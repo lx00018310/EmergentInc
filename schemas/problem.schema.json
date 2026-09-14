@@ -1,0 +1,85 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Problem",
+  "type": "object",
+  "required": [
+    "id",
+    "status",
+    "creator",
+    "current_state",
+    "desired_state",
+    "acceptance",
+    "reward_offer",
+    "created_round"
+  ],
+  "properties": {
+    "id": {
+      "type": "string"
+    },
+    "status": {
+      "enum": [
+        "OPEN",
+        "OFFERED",
+        "BIDDING",
+        "WORKING",
+        "BLOCKED",
+        "CLOSED",
+        "ABANDONED"
+      ]
+    },
+    "creator": {
+      "type": "string"
+    },
+    "current_holder": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "parent_problem": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "current_state": {
+      "type": "string"
+    },
+    "desired_state": {
+      "type": "string"
+    },
+    "acceptance": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "minItems": 1
+    },
+    "reward_offer": {
+      "type": "number",
+      "minimum": 0
+    },
+    "created_round": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "deadline_round": {
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "route": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "contracts": {
+      "type": "array"
+    },
+    "evidence": {
+      "type": "array"
+    }
+  }
+}
