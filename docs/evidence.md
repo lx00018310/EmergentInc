@@ -1,4 +1,4 @@
-# Evidence V2
+# Evidence
 
 核心：
 
@@ -6,24 +6,27 @@
 No Evidence → No Completion
 ```
 
-强度：
-1. REAL_WORLD
-2. TOOL_VERIFIED
-3. INDEPENDENT_PIXEL_VERIFIED
-4. CREATOR_VERIFIED
-5. SELF_CLAIM
+## 引擎定义的证据来源
 
-默认 SELF_CLAIM 不能 CLOSED。
+Pixel 不能自己指定这些等级。
 
-禁止：
-- “阶段1完成”
-- “已生成验证数据”
-- evidence_progress += 1
-- 随机数达到阈值
+- `MODEL_ARTIFACT`：LLM WORK 产生的分析/方案/代码文本。
+- `TOOL_VERIFIED`：真实工具、测试、API 的机器结果。
+- `ENVIRONMENT_VERIFIED`：Environment 注入的真实外部事件。
+- `INDEPENDENT_PIXEL_VERIFIED`：独立 Pixel 审核结果。
+- `HUMAN_VERIFIED`：人工确认。
 
-Validator 输出：
+## 关闭规则
+
+每个 Problem 有：
+
 ```text
-PASS
-FAIL
-INSUFFICIENT
+evidence_policy.allowed_sources
+evidence_policy.min_items
 ```
+
+只有来源满足政策，才进入语义 Validator。
+
+例如商业方案类 Sandbox Problem 可允许 `MODEL_ARTIFACT`。
+
+“客户已付款”类 Problem 必须要求 `ENVIRONMENT_VERIFIED` 或 `TOOL_VERIFIED`。

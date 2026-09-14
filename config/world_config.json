@@ -1,49 +1,47 @@
 {
-  "version": "0.2.0",
+  "version": "3.0.0",
   "experiment_seed": 20260914,
   "model": {
-    "provider": "CONFIGURE_ME",
-    "model": "CONFIGURE_ME",
-    "temperature": 0.7,
-    "max_output_tokens": 1200,
-    "structured_output": true
+    "provider": "openai_compatible",
+    "model": "MCL_MODEL",
+    "base_url": "MCL_BASE_URL",
+    "api_key_env": "MCL_API_KEY",
+    "temperature": 0.65,
+    "max_output_tokens": 1400
   },
   "space": {
-    "neighborhood": "von_neumann_6",
-    "pixel_movement": false
+    "neighborhood": "von_neumann_6"
   },
   "resource": {
     "initial_pixel_resource": 100.0,
-    "maintenance_cost_per_round": 0.2,
+    "maintenance_cost_per_round": 0.25,
     "work_cost": 1.0,
     "create_problem_cost": 1.0,
     "offer_cost": 0.5,
     "bid_cost": 0.5,
+    "accept_bid_cost": 0.2,
+    "accept_cost": 0.0,
+    "reject_cost": 0.0,
     "transfer_cost": 0.5,
-    "spawn_cost": 10.0,
-    "default_birth_grant": 10.0,
-    "grace_rounds_after_resource_depletion": 3
+    "spawn_cost": 8.0,
+    "default_birth_grant": 12.0,
+    "request_close_cost": 0.2,
+    "abandon_cost": 0.2,
+    "invalid_action_cost": 0.2,
+    "grace_rounds": 3
   },
   "llm": {
-    "skip_call_when_idle": true,
-    "call_on_work": true,
-    "call_on_offer": true,
-    "call_on_bid": true,
-    "call_on_spawn": true,
-    "call_on_memory_update_only_on_significant_event": true
-  },
-  "anti_bias": {
-    "decision_order": "seeded_shuffle",
-    "global_problem_visibility": false,
-    "auto_pick_first_problem": false,
-    "auto_pick_first_neighbor": false,
-    "fake_evidence_progress": false
+    "skip_when_idle": true,
+    "memory_update_on": [
+      "CLOSED",
+      "FAILED_CLOSE",
+      "SPAWN",
+      "MAJOR_LOSS"
+    ]
   },
   "logging": {
-    "log_llm_calls": true,
-    "log_prompt_hash": true,
-    "log_token_usage": true,
-    "log_resource_flow": true,
-    "log_evidence": true
+    "write_local_view_to_inbox": true,
+    "record_token_usage": true,
+    "record_prompt_hash": true
   }
 }

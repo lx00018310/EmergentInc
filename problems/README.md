@@ -1,11 +1,2 @@
 # Problems
-
-使用：
-
-```text
-P0001.md
-P0002.md
-...
-```
-
-不得通过文件名或目录位置编码角色或优先级。
+Canonical Problem files are JSON. Markdown mirrors are generated for inspection.

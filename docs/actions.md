@@ -1,9 +1,9 @@
-# Actions V2
+# Actions
 
-## Engine-direct
-- IDLE：仅在完全无事件时由引擎直接执行。
+### IDLE
+完全无事件时由引擎直接执行，不调用 LLM。
 
-## LLM-required
+### LLM-required
 - WORK
 - CREATE_PROBLEM
 - OFFER
@@ -16,10 +16,4 @@
 - REQUEST_CLOSE
 - ABANDON
 
-## 禁止
-- MOVE
-- GLOBAL_ASSIGN
-- GLOBAL_BROADCAST
-- AUTO_EVIDENCE_INCREMENT
-- AUTO_PICK_FIRST_PROBLEM
-- AUTO_PICK_FIRST_NEIGHBOR
+每轮每个 Pixel 最多一个主要动作。

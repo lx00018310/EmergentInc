@@ -1,6 +1,5 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "PixelAction",
   "type": "object",
   "required": [
     "pixel",
@@ -14,7 +13,7 @@
     },
     "round": {
       "type": "integer",
-      "minimum": 0
+      "minimum": 1
     },
     "action": {
       "enum": [
@@ -32,26 +31,26 @@
         "IDLE"
       ]
     },
-    "target_pixel": {
-      "type": [
-        "string",
-        "null"
-      ]
-    },
     "problem_id": {
       "type": [
         "string",
         "null"
       ]
     },
-    "requested_resource": {
+    "target_pixel": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "offered_resource": {
       "type": [
         "number",
         "null"
       ],
       "minimum": 0
     },
-    "offered_resource": {
+    "requested_resource": {
       "type": [
         "number",
         "null"
@@ -70,21 +69,29 @@
         "null"
       ]
     },
-    "evidence_candidate": {
-      "type": [
-        "object",
-        "null"
-      ]
-    },
     "spawn_proposal": {
       "type": [
         "object",
         "null"
-      ]
+      ],
+      "properties": {
+        "target_pixel": {
+          "type": "string"
+        },
+        "mutation": {
+          "type": "object"
+        }
+      },
+      "required": [
+        "target_pixel",
+        "mutation"
+      ],
+      "additionalProperties": false
     },
     "reasoning_summary": {
       "type": "string",
-      "maxLength": 800
+      "minLength": 1,
+      "maxLength": 900
     }
   },
   "additionalProperties": false

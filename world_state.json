@@ -1,0 +1,23 @@
+{
+  "round": 0,
+  "experiment_id": "experiment_001_v3_30_rounds",
+  "accounting": {
+    "environment_reward_injected": 0.0,
+    "maintenance_burned": 0.0,
+    "action_cost_burned": 0.0,
+    "resource_transferred": 0.0
+  },
+  "llm_accounting": {
+    "decision_calls": 0,
+    "validator_calls": 0,
+    "memory_calls": 0,
+    "prompt_tokens": 0,
+    "completion_tokens": 0
+  },
+  "counters": {
+    "births": 0,
+    "deaths": 0,
+    "problems_created": 0,
+    "problems_closed": 0
+  }
+}

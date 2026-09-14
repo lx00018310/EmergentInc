@@ -1,39 +1,17 @@
-# Metrics V2
+# Metrics
 
-每 10 Round：
+每轮记录：
 
-## Population
-- active_pixels
-- births
-- deaths
-
-## Problems
-- created
-- closed
-- abandoned
-- avg_route_length
-- avg_time_to_close
-
-## Interaction
-- offers
-- bids
-- rejects
-- transfers
-- child_problems
-- work_actions
-
-## Economy
+- active_pixels / births / deaths
+- problems_created / closed / abandoned
+- work / offer / bid / transfer / spawn / child_problem 次数
 - total_resource
 - environment_reward_injected
 - maintenance_burned
 - action_cost_burned
-- top1_share
-- top2_share
-- gini
+- resource_transfer_total
+- top1/top2 resource share
+- decision_calls / validator_calls / memory_calls
+- prompt_tokens / completion_tokens
 
-## LLM
-- decision_calls
-- validator_calls
-- memory_calls
-- tokens
-- avg_tokens_per_non_idle_action
+指标只描述发生了什么，不自动证明“公司涌现”。

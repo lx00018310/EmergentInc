@@ -1,35 +1,27 @@
-# Pixel V2
+# Pixel
 
-最小身份：
+Pixel 的极简身份：
 
 ```text
-active = 0 / 1
+active = 0/1
 position = (x,y,z)
 ```
 
-每个目录：
+每个 Pixel：
 
 ```text
 pixels/x_y_z/
+├─ state.json       # 机器真值
+├─ genome.json      # 可遗传策略
+├─ memory.json      # 压缩经验
+├─ state.md         # 人类镜像
+├─ genome.md
+├─ memory.md
+├─ history.md       # 不回写事件流水
+├─ inbox.md         # 最近一次 Local View
+└─ llm_log.md       # 模型调用审计
 ```
 
-包含：
+禁止 `role=sales`、`role=manager`。
 
-```text
-state.md
-genome.md
-memory.md
-history.md
-inbox.md
-llm_log.md
-```
-
-禁止硬编码：
-
-```text
-role = sales
-role = manager
-department = engineering
-```
-
-角色只能是运行后的人类观察解释。
+如果某个 Pixel 长期像销售，那是涌现观察，不是身份字段。

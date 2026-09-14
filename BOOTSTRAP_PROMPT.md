@@ -1,25 +1,20 @@
-# Bootstrap Prompt for Coding Agent
+# 给本地 Coding AI 的执行提示词
 
-请基于当前目录实现 My Company Life V2。
+目标：以本目录为 V3 基线运行，而不是重新设计项目。
 
-第一步不要直接跑 100 Round。
+执行顺序：
 
-先完成最小 runner，使 Round 1 满足：
-
-1. 读取 `config/world_config.json`
-2. 加载 `0_0_0`
-3. Environment 注入一个 Problem
-4. 构造 0_0_0 的 Local View
-5. 调用真实 LLM
-6. 要求结构化输出符合 schema
-7. RuleValidator 检查动作
-8. 执行动作
-9. 写 `round_0001.md`
-10. 在 `llm_log.md` 记录模型调用
-
-然后自动执行 `docs/self_check.md`。
-
-只有 Self-Check PASS，才允许 Round 2。
-
-禁止真实 LLM 失败后降级成 random / heuristic fallback。
-失败应 FAIL FAST。
+1. 阅读 README.md 与 MASTER_PROMPT.md。
+2. 阅读 docs/ 下所有规则。
+3. 运行 `python -m scripts.self_check`。
+4. 配置真实 LLM API。
+5. 运行 1 Round。
+6. 检查：
+   - rounds/round_0001.md
+   - pixels/*/llm_log.md
+   - world_state.json
+   - problems/*.json
+7. Self-check 与 Round 1 审计都通过后，再运行到 Round 10。
+8. 不允许添加 random_action、heuristic fallback、evidence_progress。
+9. 如果模型不可用，实验失败，不得伪装继续。
+10. 如果发现规则缺陷，先记录到 reports/，不要为了“跑通”偷偷改变世界公理。
