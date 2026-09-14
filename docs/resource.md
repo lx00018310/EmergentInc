@@ -1,4 +1,4 @@
-# Resource v0.2
+# Resource V2
 
 仍只使用一种统一 Resource。
 

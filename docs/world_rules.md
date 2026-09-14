@@ -1,4 +1,4 @@
-# World Rules v0.2
+# World Rules V2
 
 1. 每个整数三维坐标最多一个 Pixel。
 2. Pixel 出生后坐标永久固定。

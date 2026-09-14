@@ -1,4 +1,4 @@
-# My Company Life v0.2 — LLM-Native Baseline
+# My Company Life V2 — LLM-Native Baseline
 
 这是一个“商业版三维元胞自动机”实验基线。
 
@@ -7,7 +7,7 @@
 > 在固定空间、局部交互、单 Problem 容量、Resource 约束、微变异繁殖与真实 LLM 决策下，
 > 是否会自然出现专业化、竞争、合作、中间层、管理、组织结构与商业策略。
 
-## v0.2 与 v0.1 的关键差异
+## V2 与 v0.1 的关键差异
 
 v0.1 实际是：
 
@@ -17,7 +17,7 @@ Cellular Automaton
 + if/else/random Strategy
 ```
 
-v0.2 必须变成：
+V2 必须变成：
 
 ```text
 Cellular Automaton
@@ -27,7 +27,7 @@ Cellular Automaton
 + Evolution
 ```
 
-### v0.2 明确禁止
+### V2 明确禁止
 
 以下逻辑不得继续替 Pixel 做思考：
 

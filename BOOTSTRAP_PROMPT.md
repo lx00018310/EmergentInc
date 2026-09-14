@@ -1,6 +1,6 @@
 # Bootstrap Prompt for Coding Agent
 
-请基于当前目录实现 My Company Life v0.2。
+请基于当前目录实现 My Company Life V2。
 
 第一步不要直接跑 100 Round。
 

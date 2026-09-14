@@ -1,4 +1,4 @@
-# Loop v0.2
+# Loop V2
 
 A. Environment Update  
 B. Build Local Views  

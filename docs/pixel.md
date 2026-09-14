@@ -1,4 +1,4 @@
-# Pixel v0.2
+# Pixel V2
 
 最小身份：
 
