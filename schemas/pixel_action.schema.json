@@ -1,5 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "PixelActionV4",
   "type": "object",
   "required": [
     "pixel",
@@ -28,7 +29,10 @@
         "SPAWN",
         "REQUEST_CLOSE",
         "ABANDON",
-        "IDLE"
+        "IDLE",
+        "REQUEST_CAPABILITY",
+        "USE_CAPABILITY",
+        "WAIT_EXTERNAL"
       ]
     },
     "problem_id": {
@@ -88,10 +92,114 @@
       ],
       "additionalProperties": false
     },
+    "capability_request": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "properties": {
+        "capability_type": {
+          "type": "string",
+          "minLength": 1
+        },
+        "purpose": {
+          "type": "string",
+          "minLength": 1
+        },
+        "minimum_requirements": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "requested_operations": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1
+        },
+        "estimated_external_cost": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "properties": {
+            "amount": {
+              "type": "number",
+              "minimum": 0
+            },
+            "currency": {
+              "type": "string"
+            },
+            "recurring": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "amount",
+            "currency"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "capability_type",
+        "purpose",
+        "minimum_requirements",
+        "requested_operations"
+      ],
+      "additionalProperties": false
+    },
+    "capability_use": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "properties": {
+        "capability_id": {
+          "type": "string"
+        },
+        "operation": {
+          "type": "string"
+        },
+        "arguments": {
+          "type": "object"
+        }
+      },
+      "required": [
+        "capability_id",
+        "operation",
+        "arguments"
+      ],
+      "additionalProperties": false
+    },
+    "wait_external": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "properties": {
+        "reason": {
+          "type": "string"
+        },
+        "waiting_for": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "reason",
+        "waiting_for"
+      ],
+      "additionalProperties": false
+    },
     "reasoning_summary": {
       "type": "string",
       "minLength": 1,
-      "maxLength": 900
+      "maxLength": 1000
     }
   },
   "additionalProperties": false

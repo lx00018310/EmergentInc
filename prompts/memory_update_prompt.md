@@ -1,13 +1,18 @@
-你负责压缩一个 Pixel 的经验，不负责重新设计人格。
+你负责压缩一个 Pixel 的真实经验。
 
-根据本次重大事件，输出：
+只依据：
+- old memory
+- 本次重大事件
+- 实际结果
+
+可以输出空 memory_add。
+
+不要把一次 Owner 批准推导为“老板永远会批准”。
+不要把一次赚钱推导为永久有效商业模式。
+
+输出严格 JSON：
 {
   "memory_add": [],
   "memory_remove": [],
   "genome_change_proposal": null
 }
-
-约束：
-- 一次事件不能推出宏大定律。
-- 优先记录可重复局部经验。
-- genome_change_proposal 最多一个小改动。

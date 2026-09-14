@@ -1,0 +1,10 @@
+{
+  "driver": "ssh",
+  "host": "YOUR_VPS_IP",
+  "port": 22,
+  "username": "ubuntu",
+  "key_path_env": "MCL_CAP_CAP0001_KEY_PATH",
+  "public_metadata": {
+    "description": "Linux VPS"
+  }
+}

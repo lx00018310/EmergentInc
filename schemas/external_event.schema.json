@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": [
+    "id",
+    "type",
+    "target_pixel",
+    "round_created",
+    "payload",
+    "consumed"
+  ],
+  "properties": {
+    "id": {
+      "type": "string"
+    },
+    "type": {
+      "type": "string"
+    },
+    "target_pixel": {
+      "type": "string"
+    },
+    "problem_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "round_created": {
+      "type": "integer"
+    },
+    "payload": {
+      "type": "object"
+    },
+    "consumed": {
+      "type": "boolean"
+    }
+  }
+}

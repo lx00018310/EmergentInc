@@ -1,10 +1,18 @@
 {
-  "version": "3.0.0",
+  "version": "4.0.0",
   "experiment_seed": 20260914,
+  "runtime": {
+    "mode": "agent_queue",
+    "agent_queue": {
+      "requests_dir": "runtime/agent_requests",
+      "responses_dir": "runtime/agent_responses",
+      "pending_round_file": "runtime/pending_round.json"
+    }
+  },
   "model": {
     "provider": "openai_compatible",
-    "model": "MCL_MODEL",
-    "base_url": "MCL_BASE_URL",
+    "model": "CONFIGURE_ME",
+    "base_url": "CONFIGURE_ME",
     "api_key_env": "MCL_API_KEY",
     "temperature": 0.65,
     "max_output_tokens": 1400
@@ -27,8 +35,17 @@
     "default_birth_grant": 12.0,
     "request_close_cost": 0.2,
     "abandon_cost": 0.2,
+    "request_capability_cost": 0.2,
+    "use_capability_cost": 0.5,
+    "wait_external_cost": 0.0,
     "invalid_action_cost": 0.2,
     "grace_rounds": 3
+  },
+  "external": {
+    "owner_required": true,
+    "capability_profiles_dir": "owner_private/capabilities",
+    "ssh_timeout_seconds": 60,
+    "tool_output_max_chars": 8000
   },
   "llm": {
     "skip_when_idle": true,
@@ -36,7 +53,10 @@
       "CLOSED",
       "FAILED_CLOSE",
       "SPAWN",
-      "MAJOR_LOSS"
+      "CAPABILITY_GRANTED",
+      "CAPABILITY_REJECTED",
+      "TOOL_RESULT",
+      "REAL_PAYMENT"
     ]
   },
   "logging": {

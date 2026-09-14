@@ -1,62 +1,164 @@
-# EmergentInc V3 — LLM-Native Business Cellular Automaton
+# EmergentInc V4 — Open World Overlay
 
-V3 是 My Company Life / EmergentInc 的第一个“可连续演化”基线。
-
-核心世界：
+V4 在 V3 的闭合数字世界上增加受控的现实世界通道：
 
 ```text
-Pixel 固定
-Problem 流动
-Resource 反向流动
-一个 Pixel 同时最多持有一个 Problem
-Spawn = 父代 + 单次微变异
-局部交互
-真实 LLM 决策
-离散 Round
+Digital Intelligence
+        ↕
+Owner / Capability Gateway
+        ↕
+Real World
 ```
 
-## V3 解决 V2_TEST_001 的问题
+## 这是覆盖升级包
 
-- 不再写死 `0_0_0`
-- 不再写死 `P0001`
-- 不再只运行 Round 1
-- 动态扫描所有 active Pixel
-- Problem 可见性由拓扑服务计算，Runner 不能手工塞全局 Problem
-- 支持 SPAWN / OFFER / BID / ACCEPT_BID / TRANSFER / CREATE_PROBLEM
-- JSON 是机器真值；Markdown 仅为可读镜像
-- Evidence 来源由引擎标记，Pixel 不能自封 `REAL_WORLD`
-- `REQUEST_CLOSE` 必须经过 Evidence Gate + 独立语义 Validator
-- 每轮决策顺序使用 seeded shuffle
-- 所有 Pixel 都支付 maintenance
-- 模型失败 Fail Fast，不允许 random/heuristic fallback
-- 非事件 Pixel 不调用 LLM
-- 运行时 Self-Check 检查局部性与模型审计，不只扫字符串
+把 ZIP 解压到现有 V3 仓库根目录并允许覆盖。
 
-## 快速开始
+本包**不会包含/覆盖**：
+
+```text
+world_state.json
+pixels/
+problems/
+rounds/
+```
+
+所以 Round 50、P0005、两个 Pixel、Resource、Memory、历史日志都会保留。
+
+覆盖后：
 
 ```bash
 pip install -r requirements.txt
-
-# OpenAI-compatible provider
-set MCL_API_KEY=YOUR_KEY
-# Linux/macOS:
-# export MCL_API_KEY=YOUR_KEY
-
+python -m scripts.migrate_v3_to_v4
 python -m scripts.self_check
-python -m scripts.runner --rounds 1
-python -m scripts.runner --rounds 9
 ```
 
-建议实验节奏：
+---
+
+## V4 新能力
+
+Pixel 新增三个动作：
 
 ```text
-1 Round
-→ 审计
-→ 10 Round
-→ 审计
-→ 30 Round
-→ 审计
-→ 100 Round
+REQUEST_CAPABILITY
+USE_CAPABILITY
+WAIT_EXTERNAL
 ```
 
-不要一开始直接跑 1000 Round。
+### REQUEST_CAPABILITY
+
+Pixel 如果发现要继续解决 Problem 必须接触真实世界，就可以向 Owner 请求能力，例如：
+
+```text
+ssh_vps
+public_web_hosting
+domain
+email
+browser
+payment_observation
+human_action
+```
+
+Owner 不是 CEO，不负责告诉 Pixel 应该怎么赚钱，只负责现实权限。
+
+### USE_CAPABILITY
+
+Owner 批准后，Pixel 看到：
+
+```text
+CAP0001
+type = ssh_vps
+allowed_operations = [ssh_exec]
+```
+
+Pixel 看不到 SSH 私钥/API Key。
+
+Gateway 代替 Pixel 执行实际操作，并把结果作为 TOOL_VERIFIED Evidence 返回世界。
+
+### WAIT_EXTERNAL
+
+如果下一步只能等客户付款、Owner 批准、网站事件等外部变化，Pixel 可进入 WAIT_EXTERNAL。
+
+WAIT_EXTERNAL 时不会每轮重复调用 LLM。
+
+---
+
+# 两种 LLM 运行方式
+
+## 1. API 模式
+
+适合 OpenAI-compatible API：
+
+```bash
+set MCL_RUNTIME_MODE=api
+set MCL_API_KEY=YOUR_KEY
+set MCL_BASE_URL=https://your-endpoint/v1
+set MCL_MODEL=your-model
+
+python -m scripts.runner --rounds 10
+```
+
+可用于 Gemini compatible gateway、OpenRouter、火山方舟等兼容接口。
+
+## 2. Agent Queue 模式
+
+适合：
+
+```text
+Codex
+ZCode
+Claude Code
+Gemini Coding Agent
+其他可以读写文件并执行命令的 Agent
+```
+
+Windows：
+
+```bash
+set MCL_RUNTIME_MODE=agent_queue
+```
+
+把：
+
+```text
+AGENT_RUNNER_PROMPT.md
+```
+
+交给 Agent。
+
+Runner 会生成：
+
+```text
+runtime/agent_requests/*.json
+```
+
+Agent 只读取该 request 的隔离上下文，写：
+
+```text
+runtime/agent_responses/<same_request_id>.json
+```
+
+然后再次运行 runner。V4 使用 Round checkpoint，不会重复扣费/执行动作。
+
+---
+
+# 真实钱和 Resource 分离
+
+```text
+Resource = 人工世界内部能量
+CNY/USD = 真实现金流
+```
+
+真实收入/支出写入：
+
+```text
+external_transactions/
+```
+
+例如：
+
+```text
+Revenue ¥1
+VPS Cost ¥20
+Real P&L = -¥19
+```
