@@ -25,6 +25,6 @@ def check_invariants(storage, local_views=None, audits=None):
                     errors.append(f"{pid} sees illegal neighbor {n['pixel_id']}")
     if audits is not None:
         for pid,a in audits.items():
-            if not a.get("prompt_hash") or not a.get("local_view_hash"):
+            if not a.get("prompt_hash") or not a.get("sandbox_hash"):
                 errors.append(f"missing LLM audit for {pid}")
     return errors
