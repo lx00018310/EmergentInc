@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>EmergentInc V5 极简可视化控制台</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header class="app-header">
+    <div class="logo-title">
+      <span class="logo-icon">▣</span>
+      <h1>EmergentInc V5 观察控制台</h1>
+      <span class="badge" id="branch-badge">branch: main</span>
+      <span class="badge" id="loop-badge">loop: -</span>
+    </div>
+    <div class="header-metrics">
+      <div class="metric-item"><span class="m-label">Round:</span> <span class="m-val" id="metric-round">0</span></div>
+      <div class="metric-item"><span class="m-label">Pixels:</span> <span class="m-val" id="metric-pixels">0</span></div>
+      <div class="metric-item"><span class="m-label">Open Problems:</span> <span class="m-val" id="metric-problems">0</span></div>
+      <div class="metric-item"><span class="m-label">CNY 净收:</span> <span class="m-val" id="metric-cny">¥0.0</span></div>
+      <div class="metric-item"><span class="m-label">LLM Calls:</span> <span class="m-val" id="metric-llm">0</span></div>
+    </div>
+  </header>
+
+  <main class="main-layout">
+    <!-- 左侧：系统对话/控制窗口与 LOOP 树 -->
+    <section class="left-panel">
+      <!-- 运行与控制窗口 -->
+      <div class="panel-card" id="control-card">
+        <div class="panel-header">
+          <h2>系统控制 &amp; 命令入口</h2>
+          <span class="run-status-indicator" id="run-status-indicator">IDLE</span>
+        </div>
+
+        <div class="command-input-group">
+          <input type="text" id="cmd-input" placeholder="输入命令，例如：跑10轮 / run 5 / 状态 / 停止" autocomplete="off" />
+          <button id="btn-run" class="btn btn-primary">执行</button>
+          <button id="btn-stop" class="btn btn-danger" disabled>停止</button>
+        </div>
+
+        <div class="quick-action-bar">
+          <button class="btn btn-sm" onclick="sendQuickCommand('跑1轮')">跑1轮</button>
+          <button class="btn btn-sm" onclick="sendQuickCommand('跑5轮')">跑5轮</button>
+          <button class="btn btn-sm" onclick="sendQuickCommand('跑10轮')">跑10轮</button>
+          <button class="btn btn-sm" onclick="openProblemModal()">+ 新建目标</button>
+          <button class="btn btn-sm" onclick="openEventModal()">+ 记录事实</button>
+        </div>
+
+        <!-- 停机/审批拦截告警框 -->
+        <div id="owner-alert-container" class="owner-alert-container" style="display: none;">
+          <div class="alert-box">
+            <div class="alert-title" id="alert-title">⚠ 停机提醒：需 Owner 介入</div>
+            <div class="alert-body" id="alert-body"></div>
+            <div class="alert-actions" id="alert-actions"></div>
+          </div>
+        </div>
+
+        <!-- 控制台日志输出窗口 -->
+        <div class="console-box" id="console-output">
+          <div class="console-line system-line">[SYSTEM] 控制台已就绪，已加载本地世界。</div>
+        </div>
+      </div>
+
+      <!-- LOOP 树窗口 -->
+      <div class="panel-card" id="loop-card">
+        <div class="panel-header">
+          <h2>LOOP 树 (分支与回退)</h2>
+          <button class="btn btn-sm" onclick="refreshLoops()">刷新树</button>
+        </div>
+        <div class="loop-tree-container" id="loop-tree-container">
+          <div class="tree-loading">加载 Loop 历史...</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 右侧：Pixel 空间世界地图 -->
+    <section class="right-panel">
+      <div class="canvas-toolbar">
+        <div class="toolbar-left">
+          <span class="toolbar-title">Pixel 空间投影地图 (Isometric 2.5D)</span>
+          <span class="canvas-legend">
+            <span class="legend-item"><span class="dot active-dot"></span> Active</span>
+            <span class="legend-item"><span class="dot inactive-dot"></span> Inactive</span>
+            <span class="legend-item"><span class="dot waiting-dot"></span> Waiting</span>
+            <span class="legend-item"><span class="dot cap-dot"></span> Capable</span>
+          </span>
+        </div>
+        <div class="toolbar-right">
+          <button class="btn btn-sm" id="btn-zoom-in">+</button>
+          <button class="btn btn-sm" id="btn-zoom-out">-</button>
+          <button class="btn btn-sm" id="btn-reset-view">重置视角</button>
+        </div>
+      </div>
+
+      <div class="canvas-container" id="canvas-container">
+        <canvas id="pixel-canvas"></canvas>
+
+        <!-- Hover 浮层 -->
+        <div class="pixel-hover-card" id="pixel-hover-card" style="display: none;">
+          <div class="hover-header">
+            <span class="hover-id" id="hover-id">0_0_0</span>
+            <span class="hover-status" id="hover-status">Active</span>
+          </div>
+          <div class="hover-grid">
+            <div><span class="h-k">坐标:</span> <span class="h-v" id="hover-pos">[0,0,0]</span></div>
+            <div><span class="h-k">资源:</span> <span class="h-v" id="hover-resource">100</span></div>
+            <div><span class="h-k">当前任务:</span> <span class="h-v" id="hover-problem">-</span></div>
+            <div><span class="h-k">父元胞:</span> <span class="h-v" id="hover-parent">-</span></div>
+            <div><span class="h-k">诞生轮次:</span> <span class="h-v" id="hover-born">0</span></div>
+            <div><span class="h-k">保护期剩余:</span> <span class="h-v" id="hover-grace">0</span></div>
+            <div><span class="h-k">等待状态:</span> <span class="h-v" id="hover-waiting">否</span></div>
+            <div><span class="h-k">持有能力:</span> <span class="h-v" id="hover-caps">无</span></div>
+          </div>
+          <div class="hover-genome">
+            <div class="h-section-title">Genome 特征:</div>
+            <div id="hover-genome-text" class="h-section-content">-</div>
+          </div>
+          <div class="hover-memory">
+            <div class="h-section-title">Memory 经验:</div>
+            <div id="hover-memory-text" class="h-section-content">-</div>
+          </div>
+          <div class="hover-actions">
+            <button class="btn btn-xs" onclick="openPixelDoc('state')">State</button>
+            <button class="btn btn-xs" onclick="openPixelDoc('genome')">Genome</button>
+            <button class="btn btn-xs" onclick="openPixelDoc('memory')">Memory</button>
+            <button class="btn btn-xs" onclick="openPixelDoc('history')">History</button>
+            <button class="btn btn-xs" onclick="openPixelDoc('llm_log')">LLM Log</button>
+            <button class="btn btn-xs" onclick="openPixelDoc('inbox')">Inbox</button>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- 文档查看弹窗 -->
+  <div class="modal-overlay" id="doc-modal" style="display: none;">
+    <div class="modal-content doc-modal-content">
+      <div class="modal-header">
+        <h3 id="doc-modal-title">Pixel 文档查看</h3>
+        <button class="btn-close" onclick="closeModal('doc-modal')">&times;</button>
+      </div>
+      <div class="modal-body">
+        <pre class="doc-viewer" id="doc-viewer-content"></pre>
+      </div>
+    </div>
+  </div>
+
+  <!-- 新建目标弹窗 (Environment Problem) -->
+  <div class="modal-overlay" id="problem-modal" style="display: none;">
+    <div class="modal-content form-modal-content">
+      <div class="modal-header">
+        <h3>发布环境目标 (Environment Problem)</h3>
+        <button class="btn-close" onclick="closeModal('problem-modal')">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label>目标描述 (Description):</label>
+          <input type="text" id="prob-desc" placeholder="例如：找到第一个真实付费外部客户" />
+        </div>
+        <div class="form-group">
+          <label>当前状态 (Current State):</label>
+          <input type="text" id="prob-curr" placeholder="无外部收入，访问量为零" />
+        </div>
+        <div class="form-group">
+          <label>期望状态 (Desired State):</label>
+          <input type="text" id="prob-desired" placeholder="产生不少于 1 元的真实外部收入" />
+        </div>
+        <div class="form-group">
+          <label>验收标准 (Acceptance Criteria, 每行一条):</label>
+          <textarea id="prob-criteria" rows="3" placeholder="微信/支付宝真实转账记录&#10;付款人角色为 EXTERNAL_CUSTOMER"></textarea>
+        </div>
+        <div class="form-group">
+          <label>奖励资源预算 (Reward Budget):</label>
+          <input type="number" id="prob-reward" value="10.0" step="1.0" />
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn" onclick="closeModal('problem-modal')">取消</button>
+        <button class="btn btn-primary" onclick="submitProblem()">确认发布</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 记录事实弹窗 (External Event) -->
+  <div class="modal-overlay" id="event-modal" style="display: none;">
+    <div class="modal-content form-modal-content">
+      <div class="modal-header">
+        <h3>记录外部客观事实 (External Observation Event)</h3>
+        <button class="btn-close" onclick="closeModal('event-modal')">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label>目标 Pixel (Target Pixel):</label>
+          <input type="text" id="event-target" value="0_0_0" />
+        </div>
+        <div class="form-group">
+          <label>关联任务 ID (可选):</label>
+          <input type="text" id="event-problem" placeholder="例如：P0001" />
+        </div>
+        <div class="form-group">
+          <label>事实类型 (Kind):</label>
+          <input type="text" id="event-kind" value="WEB_TRAFFIC" />
+        </div>
+        <div class="form-group">
+          <label>客观事实描述 (Note, 严禁指令性内容):</label>
+          <textarea id="event-note" rows="3" placeholder="过去 24 小时网站独立 IP 访问数为 0"></textarea>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn" onclick="closeModal('event-modal')">取消</button>
+        <button class="btn btn-primary" onclick="submitEvent()">确认录入</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 审批弹窗 (Owner Approve) -->
+  <div class="modal-overlay" id="approve-modal" style="display: none;">
+    <div class="modal-content form-modal-content">
+      <div class="modal-header">
+        <h3>批准现实能力请求</h3>
+        <button class="btn-close" onclick="closeModal('approve-modal')">&times;</button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="approve-req-id" />
+        <div class="form-group">
+          <label>请求 ID:</label>
+          <span id="approve-req-id-display" class="font-mono"></span>
+        </div>
+        <div class="form-group">
+          <label>凭证配置文件绝对路径 (Profile Path):</label>
+          <input type="text" id="approve-profile-path" placeholder="例如：D:\...\owner_vps_profile.json" />
+          <small class="form-help">为保障隔离安全，不在前端传输 Secret，请填入本地配置文件绝对路径。</small>
+        </div>
+        <div class="form-group">
+          <label>分配能力 ID (可选，留空自动生成):</label>
+          <input type="text" id="approve-cap-id" placeholder="CAP0001" />
+        </div>
+        <div class="form-group">
+          <label>审批备注 (Reason):</label>
+          <input type="text" id="approve-reason" value="Approved via UI" />
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn" onclick="closeModal('approve-modal')">取消</button>
+        <button class="btn btn-primary" onclick="submitApprove()">确认批准</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/static/pixel_map.js"></script>
+  <script src="/static/loop_tree.js"></script>
+  <script src="/static/app.js"></script>
+</body>
+</html>

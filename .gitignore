@@ -11,3 +11,4 @@ id_rsa
 id_ed25519
 runtime/
 runtime_v4_legacy/
+cache
