@@ -53,11 +53,13 @@ class PixelState:
     def from_dict(cls, d: Dict[str, Any]) -> "PixelState":
         # 严格过滤禁止字段
         filtered = {k: v for k, v in d.items() if k not in FORBIDDEN_STATE_FIELDS}
+        pid = str(filtered.get("id", "0_0_0"))
+        pos = list(filtered.get("position", [0, 0, 0]))
         return cls(
-            id=filtered["id"],
-            position=list(filtered["position"]),
+            id=pid,
+            position=pos,
             active=bool(filtered.get("active", True)),
-            energy=int(filtered.get("energy", 0)),
+            energy=int(filtered.get("energy", filtered.get("resource", 0))),
             parent=filtered.get("parent"),
             born_round=int(filtered.get("born_round", 0)),
             last_active_round=int(filtered.get("last_active_round", 0)),

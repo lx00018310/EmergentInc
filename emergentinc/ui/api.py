@@ -137,14 +137,43 @@ def init_api(base_dir: Optional[Union[str, Path, ProjectPaths]] = None) -> APIRo
             raise HTTPException(status_code=500, detail=str(e))
 
     @router.get("/pixels/{pixel_id}")
+    @router.get("/environment")
+    def get_environment():
+        return {"content": world_reader.env.read_content()}
+
+    @router.post("/environment")
+    def update_environment(req: Dict[str, Any] = Body(...)):
+        content = req.get("content", "")
+        world_reader.env.update_content(content)
+        return {"status": "UPDATED", "length": len(content)}
+
+    @router.post("/revenue/credit")
+    def credit_revenue(req: Dict[str, Any] = Body(...)):
+        from emergentinc.engine.energy import EnergyManager
+        pixel_id = req.get("pixel_id")
+        net_amount = float(req.get("net_amount", 0.0))
+        tx_id = str(req.get("tx_id", ""))
+        if not pixel_id or net_amount <= 0 or not tx_id:
+            raise HTTPException(status_code=400, detail="Invalid revenue credit parameters")
+
+        ledger_file = paths.workspace_root / "ledger" / "energy_ledger.jsonl"
+        mgr = EnergyManager(ledger_file)
+        storage_p = world_reader.world.get_pixel_storage(pixel_id)
+        if not storage_p.state_file.exists():
+            raise HTTPException(status_code=404, detail="Pixel not found")
+
+        ok, tokens = mgr.credit_external_revenue(storage_p, net_amount, tx_id, req.get("details"))
+        return {"status": "CREDITED", "pixel_id": pixel_id, "tokens_added": tokens}
+
+    @router.get("/pixels/{pixel_id}")
     def get_pixel(pixel_id: str):
-        if pixel_id not in storage.pixel_ids():
+        storage_p = world_reader.world.get_pixel_storage(pixel_id)
+        if not storage_p.state_file.exists():
             raise HTTPException(status_code=404, detail="Pixel not found")
         return {
             "id": pixel_id,
-            "state": storage.pixel_state(pixel_id),
-            "genome": storage.pixel_genome(pixel_id),
-            "memory": storage.pixel_memory(pixel_id)
+            "state": storage_p.load_state().to_dict(),
+            "pixel_md": storage_p.load_pixel_md()
         }
 
     @router.get("/pixels/{pixel_id}/document/{doc_name}")
@@ -188,49 +217,6 @@ def init_api(base_dir: Optional[Union[str, Path, ProjectPaths]] = None) -> APIRo
             )
         except (RuntimeError, ValueError) as e:
             raise HTTPException(status_code=400, detail=str(e))
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=str(e))
-
-    @router.post("/environment/problem")
-    def create_environment_problem(req: EnvironmentProblemRequest):
-        try:
-            storage.ensure_v5_defaults()
-            pid = storage.next_problem_id()
-            rn = int(storage.world().get('round', 0))
-            p = {
-                "id": pid,
-                "status": "OPEN",
-                "creator": "ENVIRONMENT_OWNER",
-                "current_holder": None,
-                "created_round": rn,
-                "description": req.description,
-                "current_state": req.current_state,
-                "desired_state": req.desired_state,
-                "acceptance_criteria": req.acceptance_criteria,
-                "reward_budget": float(req.reward_budget),
-                "evidence": [],
-                "history": []
-            }
-            storage.save_problem(p)
-            w = storage.world()
-            w['counters']['problems_created'] += 1
-            storage.save_world(w)
-            return {"status": "CREATED", "problem": p}
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=str(e))
-
-    @router.post("/environment/event")
-    def create_environment_event(req: EnvironmentEventRequest):
-        try:
-            storage.ensure_v5_defaults()
-            owner.record_observation(
-                storage,
-                target_pixel=req.target_pixel,
-                problem_id=req.problem_id,
-                kind=req.kind,
-                note=req.note
-            )
-            return {"status": "RECORDED", "target_pixel": req.target_pixel}
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
 

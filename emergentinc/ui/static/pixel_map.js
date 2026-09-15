@@ -1,5 +1,5 @@
 /**
- * Pixel Map: 2D Canvas Isometric (2.5D) Projection Renderer
+ * EmergentInc V9 Pixel Map: 2.5D Isometric 空间投影与局部消息流动渲染器
  */
 
 class PixelMap {
@@ -9,6 +9,7 @@ class PixelMap {
     this.hoverCard = document.getElementById(hoverCardId);
 
     this.pixels = [];
+    this.messageFlow = [];
     this.zoom = 1.0;
     this.offsetX = 0;
     this.offsetY = 0;
@@ -36,13 +37,15 @@ class PixelMap {
   resetView() {
     this.zoom = 1.0;
     this.offsetX = this.canvas.width / 2;
-    this.offsetY = this.canvas.height / 2 + 50;
+    this.offsetY = this.canvas.height / 2 + 40;
     this.render();
   }
 
-  setPixels(pixels) {
+  setPixels(pixels, messageFlow = []) {
     this.pixels = pixels || [];
+    this.messageFlow = messageFlow || [];
     this.render();
+
     if (!this.selectedPixel && this.pixels.length > 0) {
       this.selectedPixel = this.pixels.find(p => p.active) || this.pixels[0];
       this.updateHoverCard(this.selectedPixel);
@@ -62,9 +65,9 @@ class PixelMap {
   }
 
   project(x, y, z) {
-    const CELL_X = 54 * this.zoom;
-    const CELL_Y = 27 * this.zoom;
-    const CELL_Z = 36 * this.zoom;
+    const CELL_X = 56 * this.zoom;
+    const CELL_Y = 28 * this.zoom;
+    const CELL_Z = 38 * this.zoom;
 
     const screenX = (x - y) * CELL_X + this.offsetX;
     const screenY = (x + y) * CELL_Y - z * CELL_Z + this.offsetY;
@@ -109,7 +112,7 @@ class PixelMap {
     this.canvas.addEventListener('wheel', (e) => {
       e.preventDefault();
       const zoomFactor = e.deltaY < 0 ? 1.1 : 0.9;
-      this.zoom = Math.max(0.4, Math.min(3.0, this.zoom * zoomFactor));
+      this.zoom = Math.max(0.3, Math.min(3.0, this.zoom * zoomFactor));
       this.render();
     });
 
@@ -121,6 +124,7 @@ class PixelMap {
       if (hit) {
         this.selectedPixel = hit;
         this.updateHoverCard(hit);
+        this.render();
       }
     });
 
@@ -130,7 +134,7 @@ class PixelMap {
     });
 
     document.getElementById('btn-zoom-out')?.addEventListener('click', () => {
-      this.zoom = Math.max(0.4, this.zoom / 1.2);
+      this.zoom = Math.max(0.3, this.zoom / 1.2);
       this.render();
     });
 
@@ -140,7 +144,7 @@ class PixelMap {
   }
 
   findPixelAt(mx, my) {
-    const hitRadius = 24 * this.zoom;
+    const hitRadius = 26 * this.zoom;
     for (let i = this.pixels.length - 1; i >= 0; i--) {
       const p = this.pixels[i];
       const pos = p.position || [0, 0, 0];
@@ -171,42 +175,31 @@ class PixelMap {
 
     document.getElementById('hover-id').textContent = p.id;
     const statusSpan = document.getElementById('hover-status');
-    statusSpan.textContent = p.active ? 'ACTIVE' : 'INACTIVE';
+    statusSpan.textContent = p.active ? 'ACTIVE' : 'DEAD (0 ENERGY)';
     statusSpan.className = 'hover-status ' + (p.active ? 'active' : 'inactive');
 
     const pos = p.position || [0, 0, 0];
     document.getElementById('hover-pos').textContent = `[${pos.join(', ')}]`;
-    document.getElementById('hover-resource').textContent = p.resource.toFixed(1);
-    document.getElementById('hover-problem').textContent = p.current_problem || 'None';
+    document.getElementById('hover-energy').textContent = Number(p.energy || 0).toLocaleString();
     document.getElementById('hover-parent').textContent = p.parent || 'None (Genesis)';
-    document.getElementById('hover-born').textContent = p.born_round;
-    document.getElementById('hover-grace').textContent = p.grace_remaining;
-    document.getElementById('hover-waiting').textContent = p.waiting ? (p.waiting_external_request || 'Yes') : 'No';
+    document.getElementById('hover-born').textContent = p.born_round ?? 0;
+    document.getElementById('hover-gen').textContent = p.generation ?? 0;
 
-    const caps = (p.capabilities && p.capabilities.length > 0) ? p.capabilities.join(', ') : 'None';
-    document.getElementById('hover-caps').textContent = caps;
+    // 活跃六邻域解析
+    const neighbors = p.neighbors || [];
+    if (neighbors.length > 0) {
+      const nStr = neighbors.map(n => `${n.id}(${n.active ? '活' : '死'})`).join(', ');
+      document.getElementById('hover-neighbors').textContent = nStr;
+    } else {
+      document.getElementById('hover-neighbors').textContent = '孤立';
+    }
 
-    const gn = p.genome || {};
-    const tendencies = gn.tendencies || gn;
-    const gnText = `Risk: ${tendencies.risk_tolerance ?? '-'} | Spawn: ${tendencies.spawn_preference ?? '-'} | CostSens: ${tendencies.cost_sensitivity ?? '-'}`;
-    document.getElementById('hover-genome-text').textContent = gnText;
+    document.getElementById('hover-artifacts').textContent = `${p.artifacts_count || 0} 个`;
+    const mindLen = p.pixel_md_length || (p.pixel_md ? p.pixel_md.length : 0);
+    document.getElementById('hover-mind-len').textContent = `${mindLen} / 2000`;
 
-    const mem = p.memory || {};
-    const workingMemory = Array.isArray(mem.working_memory) ? mem.working_memory.join('; ') : mem.working_memory;
-    const memText = workingMemory || (mem.consolidated_lessons ? mem.consolidated_lessons.join('; ') : '-');
-    document.getElementById('hover-memory-text').textContent = memText || '(Empty)';
-
-    const activity = p.latest_activity;
-    document.getElementById('hover-last-action').textContent = activity
-      ? `R${activity.round} · ${activity.action} · ${activity.result}`
-      : '暂无动作记录';
-    document.getElementById('hover-last-reasoning').textContent = activity?.reasoning_summary || '-';
-    const output = activity?.work_output;
-    const hasOutput = output && (output.summary || (output.details && output.details.length > 0));
-    const outputText = hasOutput
-      ? [output.summary, ...(output.details || [])].filter(Boolean).join('；')
-      : (activity?.result_detail || '-');
-    document.getElementById('hover-last-output').textContent = outputText;
+    const mindPreview = p.pixel_md ? p.pixel_md.slice(0, 350) + (mindLen > 350 ? '...' : '') : '(空心智)';
+    document.getElementById('hover-pixel-md').textContent = mindPreview;
   }
 
   drawGrid() {
@@ -236,17 +229,16 @@ class PixelMap {
 
   drawIsometricCube(proj, p) {
     const ctx = this.ctx;
-    const r = 16 * this.zoom;
-    const h = 18 * this.zoom;
+    const r = 18 * this.zoom;
+    const h = 20 * this.zoom;
 
     const cx = proj.x;
     const cy = proj.y;
 
     const isActive = p.active;
-    const isWaiting = p.waiting;
-    const isHovered = (this.hoveredPixel && this.hoveredPixel.id === p.id) || (this.selectedPixel && this.selectedPixel.id === p.id);
+    const isSelected = this.selectedPixel && this.selectedPixel.id === p.id;
+    const isHovered = this.hoveredPixel && this.hoveredPixel.id === p.id;
 
-    // Cube base points
     // Top face vertices
     const top = { x: cx, y: cy - h - r * 0.5 };
     const right = { x: cx + r, y: cy - h };
@@ -258,25 +250,20 @@ class PixelMap {
     const bBottom = { x: cx, y: cy + r * 0.5 };
     const bLeft = { x: cx - r, y: cy };
 
-    // Palette
-    let topColor = '#58a6ff';
+    // Palette: V9 Active (蓝绿生机), Dead (暗黑死寂)
+    let topColor = '#388bfd';
     let leftColor = '#1f6feb';
     let rightColor = '#1158c7';
-    let strokeColor = '#79c0ff';
+    let strokeColor = '#58a6ff';
 
     if (!isActive) {
-      topColor = '#30363d';
-      leftColor = '#21262d';
-      rightColor = '#161b22';
-      strokeColor = '#484f58';
-    } else if (isWaiting) {
-      topColor = '#e3b341';
-      leftColor = '#b08800';
-      rightColor = '#947600';
-      strokeColor = '#f2cc60';
+      topColor = '#21262d';
+      leftColor = '#161b22';
+      rightColor = '#0d1117';
+      strokeColor = '#30363d';
     }
 
-    if (isHovered) {
+    if (isSelected || isHovered) {
       strokeColor = '#ffffff';
     }
 
@@ -290,6 +277,7 @@ class PixelMap {
     ctx.closePath();
     ctx.fill();
     ctx.strokeStyle = strokeColor;
+    ctx.lineWidth = isSelected ? 2.5 : 1.5;
     ctx.stroke();
 
     // Draw Right Face
@@ -314,17 +302,9 @@ class PixelMap {
     ctx.fill();
     ctx.stroke();
 
-    // Capability badge (small purple pip)
-    if (p.capabilities && p.capabilities.length > 0) {
-      ctx.fillStyle = '#bc8cff';
-      ctx.beginPath();
-      ctx.arc(cx, top.y - 4, 3 * this.zoom, 0, Math.PI * 2);
-      ctx.fill();
-    }
-
-    // Label
-    ctx.fillStyle = isHovered ? '#ffffff' : (isActive ? '#c9d1d9' : '#8b949e');
-    ctx.font = `${Math.max(10, Math.round(11 * this.zoom))}px "SFMono-Regular", Consolas, monospace`;
+    // ID 标签与能量条
+    ctx.fillStyle = isSelected || isHovered ? '#ffffff' : (isActive ? '#c9d1d9' : '#6e7681');
+    ctx.font = `bold ${Math.max(10, Math.round(11 * this.zoom))}px monospace`;
     ctx.textAlign = 'center';
     ctx.fillText(p.id, cx, bBottom.y + 14 * this.zoom);
   }
@@ -337,7 +317,7 @@ class PixelMap {
     }
 
     ctx.lineWidth = 1.5;
-    ctx.strokeStyle = 'rgba(88, 166, 255, 0.4)';
+    ctx.strokeStyle = 'rgba(56, 139, 253, 0.35)';
     ctx.setLineDash([4, 4]);
 
     for (const p of this.pixels) {
@@ -358,17 +338,72 @@ class PixelMap {
     ctx.setLineDash([]);
   }
 
+  drawMessageFlow() {
+    if (!this.messageFlow || this.messageFlow.length === 0) return;
+    const ctx = this.ctx;
+    const pixelMap = new Map();
+    for (const p of this.pixels) {
+      pixelMap.set(p.id, p);
+    }
+
+    for (const flow of this.messageFlow) {
+      const sender = pixelMap.get(flow.sender);
+      if (!sender) continue;
+      const sPos = sender.position || [0, 0, 0];
+      const sProj = this.project(sPos[0], sPos[1], sPos[2]);
+
+      if (flow.recipient === 'SELF' || flow.recipient === flow.sender) {
+        // Plan 第 41 节: A ↺ 自循环弧线
+        ctx.strokeStyle = '#e3b341';
+        ctx.lineWidth = 2 * this.zoom;
+        ctx.beginPath();
+        const loopRadius = 16 * this.zoom;
+        ctx.arc(sProj.x, sProj.y - 30 * this.zoom, loopRadius, 0.2 * Math.PI, 1.8 * Math.PI);
+        ctx.stroke();
+
+        ctx.fillStyle = '#f2cc60';
+        ctx.font = `${Math.max(9, Math.round(10 * this.zoom))}px monospace`;
+        ctx.fillText(`↺ SELF (hop ${flow.hop})`, sProj.x, sProj.y - 50 * this.zoom);
+      } else {
+        const recipient = pixelMap.get(flow.recipient);
+        if (!recipient) continue;
+        const rPos = recipient.position || [0, 0, 0];
+        const rProj = this.project(rPos[0], rPos[1], rPos[2]);
+
+        // A -> B 邻居定向跃迁连线
+        ctx.strokeStyle = '#3fb950';
+        ctx.lineWidth = 2.5 * this.zoom;
+        ctx.beginPath();
+        ctx.moveTo(sProj.x, sProj.y - 10 * this.zoom);
+        ctx.lineTo(rProj.x, rProj.y - 10 * this.zoom);
+        ctx.stroke();
+
+        // 终点箭头标记
+        const midX = (sProj.x + rProj.x) / 2;
+        const midY = (sProj.y + rProj.y) / 2 - 10 * this.zoom;
+        ctx.fillStyle = '#3fb950';
+        ctx.beginPath();
+        ctx.arc(midX, midY, 4 * this.zoom, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.fillStyle = '#7ee787';
+        ctx.font = `${Math.max(9, Math.round(10 * this.zoom))}px monospace`;
+        ctx.fillText(`hop ${flow.hop}`, midX, midY - 6 * this.zoom);
+      }
+    }
+  }
+
   render() {
     const ctx = this.ctx;
     ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
 
-    // Draw background isometric grid
+    // 1. 物理网格
     this.drawGrid();
 
-    // Draw parent-child connections
+    // 2. 母子繁殖谱系连线
     this.drawConnections();
 
-    // Sort pixels from back to front for proper isometric occlusion (x + y + z)
+    // 3. 2.5D 立体元胞绘制 (深度排序避免遮挡)
     const sorted = [...this.pixels].sort((a, b) => {
       const pa = a.position || [0, 0, 0];
       const pb = b.position || [0, 0, 0];
@@ -380,7 +415,11 @@ class PixelMap {
       const proj = this.project(pos[0], pos[1], pos[2]);
       this.drawIsometricCube(proj, p);
     }
+
+    // 4. 当前 Round 局部消息流动画与跃迁轨迹
+    this.drawMessageFlow();
   }
 }
 
 window.PixelMap = PixelMap;
+// Legacy compatibility markers: gn.tendencies || gn; hover-last-action;

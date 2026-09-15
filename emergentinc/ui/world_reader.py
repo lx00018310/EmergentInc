@@ -1,198 +1,170 @@
-import re
+"""V9 专用的世界状态读取与 DTO 转换服务 (V9 World Reader).
+
+核心规则:
+1. 严格收敛至 V9 数据规范，输出包含 V9 纯净核心字段与 Observer 宏观指标。
+2. 兼容保留历史 rounds 目录中的决策活动快照 (latest_activity)。
+3. 提供最新 Round 消息流记录 (Message Flow)，供 2.5D 地图动态展示。
+4. 严格白名单与路径穿越防御检查 (ALLOWED_DOCS)。
+"""
+
 import json
 from pathlib import Path
 from typing import Dict, Any, List, Optional, Union
 from emergentinc.paths import ProjectPaths, get_paths
-from emergentinc.engine.storage import Storage
+from emergentinc.engine.world import World
+from emergentinc.engine.pixel import PixelStorage
+from emergentinc.engine.environment import Environment
+from emergentinc.engine.observer import Observer
+from emergentinc.engine.utils import read_json
 
-ALLOWED_DOCS = {'state', 'self', 'public', 'memory', 'inheritance', 'history', 'llm_log', 'inbox', 'genome'}
+ALLOWED_DOCS = {
+    "state", "self", "public", "memory", "inheritance",
+    "history", "llm_log", "inbox", "genome", "pixel", "environment"
+}
+
 
 class WorldReader:
+    """提供供 Web UI 消费的完整 V9 DTO."""
+
     def __init__(self, base_dir: Optional[Union[str, Path, ProjectPaths]] = None):
         if isinstance(base_dir, ProjectPaths):
             self.paths = base_dir
         else:
             self.paths = get_paths(base_dir)
-        self.base = self.paths.workspace_root
-        self.s = Storage(self.paths)
+        self.workspace = self.paths.workspace_root
+        self.live = self.paths.live_root
+        self.pixels_dir = self.live / "pixels"
+        self.artifacts_dir = self.live / "artifacts"
+        self.env_file = self.live / "environment.md"
+        self.world_state_file = self.live / "world_state.json"
+
+        self.world = World(self.pixels_dir)
+        self.env = Environment(self.env_file)
+        self.observer = Observer(self.workspace)
 
     def get_world_dto(self) -> Dict[str, Any]:
-        self.s.ensure_v5_defaults()
-        w = self.s.world()
-        rn = int(w.get('round', 0))
-
-        latest_round = {}
-        latest_round_path = self.s.live / 'rounds' / f'round_{rn:04d}.json'
-        if latest_round_path.exists():
+        # 1. 基础轮次状态
+        w_state = {}
+        if self.world_state_file.exists():
             try:
-                latest_round = json.loads(latest_round_path.read_text(encoding='utf-8'))
+                w_state = read_json(self.world_state_file)
             except Exception:
-                latest_round = {}
+                pass
+        current_round = int(w_state.get("round", 0))
 
-        latest_decisions = latest_round.get('decisions', {})
-        applied_pixels = {item.get('pixel') for item in latest_round.get('applied', [])}
-        rejected_by_pixel = {
-            item.get('pixel'): item.get('reason', 'REJECTED')
-            for item in latest_round.get('rejected', [])
-        }
-        skipped_pixels = set(latest_round.get('skipped_idle', []))
+        # 2. 读取最新回合快照 (若有)，以兼容旧 activity
+        latest_round_data = {}
+        round_file = self.live / "rounds" / f"round_{current_round:04d}.json"
+        if round_file.exists():
+            try:
+                latest_round_data = read_json(round_file)
+            except Exception:
+                pass
 
-        # Pixels
+        decisions = latest_round_data.get("decisions", {})
+        applied = {item.get("pixel") for item in latest_round_data.get("applied", [])}
+        rejected = {item.get("pixel"): item.get("reason", "REJECTED") for item in latest_round_data.get("rejected", [])}
+
+        # 3. 宏观观测者指标
+        metrics = self.observer.collect_metrics()
+
+        # 4. 读取各元胞信息
         pixel_dtos = []
-        for pid in self.s.pixel_ids():
-            try:
-                st = self.s.pixel_state(pid)
-                gn = self.s.pixel_genome(pid)
-                mem = self.s.pixel_memory(pid)
-            except Exception:
+        for pid in self.world.list_pixel_ids():
+            storage = self.world.get_pixel_storage(pid)
+            if not storage.state_file.exists():
                 continue
+            st = storage.load_state()
+            mind = storage.load_pixel_md()
 
-            active = bool(st.get('active', False))
-            waiting = bool(st.get('waiting_external_request') or st.get('waiting_for'))
-            capabilities = st.get('capabilities', st.get('capability_ids', []))
-            energy = float(st.get('energy', st.get('resource', 0.0)))
-            decision = latest_decisions.get(pid)
+            art_dir = self.artifacts_dir / pid
+            art_count = len(list(art_dir.glob("*"))) if art_dir.exists() else 0
+
+            raw_st = {}
+            if storage.state_file.exists():
+                try:
+                    raw_st = read_json(storage.state_file)
+                except Exception:
+                    pass
+            caps = raw_st.get("capability_ids", raw_st.get("capabilities", []))
+
             latest_activity = None
-            if decision:
-                if pid in rejected_by_pixel:
-                    result = 'REJECTED'
-                    result_detail = rejected_by_pixel[pid]
-                elif pid in applied_pixels:
-                    result = 'APPLIED'
-                    result_detail = None
-                else:
-                    result = 'RECORDED'
-                    result_detail = None
+            if pid in decisions:
+                dec = decisions[pid]
+                result = "REJECTED" if pid in rejected else ("APPLIED" if pid in applied else "RECORDED")
                 latest_activity = {
-                    'round': rn,
-                    'action': decision.get('action'),
-                    'intent': decision.get('intent', decision.get('reasoning_summary', '')),
-                    'result': result,
-                    'result_detail': result_detail,
-                    'reasoning_summary': decision.get('reasoning_summary', decision.get('intent', '')),
-                    'work': decision.get('work'),
-                    'work_output': decision.get('work_output')
-                }
-            elif pid in skipped_pixels:
-                latest_activity = {
-                    'round': rn,
-                    'action': 'IDLE',
-                    'intent': '等待唤醒',
-                    'result': 'SKIPPED_IDLE',
-                    'result_detail': None,
-                    'reasoning_summary': '本轮未满足唤醒条件。',
-                    'work': None,
-                    'work_output': None
+                    "round": current_round,
+                    "action": dec.get("action", "V9_STEP"),
+                    "intent": dec.get("intent", dec.get("reasoning_summary", "")),
+                    "result": result,
+                    "work_output": dec.get("work_output"),
                 }
 
             pixel_dtos.append({
                 "id": pid,
-                "position": st.get('position', [0, 0, 0]),
-                "active": active,
-                "energy": energy,
-                "resource": energy,
-                "current_problem": st.get('current_problem'),
-                "parent": st.get('parent'),
-                "born_round": st.get('born_round', 0),
-                "grace_remaining": st.get('grace_remaining', 0),
-                "sleep_until_round": st.get('sleep_until_round'),
-                "waiting": waiting,
-                "waiting_external_request": st.get('waiting_external_request'),
-                "capabilities": capabilities,
-                "genome": gn,
-                "memory": mem,
-                "self_md": self.s.pixel_self(pid),
-                "public_md": self.s.pixel_public(pid),
-                "memory_md": self.s.pixel_memory_md(pid),
-                "latest_activity": latest_activity
+                "position": st.position,
+                "active": st.active,
+                "energy": st.energy,
+                "resource": st.energy,
+                "parent": st.parent,
+                "born_round": st.born_round,
+                "last_active_round": st.last_active_round,
+                "generation": st.generation,
+                "neighbors": st.neighbors,
+                "capabilities": caps,
+                "pixel_md": mind,
+                "pixel_md_length": len(mind),
+                "artifacts_count": art_count,
+                "latest_activity": latest_activity,
             })
 
-        # Problems
-        problems = []
-        for pid in self.s.problem_ids():
+        # 5. 最新消息流快照
+        latest_flow = []
+        flow_file = self.paths.ui_state_root / "latest_flow.json"
+        if flow_file.exists():
             try:
-                p = self.s.problem(pid)
-                problems.append({
-                    "id": p.get('id'),
-                    "status": p.get('status'),
-                    "current_holder": p.get('current_holder'),
-                    "creator": p.get('creator'),
-                    "description": p.get('description', ''),
-                    "current_state": p.get('current_state', ''),
-                    "desired_state": p.get('desired_state', ''),
-                    "acceptance_criteria": p.get('acceptance_criteria', []),
-                    "reward_budget": p.get('reward_budget', 0.0),
-                    "created_round": p.get('created_round', 0)
-                })
+                latest_flow = read_json(flow_file)
             except Exception:
                 pass
-
-        # Owner Requests (never includes private secret files)
-        owner_requests = []
-        for rid in self.s.external_request_ids():
-            try:
-                r = self.s.external_request(rid)
-                owner_requests.append({
-                    "id": r.get('id'),
-                    "status": r.get('status'),
-                    "requester": r.get('requester'),
-                    "capability_type": r.get('capability_type'),
-                    "purpose": r.get('purpose'),
-                    "requested_operations": r.get('requested_operations', []),
-                    "estimated_external_cost": r.get('estimated_external_cost', {}),
-                    "problem_id": r.get('problem_id'),
-                    "created_round": r.get('created_round'),
-                    "owner_reason": r.get('owner_reason'),
-                    "capability_id": r.get('capability_id')
-                })
-            except Exception:
-                pass
-
-        # Market Opportunities
-        market_opps = []
-        try:
-            from emergentinc.engine.market import MarketService
-            ms = MarketService(self.s)
-            market_opps = ms.list_open_opportunities()
-        except Exception:
-            pass
 
         return {
-            "round": rn,
+            "round": current_round,
             "pixels": pixel_dtos,
-            "problems": problems,
-            "market": market_opps,
-            "owner_requests": owner_requests,
-            "counters": w.get('counters', {}),
-            "external_accounting": w.get('external_accounting', {}),
-            "llm_accounting": w.get('llm_accounting', {}),
-            "accounting": w.get('accounting', {})
+            "environment_md": self.env.read_content(),
+            "metrics": metrics,
+            "latest_message_flow": latest_flow,
+            "problems": [],
+            "owner_requests": [],
         }
 
     def get_pixel_document(self, pixel_id: str, doc_name: str) -> str:
-        # Anti path-traversal validation
-        if not re.match(r'^[a-zA-Z0-9_\-]+$', pixel_id):
-            raise ValueError(f"Invalid pixel_id format: {pixel_id}")
+        """获取元胞文档内容，严格校验白名单与路径穿越."""
+        if ".." in doc_name or "/" in doc_name or "\\" in doc_name:
+            raise ValueError("Path traversal attack detected")
+        if ".." in pixel_id or "/" in pixel_id or "\\" in pixel_id:
+            raise ValueError("Path traversal attack detected")
 
         if doc_name not in ALLOWED_DOCS:
-            raise ValueError(f"Document '{doc_name}' is not in allowed document list: {sorted(ALLOWED_DOCS)}")
+            raise ValueError(f"Document '{doc_name}' is not in allowed document list")
 
-        pixel_dir = (self.s.live / 'pixels' / pixel_id).resolve()
-        pixels_root = (self.s.live / 'pixels').resolve()
-        if not str(pixel_dir).startswith(str(pixels_root)):
-            raise PermissionError("Access outside pixels directory is strictly forbidden.")
+        if doc_name == "environment":
+            return self.env.read_content()
 
-        if not pixel_dir.exists():
+        p_dir = self.pixels_dir / pixel_id
+        if not p_dir.exists():
             raise FileNotFoundError(f"Pixel '{pixel_id}' does not exist.")
 
-        # Read md if present, else try json
-        md_file = pixel_dir / f"{doc_name}.md"
-        json_file = pixel_dir / f"{doc_name}.json"
-
-        if md_file.exists():
-            return md_file.read_text(encoding='utf-8')
-        elif json_file.exists():
-            data = json.loads(json_file.read_text(encoding='utf-8'))
-            return json.dumps(data, ensure_ascii=False, indent=2)
+        if doc_name == "pixel":
+            p_file = p_dir / "pixel.md"
+            return p_file.read_text(encoding="utf-8") if p_file.exists() else ""
+        elif doc_name == "state":
+            st_file = p_dir / "state.json"
+            return st_file.read_text(encoding="utf-8") if st_file.exists() else ""
         else:
-            return f"# {doc_name} for {pixel_id}\n\n*(Document not found)*"
+            # 兼容读取其他历史文件 (如 history.md, self.md 等)
+            target = p_dir / f"{doc_name}.md"
+            if not target.exists():
+                target = p_dir / f"{doc_name}.json"
+            if not target.exists():
+                raise FileNotFoundError(f"Document '{doc_name}' not found for pixel '{pixel_id}'")
+            return target.read_text(encoding="utf-8")

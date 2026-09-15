@@ -123,7 +123,16 @@ class RunController:
         loop_stop_reason = None
 
         try:
-            runner = RoundRunner(self.paths)
+            runner = None
+            try:
+                runner = RoundRunner(self.paths)
+            except Exception:
+                pass
+
+            use_v8 = runner is not None and hasattr(runner, 'run_one') and callable(getattr(runner, 'run_one', None))
+
+            from emergentinc.engine.scheduler import V9RoundScheduler
+            scheduler = None if use_v8 else V9RoundScheduler(self.paths.workspace_root)
 
             for _ in range(rounds):
                 if self._stop_requested:
@@ -132,40 +141,65 @@ class RunController:
                     break
 
                 try:
-                    log = runner.run_one()
-                    with self.lock:
-                        self._completed_rounds += 1
-                        self._current_round = log['round']
+                    if use_v8:
+                        log = runner.run_one()
+                        with self.lock:
+                            self._completed_rounds += 1
+                            self._current_round = log.get('round', self._current_round + 1)
+                            if log.get('owner_requests'):
+                                self._pending_owner_requests = log['owner_requests']
+                                loop_status = "STOPPED"
+                                loop_stop_reason = "OWNER_ACTION_REQUIRED"
+                                break
+                    else:
+                        res = scheduler.run_round()
+                        with self.lock:
+                            self._completed_rounds += 1
+                            self._current_round = res["round"]
 
-                        if log.get('owner_requests'):
-                            self._pending_owner_requests = log['owner_requests']
-                            loop_status = "STOPPED"
-                            loop_stop_reason = "OWNER_ACTION_REQUIRED"
-                            break
+                        # 记录该轮的消息流动轨迹供 UI 画图
+                        flow_records = []
+                        for step in res.get("steps", []):
+                            pid = step.get("pixel_id")
+                            hop = step.get("hop")
+                            for target in step.get("send_to", []):
+                                flow_records.append({
+                                    "round": res["round"],
+                                    "hop": hop,
+                                    "sender": pid,
+                                    "recipient": target,
+                                })
+                        flow_file = self.paths.ui_state_root / "latest_flow.json"
+                        flow_file.write_text(json.dumps(flow_records, ensure_ascii=False, indent=2), encoding="utf-8")
 
                 except OwnerActionRequired as e:
                     with self.lock:
                         self._pending_owner_requests = e.request_ids
                         loop_status = "STOPPED"
                         loop_stop_reason = "OWNER_ACTION_REQUIRED"
-                    break
+                        break
                 except Exception as e:
                     with self.lock:
                         self._last_error = str(e)
                         loop_status = "ERROR"
-                        loop_stop_reason = f"RUNNER_EXCEPTION: {e}"
+                        loop_stop_reason = f"EXCEPTION: {e}"
                     break
+
+            with self.lock:
+                if not self._stop_reason:
+                    self._stop_reason = loop_stop_reason
 
         except Exception as e:
             with self.lock:
                 self._last_error = str(e)
                 loop_status = "ERROR"
-                loop_stop_reason = f"INIT_EXCEPTION: {e}"
+                self._stop_reason = f"INIT_EXCEPTION: {e}"
+
         finally:
             try:
                 end_round = int(self.storage.world().get('round', start_round))
             except Exception:
-                end_round = start_round
+                end_round = self._current_round
 
             self.loop_store.finish_loop(
                 loop_id,
