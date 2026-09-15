@@ -1,24 +1,51 @@
 {
-  "version": "4.0.0",
-  "experiment_seed": 20260914,
+  "version": "5.0.0",
   "runtime": {
-    "mode": "agent_queue",
-    "agent_queue": {
-      "requests_dir": "runtime/agent_requests",
-      "responses_dir": "runtime/agent_responses",
-      "pending_round_file": "runtime/pending_round.json"
-    }
+    "mode": "api_sandbox",
+    "allow_agent_runtime": false
   },
+  "experiment_seed": 20260915,
   "model": {
     "provider": "openai_compatible",
-    "model": "CONFIGURE_ME",
+    "env_file": ".env",
     "base_url": "CONFIGURE_ME",
+    "base_url_env": "MCL_BASE_URL",
     "api_key_env": "MCL_API_KEY",
-    "temperature": 0.65,
-    "max_output_tokens": 1400
+    "default_model": "CONFIGURE_ME",
+    "decision_model_env": "MCL_DECISION_MODEL",
+    "validator_model_env": "MCL_VALIDATOR_MODEL",
+    "memory_model_env": "MCL_MEMORY_MODEL",
+    "fallback_model_env": "MCL_MODEL",
+    "temperature": {
+      "decision": 0.65,
+      "validator": 0.15,
+      "memory": 0.25
+    },
+    "max_output_tokens": {
+      "decision": 1600,
+      "validator": 1000,
+      "memory": 900
+    },
+    "response_format": "json_object"
   },
-  "space": {
-    "neighborhood": "von_neumann_6"
+  "sandbox": {
+    "max_string_chars": 5000,
+    "max_evidence_items_per_problem": 8,
+    "forbidden_key_fragments": [
+      "world_state",
+      "all_pixels",
+      "global_resource",
+      "owner_private",
+      "api_key",
+      "secret",
+      "password",
+      "private_key",
+      "future_schedule",
+      "experiment_schedule",
+      "repository_path",
+      "git_token"
+    ],
+    "external_content_label": "UNTRUSTED_EXTERNAL_DATA"
   },
   "resource": {
     "initial_pixel_resource": 100.0,
@@ -45,23 +72,15 @@
     "owner_required": true,
     "capability_profiles_dir": "owner_private/capabilities",
     "ssh_timeout_seconds": 60,
-    "tool_output_max_chars": 8000
-  },
-  "llm": {
-    "skip_when_idle": true,
-    "memory_update_on": [
-      "CLOSED",
-      "FAILED_CLOSE",
-      "SPAWN",
-      "CAPABILITY_GRANTED",
-      "CAPABILITY_REJECTED",
-      "TOOL_RESULT",
-      "REAL_PAYMENT"
-    ]
+    "tool_output_max_chars": 8000,
+    "wait_external_default_rounds": 3,
+    "wait_external_max_rounds": 20
   },
   "logging": {
     "write_local_view_to_inbox": true,
     "record_token_usage": true,
-    "record_prompt_hash": true
+    "record_prompt_hash": true,
+    "record_sandbox_hash": true,
+    "record_sandbox_keys": true
   }
 }

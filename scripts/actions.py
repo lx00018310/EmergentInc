@@ -101,6 +101,7 @@ class ActionExecutor:
               "evidence_policy":np.get("evidence_policy",{
                 "allowed_sources":["MODEL_ARTIFACT"],"min_items":1
               }),
+              "real_world_policy":np.get("real_world_policy"),
               "external_requests":[],"created_round":round_num,"deadline_round":None
             }
             self.s.save_problem(p)
@@ -128,9 +129,10 @@ class ActionExecutor:
             pid=a.get("problem_id") or cur
             p=self.s.problem(pid); p["status"]="WAITING_EXTERNAL"; self.s.save_problem(p)
             st=self.s.pixel_state(pixel_id)
-            st["waiting_for"]=a["wait_external"]["waiting_for"]
+            st["waiting_for"]=a["wait_external"]["wake_conditions"]
+            st["sleep_until_round"]=round_num+int(a["wait_external"]["max_sleep_rounds"])
             self.s.save_pixel_state(pixel_id,st)
-            result.update({"problem_id":pid,"waiting_external":True})
+            result.update({"problem_id":pid,"waiting_external":True,"sleep_until_round":st.get("sleep_until_round")})
 
         elif act=="ABANDON":
             pid=a.get("problem_id") or cur; p=self.s.problem(pid)

@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "PixelActionV4",
+  "title": "PixelActionV5",
   "type": "object",
   "required": [
     "pixel",
@@ -183,16 +183,23 @@
         "reason": {
           "type": "string"
         },
-        "waiting_for": {
+        "wake_conditions": {
           "type": "array",
           "items": {
             "type": "string"
-          }
+          },
+          "minItems": 1
+        },
+        "max_sleep_rounds": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 20
         }
       },
       "required": [
         "reason",
-        "waiting_for"
+        "wake_conditions",
+        "max_sleep_rounds"
       ],
       "additionalProperties": false
     },

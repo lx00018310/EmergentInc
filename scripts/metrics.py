@@ -1,7 +1,7 @@
 from .storage import Storage
 
 def main(base="."):
-    s=Storage(base); s.ensure_v4_defaults(); w=s.world()
+    s=Storage(base); s.ensure_v5_defaults(); w=s.world()
     inflow={}; outflow={}
     for tid in s.transaction_ids():
         t=s.transaction(tid)

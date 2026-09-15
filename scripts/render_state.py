@@ -6,14 +6,14 @@ def render(base="."):
       "# World State",
       f"\nRound: **{w['round']}**",
       "\n## Active Pixels",
-      "| Pixel | Resource | Problem | Waiting Request | Capabilities |",
-      "|---|---:|---|---|---|"
+      "| Pixel | Resource | Problem | Sleep Until | Waiting Request | Capabilities |",
+      "|---|---:|---|---:|---|---|"
     ]
     for pid in sorted(s.pixel_ids(active_only=True)):
         st=s.pixel_state(pid)
         lines.append(
           f"| {pid} | {st['resource']} | {st.get('current_problem')} | "
-          f"{st.get('waiting_external_request')} | {','.join(st.get('capability_ids',[]))} |"
+          f"{st.get('sleep_until_round')} | {st.get('waiting_external_request')} | {','.join(st.get('capability_ids',[]))} |"
         )
     lines += [
       "",

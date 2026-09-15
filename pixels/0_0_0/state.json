@@ -11,5 +11,9 @@
   "last_effective_exchange_round": 0,
   "parent": null,
   "born_round": 0,
-  "pending_self_trigger": false
+  "pending_self_trigger": false,
+  "waiting_external_request": null,
+  "waiting_for": [],
+  "sleep_until_round": null,
+  "capability_ids": []
 }

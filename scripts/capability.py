@@ -21,6 +21,7 @@ class CapabilityGateway:
         st=self.s.pixel_state(pixel_id)
         st["waiting_external_request"]=rid
         st["waiting_for"]=["CAPABILITY_GRANTED","CAPABILITY_REJECTED"]
+        st["sleep_until_round"]=None
         self.s.save_pixel_state(pixel_id,st)
         if problem_id:
             p=self.s.problem(problem_id)

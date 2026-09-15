@@ -8,6 +8,7 @@
     "currency",
     "problem_id",
     "source",
+    "payer_role",
     "created_at"
   ],
   "properties": {
@@ -35,6 +36,15 @@
     },
     "source": {
       "type": "string"
+    },
+    "payer_role": {
+      "enum": [
+        "EXTERNAL_CUSTOMER",
+        "OWNER",
+        "TEST",
+        "UNKNOWN",
+        "N/A"
+      ]
     },
     "note": {
       "type": "string"

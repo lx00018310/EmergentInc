@@ -1,21 +1,5 @@
-# API + Agent 双运行时
+# V5 Runtime
 
-## API Runtime
+V5 正式实验不再支持 agent_queue / agent_direct。
 
-```text
-MCL_RUNTIME_MODE=api
-```
-
-Runner 直接调用 OpenAI-compatible API。
-
-## Agent Queue Runtime
-
-```text
-MCL_RUNTIME_MODE=agent_queue
-```
-
-Runner 把每一次独立推理请求写成文件，由 Codex/ZCode/Claude Code/Gemini Agent 等响应。
-
-所有请求有独立隔离上下文。
-
-Round 使用 checkpoint，可跨多次 Agent 调用恢复。
+唯一 LLM Runtime 是 api_sandbox。Codex/ZCode/Claude Code/Gemini Coding Agent 只用于开发、运维和审计。详见 `DEV_AGENT_GUIDE.md`。

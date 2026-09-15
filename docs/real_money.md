@@ -1,24 +1,5 @@
-# Real Money
+# Real Money V5
 
-Resource 与真实货币严格分离。
+Resource 与真实货币严格分离。真实交易写入 external_transactions，并带 payer_role。
 
-真实交易：
-
-```text
-external_transactions/TXxxxx.json
-```
-
-有：
-
-```text
-INFLOW
-OUTFLOW
-```
-
-首次真实收入 > 0 证明产生了真实价值交换。
-
-持续商业闭环更严格：
-
-```text
-Real P&L = INFLOW - OUTFLOW > 0
-```
+如果 Problem 要求真实外部客户，只有 payer_role=EXTERNAL_CUSTOMER 的合格 INFLOW 才能满足硬门槛。Owner 自付和测试支付只能用于支付链路测试，不能证明商业闭环。

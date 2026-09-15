@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "ProblemV4",
+  "title": "ProblemV5",
   "type": "object",
   "required": [
     "id",
@@ -117,6 +117,12 @@
     "deadline_round": {
       "type": [
         "integer",
+        "null"
+      ]
+    },
+    "real_world_policy": {
+      "type": [
+        "object",
         "null"
       ]
     }

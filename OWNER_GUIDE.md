@@ -1,90 +1,67 @@
-# Owner / 老板操作指南
+# Owner Guide V5
 
-Owner 只负责现实世界权限，不负责商业策略。
+Owner 是现实权限守门人，不是 CEO、客户或营销人员。
 
-## 查看 Pixel 的现实能力申请
+## 查看能力申请
 
 ```bash
 python -m scripts.owner list-requests
 ```
 
----
+## 批准 VPS/SSH
 
-## 批准 VPS / SSH
-
-先在本地创建（不要提交 Git）：
-
-`owner_vps_profile.json`
+创建本地且不提交 Git 的 `owner_vps_profile.json`：
 
 ```json
 {
-  "driver": "ssh",
-  "host": "YOUR_VPS_IP",
-  "port": 22,
-  "username": "ubuntu",
-  "key_path_env": "MCL_CAP_CAP0001_KEY_PATH",
-  "public_metadata": {
-    "description": "Linux VPS"
-  }
+  "driver":"ssh",
+  "host":"YOUR_VPS_IP",
+  "port":22,
+  "username":"ubuntu",
+  "key_path_env":"MCL_CAP_CAP0001_KEY_PATH"
 }
 ```
-
-批准：
 
 ```bash
 python -m scripts.owner approve ER0001 --capability-id CAP0001 --profile-file owner_vps_profile.json
 ```
 
-然后只在本机设置私钥路径：
+## 真实外部客户付款
+
+只有确实来自外部客户时才可标记：
 
 ```bash
-set MCL_CAP_CAP0001_KEY_PATH=C:\private\id_ed25519
+python -m scripts.owner record-payment --problem P0005 --amount 1 --currency CNY --payer-role EXTERNAL_CUSTOMER --note "真实外部客户自愿支付" --receipt-file C:\private\receipt.png
 ```
 
-私钥本身不会进入 Pixel 或 Git。
-
----
-
-## 拒绝
+如果是你自己测试付款：
 
 ```bash
-python -m scripts.owner reject ER0001 --reason "成本过高"
+--payer-role OWNER
 ```
 
----
-
-## 真实收款
-
-真实用户确实支付后：
+或：
 
 ```bash
-python -m scripts.owner record-payment ^
-  --problem P0005 ^
-  --amount 1 ^
-  --currency CNY ^
-  --note "真实用户自愿支付" ^
-  --receipt-file C:\private\receipt.png
+--payer-role TEST
 ```
 
-系统会：
-- 写 external transaction
-- 保存 receipt SHA256
-- 给 P0005 注入 HUMAN_VERIFIED Evidence
-- 产生 REAL_PAYMENT event
-- 唤醒持有 P0005 的 Pixel
+如果 P0005 要求真实外部客户，OWNER / TEST 都不会通过 Evidence Gate。
 
----
+## 记录客观现实观察
 
-## 真实成本
-
-例如 VPS 花费 ¥20：
+可以：
 
 ```bash
-python -m scripts.owner record-expense ^
-  --problem P0005 ^
-  --amount 20 ^
-  --currency CNY ^
-  --note "VPS 月费"
+python -m scripts.owner record-observation --target-pixel 0_0_0 --problem P0005 --kind WEB_TRAFFIC --note "过去24小时unique visitors=0"
 ```
 
-V4 会分别统计真实 Revenue、Cost 和 P&L。
+不要写成策略指令，例如“立即去GitHub发广告”。商业判断必须由 Pixel 自己做。
+
+## 记录真实成本
+
+```bash
+python -m scripts.owner record-expense --problem P0005 --amount 20 --currency CNY --note "VPS 月费"
+```
+
+真实 P&L 必须计算外部收入减外部成本。

@@ -1,20 +1,24 @@
-# EmergentInc V4 — Open World Overlay
+# EmergentInc V5 — API Sandbox
 
-V4 在 V3 的闭合数字世界上增加受控的现实世界通道：
+V5 的核心变化不是增加更多 Agent，而是把每一次 AI 推理真正关进认知沙盒。
+
+正式实验结构：
 
 ```text
-Digital Intelligence
-        ↕
-Owner / Capability Gateway
-        ↕
-Real World
+World Engine
+   ↓ allow-list context
+Context Sandbox
+   ↓ single stateless API call
+LLM API
 ```
 
-## 这是覆盖升级包
+模型在每次调用中都没有：仓库、文件系统、shell、browser、全局 world_state、非邻居 Pixel、未来计划或历史聊天。
 
-把 ZIP 解压到现有 V3 仓库根目录并允许覆盖。
+## 覆盖升级
 
-本包**不会包含/覆盖**：
+这是 V5 overlay。直接解压到当前 V4/V3 项目根目录并允许覆盖。
+
+本包不包含也不覆盖：
 
 ```text
 world_state.json
@@ -23,142 +27,70 @@ problems/
 rounds/
 ```
 
-所以 Round 50、P0005、两个 Pixel、Resource、Memory、历史日志都会保留。
-
-覆盖后：
+升级后：
 
 ```bash
 pip install -r requirements.txt
-python -m scripts.migrate_v3_to_v4
+python -m scripts.migrate_v4_to_v5
 python -m scripts.self_check
 ```
 
----
+## 正式实验只允许 API Sandbox
 
-## V4 新能力
-
-Pixel 新增三个动作：
+禁止用以下方式驱动 Pixel：
 
 ```text
-REQUEST_CAPABILITY
-USE_CAPABILITY
-WAIT_EXTERNAL
+agent_direct
+agent_queue
+Codex直接替Pixel决策
+ZCode直接替Pixel决策
+Gemini Coding Agent直接替Pixel决策
 ```
 
-### REQUEST_CAPABILITY
+Codex / ZCode / Claude Code / Gemini Coding Agent 仍可以用于开发、部署、审计、修 Bug 和 Owner 运维，但不能产生 PixelAction / EvidenceVerdict / MemoryDelta。
 
-Pixel 如果发现要继续解决 Problem 必须接触真实世界，就可以向 Owner 请求能力，例如：
+## API 配置
 
-```text
-ssh_vps
-public_web_hosting
-domain
-email
-browser
-payment_observation
-human_action
-```
-
-Owner 不是 CEO，不负责告诉 Pixel 应该怎么赚钱，只负责现实权限。
-
-### USE_CAPABILITY
-
-Owner 批准后，Pixel 看到：
-
-```text
-CAP0001
-type = ssh_vps
-allowed_operations = [ssh_exec]
-```
-
-Pixel 看不到 SSH 私钥/API Key。
-
-Gateway 代替 Pixel 执行实际操作，并把结果作为 TOOL_VERIFIED Evidence 返回世界。
-
-### WAIT_EXTERNAL
-
-如果下一步只能等客户付款、Owner 批准、网站事件等外部变化，Pixel 可进入 WAIT_EXTERNAL。
-
-WAIT_EXTERNAL 时不会每轮重复调用 LLM。
-
----
-
-# 两种 LLM 运行方式
-
-## 1. API 模式
-
-适合 OpenAI-compatible API：
+可在项目根目录 `.env` 文件中配置（推荐，可参考 `.env.example`）：
 
 ```bash
-set MCL_RUNTIME_MODE=api
-set MCL_API_KEY=YOUR_KEY
-set MCL_BASE_URL=https://your-endpoint/v1
-set MCL_MODEL=your-model
+MCL_API_KEY=YOUR_KEY
+MCL_BASE_URL=YOUR_OPENAI_COMPATIBLE_ENDPOINT
+MCL_MODEL=YOUR_MODEL
+```
 
+可分别指定各任务模型：
+
+```bash
+MCL_DECISION_MODEL=...
+MCL_VALIDATOR_MODEL=...
+MCL_MEMORY_MODEL=...
+```
+
+也支持通过系统环境变量导出：
+
+```bash
+set MCL_API_KEY=YOUR_KEY
+set MCL_BASE_URL=YOUR_OPENAI_COMPATIBLE_ENDPOINT
+set MCL_MODEL=YOUR_MODEL
+```
+
+运行：
+
+```bash
 python -m scripts.runner --rounds 10
 ```
 
-可用于 Gemini compatible gateway、OpenRouter、火山方舟等兼容接口。
+每个调用都是新的无状态请求，只包含：system prompt + 一个沙盒 JSON。
 
-## 2. Agent Queue 模式
+## Owner 边界
 
-适合：
+Owner 只负责现实权限和客观事实，不负责商业策略。
 
-```text
-Codex
-ZCode
-Claude Code
-Gemini Coding Agent
-其他可以读写文件并执行命令的 Agent
-```
+Owner 可以批准 VPS / 域名 / 邮箱 / API / 支付观察能力，也可以记录客观访问量和真实外部交易。
 
-Windows：
+如果 Problem 要求真实外部客户，则 Owner 自己付款、测试转账、模型自述都不能完成验收。
 
-```bash
-set MCL_RUNTIME_MODE=agent_queue
-```
+## WAIT_EXTERNAL
 
-把：
-
-```text
-AGENT_RUNNER_PROMPT.md
-```
-
-交给 Agent。
-
-Runner 会生成：
-
-```text
-runtime/agent_requests/*.json
-```
-
-Agent 只读取该 request 的隔离上下文，写：
-
-```text
-runtime/agent_responses/<same_request_id>.json
-```
-
-然后再次运行 runner。V4 使用 Round checkpoint，不会重复扣费/执行动作。
-
----
-
-# 真实钱和 Resource 分离
-
-```text
-Resource = 人工世界内部能量
-CNY/USD = 真实现金流
-```
-
-真实收入/支出写入：
-
-```text
-external_transactions/
-```
-
-例如：
-
-```text
-Revenue ¥1
-VPS Cost ¥20
-Real P&L = -¥19
-```
+V5 的 WAIT_EXTERNAL 必须指定 `max_sleep_rounds`。即使没有事件，Pixel 也会定期醒来重新评估，避免部署页面后永久消极等待。

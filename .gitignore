@@ -1,20 +1,13 @@
 __pycache__/
 *.py[cod]
 .env
-.env.*
 .vscode/
 .idea/
-
-# Real credentials / private profiles
 owner_private/
 owner_*_profile.json
 *.pem
 *.key
 id_rsa
 id_ed25519
-
-# Agent runtime checkpoints and isolated prompts/responses
 runtime/
-
-# Never put private capability info in public descriptors
-capabilities/CAP*.private.json
+runtime_v4_legacy/
