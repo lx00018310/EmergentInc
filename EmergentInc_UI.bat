@@ -12,7 +12,7 @@ if %errorlevel% neq 0 (
     exit /b 1
 )
 
-python -m ui.app
+python -m emergentinc.ui.app
 if %errorlevel% neq 0 (
     echo.
     echo [SERVER STOPPED OR ERRORED]

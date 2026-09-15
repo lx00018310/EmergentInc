@@ -10,4 +10,4 @@ if (-not $pythonCmd) {
     exit 1
 }
 
-python -m ui.app
+python -m emergentinc.ui.app

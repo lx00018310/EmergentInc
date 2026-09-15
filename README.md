@@ -14,44 +14,92 @@ LLM API
 
 模型在每次调用中都没有：仓库、文件系统、shell、browser、全局 world_state、非邻居 Pixel、未来计划或历史聊天。
 
-## 覆盖升级
+---
 
-这是 V5 overlay。直接解压到当前 V4/V3 项目根目录并允许覆盖。
+## 1. 目录架构
 
-本包不包含也不覆盖：
+项目采用四层分离架构：
 
 ```text
-world_state.json
-pixels/
-problems/
-rounds/
+EmergentInc元胞会社/
+├─ emergentinc/                 # 核心稳定程序
+│  ├─ paths.py                  # 集中不可变路径契约
+│  ├─ engine/                   # 运行引擎 (runner, storage, sandbox, actions 等)
+│  ├─ ui/                       # Web UI 与视觉控制台
+│  └─ cli/                      # 运维、初始化、自检与迁移入口
+├─ resources/                   # 版本化静态输入
+│  ├─ config/                   # world_config.json
+│  ├─ schemas/                  # JSON Schemas
+│  ├─ prompts/                  # System Prompts
+│  ├─ templates/                # 模板文件
+│  ├─ experiments/              # 实验配置
+│  └─ bootstrap/                # 新工作区最小初始状态模板
+├─ workspace/                   # 单一运行工作区 (受 .gitignore 保护，不污染 Git)
+│  ├─ live/                     # 当前可变世界 (world_state.*, pixels, problems 等)
+│  ├─ loops/                    # Loop 元数据、分支与检查点
+│  ├─ runtime/                  # LLM 请求/响应及运行日志
+│  ├─ cache/                    # 运行时缓存
+│  ├─ ui_state/                 # UI 指令历史
+│  ├─ scratch/                  # 临时交互区
+│  └─ private/                  # 私密凭据与密钥 (绝不进入快照/API/Git)
+├─ tests/                       # 自动化测试套件
+├─ docs/                        # 文档与历史记录
+│  ├─ guides/                   # 开发与指南
+│  └─ history/                  # 历史报告与 Manifest
+├─ EmergentInc_UI.bat           # Windows 双击启动入口
+├─ EmergentInc_UI.ps1           # PowerShell 启动脚本
+├─ README.md
+├─ requirements.txt
+├─ .env.example
+└─ .gitignore
 ```
 
-升级后：
+---
 
+## 2. 快速上手
+
+### 2.1 安装依赖
 ```bash
 pip install -r requirements.txt
-python -m scripts.migrate_v4_to_v5
-python -m scripts.self_check
 ```
 
-## 正式实验只允许 API Sandbox
+### 2.2 工作区初始化
+若创建全新工作区或在空目录初始化：
+```bash
+python -m emergentinc.cli.init_workspace --workspace .\workspace
+```
+> 注：若目标工作区非空，该命令会自动拒绝覆盖以保护现有实验数据。
 
-禁止用以下方式驱动 Pixel：
-
-```text
-agent_direct
-agent_queue
-Codex直接替Pixel决策
-ZCode直接替Pixel决策
-Gemini Coding Agent直接替Pixel决策
+### 2.3 系统自检
+```bash
+python -m emergentinc.cli.self_check --workspace .\workspace
 ```
 
-Codex / ZCode / Claude Code / Gemini Coding Agent 仍可以用于开发、部署、审计、修 Bug 和 Owner 运维，但不能产生 PixelAction / EvidenceVerdict / MemoryDelta。
+### 2.4 运行实验
+在终端直接运行指定轮次：
+```bash
+python -m emergentinc.engine.runner --workspace .\workspace --rounds 10
+```
 
-## API 配置
+### 2.5 启动视觉控制台 (UI)
+Windows 用户可直接双击运行根目录下的 `EmergentInc_UI.bat`，或在终端执行：
+```powershell
+python -m emergentinc.ui.app --workspace .\workspace
+```
 
-可在项目根目录 `.env` 文件中配置（推荐，可参考 `.env.example`）：
+---
+
+## 3. 数据备份与恢复
+
+- **Loop 检查点**：运行中的快照会自动保存在 `workspace/loops/checkpoints/<LoopID>/before` 和 `after` 中，包含当时完整业务世界；私有凭据（`workspace/private/`）绝不进入快照。
+- **分支与回滚**：UI 支持在 Loop 树上进行 checkout 与 branch，一键将 `workspace/live/` 恢复至特定检查点状态。
+- **整库备份**：如需完整归档某次长线实验，直接打包复制整个 `workspace/` 目录即可。
+
+---
+
+## 4. API 配置
+
+可在项目根目录 `.env` 文件中配置（参考 `.env.example`）：
 
 ```bash
 MCL_API_KEY=YOUR_KEY
@@ -67,30 +115,12 @@ MCL_VALIDATOR_MODEL=...
 MCL_MEMORY_MODEL=...
 ```
 
-也支持通过系统环境变量导出：
+---
 
-```bash
-set MCL_API_KEY=YOUR_KEY
-set MCL_BASE_URL=YOUR_OPENAI_COMPATIBLE_ENDPOINT
-set MCL_MODEL=YOUR_MODEL
-```
-
-运行：
-
-```bash
-python -m scripts.runner --rounds 10
-```
-
-每个调用都是新的无状态请求，只包含：system prompt + 一个沙盒 JSON。
-
-## Owner 边界
+## 5. Owner 边界
 
 Owner 只负责现实权限和客观事实，不负责商业策略。
 
-Owner 可以批准 VPS / 域名 / 邮箱 / API / 支付观察能力，也可以记录客观访问量和真实外部交易。
-
-如果 Problem 要求真实外部客户，则 Owner 自己付款、测试转账、模型自述都不能完成验收。
-
-## WAIT_EXTERNAL
-
-V5 的 WAIT_EXTERNAL 必须指定 `max_sleep_rounds`。即使没有事件，Pixel 也会定期醒来重新评估，避免部署页面后永久消极等待。
+- Owner 可以批准 VPS / 域名 / 邮箱 / API / 支付观察能力，也可以记录客观访问量和真实外部交易。
+- 如果 Problem 要求真实外部客户，则 Owner 自己付款、测试转账、模型自述都不能完成验收。
+- 所有敏感凭据必须存放于 `workspace/private/`，API 与快照层对其做严格物理隔离。
