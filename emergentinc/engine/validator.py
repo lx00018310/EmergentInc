@@ -1,56 +1,94 @@
-from .utils import neighbors6
+from .utils import neighbors6, coord_to_id
+
+FORBIDDEN_OWNER_STRATEGY = [
+    'owner_as_customer', 'owner_payment', '老板付款', '老板购买',
+    '老板帮我找客户', '老板选择渠道', 'business_decision', '商业策略',
+    '你觉得我应该做什么', '帮我做决定'
+]
+
 class RuleValidator:
-    def __init__(self,storage): self.s=storage; self.cfg=self.s.config()['resource']; self.ext=self.s.config()['external']
-    def action_cost(self,action):
-        key={'WORK':'work_cost','CREATE_PROBLEM':'create_problem_cost','OFFER':'offer_cost','BID':'bid_cost','ACCEPT_BID':'accept_bid_cost','ACCEPT':'accept_cost','REJECT':'reject_cost','TRANSFER':'transfer_cost','SPAWN':'spawn_cost','REQUEST_CLOSE':'request_close_cost','ABANDON':'abandon_cost','REQUEST_CAPABILITY':'request_capability_cost','USE_CAPABILITY':'use_capability_cost','WAIT_EXTERNAL':'wait_external_cost','IDLE':None}.get(action)
-        return 0.0 if key is None else float(self.cfg.get(key,0))
-    def validate(self,pixel_id,a,local_view):
-        st=self.s.pixel_state(pixel_id); act=a.get('action'); cur=st.get('current_problem')
-        if not st.get('active'): return False,'inactive'
-        if act not in local_view['allowed_actions']: return False,'action not allowed'
-        if float(st['resource'])<self.action_cost(act): return False,'insufficient resource'
-        target=a.get('target_pixel')
-        if target and target not in neighbors6(pixel_id): return False,'target not neighbor'
-        if act=='WORK':
-            pid=a.get('problem_id') or cur
-            if not pid or pid!=cur: return False,'WORK must target held problem'
-            if not isinstance(a.get('work_output'),dict) or not a['work_output']: return False,'WORK requires work_output'
-        if act in ('OFFER','TRANSFER','REQUEST_CLOSE','ABANDON','REQUEST_CAPABILITY','USE_CAPABILITY','WAIT_EXTERNAL'):
-            pid=a.get('problem_id') or cur
-            if not pid or pid!=cur: return False,f'{act} requires held problem'
-        if act=='ACCEPT' and cur: return False,'already holds problem'
-        if act=='BID' and cur: return False,'busy pixel cannot bid'
-        if act=='REQUEST_CAPABILITY':
-            req=a.get('capability_request')
-            if not isinstance(req,dict): return False,'missing capability_request'
-            if st.get('waiting_external_request'): return False,'already has pending external request'
-            text=(str(req.get('capability_type',''))+' '+str(req.get('purpose',''))).lower()
-            bad=['owner_as_customer','owner_payment','老板付款','老板购买','老板帮我找客户','老板选择渠道','business_decision']
-            if any(x.lower() in text for x in bad): return False,'owner cannot be customer/manager/marketing decision maker'
-        if act=='USE_CAPABILITY':
-            use=a.get('capability_use')
-            if not isinstance(use,dict): return False,'missing capability_use'
-            cid=use.get('capability_id'); available={c['id']:c for c in local_view.get('external',{}).get('capabilities',[])}
-            if cid not in available: return False,'capability not visible/owned'
-            if use.get('operation') not in available[cid].get('allowed_operations',[]): return False,'operation not permitted'
-        if act=='WAIT_EXTERNAL':
-            w=a.get('wait_external')
-            if not isinstance(w,dict): return False,'missing wait_external'
-            m=int(w.get('max_sleep_rounds',0)); mx=int(self.ext.get('wait_external_max_rounds',20))
-            if m<1 or m>mx: return False,'invalid max_sleep_rounds'
-        if act=='SPAWN':
-            sp=a.get('spawn_proposal')
-            if not sp: return False,'missing spawn_proposal'
-            tgt=sp.get('target_pixel')
-            if tgt not in neighbors6(pixel_id): return False,'spawn target not neighbor'
-            if tgt in self.s.pixel_ids(): return False,'spawn target occupied'
-            if float(st['resource'])<self.action_cost('SPAWN')+float(self.cfg['default_birth_grant']): return False,'insufficient spawn resource'
-            if not isinstance(sp.get('mutation'),dict) or len(sp['mutation'])!=1: return False,'mutation must change exactly one field'
-        if act=='CREATE_PROBLEM':
-            np=a.get('new_problem')
-            if not isinstance(np,dict): return False,'missing new_problem'
-            for k in ('current_state','desired_state','acceptance','reward_offer'):
-                if k not in np: return False,f'new_problem missing {k}'
-            if float(np['reward_offer'])<=0: return False,'child reward must be >0'
-            if float(st['resource'])<self.action_cost(act)+float(np['reward_offer']): return False,'insufficient resource for child escrow'
-        return True,'VALID'
+    def __init__(self, storage):
+        self.s = storage
+        self.cfg = self.s.config().get('resource', {})
+
+    def action_cost(self, action):
+        costs = {
+            'WORK': float(self.cfg.get('work_cost', 1.0)),
+            'MESSAGE': float(self.cfg.get('transfer_cost', 0.2)),
+            'ASK_OWNER': float(self.cfg.get('request_capability_cost', 0.2)),
+            'REPRODUCE': float(self.cfg.get('spawn_cost', 10.0)),
+            'WAIT': 0.0,
+            'IDLE': 0.0
+        }
+        return costs.get(action, 0.2)
+
+    def validate(self, pixel_id: str, decision: dict, local_view: dict = None):
+        st = self.s.pixel_state(pixel_id)
+        if not st.get('active'):
+            return False, 'inactive pixel'
+
+        act = decision.get('action')
+        if not act:
+            return False, 'missing action'
+
+        energy = float(st.get('energy', st.get('resource', 0.0)))
+        cost = self.action_cost(act)
+        if energy < cost:
+            return False, f'insufficient energy: has {energy}, requires {cost}'
+
+        # 1. MESSAGE
+        if act == 'MESSAGE':
+            msg_params = decision.get('message') or decision
+            target = msg_params.get('to') or msg_params.get('target_pixel')
+            if not target:
+                return False, 'MESSAGE requires target'
+            if target not in neighbors6(pixel_id):
+                return False, f'target {target} is not a 6-neighbor of {pixel_id}'
+            energy_xfer = float(msg_params.get('energy', 0.0) or 0.0)
+            if energy_xfer < 0:
+                return False, 'energy transfer cannot be negative'
+            if energy < cost + energy_xfer:
+                return False, f'insufficient energy for message + transfer: has {energy}, requires {cost + energy_xfer}'
+
+        # 2. REPRODUCE
+        elif act == 'REPRODUCE':
+            rep_params = decision.get('reproduce') or decision
+            target_pos = rep_params.get('target')
+            if not target_pos:
+                return False, 'REPRODUCE requires target coordinate'
+            if isinstance(target_pos, (list, tuple)):
+                target_id = coord_to_id(target_pos)
+            else:
+                target_id = str(target_pos)
+            if target_id not in neighbors6(pixel_id):
+                return False, f'reproduce target {target_id} is not a 6-neighbor'
+            
+            # Check target occupation
+            if target_id in self.s.pixel_ids():
+                tgt_st = self.s.pixel_state(target_id)
+                if tgt_st.get('active'):
+                    return False, f'reproduce target {target_id} is already occupied'
+
+            energy_to_child = float(rep_params.get('energy_to_child', 40.0))
+            if energy_to_child <= 0:
+                return False, 'energy_to_child must be > 0'
+            if energy < cost + energy_to_child:
+                return False, f'insufficient energy for reproduction: has {energy}, requires {cost + energy_to_child}'
+
+        # 3. ASK_OWNER
+        elif act == 'ASK_OWNER':
+            req_params = decision.get('owner_request') or decision
+            text = f"{req_params.get('question', '')} {req_params.get('needed_resource', '')} {req_params.get('purpose', '')}".lower()
+            for bad in FORBIDDEN_OWNER_STRATEGY:
+                if bad in text:
+                    return False, 'owner cannot be asked for business strategy or to act as customer'
+
+        # 4. WORK
+        elif act == 'WORK':
+            # Physical legality: check operations list
+            work_params = decision.get('work') or decision
+            ops = work_params.get('operations')
+            if ops is not None and not isinstance(ops, list):
+                return False, 'WORK operations must be a list'
+
+        return True, 'VALID'

@@ -7,6 +7,7 @@ PathLike = Union[str, Path]
 
 SNAPSHOT_DIRS = [
     'pixels',
+    'market',
     'problems',
     'external_requests',
     'capabilities',

@@ -2,9 +2,10 @@ import os,json,subprocess
 from datetime import datetime, timezone
 
 class CapabilityGateway:
-    def __init__(self,storage,evidence):
-        self.s=storage; self.evidence=evidence
-        self.cfg=self.s.config().get("external",{})
+    def __init__(self, storage, evidence=None):
+        self.s = storage
+        self.evidence = evidence
+        self.cfg = self.s.config().get("external", {})
 
     def request(self,pixel_id,problem_id,round_num,req):
         rid=self.s.next_external_request_id()
@@ -82,7 +83,7 @@ class CapabilityGateway:
         else:
             raise RuntimeError(f"unsupported driver/operation: {driver}/{op}")
 
-        if problem_id:
+        if problem_id and self.evidence:
             self.evidence.add_tool_verified(problem_id,pixel_id,round_num,{
               "capability_id":cid,"operation":op,"result":result
             })

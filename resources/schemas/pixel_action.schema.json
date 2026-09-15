@@ -1,12 +1,11 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "PixelActionV5",
+  "title": "PixelDecisionV8",
   "type": "object",
   "required": [
     "pixel",
     "round",
-    "action",
-    "reasoning_summary"
+    "action"
   ],
   "properties": {
     "pixel": {
@@ -16,217 +15,100 @@
       "type": "integer",
       "minimum": 1
     },
+    "perception_summary": {
+      "type": "string"
+    },
+    "intent": {
+      "type": "string"
+    },
+    "reasoning_summary": {
+      "type": "string"
+    },
     "action": {
       "enum": [
         "WORK",
-        "CREATE_PROBLEM",
-        "OFFER",
-        "BID",
-        "ACCEPT_BID",
-        "ACCEPT",
-        "REJECT",
-        "TRANSFER",
-        "SPAWN",
-        "REQUEST_CLOSE",
-        "ABANDON",
-        "IDLE",
-        "REQUEST_CAPABILITY",
-        "USE_CAPABILITY",
-        "WAIT_EXTERNAL"
+        "MESSAGE",
+        "ASK_OWNER",
+        "REPRODUCE",
+        "WAIT",
+        "IDLE"
       ]
     },
-    "problem_id": {
-      "type": [
-        "string",
-        "null"
-      ]
-    },
-    "target_pixel": {
-      "type": [
-        "string",
-        "null"
-      ]
-    },
-    "offered_resource": {
-      "type": [
-        "number",
-        "null"
-      ],
-      "minimum": 0
-    },
-    "requested_resource": {
-      "type": [
-        "number",
-        "null"
-      ],
-      "minimum": 0
-    },
-    "work_output": {
-      "type": [
-        "object",
-        "null"
-      ],
+    "work": {
+      "type": ["object", "null"],
       "properties": {
-        "summary": {
-          "type": "string",
-          "minLength": 1
-        },
-        "details": {
+        "intent": {"type": "string"},
+        "operations": {
           "type": "array",
           "items": {
-            "type": "string",
-            "minLength": 1
-          },
-          "minItems": 1
-        }
-      },
-      "required": [
-        "summary",
-        "details"
-      ],
-      "additionalProperties": false
-    },
-    "new_problem": {
-      "type": [
-        "object",
-        "null"
-      ]
-    },
-    "spawn_proposal": {
-      "type": [
-        "object",
-        "null"
-      ],
-      "properties": {
-        "target_pixel": {
-          "type": "string"
-        },
-        "mutation": {
-          "type": "object"
-        }
-      },
-      "required": [
-        "target_pixel",
-        "mutation"
-      ],
-      "additionalProperties": false
-    },
-    "capability_request": {
-      "type": [
-        "object",
-        "null"
-      ],
-      "properties": {
-        "capability_type": {
-          "type": "string",
-          "minLength": 1
-        },
-        "purpose": {
-          "type": "string",
-          "minLength": 1
-        },
-        "minimum_requirements": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
-        },
-        "requested_operations": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          },
-          "minItems": 1
-        },
-        "estimated_external_cost": {
-          "type": [
-            "object",
-            "null"
-          ],
-          "properties": {
-            "amount": {
-              "type": "number",
-              "minimum": 0
-            },
-            "currency": {
-              "type": "string"
-            },
-            "recurring": {
-              "type": "boolean"
+            "type": "object",
+            "required": ["tool"],
+            "properties": {
+              "tool": {"type": "string"},
+              "args": {"type": "object"}
             }
           },
-          "required": [
-            "amount",
-            "currency"
-          ],
-          "additionalProperties": false
+          "maxItems": 3
         }
-      },
-      "required": [
-        "capability_type",
-        "purpose",
-        "minimum_requirements",
-        "requested_operations"
-      ],
-      "additionalProperties": false
+      }
     },
-    "capability_use": {
-      "type": [
-        "object",
-        "null"
-      ],
+    "message": {
+      "type": ["object", "null"],
+      "required": ["to", "content"],
       "properties": {
-        "capability_id": {
-          "type": "string"
-        },
-        "operation": {
-          "type": "string"
-        },
-        "arguments": {
-          "type": "object"
-        }
-      },
-      "required": [
-        "capability_id",
-        "operation",
-        "arguments"
-      ],
-      "additionalProperties": false
-    },
-    "wait_external": {
-      "type": [
-        "object",
-        "null"
-      ],
-      "properties": {
-        "reason": {
-          "type": "string"
-        },
-        "wake_conditions": {
+        "to": {"type": "string"},
+        "content": {"type": "string"},
+        "energy": {"type": "number", "minimum": 0},
+        "attachments": {
           "type": "array",
-          "items": {
-            "type": "string"
-          },
-          "minItems": 1
+          "items": {"type": "string"}
+        }
+      }
+    },
+    "owner_request": {
+      "type": ["object", "null"],
+      "properties": {
+        "needed_resource": {"type": "string"},
+        "question": {"type": "string"},
+        "purpose": {"type": "string"}
+      }
+    },
+    "reproduce": {
+      "type": ["object", "null"],
+      "required": ["target", "energy_to_child"],
+      "properties": {
+        "target": {
+          "type": "array",
+          "items": {"type": "integer"},
+          "minItems": 3,
+          "maxItems": 3
         },
-        "max_sleep_rounds": {
-          "type": "integer",
-          "minimum": 1,
-          "maximum": 20
+        "energy_to_child": {"type": "number", "minimum": 1},
+        "inheritance": {"type": "string"}
+      }
+    },
+    "wait": {
+      "type": ["object", "null"],
+      "properties": {
+        "reason": {"type": "string"},
+        "wake_after": {"type": "integer", "minimum": 1}
+      }
+    },
+    "problem_id": {
+      "type": ["string", "null"]
+    },
+    "work_output": {
+      "type": ["object", "null"],
+      "properties": {
+        "summary": {"type": "string", "minLength": 1},
+        "details": {
+          "type": "array",
+          "items": {"type": "string", "minLength": 1},
+          "minItems": 1
         }
       },
-      "required": [
-        "reason",
-        "wake_conditions",
-        "max_sleep_rounds"
-      ],
+      "required": ["summary", "details"],
       "additionalProperties": false
-    },
-    "reasoning_summary": {
-      "type": "string",
-      "minLength": 1,
-      "maxLength": 1000
     }
-  },
-  "additionalProperties": false
+  }
 }

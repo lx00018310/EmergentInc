@@ -5,7 +5,7 @@ from typing import Dict, Any, List, Optional, Union
 from emergentinc.paths import ProjectPaths, get_paths
 from emergentinc.engine.storage import Storage
 
-ALLOWED_DOCS = {'state', 'genome', 'memory', 'history', 'llm_log', 'inbox'}
+ALLOWED_DOCS = {'state', 'self', 'public', 'memory', 'inheritance', 'history', 'llm_log', 'inbox', 'genome'}
 
 class WorldReader:
     def __init__(self, base_dir: Optional[Union[str, Path, ProjectPaths]] = None):
@@ -49,7 +49,8 @@ class WorldReader:
 
             active = bool(st.get('active', False))
             waiting = bool(st.get('waiting_external_request') or st.get('waiting_for'))
-            capabilities = st.get('capability_ids', [])
+            capabilities = st.get('capabilities', st.get('capability_ids', []))
+            energy = float(st.get('energy', st.get('resource', 0.0)))
             decision = latest_decisions.get(pid)
             latest_activity = None
             if decision:
@@ -65,26 +66,31 @@ class WorldReader:
                 latest_activity = {
                     'round': rn,
                     'action': decision.get('action'),
+                    'intent': decision.get('intent', decision.get('reasoning_summary', '')),
                     'result': result,
                     'result_detail': result_detail,
-                    'reasoning_summary': decision.get('reasoning_summary', ''),
-                    'work_output': decision.get('work_output'),
+                    'reasoning_summary': decision.get('reasoning_summary', decision.get('intent', '')),
+                    'work': decision.get('work'),
+                    'work_output': decision.get('work_output')
                 }
             elif pid in skipped_pixels:
                 latest_activity = {
                     'round': rn,
                     'action': 'IDLE',
+                    'intent': '等待唤醒',
                     'result': 'SKIPPED_IDLE',
                     'result_detail': None,
                     'reasoning_summary': '本轮未满足唤醒条件。',
-                    'work_output': None,
+                    'work': None,
+                    'work_output': None
                 }
 
             pixel_dtos.append({
                 "id": pid,
                 "position": st.get('position', [0, 0, 0]),
                 "active": active,
-                "resource": float(st.get('resource', 0.0)),
+                "energy": energy,
+                "resource": energy,
                 "current_problem": st.get('current_problem'),
                 "parent": st.get('parent'),
                 "born_round": st.get('born_round', 0),
@@ -95,6 +101,9 @@ class WorldReader:
                 "capabilities": capabilities,
                 "genome": gn,
                 "memory": mem,
+                "self_md": self.s.pixel_self(pid),
+                "public_md": self.s.pixel_public(pid),
+                "memory_md": self.s.pixel_memory_md(pid),
                 "latest_activity": latest_activity
             })
 
@@ -139,10 +148,20 @@ class WorldReader:
             except Exception:
                 pass
 
+        # Market Opportunities
+        market_opps = []
+        try:
+            from emergentinc.engine.market import MarketService
+            ms = MarketService(self.s)
+            market_opps = ms.list_open_opportunities()
+        except Exception:
+            pass
+
         return {
             "round": rn,
             "pixels": pixel_dtos,
             "problems": problems,
+            "market": market_opps,
             "owner_requests": owner_requests,
             "counters": w.get('counters', {}),
             "external_accounting": w.get('external_accounting', {}),
