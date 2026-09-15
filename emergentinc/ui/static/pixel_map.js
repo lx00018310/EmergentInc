@@ -43,11 +43,20 @@ class PixelMap {
   setPixels(pixels) {
     this.pixels = pixels || [];
     this.render();
+    if (!this.selectedPixel && this.pixels.length > 0) {
+      this.selectedPixel = this.pixels.find(p => p.active) || this.pixels[0];
+      this.updateHoverCard(this.selectedPixel);
+      this.render();
+      return;
+    }
     if (this.selectedPixel) {
       const updated = this.pixels.find(p => p.id === this.selectedPixel.id);
       if (updated) {
         this.selectedPixel = updated;
         this.updateHoverCard(updated);
+      } else {
+        this.selectedPixel = this.pixels.find(p => p.active) || this.pixels[0] || null;
+        if (this.selectedPixel) this.updateHoverCard(this.selectedPixel);
       }
     }
   }
@@ -178,12 +187,26 @@ class PixelMap {
     document.getElementById('hover-caps').textContent = caps;
 
     const gn = p.genome || {};
-    const gnText = `Risk: ${gn.risk_tolerance ?? '-'} | Spawn: ${gn.spawn_preference ?? '-'} | CostSens: ${gn.cost_sensitivity ?? '-'}`;
+    const tendencies = gn.tendencies || gn;
+    const gnText = `Risk: ${tendencies.risk_tolerance ?? '-'} | Spawn: ${tendencies.spawn_preference ?? '-'} | CostSens: ${tendencies.cost_sensitivity ?? '-'}`;
     document.getElementById('hover-genome-text').textContent = gnText;
 
     const mem = p.memory || {};
-    const memText = mem.working_memory || (mem.consolidated_lessons ? mem.consolidated_lessons.join('; ') : '-');
+    const workingMemory = Array.isArray(mem.working_memory) ? mem.working_memory.join('; ') : mem.working_memory;
+    const memText = workingMemory || (mem.consolidated_lessons ? mem.consolidated_lessons.join('; ') : '-');
     document.getElementById('hover-memory-text').textContent = memText || '(Empty)';
+
+    const activity = p.latest_activity;
+    document.getElementById('hover-last-action').textContent = activity
+      ? `R${activity.round} · ${activity.action} · ${activity.result}`
+      : '暂无动作记录';
+    document.getElementById('hover-last-reasoning').textContent = activity?.reasoning_summary || '-';
+    const output = activity?.work_output;
+    const hasOutput = output && (output.summary || (output.details && output.details.length > 0));
+    const outputText = hasOutput
+      ? [output.summary, ...(output.details || [])].filter(Boolean).join('；')
+      : (activity?.result_detail || '-');
+    document.getElementById('hover-last-output').textContent = outputText;
   }
 
   drawGrid() {

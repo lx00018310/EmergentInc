@@ -21,6 +21,22 @@ class WorldReader:
         w = self.s.world()
         rn = int(w.get('round', 0))
 
+        latest_round = {}
+        latest_round_path = self.s.live / 'rounds' / f'round_{rn:04d}.json'
+        if latest_round_path.exists():
+            try:
+                latest_round = json.loads(latest_round_path.read_text(encoding='utf-8'))
+            except Exception:
+                latest_round = {}
+
+        latest_decisions = latest_round.get('decisions', {})
+        applied_pixels = {item.get('pixel') for item in latest_round.get('applied', [])}
+        rejected_by_pixel = {
+            item.get('pixel'): item.get('reason', 'REJECTED')
+            for item in latest_round.get('rejected', [])
+        }
+        skipped_pixels = set(latest_round.get('skipped_idle', []))
+
         # Pixels
         pixel_dtos = []
         for pid in self.s.pixel_ids():
@@ -34,6 +50,35 @@ class WorldReader:
             active = bool(st.get('active', False))
             waiting = bool(st.get('waiting_external_request') or st.get('waiting_for'))
             capabilities = st.get('capability_ids', [])
+            decision = latest_decisions.get(pid)
+            latest_activity = None
+            if decision:
+                if pid in rejected_by_pixel:
+                    result = 'REJECTED'
+                    result_detail = rejected_by_pixel[pid]
+                elif pid in applied_pixels:
+                    result = 'APPLIED'
+                    result_detail = None
+                else:
+                    result = 'RECORDED'
+                    result_detail = None
+                latest_activity = {
+                    'round': rn,
+                    'action': decision.get('action'),
+                    'result': result,
+                    'result_detail': result_detail,
+                    'reasoning_summary': decision.get('reasoning_summary', ''),
+                    'work_output': decision.get('work_output'),
+                }
+            elif pid in skipped_pixels:
+                latest_activity = {
+                    'round': rn,
+                    'action': 'IDLE',
+                    'result': 'SKIPPED_IDLE',
+                    'result_detail': None,
+                    'reasoning_summary': '本轮未满足唤醒条件。',
+                    'work_output': None,
+                }
 
             pixel_dtos.append({
                 "id": pid,
@@ -49,7 +94,8 @@ class WorldReader:
                 "waiting_external_request": st.get('waiting_external_request'),
                 "capabilities": capabilities,
                 "genome": gn,
-                "memory": mem
+                "memory": mem,
+                "latest_activity": latest_activity
             })
 
         # Problems

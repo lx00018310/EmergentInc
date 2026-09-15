@@ -474,10 +474,20 @@ body {
 .h-k { color: var(--text-dim); }
 .h-v { color: var(--text-bright); font-family: var(--font-mono); }
 
-.hover-genome, .hover-memory {
+.hover-genome, .hover-memory, .hover-activity {
   border-top: 1px solid #21262d;
   padding-top: 6px;
   margin-bottom: 6px;
+}
+
+.hover-activity .h-section-title:not(:first-child) {
+  margin-top: 5px;
+}
+
+.hover-activity .h-section-content {
+  max-height: 72px;
+  overflow-y: auto;
+  white-space: pre-wrap;
 }
 
 .h-section-title {

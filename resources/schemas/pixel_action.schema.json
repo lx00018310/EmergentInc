@@ -65,7 +65,26 @@
       "type": [
         "object",
         "null"
-      ]
+      ],
+      "properties": {
+        "summary": {
+          "type": "string",
+          "minLength": 1
+        },
+        "details": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "minItems": 1
+        }
+      },
+      "required": [
+        "summary",
+        "details"
+      ],
+      "additionalProperties": false
     },
     "new_problem": {
       "type": [
