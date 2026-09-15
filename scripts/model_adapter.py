@@ -1,5 +1,6 @@
 import os,json,re
 from pathlib import Path
+import httpx
 from openai import OpenAI
 import jsonschema
 from .utils import sha256_text, read_json
@@ -41,7 +42,8 @@ class LLMClient:
         if not self.api_key: raise RuntimeError('CALL_FAILED: missing MCL_API_KEY')
         if not self.base_url or self.base_url=='CONFIGURE_ME': raise RuntimeError('CALL_FAILED: missing MCL_BASE_URL')
         if any((not m or m=='CONFIGURE_ME') for m in self.models.values()): raise RuntimeError('CALL_FAILED: missing model configuration')
-        self.client=OpenAI(api_key=self.api_key,base_url=self.base_url); self.sandbox=ContextSandbox(self.cfg)
+        self.client=OpenAI(api_key=self.api_key,base_url=self.base_url,
+                           http_client=httpx.Client(trust_env=False)); self.sandbox=ContextSandbox(self.cfg)
         self.action_schema=read_json(self.base/'schemas/pixel_action.schema.json')
         self.evidence_schema=read_json(self.base/'schemas/evidence_verdict.schema.json')
         self.memory_schema=read_json(self.base/'schemas/memory_update.schema.json')
@@ -53,7 +55,8 @@ class LLMClient:
             r=self.client.chat.completions.create(model=model,
               messages=[{'role':'system','content':system},{'role':'user','content':user}],
               temperature=float(mc['temperature'][model_kind]),max_tokens=int(mc['max_output_tokens'][model_kind]),
-              response_format={'type':'json_object'})
+              response_format={'type':'json_schema','json_schema':{
+                  'name':kind.lower(),'strict':True,'schema':schema}})
         except Exception as e: raise RuntimeError(f'CALL_FAILED: {kind}: {e}') from e
         raw=(r.choices[0].message.content or '').strip()
         if raw.startswith('```'):
