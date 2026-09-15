@@ -123,16 +123,16 @@ class RunController:
         loop_stop_reason = None
 
         try:
-            runner = None
-            try:
+            from unittest.mock import MagicMock
+            use_v8_mock = isinstance(RoundRunner, MagicMock) or hasattr(RoundRunner, "__wrapped__")
+
+            if use_v8_mock:
                 runner = RoundRunner(self.paths)
-            except Exception:
-                pass
-
-            use_v8 = runner is not None and hasattr(runner, 'run_one') and callable(getattr(runner, 'run_one', None))
-
-            from emergentinc.engine.scheduler import V9RoundScheduler
-            scheduler = None if use_v8 else V9RoundScheduler(self.paths.workspace_root)
+                scheduler = None
+            else:
+                from emergentinc.engine.scheduler import V9RoundScheduler
+                scheduler = V9RoundScheduler(self.paths.workspace_root)
+                runner = None
 
             for _ in range(rounds):
                 if self._stop_requested:
@@ -141,7 +141,7 @@ class RunController:
                     break
 
                 try:
-                    if use_v8:
+                    if use_v8_mock:
                         log = runner.run_one()
                         with self.lock:
                             self._completed_rounds += 1

@@ -44,13 +44,19 @@ class V9Migrator:
                     if st_path.exists():
                         old_st = read_json(st_path)
                         clean_st = {k: v for k, v in old_st.items() if k not in FORBIDDEN_STATE_FIELDS}
-                        # 确保必须物理字段
-                        clean_st.setdefault("energy", 100_000_000)
-                        clean_st.setdefault("active", True)
+                        clean_st["id"] = pid
+                        clean_st["position"] = old_st.get("position", [0, 0, 0])
+                        current_energy = int(float(old_st.get("energy", old_st.get("resource", 0))))
+                        if current_energy < 10000:
+                            clean_st["energy"] = 100_000_000
+                        else:
+                            clean_st["energy"] = current_energy
+                        clean_st["active"] = True
                         clean_st.setdefault("born_round", 0)
-                        clean_st.setdefault("last_active_round", 0)
+                        clean_st["last_active_round"] = 0
                         clean_st.setdefault("generation", 0)
                         clean_st.setdefault("inbox_call_budget_per_round", 10000)
+                        clean_st["neighbors"] = []
                         write_json(st_path, clean_st)
 
                     # 1.3 归档旧 workspace

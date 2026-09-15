@@ -16,7 +16,10 @@ MAX_PIXEL_MD_CHARS = 2000
 FORBIDDEN_STATE_FIELDS = {
     "role", "job", "department", "personality", "risk_tolerance",
     "spawn_preference", "handoff_preference", "marketing_score",
-    "engineering_score", "manager"
+    "engineering_score", "manager", "current_problem", "grace_remaining",
+    "last_effective_exchange_round", "waiting_external_request",
+    "waiting_for", "capability_ids", "last_feedback", "pending_self_trigger",
+    "resource", "capabilities"
 }
 
 
