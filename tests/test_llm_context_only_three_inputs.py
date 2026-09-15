@@ -48,3 +48,31 @@ def test_system_prompt_no_role_predefinitions():
     forbidden_terms = ["CEO", "Manager", "Role", "Department", "Contract", "Marketplace", "招聘", "部门"]
     for term in forbidden_terms:
         assert term not in prompt, f"System prompt should not predefine '{term}'"
+
+
+def test_normalize_pixel_response_robustness():
+    from emergentinc.engine.llm import normalize_pixel_response
+
+    # 模拟真实大模型可能返回的各种异构字段格式
+    raw_imperfect = {
+        "read_environment": True,
+        "pixel_md": "# Test Mind",
+        "messages": [{"target": "SELF", "content": "Hello Self"}],
+        "reproductions": [],
+        "energy_transfers": None,
+        "extra_field_unwanted": 123,
+    }
+    normalized = normalize_pixel_response(raw_imperfect, fallback_pixel_md="# Fallback")
+
+    assert normalized["environment_read"] is True
+    assert normalized["pixel_md"] == "# Test Mind"
+    assert normalized["message_md"] == "Hello Self"
+    assert normalized["send_to"] == ["SELF"]
+    assert normalized["reproduce"] is None
+    assert normalized["energy_transfer"] == []
+    assert normalized["owner_request"] is None
+    assert normalized["operations"] == []
+    assert "read_environment" not in normalized
+    assert "messages" not in normalized
+    assert "extra_field_unwanted" not in normalized
+

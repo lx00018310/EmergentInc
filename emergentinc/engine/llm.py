@@ -19,6 +19,142 @@ from .utils import sha256_text, read_json
 from emergentinc.paths import ProjectPaths, get_paths
 
 
+def normalize_pixel_response(raw_data: Any, fallback_pixel_md: str) -> Dict[str, Any]:
+    """对模型响应进行容错归一化，使其严格对齐 V9PixelResponse Schema."""
+    if not isinstance(raw_data, dict):
+        raw_data = {}
+
+    out: Dict[str, Any] = {}
+
+    # 1. pixel_md
+    pixel_md = raw_data.get("pixel_md")
+    if not isinstance(pixel_md, str) or not pixel_md.strip():
+        out["pixel_md"] = fallback_pixel_md
+    else:
+        out["pixel_md"] = pixel_md
+
+    # 2. environment_read
+    if "environment_read" in raw_data:
+        out["environment_read"] = bool(raw_data["environment_read"])
+    elif "read_environment" in raw_data:
+        out["environment_read"] = bool(raw_data["read_environment"])
+    else:
+        out["environment_read"] = False
+
+    # 3. message_md & send_to
+    msg_md = raw_data.get("message_md")
+    send_to = raw_data.get("send_to")
+
+    # 容错提取 message_md
+    if msg_md is None:
+        if "messages" in raw_data and isinstance(raw_data["messages"], list) and raw_data["messages"]:
+            first = raw_data["messages"][0]
+            if isinstance(first, dict):
+                msg_md = str(first.get("content", ""))
+                if send_to is None:
+                    target = first.get("target") or first.get("to") or first.get("receiver")
+                    if target:
+                        send_to = [str(target)]
+            else:
+                msg_md = str(first)
+        elif "message" in raw_data:
+            msg_md = str(raw_data["message"])
+        else:
+            msg_md = ""
+
+    out["message_md"] = str(msg_md)
+
+    # 容错提取 send_to
+    if send_to is None:
+        if "messages" in raw_data and isinstance(raw_data["messages"], list):
+            targets = []
+            for m in raw_data["messages"]:
+                if isinstance(m, dict):
+                    t = m.get("target") or m.get("to") or m.get("receiver")
+                    if t:
+                        targets.append(str(t))
+            send_to = targets
+
+    if isinstance(send_to, str):
+        send_to = [send_to]
+    elif isinstance(send_to, list):
+        send_to = [str(x) for x in send_to if x]
+    else:
+        send_to = ["SELF"] if out["message_md"].strip() else ["STOP"]
+
+    out["send_to"] = send_to if send_to else ["STOP"]
+
+    # 4. reproduce
+    reproduce = raw_data.get("reproduce")
+    if not reproduce and "reproductions" in raw_data and isinstance(raw_data["reproductions"], list) and raw_data["reproductions"]:
+        reproduce = raw_data["reproductions"][0]
+
+    if isinstance(reproduce, dict) and "target" in reproduce and "child_energy" in reproduce and "child_pixel_md" in reproduce:
+        try:
+            target = [int(x) for x in reproduce["target"][:3]]
+            child_energy = int(reproduce["child_energy"])
+            child_pixel_md = str(reproduce["child_pixel_md"])
+            if len(target) == 3 and child_energy >= 1:
+                out["reproduce"] = {
+                    "target": target,
+                    "child_energy": child_energy,
+                    "child_pixel_md": child_pixel_md,
+                }
+            else:
+                out["reproduce"] = None
+        except Exception:
+            out["reproduce"] = None
+    else:
+        out["reproduce"] = None
+
+    # 5. energy_transfer
+    transfers = raw_data.get("energy_transfer")
+    if transfers is None and "energy_transfers" in raw_data:
+        transfers = raw_data.get("energy_transfers")
+
+    clean_transfers = []
+    if isinstance(transfers, list):
+        for item in transfers:
+            if isinstance(item, dict) and "to" in item and "amount" in item:
+                try:
+                    to_pid = str(item["to"])
+                    amount = int(item["amount"])
+                    ref_msg = item.get("ref_message_id")
+                    if amount >= 1:
+                        clean_transfers.append({
+                            "to": to_pid,
+                            "amount": amount,
+                            "ref_message_id": str(ref_msg) if ref_msg is not None else None,
+                        })
+                except Exception:
+                    pass
+    out["energy_transfer"] = clean_transfers
+
+    # 6. owner_request
+    owner_req = raw_data.get("owner_request")
+    if isinstance(owner_req, dict) and "type" in owner_req and "description" in owner_req:
+        out["owner_request"] = {
+            "type": str(owner_req["type"]),
+            "description": str(owner_req["description"]),
+        }
+    else:
+        out["owner_request"] = None
+
+    # 7. operations
+    ops = raw_data.get("operations")
+    clean_ops = []
+    if isinstance(ops, list):
+        for op in ops[:3]:
+            if isinstance(op, dict) and "tool" in op and "args" in op:
+                clean_ops.append({
+                    "tool": str(op["tool"]),
+                    "args": dict(op.get("args") or {}),
+                })
+    out["operations"] = clean_ops
+
+    return out
+
+
 class CognitiveIsolationViolation(RuntimeError):
     """违反认知隔离原则时抛出的异常."""
     pass
@@ -83,11 +219,15 @@ class V9LLMClient:
             or mc.get("default_model", "gpt-4o-mini")
         )
 
+        timeout_sec = float(mc.get("timeout", 45.0))
         if self.api_key and self.base_url and self.base_url != "CONFIGURE_ME":
             self.client = OpenAI(
                 api_key=self.api_key,
                 base_url=self.base_url,
-                http_client=httpx.Client(trust_env=False),
+                http_client=httpx.Client(
+                    trust_env=False,
+                    timeout=httpx.Timeout(timeout_sec, connect=10.0),
+                ),
             )
         else:
             self.client = None
@@ -120,6 +260,7 @@ class V9LLMClient:
         # 2. 如果存在 mock_handler，优先用于测试或离线模式
         if self.mock_handler is not None:
             data = self.mock_handler(payload)
+            data = normalize_pixel_response(data, pixel_md)
             jsonschema.validate(data, self.schema)
             audit = {
                 "kind": "V9_STEP",
@@ -150,6 +291,9 @@ class V9LLMClient:
                 response_format={"type": "json_object"},
             )
         except Exception as e:
+            err_msg = str(e)
+            if "timeout" in err_msg.lower():
+                raise RuntimeError(f"CALL_FAILED: V9_STEP: LLM_TIMEOUT: {e}") from e
             raise RuntimeError(f"CALL_FAILED: V9_STEP: {e}") from e
 
         raw = (r.choices[0].message.content or "").strip()
@@ -162,7 +306,8 @@ class V9LLMClient:
         except Exception as e:
             raise RuntimeError(f"CALL_FAILED: V9_STEP: invalid JSON response: {e}") from e
 
-        # 4. Schema 校验
+        # 4. 容错归一化与 Schema 校验
+        data = normalize_pixel_response(data, pixel_md)
         jsonschema.validate(data, self.schema)
 
         u = r.usage

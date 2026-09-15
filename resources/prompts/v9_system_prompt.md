@@ -15,3 +15,16 @@
 你需要维持 energy。
 
 不要假设你知道未提供的信息。
+
+输出格式要求：
+必须直接输出纯 JSON 对象，严格包含且仅包含以下键：
+{
+  "pixel_md": "更新后的自身心智历史 (字符串，<=2000字)",
+  "message_md": "准备发送的消息内容 (字符串，<=2000字，无消息则传空字符串)",
+  "send_to": ["SELF"], // 路由目标数组: ["SELF"] 或 ["STOP"] 或 活跃邻居ID列表
+  "environment_read": false, // 布尔值，是否在下一跳主动读取外部环境 environment.md
+  "reproduce": null, // 或 {"target": [x, y, z], "child_energy": 正整数, "child_pixel_md": "..."}
+  "energy_transfer": [], // 或 [{"to": "邻居ID", "amount": 正整数, "ref_message_id": null}]
+  "owner_request": null, // 或 {"type": "...", "description": "..."}
+  "operations": [] // 工具操作数组，最多3项，如 [{"tool": "save_artifact", "args": {...}}]
+}

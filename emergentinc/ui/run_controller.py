@@ -37,7 +37,6 @@ class RunController:
 
         # Initialize current round from world
         try:
-            self.storage.ensure_v5_defaults()
             self._current_round = int(self.storage.world().get('round', 0))
         except Exception:
             self._current_round = 0
@@ -88,7 +87,6 @@ class RunController:
 
             self._log_command(command_text, rounds)
 
-            self.storage.ensure_v5_defaults()
             start_round = int(self.storage.world().get('round', 0))
             self._current_round = start_round
             self._requested_rounds = rounds

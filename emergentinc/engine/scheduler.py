@@ -143,12 +143,20 @@ class V9RoundScheduler:
                     sender="ENGINE",
                     recipient=msg.recipient,
                     content=fb,
-                    hop=msg.hop + 1,
-                    round_num=current_round,
+                    hop=1,
+                    round_num=current_round + 1,
                     source_type="engine_feedback",
                     is_feedback=True,
                 )
                 self.router.enqueue([fb_msg])
+                step_summary = {
+                    "pixel_id": msg.recipient,
+                    "hop": msg.hop,
+                    "tokens": 200,
+                    "error": str(e),
+                    "send_to": [],
+                }
+                executed_steps.append(step_summary)
                 continue
 
             # 3.4 实际计费结算
