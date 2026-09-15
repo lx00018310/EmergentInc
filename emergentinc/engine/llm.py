@@ -160,6 +160,12 @@ class CognitiveIsolationViolation(RuntimeError):
     pass
 
 
+class LLMInfrastructureError(RuntimeError):
+    """底层基础设施、网络、代理或鉴权不可用时抛出的硬中断异常 (Fail Fast)."""
+    pass
+
+
+
 class V9LLMClient:
     """V9 统一模型客户端，保证纯三输入上下文与输出 Schema 校验."""
 
@@ -276,7 +282,7 @@ class V9LLMClient:
 
         # 3. 真实模型调用
         if self.client is None:
-            raise RuntimeError("LLM client not configured (missing MCL_API_KEY / MCL_BASE_URL) and no mock_handler provided.")
+            raise LLMInfrastructureError("LLM client not configured (missing MCL_API_KEY / MCL_BASE_URL) and no mock_handler provided.")
 
         mc = self.cfg.get("model", {})
         try:
@@ -292,8 +298,14 @@ class V9LLMClient:
             )
         except Exception as e:
             err_msg = str(e)
-            if "timeout" in err_msg.lower():
-                raise RuntimeError(f"CALL_FAILED: V9_STEP: LLM_TIMEOUT: {e}") from e
+            err_lower = err_msg.lower()
+            infra_keywords = [
+                "proxy", "disabled", "connection", "connect", "timeout",
+                "unauthorized", "401", "403", "429", "quota", "502", "503", "504",
+                "refused", "network", "getaddrinfo", "dns", "authentication"
+            ]
+            if any(k in err_lower for k in infra_keywords):
+                raise LLMInfrastructureError(f"API_INFRASTRUCTURE_FAILURE: {e}") from e
             raise RuntimeError(f"CALL_FAILED: V9_STEP: {e}") from e
 
         raw = (r.choices[0].message.content or "").strip()

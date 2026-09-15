@@ -17,7 +17,7 @@ from .router import MessageRouter, MessageEnvelope, MAX_HOPS_PER_ROUND
 from .energy import EnergyManager
 from .environment import Environment
 from .operations import OperationExecutor
-from .llm import V9LLMClient
+from .llm import V9LLMClient, LLMInfrastructureError
 from .utils import read_json, write_json, id_to_coord, coord_to_id, neighbors6
 
 NATURAL_WAKE_ROUNDS = 5
@@ -133,6 +133,14 @@ class V9RoundScheduler:
                     message_md=msg.content,
                 )
                 actual_tokens = audit.get("token_usage", {}).get("total_tokens", 1000)
+            except LLMInfrastructureError as e:
+                # 基础设施级故障（API挂掉/未配置/代理禁用/断网）：全额退还预留，不向队列塞反馈，立即向上熔断退出
+                self.energy_mgr.settle_budget(
+                    recipient_storage, call_id, 0, {"error": f"INFRASTRUCTURE_FAILURE: {str(e)}"}
+                )
+                # 把未完成处理的消息放回原队列头部，以便修复网络后继续消费，绝不丢失
+                self.router.queue.insert(0, msg)
+                raise
             except Exception as e:
                 # 调用失败，按最小惩罚结算并生成反馈
                 self.energy_mgr.settle_budget(

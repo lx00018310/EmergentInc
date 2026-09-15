@@ -163,14 +163,22 @@ function updateRunStatusUI(status) {
     indicator.className = 'run-status-indicator running';
     btnRun.disabled = true;
     btnStop.disabled = false;
+  } else if (status.last_error) {
+    indicator.textContent = `ERROR: ${status.last_error}`;
+    indicator.className = 'run-status-indicator stopped';
+    indicator.title = status.last_error;
+    btnRun.disabled = false;
+    btnStop.disabled = true;
   } else if (status.stop_reason) {
     indicator.textContent = `STOPPED (${status.stop_reason})`;
     indicator.className = 'run-status-indicator stopped';
+    indicator.title = status.stop_reason;
     btnRun.disabled = false;
     btnStop.disabled = true;
   } else {
     indicator.textContent = 'IDLE';
     indicator.className = 'run-status-indicator';
+    indicator.title = '';
     btnRun.disabled = false;
     btnStop.disabled = true;
   }
