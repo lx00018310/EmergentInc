@@ -11,8 +11,6 @@ from .run_controller import RunController
 from .loop_store import LoopStore
 from .owner_bridge import OwnerBridge
 
-router = APIRouter(prefix="/api")
-
 # Models for request validation
 class RunStartRequest(BaseModel):
     rounds: int = 1
@@ -50,6 +48,7 @@ def init_api(base_dir: Optional[Union[str, Path, ProjectPaths]] = None) -> APIRo
         paths = base_dir
     else:
         paths = get_paths(base_dir)
+    router = APIRouter(prefix="/api")
     storage = Storage(paths)
     world_reader = WorldReader(paths)
     loop_store = LoopStore(paths)
@@ -136,7 +135,6 @@ def init_api(base_dir: Optional[Union[str, Path, ProjectPaths]] = None) -> APIRo
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
 
-    @router.get("/pixels/{pixel_id}")
     @router.get("/environment")
     def get_environment():
         return {"content": world_reader.env.read_content()}
@@ -152,7 +150,7 @@ def init_api(base_dir: Optional[Union[str, Path, ProjectPaths]] = None) -> APIRo
         from emergentinc.engine.energy import EnergyManager
         pixel_id = req.get("pixel_id")
         net_amount = float(req.get("net_amount", 0.0))
-        tx_id = str(req.get("tx_id", ""))
+        tx_id = str(req.get("tx_id", "")).strip()
         if not pixel_id or net_amount <= 0 or not tx_id:
             raise HTTPException(status_code=400, detail="Invalid revenue credit parameters")
 
@@ -162,8 +160,35 @@ def init_api(base_dir: Optional[Union[str, Path, ProjectPaths]] = None) -> APIRo
         if not storage_p.state_file.exists():
             raise HTTPException(status_code=404, detail="Pixel not found")
 
-        ok, tokens = mgr.credit_external_revenue(storage_p, net_amount, tx_id, req.get("details"))
-        return {"status": "CREDITED", "pixel_id": pixel_id, "tokens_added": tokens}
+        res = mgr.credit_external_revenue(storage_p, net_amount, tx_id, req.get("details"))
+        if not res.ok:
+            if res.status == "CONFLICT_TX_MISMATCH":
+                raise HTTPException(status_code=409, detail=f"Transaction '{tx_id}' exists with different parameters")
+            raise HTTPException(status_code=400, detail=res.status)
+        return {"status": res.status, "pixel_id": pixel_id, "tokens_added": res.tokens}
+
+    @router.post("/revenue/refund")
+    def refund_revenue(req: Dict[str, Any] = Body(...)):
+        from emergentinc.engine.energy import EnergyManager
+        pixel_id = req.get("pixel_id")
+        tx_id = str(req.get("tx_id", "")).strip()
+        refund_amount = req.get("refund_amount")
+        if refund_amount is not None:
+            refund_amount = float(refund_amount)
+        reason = str(req.get("reason", "manual refund"))
+        if not pixel_id or not tx_id:
+            raise HTTPException(status_code=400, detail="Missing pixel_id or tx_id")
+
+        ledger_file = paths.workspace_root / "ledger" / "energy_ledger.jsonl"
+        mgr = EnergyManager(ledger_file)
+        storage_p = world_reader.world.get_pixel_storage(pixel_id)
+        if not storage_p.state_file.exists():
+            raise HTTPException(status_code=404, detail="Pixel not found")
+
+        ok, tokens_deducted, err = mgr.refund_external_revenue(storage_p, tx_id, refund_amount, reason)
+        if not ok:
+            raise HTTPException(status_code=400, detail=err or "Refund failed")
+        return {"status": "REFUNDED", "pixel_id": pixel_id, "tokens_deducted": tokens_deducted, "tx_id": tx_id}
 
     @router.get("/pixels/{pixel_id}")
     def get_pixel(pixel_id: str):
@@ -216,6 +241,25 @@ def init_api(base_dir: Optional[Union[str, Path, ProjectPaths]] = None) -> APIRo
                 reason=req.reason
             )
         except (RuntimeError, ValueError) as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+
+    from emergentinc.engine.genesis import GenesisPromptManager
+    genesis_mgr = GenesisPromptManager(paths.runtime_root)
+
+    @router.get("/genesis-prompt")
+    def get_genesis_prompt():
+        return genesis_mgr.get_prompt()
+
+    @router.put("/genesis-prompt")
+    def update_genesis_prompt(req: Dict[str, Any] = Body(...)):
+        if run_controller.status()['running']:
+            raise HTTPException(status_code=409, detail="Cannot update genesis prompt while run is in progress.")
+        raw_content = str(req.get("content", ""))
+        try:
+            return genesis_mgr.update_prompt(raw_content)
+        except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))

@@ -14,8 +14,20 @@ document.addEventListener('DOMContentLoaded', () => {
   loopTree = new LoopTreeViewer('loop-tree-container');
 
   initCommandInputs();
+  initGenesisPromptEvents();
+  loadGenesisPrompt();
   startPolling();
 });
+
+function initGenesisPromptEvents() {
+  const textarea = document.getElementById('genesis-textarea');
+  const countEl = document.getElementById('genesis-char-count');
+  if (textarea && countEl) {
+    textarea.addEventListener('input', () => {
+      countEl.textContent = `${textarea.value.length} / 12000`;
+    });
+  }
+}
 
 function appendConsole(text, type = 'system') {
   const box = document.getElementById('console-output');
@@ -182,6 +194,13 @@ function updateRunStatusUI(status) {
     btnRun.disabled = false;
     btnStop.disabled = true;
   }
+
+  const genesisTextarea = document.getElementById('genesis-textarea');
+  const btnSaveGenesis = document.getElementById('btn-save-genesis');
+  const btnClearGenesis = document.getElementById('btn-clear-genesis');
+  if (genesisTextarea) genesisTextarea.disabled = Boolean(status.running);
+  if (btnSaveGenesis) btnSaveGenesis.disabled = Boolean(status.running);
+  if (btnClearGenesis) btnClearGenesis.disabled = Boolean(status.running);
 }
 
 async function refreshWorld() {
@@ -409,4 +428,86 @@ async function deleteLoop(loopId) {
 function closeModal(id) {
   const modal = document.getElementById(id);
   if (modal) modal.style.display = 'none';
+}
+
+async function loadGenesisPrompt() {
+  try {
+    const res = await fetch('/api/genesis-prompt');
+    if (!res.ok) return;
+    const data = await res.json();
+    const textarea = document.getElementById('genesis-textarea');
+    const badge = document.getElementById('genesis-status-badge');
+    const revEl = document.getElementById('genesis-revision');
+    const hashEl = document.getElementById('genesis-hash');
+    const countEl = document.getElementById('genesis-char-count');
+
+    if (textarea) textarea.value = data.content || '';
+    if (revEl) revEl.textContent = data.revision !== undefined ? data.revision : '-';
+    if (hashEl) hashEl.textContent = data.sha256 ? data.sha256.slice(0, 12) : '-';
+    if (countEl) countEl.textContent = `${(data.content || '').length} / 12000`;
+
+    if (badge) {
+      if (data.active) {
+        badge.textContent = '已启用';
+        badge.className = 'badge active-dot';
+      } else {
+        badge.textContent = '已关闭';
+        badge.className = 'badge';
+      }
+    }
+  } catch (e) {
+    console.error('Failed to load genesis prompt:', e);
+  }
+}
+
+async function saveGenesisPrompt() {
+  const textarea = document.getElementById('genesis-textarea');
+  if (!textarea) return;
+  const content = textarea.value;
+  if (content.length > 12000) {
+    alert('创世提示词长度不能超过 12,000 字符！');
+    return;
+  }
+
+  try {
+    const res = await fetch('/api/genesis-prompt', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content: content })
+    });
+    if (res.ok) {
+      const data = await res.json();
+      appendConsole(`创世提示词已保存 (Revision ${data.revision})，将作为后续所有元胞系统提示词的初速度。`, 'success');
+      await loadGenesisPrompt();
+    } else {
+      const err = await res.json();
+      alert(`保存失败: ${err.detail || err.error}`);
+    }
+  } catch (e) {
+    alert(`保存异常: ${e.message}`);
+  }
+}
+
+async function clearGenesisPrompt() {
+  if (!confirm('确定清空并关闭创世提示词吗？\n清空后将停止向后续元胞注入，但此前已经写入 pixel.md 的经验不会自动删除。')) {
+    return;
+  }
+
+  try {
+    const res = await fetch('/api/genesis-prompt', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content: '' })
+    });
+    if (res.ok) {
+      const data = await res.json();
+      appendConsole(`创世提示词已清空并关闭 (Revision ${data.revision})。`, 'warn');
+      await loadGenesisPrompt();
+    } else {
+      const err = await res.json();
+      alert(`清空失败: ${err.detail || err.error}`);
+    }
+  } catch (e) {
+    alert(`清空异常: ${e.message}`);
+  }
 }

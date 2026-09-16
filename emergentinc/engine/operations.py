@@ -10,6 +10,7 @@
 
 import sys
 import os
+import re
 import subprocess
 import time
 import uuid
@@ -20,6 +21,28 @@ from .utils import sha256_text
 
 MAX_OPERATIONS_PER_STEP = 3
 DEFAULT_CODE_TIMEOUT_SECONDS = 5
+
+COORD_ID_PATTERN = re.compile(r"^-?\d+_-?\d+_-?\d+$")
+
+
+def is_valid_coord_id(pixel_id: str) -> bool:
+    """验证 pixel_id 是否符合 3D 坐标规范."""
+    if not isinstance(pixel_id, str):
+        return False
+    return bool(COORD_ID_PATTERN.match(pixel_id.strip()))
+
+
+def validate_artifact_filename(filename: str) -> Tuple[bool, Optional[str]]:
+    """严格校验 artifact 文件名，防范目录穿越、盘符逃逸与 Windows ADS 流."""
+    if not filename or not isinstance(filename, str):
+        return False, "Missing or invalid 'filename'"
+    name = filename.strip()
+    if ".." in name or "/" in name or "\\" in name or ":" in name:
+        return False, "Invalid artifact filename: directory traversal or path separators forbidden"
+    forbidden_chars = set('<>"/\\|?*:\0')
+    if any(c in forbidden_chars for c in name):
+        return False, "Invalid artifact filename: forbidden characters detected"
+    return True, None
 
 
 @dataclass
@@ -46,11 +69,15 @@ class OperationExecutor:
     """工具操作执行器与交付物空间."""
 
     def __init__(self, artifacts_root: Path):
-        self.artifacts_root = Path(artifacts_root)
+        self.artifacts_root = Path(artifacts_root).resolve()
         self.artifacts_root.mkdir(parents=True, exist_ok=True)
 
     def _pixel_artifact_dir(self, pixel_id: str) -> Path:
-        d = self.artifacts_root / pixel_id
+        if not is_valid_coord_id(pixel_id):
+            raise ValueError(f"Invalid pixel_id format: '{pixel_id}'")
+        d = (self.artifacts_root / pixel_id).resolve()
+        if not str(d).startswith(str(self.artifacts_root)):
+            raise ValueError(f"Path escape detected for pixel_id: '{pixel_id}'")
         d.mkdir(parents=True, exist_ok=True)
         return d
 
@@ -104,44 +131,65 @@ class OperationExecutor:
             )
 
     def _tool_save_artifact(self, op_id: str, pixel_id: str, args: Dict[str, Any]) -> OperationReceipt:
-        filename = args.get("filename", "").strip()
+        if not is_valid_coord_id(pixel_id):
+            return OperationReceipt(op_id, "save_artifact", "FAILED", None, f"Invalid pixel_id format: '{pixel_id}'")
+        filename = args.get("filename", "")
         content = args.get("content", "")
-        if not filename:
-            return OperationReceipt(op_id, "save_artifact", "FAILED", None, "Missing 'filename'")
-        # 防止路径遍历
-        if ".." in filename or filename.startswith("/") or filename.startswith("\\"):
-            return OperationReceipt(op_id, "save_artifact", "FAILED", None, "Invalid artifact filename")
-
-        target_file = self._pixel_artifact_dir(pixel_id) / filename
-        target_file.parent.mkdir(parents=True, exist_ok=True)
-        target_file.write_text(content, encoding="utf-8")
-
-        artifact_hash = sha256_text(content)
-        return OperationReceipt(
-            operation_id=op_id,
-            tool="save_artifact",
-            status="SUCCESS",
-            output={
-                "pixel_id": pixel_id,
-                "filename": filename,
-                "size_bytes": len(content.encode("utf-8")),
-                "sha256": artifact_hash,
-            },
-        )
-
-    def _tool_read_artifact(self, op_id: str, pixel_id: str, args: Dict[str, Any]) -> OperationReceipt:
-        target_pixel_id = args.get("pixel_id", pixel_id).strip()
-        filename = args.get("filename", "").strip()
-        if not filename:
-            return OperationReceipt(op_id, "read_artifact", "FAILED", None, "Missing 'filename'")
-        if ".." in filename or filename.startswith("/") or filename.startswith("\\"):
-            return OperationReceipt(op_id, "read_artifact", "FAILED", None, "Invalid artifact filename")
-
-        target_file = self.artifacts_root / target_pixel_id / filename
-        if not target_file.exists():
-            return OperationReceipt(op_id, "read_artifact", "FAILED", None, f"Artifact '{filename}' not found")
+        ok, err = validate_artifact_filename(filename)
+        if not ok:
+            return OperationReceipt(op_id, "save_artifact", "FAILED", None, err)
 
         try:
+            p_dir = self._pixel_artifact_dir(pixel_id)
+            target_file = (p_dir / filename.strip()).resolve()
+            if not str(target_file).startswith(str(p_dir.resolve())):
+                return OperationReceipt(op_id, "save_artifact", "FAILED", None, "Path traversal escape detected")
+
+            target_file.parent.mkdir(parents=True, exist_ok=True)
+            target_file.write_text(content, encoding="utf-8")
+
+            artifact_hash = sha256_text(content)
+            return OperationReceipt(
+                operation_id=op_id,
+                tool="save_artifact",
+                status="SUCCESS",
+                output={
+                    "pixel_id": pixel_id,
+                    "filename": filename.strip(),
+                    "size_bytes": len(content.encode("utf-8")),
+                    "sha256": artifact_hash,
+                },
+            )
+        except Exception as e:
+            return OperationReceipt(op_id, "save_artifact", "FAILED", None, str(e))
+
+    def _tool_read_artifact(self, op_id: str, pixel_id: str, args: Dict[str, Any]) -> OperationReceipt:
+        if not is_valid_coord_id(pixel_id):
+            return OperationReceipt(op_id, "read_artifact", "FAILED", None, f"Invalid pixel_id format: '{pixel_id}'")
+        target_pixel_id = str(args.get("pixel_id", pixel_id)).strip()
+        if target_pixel_id != pixel_id:
+            return OperationReceipt(
+                op_id,
+                "read_artifact",
+                "FAILED",
+                None,
+                "CROSS_PIXEL_READ_FORBIDDEN: Cross-pixel artifact reading is strictly disabled.",
+            )
+
+        filename = args.get("filename", "")
+        ok, err = validate_artifact_filename(filename)
+        if not ok:
+            return OperationReceipt(op_id, "read_artifact", "FAILED", None, err)
+
+        try:
+            p_dir = self._pixel_artifact_dir(pixel_id)
+            target_file = (p_dir / filename.strip()).resolve()
+            if not str(target_file).startswith(str(p_dir.resolve())):
+                return OperationReceipt(op_id, "read_artifact", "FAILED", None, "Path traversal escape detected")
+
+            if not target_file.exists() or not target_file.is_file():
+                return OperationReceipt(op_id, "read_artifact", "FAILED", None, f"Artifact '{filename.strip()}' not found")
+
             content = target_file.read_text(encoding="utf-8")
             return OperationReceipt(
                 operation_id=op_id,
@@ -153,68 +201,33 @@ class OperationExecutor:
             return OperationReceipt(op_id, "read_artifact", "FAILED", None, str(e))
 
     def _tool_list_artifacts(self, op_id: str, pixel_id: str, args: Dict[str, Any]) -> OperationReceipt:
-        p_dir = self._pixel_artifact_dir(pixel_id)
-        items = []
-        for p in p_dir.glob("*"):
-            if p.is_file():
-                items.append({
-                    "filename": p.name,
-                    "size_bytes": p.stat().st_size,
-                    "sha256": sha256_text(p.read_text(encoding="utf-8", errors="ignore")),
-                })
-        return OperationReceipt(
-            operation_id=op_id,
-            tool="list_artifacts",
-            status="SUCCESS",
-            output={"artifacts": items},
-        )
-
-    def _tool_run_isolated_code(self, op_id: str, pixel_id: str, args: Dict[str, Any]) -> OperationReceipt:
-        code = args.get("code", "")
-        timeout = int(args.get("timeout", DEFAULT_CODE_TIMEOUT_SECONDS))
-        if not code:
-            return OperationReceipt(op_id, "run_isolated_code", "FAILED", None, "Empty code snippet")
-
-        # 准备干净环境变量，剔除 API keys 等机密
-        safe_env = {
-            "SYSTEMROOT": os.environ.get("SYSTEMROOT", ""),
-            "PATH": os.environ.get("PATH", ""),
-            "PYTHONPATH": "",
-        }
-
+        if not is_valid_coord_id(pixel_id):
+            return OperationReceipt(op_id, "list_artifacts", "FAILED", None, f"Invalid pixel_id format: '{pixel_id}'")
         try:
-            res = subprocess.run(
-                [sys.executable, "-c", code],
-                capture_output=True,
-                text=True,
-                timeout=timeout,
-                env=safe_env,
-                cwd=str(self._pixel_artifact_dir(pixel_id)),
-            )
+            p_dir = self._pixel_artifact_dir(pixel_id)
+            items = []
+            for p in sorted(p_dir.glob("*")):
+                if p.is_file():
+                    items.append({
+                        "filename": p.name,
+                        "size_bytes": p.stat().st_size,
+                        "sha256": sha256_text(p.read_text(encoding="utf-8", errors="ignore")),
+                    })
             return OperationReceipt(
                 operation_id=op_id,
-                tool="run_isolated_code",
-                status="SUCCESS" if res.returncode == 0 else "FAILED",
-                output={
-                    "returncode": res.returncode,
-                    "stdout": res.stdout[:2000],
-                    "stderr": res.stderr[:2000],
-                },
-                error=res.stderr[:500] if res.returncode != 0 else None,
-            )
-        except subprocess.TimeoutExpired:
-            return OperationReceipt(
-                operation_id=op_id,
-                tool="run_isolated_code",
-                status="FAILED",
-                output=None,
-                error=f"Execution timed out after {timeout} seconds",
+                tool="list_artifacts",
+                status="SUCCESS",
+                output={"artifacts": items},
             )
         except Exception as e:
-            return OperationReceipt(
-                operation_id=op_id,
-                tool="run_isolated_code",
-                status="FAILED",
-                output=None,
-                error=str(e),
-            )
+            return OperationReceipt(op_id, "list_artifacts", "FAILED", None, str(e))
+
+    def _tool_run_isolated_code(self, op_id: str, pixel_id: str, args: Dict[str, Any]) -> OperationReceipt:
+        # T0-01: 未配置真实沙箱时，禁止宿主代码执行，固定返回不可用
+        return OperationReceipt(
+            operation_id=op_id,
+            tool="run_isolated_code",
+            status="FAILED",
+            output=None,
+            error="CAPABILITY_UNAVAILABLE: Isolated code execution is not configured.",
+        )

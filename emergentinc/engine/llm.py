@@ -173,6 +173,8 @@ class V9LLMClient:
         self,
         base_dir: Optional[Union[str, Path, ProjectPaths]] = None,
         mock_handler: Optional[Callable[[Dict[str, Any]], Dict[str, Any]]] = None,
+        genesis_prompt: Optional[str] = None,
+        genesis_revision: int = 0,
     ):
         if isinstance(base_dir, ProjectPaths):
             self.paths = base_dir
@@ -188,6 +190,9 @@ class V9LLMClient:
         else:
             self.system_prompt = "你是一个Pixel。你只能依据当前 state.json、pixel.md 和 message.md 做决定。"
 
+        self.genesis_prompt: Optional[str] = genesis_prompt
+        self.genesis_revision: int = genesis_revision
+
         if self.schema_file.exists():
             self.schema = read_json(self.schema_file)
         else:
@@ -197,6 +202,11 @@ class V9LLMClient:
         config_path = self.paths.config_dir / "world_config.json"
         self.cfg = read_json(config_path) if config_path.exists() else {}
         self._init_client()
+
+    def lock_genesis_prompt(self, prompt_text: str, revision: int = 0):
+        """为当前 Run 锁定统一的创世提示词与版本号."""
+        self.genesis_prompt = prompt_text.strip() if prompt_text else None
+        self.genesis_revision = revision
 
     def _init_client(self):
         mc = self.cfg.get("model", {})
@@ -259,8 +269,13 @@ class V9LLMClient:
         if extra_check and len(payload.keys()) != 3:
             raise CognitiveIsolationViolation("Context payload must strictly contain exactly 3 keys: state, pixel_md, message_md")
 
+        # 组装 effective system prompt (若创世提示词非空则注入 [GENESIS_CONTEXT])
+        effective_system_prompt = self.system_prompt
+        if self.genesis_prompt and self.genesis_prompt.strip():
+            effective_system_prompt = f"{self.system_prompt}\n\n[GENESIS_CONTEXT]\n{self.genesis_prompt.strip()}"
+
         user_content = json.dumps(payload, ensure_ascii=False, indent=2)
-        prompt_full = f"{self.system_prompt}\n\n{user_content}"
+        prompt_full = f"{effective_system_prompt}\n\n{user_content}"
         prompt_hash = sha256_text(prompt_full)
 
         # 2. 如果存在 mock_handler，优先用于测试或离线模式
@@ -272,6 +287,8 @@ class V9LLMClient:
                 "kind": "V9_STEP",
                 "model": "mock",
                 "prompt_hash": prompt_hash,
+                "effective_prompt_hash": prompt_hash,
+                "genesis_revision": self.genesis_revision,
                 "token_usage": {
                     "prompt_tokens": len(prompt_full) // 4,
                     "completion_tokens": len(json.dumps(data)) // 4,
@@ -289,7 +306,7 @@ class V9LLMClient:
             r = self.client.chat.completions.create(
                 model=self.model_name,
                 messages=[
-                    {"role": "system", "content": self.system_prompt},
+                    {"role": "system", "content": effective_system_prompt},
                     {"role": "user", "content": user_content},
                 ],
                 temperature=float(mc.get("temperature", {}).get("decision", 0.6)),
@@ -333,6 +350,8 @@ class V9LLMClient:
             "kind": "V9_STEP",
             "model": self.model_name,
             "prompt_hash": prompt_hash,
+            "effective_prompt_hash": prompt_hash,
+            "genesis_revision": self.genesis_revision,
             "token_usage": usage,
         }
         return data, audit

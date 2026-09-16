@@ -1,4 +1,4 @@
-# EmergentInc V5 — API Sandbox
+# Emergent Inc AI 元胞自动会社
 
 V5 的核心变化不是增加更多 Agent，而是把每一次 AI 推理真正关进认知沙盒。
 

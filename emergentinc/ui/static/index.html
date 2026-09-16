@@ -62,6 +62,26 @@
         </div>
       </div>
 
+      <!-- 创世提示词 (临时初速度) 独立编辑卡片 -->
+      <div class="panel-card" id="genesis-card">
+        <div class="panel-header">
+          <h2>创世提示词 (临时初速度)</h2>
+          <span class="badge" id="genesis-status-badge">已关闭</span>
+        </div>
+        <p class="form-hint" style="margin-bottom: 8px; font-size: 12px; color: #a0aec0;">
+          该提示词仅作为系统提示词的临时初速度，影响后续所有元胞调用；不进入三输入 payload，清空后不再注入。
+        </p>
+        <textarea id="genesis-textarea" class="modal-textarea" rows="6" maxlength="12000" placeholder="可输入创世提示词，清空则完全关闭..."></textarea>
+        <div class="genesis-meta-bar" style="display: flex; justify-content: space-between; align-items: center; margin: 8px 0; font-size: 12px; color: #a0aec0;">
+          <span>Revision: <b id="genesis-revision">-</b> | Hash: <code id="genesis-hash">-</code></span>
+          <span id="genesis-char-count">0 / 12000</span>
+        </div>
+        <div class="genesis-actions" style="display: flex; gap: 8px; justify-content: flex-end;">
+          <button id="btn-save-genesis" class="btn btn-sm btn-primary" onclick="saveGenesisPrompt()">保存提示词</button>
+          <button id="btn-clear-genesis" class="btn btn-sm btn-secondary" onclick="clearGenesisPrompt()">清空并关闭</button>
+        </div>
+      </div>
+
       <!-- LOOP 树窗口 -->
       <div class="panel-card" id="loop-card">
         <div class="panel-header">

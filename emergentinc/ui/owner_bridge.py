@@ -26,6 +26,27 @@ class OwnerBridge:
                 pass
         return out
 
+    def _inject_v9_feedback(self, pixel_id: str, request_id: str, status: str, reason: str):
+        try:
+            from emergentinc.engine.world import World
+            from emergentinc.engine.router import MessageRouter
+            q_file = self.paths.runtime_root / "v9_message_queue.json"
+            w = World(self.paths.live_root / "pixels")
+            router = MessageRouter(w, state_file=q_file)
+            fb = f"[ENGINE_FEEDBACK]\n\nOwner request '{request_id}' {status}.\nReason: {reason}"
+            msg = router.create_message(
+                sender="ENGINE",
+                recipient=pixel_id,
+                content=fb,
+                hop=1,
+                round_num=int(self.s.world().get("round", 1)),
+                source_type="engine_feedback",
+                is_feedback=True,
+            )
+            router.enqueue([msg])
+        except Exception:
+            pass
+
     def approve_request(
         self,
         request_id: str,
@@ -38,6 +59,22 @@ class OwnerBridge:
         if r.get('status') != 'PENDING_OWNER':
             raise RuntimeError(f"Request {request_id} is not in PENDING_OWNER state (status={r.get('status')})")
 
+        # 判断是否为 V9 通用 request (无需 capability profile)
+        requester = r.get('pixel_id') or r.get('requester')
+        if not profile_file and requester:
+            r.update({
+                'status': 'APPROVED',
+                'resolved_round': self.s.world().get('round', 0),
+                'owner_reason': reason,
+            })
+            self.s.save_external_request(r)
+            self._inject_v9_feedback(requester, request_id, 'APPROVED', reason)
+            return {
+                "status": "APPROVED",
+                "request_id": request_id,
+                "reason": reason
+            }
+
         if not capability_id:
             capability_id = self.s._next_id('capabilities', 'CAP')
 
@@ -49,6 +86,8 @@ class OwnerBridge:
             raise FileNotFoundError(f"Profile file not found: {profile_file}")
 
         owner.approve(self.s, request_id, capability_id, str(p_path), reason)
+        if requester:
+            self._inject_v9_feedback(requester, request_id, 'APPROVED', reason)
 
         return {
             "status": "APPROVED",
@@ -64,7 +103,17 @@ class OwnerBridge:
             raise RuntimeError(f"Request {request_id} is not in PENDING_OWNER state (status={r.get('status')})")
 
         clean_reason = reason.strip() or "Rejected by Owner"
-        owner.reject(self.s, request_id, clean_reason)
+        requester = r.get('pixel_id') or r.get('requester')
+
+        r.update({
+            'status': 'REJECTED',
+            'resolved_round': self.s.world().get('round', 0),
+            'owner_reason': clean_reason,
+        })
+        self.s.save_external_request(r)
+
+        if requester:
+            self._inject_v9_feedback(requester, request_id, 'REJECTED', clean_reason)
 
         return {
             "status": "REJECTED",

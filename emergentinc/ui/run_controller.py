@@ -35,11 +35,30 @@ class RunController:
         self.ui_state_dir.mkdir(parents=True, exist_ok=True)
         self.history_file = self.ui_state_dir / 'command_history.jsonl'
 
+        # 启动恢复：修正假死 Loop 为 INTERRUPTED
+        self._recover_stale_loops()
+
         # Initialize current round from world
         try:
             self._current_round = int(self.storage.world().get('round', 0))
         except Exception:
             self._current_round = 0
+
+    def _recover_stale_loops(self):
+        """应用启动时，将处于 RUNNING 状态但本进程无 worker 的 Loop 标为 INTERRUPTED."""
+        try:
+            for loop in self.loop_store.list_loops():
+                if loop.get("status") == "RUNNING":
+                    loop_id = loop["id"]
+                    end_round = int(loop.get("start_round", 0))
+                    self.loop_store.finish_loop(
+                        loop_id=loop_id,
+                        end_round=end_round,
+                        status="INTERRUPTED",
+                        stop_reason="PROCESS_RESTARTED",
+                    )
+        except Exception:
+            pass
 
     def _log_command(self, command_text: str, rounds: int, extra: Optional[Dict[str, Any]] = None) -> None:
         record = {
@@ -150,7 +169,7 @@ class RunController:
                                 loop_stop_reason = "OWNER_ACTION_REQUIRED"
                                 break
                     else:
-                        res = scheduler.run_round()
+                        res = scheduler.run_round(stop_requested=lambda: self._stop_requested)
                         with self.lock:
                             self._completed_rounds += 1
                             self._current_round = res["round"]

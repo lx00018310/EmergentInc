@@ -65,14 +65,63 @@ def validate_message_md(content: str) -> Tuple[bool, Optional[str]]:
     return True, None
 
 
-class MessageRouter:
-    """局部消息路由器，处理路由合法性与队列流转."""
+import os
+import tempfile
+import json
+from pathlib import Path
 
-    def __init__(self, world: World):
+
+class MessageRouter:
+    """局部消息路由器，处理路由合法性、队列流转与崩溃恢复持久化."""
+
+    def __init__(self, world: World, state_file: Optional[Path] = None):
         self.world = world
+        self.state_file = Path(state_file) if state_file else None
         self.queue: List[MessageEnvelope] = []
         self.delayed_queue: List[MessageEnvelope] = []
+        self.consumed_ids: set[str] = set()
         self.processed_count: int = 0
+        self.current_in_progress: Optional[MessageEnvelope] = None
+
+        if self.state_file and self.state_file.exists():
+            self.load_state()
+
+    def save_state(self):
+        """原子写入持久化队列文件，防范写半死锁与损坏."""
+        if not self.state_file:
+            return
+        self.state_file.parent.mkdir(parents=True, exist_ok=True)
+        data = {
+            "queue": [m.to_dict() for m in self.queue],
+            "delayed_queue": [m.to_dict() for m in self.delayed_queue],
+            "consumed_ids": list(self.consumed_ids),
+            "processed_count": self.processed_count,
+            "in_progress": self.current_in_progress.to_dict() if self.current_in_progress else None,
+        }
+        # 使用同目录临时文件原子替换
+        tmp_file = self.state_file.with_suffix(".tmp")
+        tmp_file.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        tmp_file.replace(self.state_file)
+
+    def load_state(self):
+        """从持久化状态恢复队列与消费记录."""
+        if not self.state_file or not self.state_file.exists():
+            return
+        try:
+            data = json.loads(self.state_file.read_text(encoding="utf-8"))
+            self.queue = [MessageEnvelope.from_dict(d) for d in data.get("queue", [])]
+            self.delayed_queue = [MessageEnvelope.from_dict(d) for d in data.get("delayed_queue", [])]
+            self.consumed_ids = set(data.get("consumed_ids", []))
+            self.processed_count = int(data.get("processed_count", 0))
+            # 如果上次进程意外中断，恢复处于处理中的消息至队首
+            in_prog = data.get("in_progress")
+            if in_prog:
+                msg = MessageEnvelope.from_dict(in_prog)
+                if msg.id not in self.consumed_ids and not any(m.id == msg.id for m in self.queue):
+                    self.queue.insert(0, msg)
+            self.current_in_progress = None
+        except Exception:
+            pass
 
     def create_message(
         self,
@@ -191,19 +240,43 @@ class MessageRouter:
     def enqueue(self, messages: List[MessageEnvelope]):
         """将消息排入队列，超出 MAX_MESSAGES_PER_ROUND 时排入延期队列."""
         for m in messages:
+            # 过滤已完全消费过的重复消息 ID
+            if m.id in self.consumed_ids:
+                continue
             if self.processed_count + len(self.queue) >= MAX_MESSAGES_PER_ROUND:
                 self.delayed_queue.append(m)
             else:
                 self.queue.append(m)
+        self.save_state()
 
     def pop_next(self) -> Optional[MessageEnvelope]:
         if not self.queue:
             return None
         self.processed_count += 1
-        return self.queue.pop(0)
+        msg = self.queue.pop(0)
+        self.current_in_progress = msg
+        self.save_state()
+        return msg
+
+    def commit_in_progress(self, msg: Optional[MessageEnvelope] = None):
+        """成功完成当前消息所有副作用后调用，标记为已消费."""
+        target_msg = msg or self.current_in_progress
+        if target_msg:
+            self.consumed_ids.add(target_msg.id)
+        self.current_in_progress = None
+        self.save_state()
+
+    def revert_in_progress(self):
+        """遇到基础设施异常或硬中断时，安全将处理中消息放回队首."""
+        if self.current_in_progress:
+            if not any(m.id == self.current_in_progress.id for m in self.queue):
+                self.queue.insert(0, self.current_in_progress)
+            self.current_in_progress = None
+            self.save_state()
 
     def roll_to_next_round(self):
         """回合结束切换，延期队列移入主队列，重置计数器."""
         self.queue.extend(self.delayed_queue)
         self.delayed_queue.clear()
         self.processed_count = 0
+        self.save_state()

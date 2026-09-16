@@ -34,7 +34,7 @@ class PixelState:
     last_active_round: int = 0
     sleep_until_round: Optional[int] = None
     generation: int = 0
-    inbox_call_budget_per_round: int = 10_000
+    inbox_call_budget_per_round: int = 100_000
     neighbors: List[Dict[str, Any]] = field(default_factory=list)
 
     def to_dict(self) -> Dict[str, Any]:
@@ -68,7 +68,7 @@ class PixelState:
             last_active_round=int(filtered.get("last_active_round", 0)),
             sleep_until_round=filtered.get("sleep_until_round"),
             generation=int(filtered.get("generation", 0)),
-            inbox_call_budget_per_round=int(filtered.get("inbox_call_budget_per_round", 10_000)),
+            inbox_call_budget_per_round=int(filtered.get("inbox_call_budget_per_round", 100_000)),
             neighbors=list(filtered.get("neighbors", [])),
         )
 
