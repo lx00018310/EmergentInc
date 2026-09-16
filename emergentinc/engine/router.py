@@ -71,6 +71,9 @@ import json
 from pathlib import Path
 
 
+from .core_store import QueueCorruptedError
+
+
 class MessageRouter:
     """局部消息路由器，处理路由合法性、队列流转与崩溃恢复持久化."""
 
@@ -104,11 +107,16 @@ class MessageRouter:
         tmp_file.replace(self.state_file)
 
     def load_state(self):
-        """从持久化状态恢复队列与消费记录."""
+        """从持久化状态恢复队列与消费记录 (Fail Closed: 损坏时保存 .quarantine 并抛出异常)."""
         if not self.state_file or not self.state_file.exists():
             return
+        content = self.state_file.read_text(encoding="utf-8")
+        if not content.strip():
+            return
         try:
-            data = json.loads(self.state_file.read_text(encoding="utf-8"))
+            data = json.loads(content)
+            if not isinstance(data, dict):
+                raise ValueError("Queue root is not a dict")
             self.queue = [MessageEnvelope.from_dict(d) for d in data.get("queue", [])]
             self.delayed_queue = [MessageEnvelope.from_dict(d) for d in data.get("delayed_queue", [])]
             self.consumed_ids = set(data.get("consumed_ids", []))
@@ -120,8 +128,14 @@ class MessageRouter:
                 if msg.id not in self.consumed_ids and not any(m.id == msg.id for m in self.queue):
                     self.queue.insert(0, msg)
             self.current_in_progress = None
-        except Exception:
-            pass
+        except Exception as e:
+            # 创建只读 .quarantine 隔离副本，不覆盖原文件
+            quarantine_file = self.state_file.with_name(f"{self.state_file.stem}_{int(time.time())}.quarantine")
+            try:
+                quarantine_file.write_text(content, encoding="utf-8")
+            except Exception:
+                pass
+            raise QueueCorruptedError(f"QUEUE_CORRUPTED: Failed to parse queue state file '{self.state_file}': {e}. Quarantined to '{quarantine_file}'.") from e
 
     def create_message(
         self,
@@ -144,6 +158,19 @@ class MessageRouter:
             source_type=source_type,
             is_feedback=is_feedback,
         )
+
+    def send_message(
+        self,
+        sender: str,
+        recipient: str,
+        content: str,
+        hop: int = 1,
+        round_num: int = 1,
+    ) -> str:
+        """便捷投递单条消息入队，返回生成的 message_id."""
+        msg = self.create_message(sender, recipient, content, hop, round_num)
+        self.enqueue([msg])
+        return msg.id
 
     def route_response(
         self,

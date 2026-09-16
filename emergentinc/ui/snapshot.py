@@ -74,13 +74,13 @@ def restore_snapshot(snapshot_dir: PathLike, live_dir: PathLike) -> None:
     if not src_dir.exists():
         raise FileNotFoundError(f"Snapshot directory not found: {snapshot_dir}")
 
-    # 1. 采用 V9 SnapshotManager 安全恢复 pixels, world_state 与 environment (绝不恢复已消费 energy)
+    # 1. 采用 V9 SnapshotManager 安全恢复 pixels, world_state 与 environment (精确对账未来元胞，绝不恢复已消费 energy)
     from emergentinc.engine.persistence import SnapshotManager
     SnapshotManager.safe_restore_snapshot(src_dir, live)
 
-    # 2. 恢复其他白名单附加目录 (如历史 market, external_requests 等)
+    # 2. 恢复其他白名单附加目录 (外部事实如 external_requests/transactions 不可逆覆盖回旧状态)
     for d_name in SNAPSHOT_DIRS:
-        if d_name == 'pixels':
+        if d_name in ('pixels', 'external_requests', 'external_transactions', 'external_events'):
             continue
         src = src_dir / d_name
         dst = live / d_name

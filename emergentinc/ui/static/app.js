@@ -107,11 +107,21 @@ function sendQuickCommand(cmd) {
 
 async function startRun(rounds, cmdText) {
   try {
-    appendConsole(`发起演化指令: 推进 ${rounds} 轮...`, 'info');
+    const runBudgetInput = document.getElementById('input-run-budget');
+    const globalBudgetInput = document.getElementById('input-global-budget');
+    const run_budget_tokens = runBudgetInput ? (parseInt(runBudgetInput.value, 10) || 100000) : 100000;
+    const global_budget_tokens = globalBudgetInput ? (parseInt(globalBudgetInput.value, 10) || 1000000) : 1000000;
+
+    appendConsole(`发起演化指令: 推进 ${rounds} 轮 (Run预算: ${run_budget_tokens.toLocaleString()}, 全局: ${global_budget_tokens.toLocaleString()})...`, 'info');
     const res = await fetch('/api/run/start', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ rounds, command: cmdText })
+      body: JSON.stringify({
+        rounds,
+        command: cmdText,
+        run_budget_tokens,
+        global_budget_tokens
+      })
     });
     if (!res.ok) {
       const err = await res.json();
@@ -240,6 +250,51 @@ async function refreshLoops() {
   } catch (e) {}
 }
 
+async function refreshAuditStatus() {
+  try {
+    const res = await fetch('/api/audit/workspace');
+    if (!res.ok) return;
+    const audit = await res.json();
+
+    const healthEl = document.getElementById('metric-system-health');
+    const runRemainingEl = document.getElementById('metric-run-remaining');
+    const recoveryAlert = document.getElementById('recovery-alert-container');
+    const recoveryBody = document.getElementById('recovery-alert-body');
+
+    if (audit.budget_state) {
+      const rRem = audit.budget_state.run_remaining_tokens;
+      if (runRemainingEl) {
+        runRemainingEl.textContent = (rRem !== undefined && rRem !== null) ? Number(rRem).toLocaleString() : '-';
+      }
+    }
+
+    if (!audit.allowed_to_start || audit.recovery_required) {
+      if (healthEl) {
+        healthEl.textContent = 'BLOCKED';
+        healthEl.style.color = '#fc8181';
+      }
+      if (recoveryAlert && recoveryBody) {
+        recoveryAlert.style.display = 'block';
+        let msg = `<b>系统可靠性审计未通过，启动已拦截：</b><br/>`;
+        if (audit.block_reasons && audit.block_reasons.length > 0) {
+          msg += audit.block_reasons.map(r => `• ${r}`).join('<br/>');
+        } else {
+          msg += `• 存在未解决预留、未知调用或账本差异，请执行恢复。`;
+        }
+        recoveryBody.innerHTML = msg;
+      }
+    } else {
+      if (healthEl) {
+        healthEl.textContent = 'HEALTHY';
+        healthEl.style.color = '#48bb78';
+      }
+      if (recoveryAlert) {
+        recoveryAlert.style.display = 'none';
+      }
+    }
+  } catch (e) {}
+}
+
 function startPolling() {
   if (isPolling) return;
   isPolling = true;
@@ -247,6 +302,7 @@ function startPolling() {
   const poll = async () => {
     await refreshWorld();
     await refreshRunStatus();
+    await refreshAuditStatus();
 
     const interval = (currentRunStatus && currentRunStatus.running) ? 600 : 1500;
     setTimeout(poll, interval);

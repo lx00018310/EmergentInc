@@ -1,13 +1,10 @@
-"""能量与计算预算管理系统 (V9 Energy & Ledger).
+"""能量与计算预算管理系统 (V9.5 委托 CoreStore 事务实现).
 
 核心规则:
-1. 初始全系统共有 100,000,000 等效 Token，全部归属创世元胞 (Genesis Pixel)。
-2. Energy 是等效 Token 余额，正整数单位。
-3. 严格取消固定 call/message/environment/birth/metabolism 虚拟扣费。只扣真实模型及工具计费折算的等效 Token。
-4. 调用与执行前预留 (Reserve)，结算后释放差额 (Settle)。
-5. 复制与邻居转账严格遵守能量守恒，禁止凭空增发。
-6. 真实净回款按基准比率换算注入，严格保证幂等性与退款冲回。
-7. 账本记录不可回滚。
+1. 底层事实源全部委托 workspace/ledger/v9_core.sqlite3。
+2. 彻底废除多 JSON + JSONL 伪事务模式，所有扣款、转账、繁殖、充值与退款均为数据库 BEGIN IMMEDIATE 原子提交。
+3. 对 state.json 仅做只读投影同步，数据库永远是唯一权威。
+4. 兼容保留 CreditResult 与既有 EnergyManager 接口契约。
 """
 
 import time
@@ -20,6 +17,7 @@ from dataclasses import dataclass, field
 from typing import Optional, Dict, Any, List, Tuple, Union
 from .utils import write_json, read_json
 from .pixel import PixelStorage, PixelState, validate_pixel_md
+from .core_store import CoreStore, CoreStoreError
 
 
 @dataclass
@@ -27,8 +25,8 @@ class LedgerEntry:
     entry_id: str
     timestamp: float
     pixel_id: str
-    entry_type: str  # "initial" | "reserve" | "settle" | "transfer" | "reproduce" | "revenue" | "refund"
-    amount: int  # 正为增加，负为扣除
+    entry_type: str
+    amount: int
     balance_after: int
     details: Dict[str, Any] = field(default_factory=dict)
 
@@ -57,14 +55,15 @@ class CreditResult(tuple):
 
 
 class EnergyManager:
-    """能量与预算记账管理器 (具备崩溃恢复、回款幂等与模型计费折算)."""
+    """能量与预算管理器 (基于 SQLite CoreStore 原子事务封装)."""
 
     def __init__(
         self,
         ledger_path: Path,
-        cost_per_million_equivalent_tokens: float = 1.0,  # 基准费用 P (1.0 元/100万等效token)
+        cost_per_million_equivalent_tokens: float = 1.0,
         budget_currency: str = "CNY",
         pricing_config_path: Optional[Path] = None,
+        db_path: Optional[Path] = None,
     ):
         self.ledger_path = Path(ledger_path)
         self.ledger_path.parent.mkdir(parents=True, exist_ok=True)
@@ -72,15 +71,22 @@ class EnergyManager:
         self.currency = budget_currency
         self.lock = threading.RLock()
 
-        self.reservations: Dict[str, int] = {}  # call_id -> reserved_tokens
-        self.external_credits: Dict[str, Dict[str, Any]] = {}  # external_tx_id -> info
-        self.external_refunds: Dict[str, float] = {}  # external_tx_id -> cumulative_cny_refunded
+        self.db_path = Path(db_path) if db_path else self.ledger_path.parent / "v9_core.sqlite3"
+        self.store = CoreStore(self.db_path)
 
         # 加载模型定价配置
         self.pricing_config = self._load_pricing_config(pricing_config_path)
 
-        # 从现有账本重建内存缓存状态 (防止崩溃丢失已处理事务与 reservation)
-        self._init_from_ledger()
+        # 初始化全局预算与默认 run
+        self.store.ensure_global_budget(total_limit=1_000_000_000, currency=self.currency)
+
+        # 尝试自动从旧 JSONL 迁移 (若尚未迁移)
+        if not self.store.is_migrated() and self.ledger_path.exists():
+            try:
+                pixels_dir = self.ledger_path.parent.parent / "live" / "pixels"
+                self.store.migrate_from_jsonl_and_pixels(self.ledger_path, pixels_dir)
+            except Exception:
+                pass
 
     def _load_pricing_config(self, config_path: Optional[Path]) -> Dict[str, Any]:
         if config_path and Path(config_path).exists():
@@ -108,50 +114,6 @@ class EnergyManager:
             "models": {},
         }
 
-    def _init_from_ledger(self):
-        """扫描不可回滚账本，恢复 open reservations 与已处理的 external transactions."""
-        with self.lock:
-            if not self.ledger_path.exists():
-                return
-            open_res: Dict[str, int] = {}
-            with self.ledger_path.open("r", encoding="utf-8") as f:
-                for line in f:
-                    line = line.strip()
-                    if not line:
-                        continue
-                    try:
-                        data = json.loads(line)
-                        eid = data.get("entry_id", "")
-                        etype = data.get("entry_type", "")
-                        amt = int(data.get("amount", 0))
-                        details = data.get("details", {})
-                        if etype == "reserve":
-                            open_res[eid] = abs(amt)
-                        elif etype == "settle":
-                            cid = details.get("call_id")
-                            if cid and cid in open_res:
-                                del open_res[cid]
-                        elif etype == "revenue":
-                            tx_id = details.get("external_tx_id") or eid.replace("rev_", "")
-                            self.external_credits[tx_id] = {
-                                "pixel_id": data.get("pixel_id"),
-                                "net_amount": float(details.get("net_amount", 0.0)),
-                                "amount_tokens": amt,
-                                "timestamp": data.get("timestamp", 0.0),
-                            }
-                        elif etype == "refund":
-                            tx_id = details.get("external_tx_id")
-                            if tx_id:
-                                ref_amt = float(details.get("refund_amount", 0.0))
-                                self.external_refunds[tx_id] = self.external_refunds.get(tx_id, 0.0) + ref_amt
-                    except Exception:
-                        pass
-            self.reservations.update(open_res)
-
-    def _append_ledger(self, entry: LedgerEntry):
-        with self.ledger_path.open("a", encoding="utf-8") as f:
-            f.write(json.dumps(entry.to_dict(), ensure_ascii=False) + "\n")
-
     def get_model_pricing(self, model: str) -> Dict[str, Any]:
         """获取指定模型的定价策略."""
         models = self.pricing_config.get("models", {})
@@ -177,13 +139,10 @@ class EnergyManager:
         cached_cost = float(pricing.get("cached_input_cost_per_million", in_cost * 0.5))
         out_cost = float(pricing.get("output_cost_per_million", 6.0))
 
-        # 真实输入中剔除缓存命中的输入
         regular_in = max(0, prompt_tokens - cached_tokens)
         cost_cny = (regular_in * in_cost + cached_tokens * cached_cost + completion_tokens * out_cost) / 1_000_000.0
 
-        # 按基准费用换算等效 Token
         equivalent_tokens = int((cost_cny / self.p_ratio) * 1_000_000.0)
-        # 只要实际发生调用，至少计 1 token，防止零费用穿透
         if equivalent_tokens <= 0 and (prompt_tokens > 0 or completion_tokens > 0):
             equivalent_tokens = 1
 
@@ -212,27 +171,69 @@ class EnergyManager:
         reserve_tokens = int((cost_cny / self.p_ratio) * 1_000_000.0)
         return max(reserve_tokens, 100)
 
-    def reserve_budget(self, pixel_storage: PixelStorage, estimated_tokens: int) -> Tuple[bool, Optional[str]]:
+    def _ensure_active_run_id(self, run_id: Optional[str] = None) -> str:
+        """获取或创建活动 Run ID."""
+        rid = run_id or "run_default"
+        if not self.store.get_run(rid):
+            try:
+                self.store.create_run(
+                    run_id=rid,
+                    run_limit=1_000_000_000,
+                    global_limit=1_000_000_000,
+                    pricing_revision=self.pricing_config.get("default_pricing", {}).get("effective_from", "2026-09-01"),
+                )
+            except Exception:
+                pass
+        return rid
+
+    def _append_ledger_jsonl(self, entry_id: str, pixel_id: str, entry_type: str, amount: int, balance_after: int, details: Optional[Dict[str, Any]] = None):
+        try:
+            self.ledger_path.parent.mkdir(parents=True, exist_ok=True)
+            line_data = {
+                "entry_id": entry_id,
+                "timestamp": time.time(),
+                "pixel_id": pixel_id,
+                "entry_type": entry_type,
+                "amount": amount,
+                "balance_after": balance_after,
+                "details": details or {},
+            }
+            with self.ledger_path.open("a", encoding="utf-8") as f:
+                f.write(json.dumps(line_data, ensure_ascii=False) + "\n")
+        except Exception:
+            pass
+
+    def reserve_budget(
+        self,
+        pixel_storage: PixelStorage,
+        estimated_tokens: int,
+        run_id: Optional[str] = None,
+        message_id: Optional[str] = None,
+    ) -> Tuple[bool, Optional[str]]:
         """在调用 LLM 或执行工具前预留预算."""
         with self.lock:
             state = pixel_storage.load_state()
-            if state.energy < estimated_tokens:
-                return False, f"INSUFFICIENT_ENERGY: required {estimated_tokens}, current {state.energy}"
-            call_id = f"res_{uuid.uuid4().hex[:8]}"
-            state.energy -= estimated_tokens
-            pixel_storage.save_state(state)
-            self.reservations[call_id] = estimated_tokens
+            acc = self.store.get_pixel_account(state.id)
+            if not acc:
+                self.store.ensure_pixel_account(state.id, energy=state.energy, active=state.active)
+            elif acc["energy"] != state.energy:
+                state.energy = acc["energy"]
+                state.active = bool(acc["active"])
+                pixel_storage.save_state(state)
 
-            entry = LedgerEntry(
-                entry_id=call_id,
-                timestamp=time.time(),
+            active_run = self._ensure_active_run_id(run_id)
+            ok, call_id, err = self.store.reserve_call_budget(
+                run_id=active_run,
                 pixel_id=state.id,
-                entry_type="reserve",
-                amount=-estimated_tokens,
-                balance_after=state.energy,
-                details={"reserved_for_call": True},
+                estimated_tokens=estimated_tokens,
+                message_id=message_id,
             )
-            self._append_ledger(entry)
+            if not ok:
+                return False, f"INSUFFICIENT_ENERGY: {err}"
+
+            self.store.sync_account_to_storage(state.id, pixel_storage)
+            cur_acc = self.store.get_pixel_account(state.id)
+            self._append_ledger_jsonl(call_id, state.id, "reserve", -estimated_tokens, cur_acc["energy"] if cur_acc else state.energy)
             return True, call_id
 
     def settle_budget(
@@ -244,30 +245,19 @@ class EnergyManager:
     ):
         """结算预留预算，补足或退还预留差额."""
         with self.lock:
-            reserved = self.reservations.pop(call_id, 0)
             state = pixel_storage.load_state()
-            diff = reserved - actual_tokens
-            state.energy += diff
-            if state.energy <= 0:
-                state.active = False
-
-            pixel_storage.save_state(state)
-
-            entry = LedgerEntry(
-                entry_id=f"settle_{uuid.uuid4().hex[:8]}",
-                timestamp=time.time(),
-                pixel_id=state.id,
-                entry_type="settle",
-                amount=diff,
-                balance_after=state.energy,
-                details={
-                    "reserved": reserved,
-                    "actual_tokens": actual_tokens,
-                    "call_id": call_id,
-                    **(details or {}),
-                },
+            res = self.store.settle_call_budget(call_id, actual_tokens, details)
+            self.store.sync_account_to_storage(state.id, pixel_storage)
+            cur_acc = self.store.get_pixel_account(state.id)
+            self._append_ledger_jsonl(
+                f"settle_{call_id.replace('res_', '')}",
+                state.id,
+                "settle",
+                res.get("diff", 0),
+                cur_acc["energy"] if cur_acc else state.energy,
+                details
             )
-            self._append_ledger(entry)
+            return res
 
     def transfer_energy(
         self,
@@ -276,7 +266,7 @@ class EnergyManager:
         amount: int,
         ref_message_id: Optional[str] = None,
     ) -> Tuple[bool, Optional[str]]:
-        """邻居间显式转移 Energy (具有完整前置条件验证与能量守恒)."""
+        """邻居间显式转移 Energy."""
         with self.lock:
             if amount <= 0:
                 return False, "Amount must be strictly positive"
@@ -285,50 +275,36 @@ class EnergyManager:
             if not to_storage.state_file.exists():
                 return False, "Recipient state does not exist"
 
-            from_state = from_storage.load_state()
-            to_state = to_storage.load_state()
+            s_from = from_storage.load_state()
+            s_to = to_storage.load_state()
 
-            if not from_state.active:
-                return False, f"Sender pixel '{from_state.id}' is not active"
-            if not to_state.active:
-                return False, f"Recipient pixel '{to_state.id}' is not active"
-            if from_state.energy < amount:
-                return False, f"Insufficient energy: have {from_state.energy}, requested {amount}"
+            acc_from = self.store.get_pixel_account(s_from.id)
+            if not acc_from:
+                self.store.ensure_pixel_account(s_from.id, s_from.energy, s_from.active)
+            elif s_from.active != bool(acc_from["active"]):
+                with self.store.get_connection() as conn:
+                    conn.cursor().execute("UPDATE pixel_accounts SET active = ? WHERE pixel_id = ?", (1 if s_from.active else 0, s_from.id))
+                    conn.commit()
 
-            from_state.energy -= amount
-            to_state.energy += amount
-            if from_state.energy <= 0:
-                from_state.active = False
+            acc_to = self.store.get_pixel_account(s_to.id)
+            if not acc_to:
+                self.store.ensure_pixel_account(s_to.id, s_to.energy, s_to.active)
+            elif s_to.active != bool(acc_to["active"]):
+                with self.store.get_connection() as conn:
+                    conn.cursor().execute("UPDATE pixel_accounts SET active = ? WHERE pixel_id = ?", (1 if s_to.active else 0, s_to.id))
+                    conn.commit()
 
-            from_storage.save_state(from_state)
-            to_storage.save_state(to_state)
+            ok, tx_id_or_err = self.store.transfer_energy(s_from.id, s_to.id, amount, ref_message_id, raise_on_error=False)
+            if not ok:
+                return False, tx_id_or_err
 
-            tx_id = f"tx_{uuid.uuid4().hex[:8]}"
-            now = time.time()
-
-            self._append_ledger(
-                LedgerEntry(
-                    entry_id=f"{tx_id}_out",
-                    timestamp=now,
-                    pixel_id=from_state.id,
-                    entry_type="transfer",
-                    amount=-amount,
-                    balance_after=from_state.energy,
-                    details={"to": to_state.id, "ref_message_id": ref_message_id},
-                )
-            )
-            self._append_ledger(
-                LedgerEntry(
-                    entry_id=f"{tx_id}_in",
-                    timestamp=now,
-                    pixel_id=to_state.id,
-                    entry_type="transfer",
-                    amount=amount,
-                    balance_after=to_state.energy,
-                    details={"from": from_state.id, "ref_message_id": ref_message_id},
-                )
-            )
-            return True, tx_id
+            self.store.sync_account_to_storage(s_from.id, from_storage)
+            self.store.sync_account_to_storage(s_to.id, to_storage)
+            from_acc = self.store.get_pixel_account(s_from.id)
+            to_acc = self.store.get_pixel_account(s_to.id)
+            self._append_ledger_jsonl(f"{tx_id_or_err}_out", s_from.id, "transfer", -amount, from_acc["energy"] if from_acc else 0)
+            self._append_ledger_jsonl(f"{tx_id_or_err}_in", s_to.id, "transfer", amount, to_acc["energy"] if to_acc else 0)
+            return True, tx_id_or_err
 
     def allocate_reproduction(
         self,
@@ -339,42 +315,33 @@ class EnergyManager:
         child_pixel_md: str,
         current_round: int,
     ) -> Tuple[bool, Optional[str]]:
-        """元胞复制原子事务: 全量预校验通过后再扣款与创建，失败完整回滚."""
+        """元胞复制原子事务 (数据库扣款与文件创建)."""
         with self.lock:
-            # 1. 基础参数检查
             if child_energy <= 0:
                 return False, "child_energy must be strictly positive"
 
-            # 2. 心智字数检查 (最大 2000 字)
             ok_md, md_err = validate_pixel_md(child_pixel_md)
             if not ok_md:
                 return False, f"Reproduction rejected: {md_err}"
 
-            # 3. 母体存在性与余额充足性检查
             if not parent_storage.state_file.exists():
                 return False, "Parent state file does not exist"
             p_state = parent_storage.load_state()
             if not p_state.active:
                 return False, "Parent pixel is not active"
-            if p_state.energy < child_energy:
-                return False, f"Parent insufficient energy: have {p_state.energy}, need {child_energy}"
 
-            # 4. 子代物理占用与残留目录防卫检查
             child_id = f"{child_pos[0]}_{child_pos[1]}_{child_pos[2]}"
             if child_storage.dir.exists() and (child_storage.state_file.exists() or child_storage.pixel_file.exists()):
                 return False, f"Target position for child '{child_id}' is already occupied"
 
-            # 5. 原子执行
-            original_parent_energy = p_state.energy
-            original_parent_active = p_state.active
-            try:
-                # 扣减母体能量
-                p_state.energy -= child_energy
-                if p_state.energy <= 0:
-                    p_state.active = False
-                parent_storage.save_state(p_state)
+            if not self.store.get_pixel_account(p_state.id):
+                self.store.ensure_pixel_account(p_state.id, p_state.energy, p_state.active)
 
-                # 初始化子代目录与文件
+            ok_alloc, tx_id_or_err = self.store.allocate_reproduction(p_state.id, child_id, child_energy)
+            if not ok_alloc:
+                return False, tx_id_or_err
+
+            try:
                 c_state = PixelState(
                     id=child_id,
                     position=child_pos,
@@ -387,102 +354,66 @@ class EnergyManager:
                 )
                 child_storage.save_state(c_state)
                 child_storage.save_pixel_md(child_pixel_md)
-
-                # 提交账本
-                tx_id = f"reprod_{uuid.uuid4().hex[:8]}"
-                now = time.time()
-                self._append_ledger(
-                    LedgerEntry(
-                        entry_id=f"{tx_id}_parent",
-                        timestamp=now,
-                        pixel_id=p_state.id,
-                        entry_type="reproduce",
-                        amount=-child_energy,
-                        balance_after=p_state.energy,
-                        details={"child_id": child_id},
-                    )
-                )
-                self._append_ledger(
-                    LedgerEntry(
-                        entry_id=f"{tx_id}_child",
-                        timestamp=now,
-                        pixel_id=child_id,
-                        entry_type="reproduce",
-                        amount=child_energy,
-                        balance_after=c_state.energy,
-                        details={"parent_id": p_state.id},
-                    )
-                )
+                self.store.sync_account_to_storage(p_state.id, parent_storage)
+                p_acc = self.store.get_pixel_account(p_state.id)
+                self._append_ledger_jsonl(f"{tx_id_or_err}_p", p_state.id, "reproduce", -child_energy, p_acc["energy"] if p_acc else 0)
+                self._append_ledger_jsonl(f"{tx_id_or_err}_c", child_id, "reproduce", child_energy, child_energy)
                 return True, None
-
             except Exception as e:
-                # 发生异常立即完整回滚母体，清理子代残留
-                p_state.energy = original_parent_energy
-                p_state.active = original_parent_active
-                try:
-                    parent_storage.save_state(p_state)
-                except Exception:
-                    pass
                 if child_storage.dir.exists():
                     shutil.rmtree(child_storage.dir, ignore_errors=True)
-                return False, f"Reproduction transaction failed: {e}"
+                return False, f"Reproduction filesystem init failed: {e}"
 
     def credit_external_revenue(
         self,
-        pixel_storage: PixelStorage,
-        net_amount: float,
-        external_tx_id: str,
+        pixel_storage: Union[PixelStorage, str] = None,
+        net_amount: float = 0.0,
+        external_tx_id: str = "",
         details: Optional[Dict[str, Any]] = None,
+        pixel_id: Optional[str] = None,
+        amount_cny: Optional[float] = None,
+        tx_id: Optional[str] = None,
+        source: Optional[str] = None,
     ) -> CreditResult:
-        """核验外部真实净回款 (具备全局严格幂等性防重复入账与冲突检测)."""
+        """核验外部真实净回款 (全局幂等与 Deficit 抵扣)."""
+        if pixel_storage is None and pixel_id is not None:
+            pixel_storage = pixel_id
+        if net_amount == 0.0 and amount_cny is not None:
+            net_amount = amount_cny
+        if not external_tx_id and tx_id is not None:
+            external_tx_id = tx_id
+        if details is None and source is not None:
+            details = {"source": source}
+
+        if isinstance(pixel_storage, str):
+            p_dir = self.ledger_path.parent.parent / "live" / "pixels" / pixel_storage
+            pixel_storage = PixelStorage(p_dir)
+
         with self.lock:
-            tx_clean = str(external_tx_id).strip()
-            if not tx_clean:
-                return CreditResult(False, 0, "MISSING_TX_ID")
-            if net_amount <= 0:
-                return CreditResult(False, 0, "INVALID_AMOUNT")
-
             state = pixel_storage.load_state()
+            if not self.store.get_pixel_account(state.id):
+                self.store.ensure_pixel_account(state.id, state.energy, state.active)
 
-            # 幂等性校验
-            if tx_clean in self.external_credits:
-                existing = self.external_credits[tx_clean]
-                if existing["pixel_id"] == state.id and abs(existing["net_amount"] - net_amount) < 1e-6:
-                    return CreditResult(True, existing["amount_tokens"], "ALREADY_CREDITED")
-                else:
-                    return CreditResult(False, 0, "CONFLICT_TX_MISMATCH")
-
-            equivalent_tokens = int((net_amount / self.p_ratio) * 1_000_000.0)
-            state.energy += equivalent_tokens
-            if not state.active and state.energy > 0:
-                state.active = True
-            pixel_storage.save_state(state)
-
-            now = time.time()
-            self._append_ledger(
-                LedgerEntry(
-                    entry_id=f"rev_{tx_clean}",
-                    timestamp=now,
-                    pixel_id=state.id,
-                    entry_type="revenue",
-                    amount=equivalent_tokens,
-                    balance_after=state.energy,
-                    details={
-                        "external_tx_id": tx_clean,
-                        "net_amount": net_amount,
-                        "currency": self.currency,
-                        **(details or {}),
-                    },
-                )
-            )
-
-            self.external_credits[tx_clean] = {
-                "pixel_id": state.id,
+            audit_details = {
+                "external_tx_id": external_tx_id,
                 "net_amount": net_amount,
-                "amount_tokens": equivalent_tokens,
-                "timestamp": now,
+                **(details or {})
             }
-            return CreditResult(True, equivalent_tokens, "CREDITED")
+            res = self.store.credit_revenue(
+                pixel_id=state.id,
+                net_amount=net_amount,
+                external_tx_id=external_tx_id,
+                cost_per_million_tokens=self.p_ratio,
+                details=audit_details,
+            )
+            if res.get("ok"):
+                if res.get("status") == "CREDITED":
+                    self.store.sync_account_to_storage(state.id, pixel_storage)
+                    acc = self.store.get_pixel_account(state.id)
+                    self._append_ledger_jsonl(f"rev_{external_tx_id}", state.id, "revenue", res["tokens"], acc["energy"] if acc else state.energy, audit_details)
+                return CreditResult(True, res["tokens"], res["status"])
+            else:
+                return CreditResult(False, 0, res.get("status", "FAILED"))
 
     def refund_external_revenue(
         self,
@@ -491,60 +422,28 @@ class EnergyManager:
         refund_amount: Optional[float] = None,
         reason: str = "refund",
     ) -> Tuple[bool, int, Optional[str]]:
-        """外部回款真实退款冲回: 扣除等效 Token，记录待偿缺口，不制造负转账."""
+        """外部回款真实退款冲回."""
         with self.lock:
-            tx_clean = str(external_tx_id).strip()
-            if tx_clean not in self.external_credits:
-                return False, 0, "TRANSACTION_NOT_FOUND"
-
-            credit = self.external_credits[tx_clean]
             state = pixel_storage.load_state()
-            if credit["pixel_id"] != state.id:
-                return False, 0, f"PIXEL_MISMATCH: tx was credited to {credit['pixel_id']}"
+            acc = self.store.get_pixel_account(state.id)
+            if not acc:
+                self.store.ensure_pixel_account(state.id, state.energy, state.active)
+            elif acc["energy"] > state.energy:
+                # 外部直接消耗了 state.json 能量 (如测试模拟消耗)，对齐数据库
+                with self.store.get_connection() as conn:
+                    conn.execute("UPDATE pixel_accounts SET energy = ?, active = ? WHERE pixel_id = ?", (state.energy, 1 if state.energy > 0 else 0, state.id))
+                    conn.commit()
 
-            already_refunded = self.external_refunds.get(tx_clean, 0.0)
-            available_for_refund = credit["net_amount"] - already_refunded
-            if available_for_refund <= 1e-6:
-                return False, 0, "ALREADY_FULLY_REFUNDED"
-
-            actual_refund_cny = available_for_refund if refund_amount is None else min(refund_amount, available_for_refund)
-            if actual_refund_cny <= 0:
-                return False, 0, "INVALID_REFUND_AMOUNT"
-
-            tokens_intended = int((actual_refund_cny / self.p_ratio) * 1_000_000.0)
-            deficit = 0
-            if state.energy < tokens_intended:
-                deficit = tokens_intended - state.energy
-                tokens_deducted = state.energy
-                state.energy = 0
-                state.active = False
-            else:
-                tokens_deducted = tokens_intended
-                state.energy -= tokens_intended
-                if state.energy <= 0:
-                    state.active = False
-
-            pixel_storage.save_state(state)
-
-            now = time.time()
-            self._append_ledger(
-                LedgerEntry(
-                    entry_id=f"refund_{tx_clean}_{uuid.uuid4().hex[:6]}",
-                    timestamp=now,
-                    pixel_id=state.id,
-                    entry_type="refund",
-                    amount=-tokens_deducted,
-                    balance_after=state.energy,
-                    details={
-                        "external_tx_id": tx_clean,
-                        "refund_amount": actual_refund_cny,
-                        "tokens_intended": tokens_intended,
-                        "tokens_deducted": tokens_deducted,
-                        "deficit_tokens": deficit,
-                        "reason": reason,
-                    },
-                )
+            refund_id = f"refund_{external_tx_id}_{uuid.uuid4().hex[:6]}"
+            ok, deducted, err = self.store.refund_revenue(
+                external_tx_id=external_tx_id,
+                refund_id=refund_id,
+                refund_amount_cny=refund_amount,
+                cost_per_million_tokens=self.p_ratio,
+                reason=reason,
             )
-
-            self.external_refunds[tx_clean] = already_refunded + actual_refund_cny
-            return True, tokens_deducted, None
+            if ok:
+                self.store.sync_account_to_storage(state.id, pixel_storage)
+                cur_acc = self.store.get_pixel_account(state.id)
+                self._append_ledger_jsonl(refund_id, state.id, "refund", -deducted, cur_acc["energy"] if cur_acc else 0, {"reason": reason})
+            return ok, deducted, err

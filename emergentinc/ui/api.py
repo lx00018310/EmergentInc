@@ -1,7 +1,7 @@
 from pathlib import Path
 from typing import Dict, Any, Optional, List, Union
 from fastapi import APIRouter, HTTPException, Query, Body
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from emergentinc.paths import ProjectPaths, get_paths
 from emergentinc.engine.storage import Storage
@@ -15,6 +15,11 @@ from .owner_bridge import OwnerBridge
 class RunStartRequest(BaseModel):
     rounds: int = 1
     command: str = ""
+    run_budget_tokens: int = Field(..., gt=0, description="Run budget in tokens, must be positive integer")
+    global_budget_tokens: int = Field(..., gt=0, description="Global budget in tokens, must be positive integer")
+
+class GenesisPromptUpdateRequest(BaseModel):
+    content: str
 
 class BranchRequest(BaseModel):
     branch_name: str
@@ -69,7 +74,12 @@ def init_api(base_dir: Optional[Union[str, Path, ProjectPaths]] = None) -> APIRo
     @router.post("/run/start")
     def start_run(req: RunStartRequest):
         try:
-            return run_controller.start(rounds=req.rounds, command_text=req.command)
+            return run_controller.start(
+                rounds=req.rounds,
+                command_text=req.command,
+                run_budget_tokens=req.run_budget_tokens,
+                global_budget_tokens=req.global_budget_tokens,
+            )
         except RuntimeError as e:
             raise HTTPException(status_code=409, detail=str(e))
         except ValueError as e:
@@ -253,15 +263,23 @@ def init_api(base_dir: Optional[Union[str, Path, ProjectPaths]] = None) -> APIRo
         return genesis_mgr.get_prompt()
 
     @router.put("/genesis-prompt")
-    def update_genesis_prompt(req: Dict[str, Any] = Body(...)):
+    def update_genesis_prompt(req: GenesisPromptUpdateRequest):
         if run_controller.status()['running']:
             raise HTTPException(status_code=409, detail="Cannot update genesis prompt while run is in progress.")
-        raw_content = str(req.get("content", ""))
+        if not isinstance(req.content, str):
+            raise HTTPException(status_code=422, detail="Genesis prompt content must be a string.")
         try:
-            return genesis_mgr.update_prompt(raw_content)
+            return genesis_mgr.update_prompt(req.content)
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
+
+    @router.get("/audit/workspace")
+    def get_workspace_audit():
+        from emergentinc.engine.audit import audit_workspace
+        curr_run_id = run_controller.status().get("current_loop")
+        rep = audit_workspace(paths.workspace_root, run_id=curr_run_id)
+        return rep.to_dict()
 
     return router

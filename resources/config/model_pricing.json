@@ -31,6 +31,30 @@
       "cached_input_cost_per_million": 9.0,
       "output_cost_per_million": 72.0,
       "effective_from": "2026-09-01T00:00:00Z"
+    },
+    "gemini-3.8-flash-high": {
+      "input_cost_per_million": 0.5,
+      "cached_input_cost_per_million": 0.25,
+      "output_cost_per_million": 2.0,
+      "effective_from": "2026-09-01T00:00:00Z"
+    },
+    "gemini-1.5-flash": {
+      "input_cost_per_million": 0.5,
+      "cached_input_cost_per_million": 0.25,
+      "output_cost_per_million": 2.0,
+      "effective_from": "2026-09-01T00:00:00Z"
+    },
+    "gemini-1.5-pro": {
+      "input_cost_per_million": 2.5,
+      "cached_input_cost_per_million": 1.25,
+      "output_cost_per_million": 10.0,
+      "effective_from": "2026-09-01T00:00:00Z"
+    },
+    "gemini-2.0-flash": {
+      "input_cost_per_million": 0.5,
+      "cached_input_cost_per_million": 0.25,
+      "output_cost_per_million": 2.0,
+      "effective_from": "2026-09-01T00:00:00Z"
     }
   }
 }

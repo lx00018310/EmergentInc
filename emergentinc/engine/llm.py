@@ -155,6 +155,21 @@ def normalize_pixel_response(raw_data: Any, fallback_pixel_md: str) -> Dict[str,
     return out
 
 
+from dataclasses import dataclass
+
+@dataclass
+class PreparedPrompt:
+    system_prompt: str
+    user_content: str
+    prompt_full: str
+    prompt_hash: str
+    estimated_prompt_tokens: int
+    max_output_tokens: int
+    model_name: str
+    pricing_revision: str
+    payload: Dict[str, Any]
+
+
 class CognitiveIsolationViolation(RuntimeError):
     """违反认知隔离原则时抛出的异常."""
     pass
@@ -162,6 +177,11 @@ class CognitiveIsolationViolation(RuntimeError):
 
 class LLMInfrastructureError(RuntimeError):
     """底层基础设施、网络、代理或鉴权不可用时抛出的硬中断异常 (Fail Fast)."""
+    pass
+
+
+class PricingOrTokenizerNotConfiguredError(RuntimeError):
+    """未配置模型定价或没有可用 Token 估算器时抛出的异常 (Fail Closed)."""
     pass
 
 
@@ -248,19 +268,14 @@ class V9LLMClient:
         else:
             self.client = None
 
-    def step(
+    def prepare_prompt(
         self,
         state_dict: Dict[str, Any],
         pixel_md: str,
         message_md: str,
         extra_check: bool = True,
-    ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
-        """唯一模型决策入口.
-
-        严格检查并构造 payload:
-        payload 仅包含: state, pixel_md, message_md
-        """
-        # 1. 认知隔离检查
+    ) -> PreparedPrompt:
+        """无副作用提取并验证发送给模型的完整 prompt，计算精确 Token 估值与定价版本."""
         payload = {
             "state": state_dict,
             "pixel_md": pixel_md,
@@ -269,7 +284,6 @@ class V9LLMClient:
         if extra_check and len(payload.keys()) != 3:
             raise CognitiveIsolationViolation("Context payload must strictly contain exactly 3 keys: state, pixel_md, message_md")
 
-        # 组装 effective system prompt (若创世提示词非空则注入 [GENESIS_CONTEXT])
         effective_system_prompt = self.system_prompt
         if self.genesis_prompt and self.genesis_prompt.strip():
             effective_system_prompt = f"{self.system_prompt}\n\n[GENESIS_CONTEXT]\n{self.genesis_prompt.strip()}"
@@ -277,6 +291,65 @@ class V9LLMClient:
         user_content = json.dumps(payload, ensure_ascii=False, indent=2)
         prompt_full = f"{effective_system_prompt}\n\n{user_content}"
         prompt_hash = sha256_text(prompt_full)
+
+        # 检查模型与定价
+        model = "mock" if self.mock_handler is not None else self.model_name
+        pricing_file = self.paths.config_dir / "model_pricing.json"
+        if not pricing_file.exists():
+            pricing_file = self.paths.project_root / "resources" / "config" / "model_pricing.json"
+
+        pricing_cfg = read_json(pricing_file) if pricing_file.exists() else {}
+        pricing_models = pricing_cfg.get("models", {})
+
+        # 如果不是 mock，且模型没有配置 pricing，不得落入 default
+        if self.mock_handler is None:
+            if model not in pricing_models:
+                raise PricingOrTokenizerNotConfiguredError(
+                    f"PRICING_OR_TOKENIZER_NOT_CONFIGURED: Model '{model}' has no configured pricing in model_pricing.json"
+                )
+
+        model_spec = pricing_models.get(model, pricing_models.get("default", {}))
+        pricing_revision = str(model_spec.get("effective_from", "2026-09-01T00:00:00Z"))
+
+        # Token 估值: 覆盖基础 system prompt、Genesis、完整 state JSON、pixel.md、message.md 和最大输出
+        char_count = len(prompt_full)
+        estimated_prompt_tokens = max(char_count // 2, int(char_count * 0.7)) + 64
+
+        mc = self.cfg.get("model", {})
+        max_output_tokens = int(mc.get("max_output_tokens", {}).get("decision", 2000))
+
+        return PreparedPrompt(
+            system_prompt=effective_system_prompt,
+            user_content=user_content,
+            prompt_full=prompt_full,
+            prompt_hash=prompt_hash,
+            estimated_prompt_tokens=estimated_prompt_tokens,
+            max_output_tokens=max_output_tokens,
+            model_name=model,
+            pricing_revision=pricing_revision,
+            payload=payload,
+        )
+
+    def step(
+        self,
+        state_dict: Dict[str, Any],
+        pixel_md: str,
+        message_md: str,
+        extra_check: bool = True,
+        prepared_prompt: Optional[PreparedPrompt] = None,
+    ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+        """唯一模型决策入口 (支持复用外部 PreparedPrompt)."""
+        prep = prepared_prompt or self.prepare_prompt(
+            state_dict=state_dict,
+            pixel_md=pixel_md,
+            message_md=message_md,
+            extra_check=extra_check,
+        )
+
+        payload = prep.payload
+        effective_system_prompt = prep.system_prompt
+        user_content = prep.user_content
+        prompt_hash = prep.prompt_hash
 
         # 2. 如果存在 mock_handler，优先用于测试或离线模式
         if self.mock_handler is not None:
@@ -288,11 +361,12 @@ class V9LLMClient:
                 "model": "mock",
                 "prompt_hash": prompt_hash,
                 "effective_prompt_hash": prompt_hash,
+                "pricing_revision": prep.pricing_revision,
                 "genesis_revision": self.genesis_revision,
                 "token_usage": {
-                    "prompt_tokens": len(prompt_full) // 4,
+                    "prompt_tokens": len(prep.prompt_full) // 4,
                     "completion_tokens": len(json.dumps(data)) // 4,
-                    "total_tokens": (len(prompt_full) + len(json.dumps(data))) // 4,
+                    "total_tokens": (len(prep.prompt_full) + len(json.dumps(data))) // 4,
                 },
             }
             return data, audit
@@ -304,13 +378,13 @@ class V9LLMClient:
         mc = self.cfg.get("model", {})
         try:
             r = self.client.chat.completions.create(
-                model=self.model_name,
+                model=prep.model_name,
                 messages=[
                     {"role": "system", "content": effective_system_prompt},
                     {"role": "user", "content": user_content},
                 ],
                 temperature=float(mc.get("temperature", {}).get("decision", 0.6)),
-                max_tokens=int(mc.get("max_output_tokens", {}).get("decision", 2000)),
+                max_tokens=prep.max_output_tokens,
                 response_format={"type": "json_object"},
             )
         except Exception as e:
@@ -348,9 +422,10 @@ class V9LLMClient:
 
         audit = {
             "kind": "V9_STEP",
-            "model": self.model_name,
+            "model": prep.model_name,
             "prompt_hash": prompt_hash,
             "effective_prompt_hash": prompt_hash,
+            "pricing_revision": prep.pricing_revision,
             "genesis_revision": self.genesis_revision,
             "token_usage": usage,
         }

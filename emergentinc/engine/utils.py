@@ -1,12 +1,25 @@
-import json, hashlib, random
+import json, hashlib, random, os, time, uuid
 from pathlib import Path
 
 def read_json(path):
-    return json.loads(Path(path).read_text(encoding="utf-8"))
+    p = Path(path)
+    for attempt in range(5):
+        try:
+            content = p.read_text(encoding="utf-8")
+            if content.strip():
+                return json.loads(content)
+        except (json.JSONDecodeError, PermissionError, FileNotFoundError):
+            if attempt == 4:
+                raise
+            time.sleep(0.01 * (attempt + 1))
+    return json.loads(p.read_text(encoding="utf-8"))
 
 def write_json(path, obj):
-    p=Path(path); p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(json.dumps(obj, ensure_ascii=False, indent=2)+"\n", encoding="utf-8")
+    p = Path(path)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    tmp = p.with_name(f"{p.name}.{uuid.uuid4().hex[:8]}.tmp")
+    tmp.write_text(json.dumps(obj, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    os.replace(tmp, p)
 
 def sha256_text(text):
     return hashlib.sha256(text.encode("utf-8")).hexdigest()

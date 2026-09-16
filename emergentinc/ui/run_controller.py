@@ -96,15 +96,59 @@ class RunController:
                 "last_error": self._last_error
             }
 
-    def start(self, rounds: int, command_text: str = "") -> Dict[str, Any]:
+    def _run_startup_audit(self) -> None:
+        """启动审计门: 检查损坏队列、未决 reservation 与 unknown call."""
+        queue_file = self.paths.runtime_root / "v9_message_queue.json"
+        if queue_file.exists():
+            try:
+                content = queue_file.read_text(encoding="utf-8")
+                if content.strip():
+                    data = json.loads(content)
+                    if not isinstance(data, dict):
+                        raise ValueError("Queue root is not a dict")
+            except Exception as e:
+                raise RuntimeError(f"RECOVERY_REQUIRED: Queue file corrupted: {e}")
+
+        db_path = self.paths.workspace_root / "ledger" / "v9_core.sqlite3"
+        if db_path.exists():
+            from emergentinc.engine.core_store import CoreStore
+            store = CoreStore(db_path)
+            unresolved = store.get_unresolved_reservations()
+            if unresolved:
+                raise RuntimeError(f"RECOVERY_REQUIRED: Found {len(unresolved)} open reservations")
+            unknown_calls = store.get_unknown_calls()
+            if unknown_calls:
+                raise RuntimeError(f"RECOVERY_REQUIRED: Found {len(unknown_calls)} unknown model calls requiring recovery")
+
+    def start(
+        self,
+        rounds: int,
+        command_text: str = "",
+        run_budget_tokens: Optional[int] = None,
+        global_budget_tokens: Optional[int] = None,
+    ) -> Dict[str, Any]:
         if rounds <= 0:
             raise ValueError("rounds must be greater than 0")
+
+        if run_budget_tokens is None:
+            run_budget_tokens = 100_000
+        if global_budget_tokens is None:
+            global_budget_tokens = 1_000_000
+
+        if run_budget_tokens <= 0 or global_budget_tokens <= 0:
+            raise ValueError("run_budget_tokens and global_budget_tokens must be positive integers")
 
         with self.lock:
             if self._running:
                 raise RuntimeError("Execution is already in progress.")
 
-            self._log_command(command_text, rounds)
+            # 启动审计门拦截
+            self._run_startup_audit()
+
+            self._log_command(command_text, rounds, {
+                "run_budget_tokens": run_budget_tokens,
+                "global_budget_tokens": global_budget_tokens,
+            })
 
             start_round = int(self.storage.world().get('round', 0))
             self._current_round = start_round
@@ -119,9 +163,22 @@ class RunController:
             loop_meta = self.loop_store.start_loop(command_text or f"RUN {rounds}", start_round)
             self._current_loop = loop_meta['id']
 
+            # 若使用 CoreStore，持久化当前 Run 记录
+            db_path = self.paths.workspace_root / "ledger" / "v9_core.sqlite3"
+            if db_path.exists():
+                from emergentinc.engine.core_store import CoreStore
+                store = CoreStore(db_path)
+                store.create_run(
+                    run_id=self._current_loop,
+                    run_limit=run_budget_tokens,
+                    global_limit=global_budget_tokens,
+                    loop_id=self._current_loop,
+                    start_round=start_round + 1,
+                )
+
             self._worker_thread = threading.Thread(
                 target=self._run_loop,
-                args=(rounds, self._current_loop, start_round),
+                args=(rounds, self._current_loop, start_round, run_budget_tokens, global_budget_tokens),
                 daemon=True
             )
             self._worker_thread.start()
@@ -135,7 +192,14 @@ class RunController:
                 self._log_command("STOP", 0)
             return self.status()
 
-    def _run_loop(self, rounds: int, loop_id: str, start_round: int) -> None:
+    def _run_loop(
+        self,
+        rounds: int,
+        loop_id: str,
+        start_round: int,
+        run_budget_tokens: Optional[int] = None,
+        global_budget_tokens: Optional[int] = None,
+    ) -> None:
         loop_status = "COMPLETED"
         loop_stop_reason = None
 
@@ -169,10 +233,20 @@ class RunController:
                                 loop_stop_reason = "OWNER_ACTION_REQUIRED"
                                 break
                     else:
-                        res = scheduler.run_round(stop_requested=lambda: self._stop_requested)
+                        res = scheduler.run_round(
+                            stop_requested=lambda: self._stop_requested,
+                            run_budget_tokens=run_budget_tokens,
+                            global_budget_tokens=global_budget_tokens,
+                            run_id=loop_id,
+                        )
                         with self.lock:
                             self._completed_rounds += 1
                             self._current_round = res["round"]
+
+                        if res.get("stop_reason") == "BUDGET_EXHAUSTED":
+                            loop_status = "STOPPED"
+                            loop_stop_reason = "BUDGET_EXHAUSTED"
+                            break
 
                         # 记录该轮的消息流动轨迹供 UI 画图
                         flow_records = []
@@ -224,6 +298,26 @@ class RunController:
                 status=loop_status,
                 stop_reason=loop_stop_reason
             )
+
+            db_path = self.paths.workspace_root / "ledger" / "v9_core.sqlite3"
+            if db_path.exists():
+                try:
+                    from emergentinc.engine.core_store import CoreStore
+                    store = CoreStore(db_path)
+                    store.update_run_status(
+                        run_id=loop_id,
+                        status=loop_status,
+                        stop_reason=loop_stop_reason,
+                        end_round=end_round,
+                    )
+                except Exception:
+                    pass
+
+            try:
+                from emergentinc.engine.audit import generate_run_report
+                generate_run_report(self.paths.workspace_root, loop_id)
+            except Exception:
+                pass
 
             with self.lock:
                 self._running = False

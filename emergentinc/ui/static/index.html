@@ -20,6 +20,8 @@
       <div class="metric-item"><span class="m-label">总能量(Tokens):</span> <span class="m-val" id="metric-energy">0</span></div>
       <div class="metric-item"><span class="m-label">核验净回款:</span> <span class="m-val" id="metric-revenue">¥0.0</span></div>
       <div class="metric-item"><span class="m-label">支出折算:</span> <span class="m-val" id="metric-spent">0</span></div>
+      <div class="metric-item"><span class="m-label">Run剩余:</span> <span class="m-val" id="metric-run-remaining">-</span></div>
+      <div class="metric-item"><span class="m-label">系统状态:</span> <span class="m-val" id="metric-system-health" style="color: #48bb78;">HEALTHY</span></div>
     </div>
   </header>
 
@@ -31,6 +33,17 @@
         <div class="panel-header">
           <h2>系统控制 &amp; 演化命令</h2>
           <span class="run-status-indicator" id="run-status-indicator">IDLE</span>
+        </div>
+
+        <div class="budget-input-row" style="display: flex; gap: 8px; margin-bottom: 8px; font-size: 12px; color: #a0aec0;">
+          <div style="flex: 1;">
+            <label for="input-run-budget">本轮预算 (Run Tokens):</label>
+            <input type="number" id="input-run-budget" value="100000" min="1000" step="1000" style="width: 100%; background: #1a202c; color: #fff; border: 1px solid #4a5568; border-radius: 4px; padding: 4px 6px;" />
+          </div>
+          <div style="flex: 1;">
+            <label for="input-global-budget">全局预算 (Global Tokens):</label>
+            <input type="number" id="input-global-budget" value="1000000" min="10000" step="10000" style="width: 100%; background: #1a202c; color: #fff; border: 1px solid #4a5568; border-radius: 4px; padding: 4px 6px;" />
+          </div>
         </div>
 
         <div class="command-input-group">
@@ -53,6 +66,14 @@
             <div class="alert-title" id="alert-title">⚠ 停机提醒：需 Owner 介入</div>
             <div class="alert-body" id="alert-body"></div>
             <div class="alert-actions" id="alert-actions"></div>
+          </div>
+        </div>
+
+        <!-- 崩溃/故障/赤字恢复告警框 -->
+        <div id="recovery-alert-container" class="owner-alert-container" style="display: none;">
+          <div class="alert-box" style="border-left: 4px solid #e53e3e; background: #2d3748; padding: 10px; margin-bottom: 8px; border-radius: 4px;">
+            <div class="alert-title" id="recovery-alert-title" style="color: #fc8181; font-weight: bold; margin-bottom: 4px;">🚨 启动受阻：需恢复审计介入 (RECOVERY_REQUIRED)</div>
+            <div class="alert-body" id="recovery-alert-body" style="font-size: 12px; color: #e2e8f0; line-height: 1.4;"></div>
           </div>
         </div>
 
