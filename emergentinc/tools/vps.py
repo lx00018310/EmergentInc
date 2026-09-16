@@ -10,22 +10,47 @@
 """
 
 import os
+import re
 import json
 import time
 from pathlib import Path
 from contextlib import contextmanager
 from typing import Dict, Any, Tuple, Optional, Generator
 
-import paramiko
+try:
+    import paramiko
+    PARAMIKO_AVAILABLE = True
+except ImportError:
+    paramiko = None
+    PARAMIKO_AVAILABLE = False
+
 from .contracts import ToolSpec, ToolContext, ToolResult
 from .artifacts import validate_artifact_filename, get_pixel_artifacts_dir
-from .private_files import resolve_private_path
+from .private_files import resolve_private_path, is_sensitive_credential_path
+
+PROFILE_ID_REGEX = re.compile(r"^[a-zA-Z0-9_-]{1,64}$")
+
+
+def check_paramiko(operation_id: str, tool_name: str) -> Optional[ToolResult]:
+    """检查 Paramiko 依赖是否存在，不存在时优雅降级返回 DEPENDENCY_MISSING."""
+    if not PARAMIKO_AVAILABLE:
+        return ToolResult(
+            operation_id=operation_id,
+            tool=tool_name,
+            status="FAILED",
+            error_code="DEPENDENCY_MISSING",
+            error_message="Paramiko is required for VPS operations but not installed. Please install it via 'pip install paramiko'.",
+        )
+    return None
 
 
 def load_vps_profile(private_root: Path, profile_id: str) -> Tuple[bool, Optional[Dict[str, Any]], Optional[str]]:
-    """读取指定 profile 配置 (默认 owner_vps_profile.json)."""
+    """读取指定 profile 配置 (默认 owner_vps_profile.json)，防御路径逃逸与非白名单 ID."""
     pid = profile_id.strip() if profile_id else "owner_vps"
-    # 支持 profile_id="owner_vps" 映射到 owner_vps_profile.json
+    if not PROFILE_ID_REGEX.match(pid):
+        return False, None, f"INVALID_PROFILE_ID: Profile ID '{pid}' contains invalid characters. Must match ^[a-zA-Z0-9_-]{{1,64}}$."
+
+    root_resolved = private_root.resolve()
     candidates = [
         private_root / f"{pid}_profile.json",
         private_root / f"{pid}.json",
@@ -35,8 +60,14 @@ def load_vps_profile(private_root: Path, profile_id: str) -> Tuple[bool, Optiona
 
     target_file = None
     for c in candidates:
-        if c.exists() and c.is_file():
-            target_file = c
+        res_c = c.resolve()
+        try:
+            res_c.relative_to(root_resolved)
+        except ValueError:
+            return False, None, f"PATH_TRAVERSAL_FORBIDDEN: Profile '{pid}' escapes workspace/private."
+
+        if res_c.exists() and res_c.is_file():
+            target_file = res_c
             break
 
     if not target_file:
@@ -54,8 +85,11 @@ def get_ssh_client(
     context: ToolContext,
     profile_id: str,
     connect_timeout: float = 10.0,
-) -> Generator[Tuple[paramiko.SSHClient, Optional[paramiko.SFTPClient]], None, None]:
+) -> Generator[Tuple[Any, Optional[Any]], None, None]:
     """创建并管理 Paramiko SSHClient 及 SFTPClient 连接上下文."""
+    if not PARAMIKO_AVAILABLE:
+        raise RuntimeError("Paramiko is not installed.")
+
     ok, profile, err = load_vps_profile(context.private_root, profile_id)
     if not ok or profile is None:
         raise ValueError(err)
@@ -83,6 +117,11 @@ def get_ssh_client(
     pkey = None
     if key_path_str:
         key_path = (context.private_root / key_path_str).resolve()
+        try:
+            key_path.relative_to(context.private_root.resolve())
+        except ValueError:
+            raise ValueError(f"Private key path '{key_path_str}' escapes workspace/private directory.")
+
         if key_path.exists() and key_path.is_file():
             try:
                 pkey = paramiko.RSAKey.from_private_key_file(str(key_path))
@@ -131,6 +170,10 @@ def get_ssh_client(
 
 
 def handle_vps_exec(args: Dict[str, Any], context: ToolContext) -> ToolResult:
+    dep_err = check_paramiko(context.operation_id, "vps_exec")
+    if dep_err:
+        return dep_err
+
     profile_id = str(args.get("profile_id", "owner_vps")).strip()
     command = str(args.get("command", "")).strip()
     if not command:
@@ -150,7 +193,7 @@ def handle_vps_exec(args: Dict[str, Any], context: ToolContext) -> ToolResult:
 
     try:
         with get_ssh_client(context, profile_id, connect_timeout=10.0) as (ssh, _):
-            # 检查停止信号
+            # 检查命令执行前是否已触发停止信号
             if context.stop_requested and context.stop_requested():
                 return ToolResult(
                     operation_id=context.operation_id,
@@ -161,13 +204,124 @@ def handle_vps_exec(args: Dict[str, Any], context: ToolContext) -> ToolResult:
                 )
 
             stdin, stdout, stderr = ssh.exec_command(command, timeout=timeout_sec, get_pty=False)
-            exit_code = stdout.channel.recv_exit_status()
-            out_str = stdout.read().decode("utf-8", errors="replace")
-            err_str = stderr.read().decode("utf-8", errors="replace")
+            chan = stdout.channel
 
-            # 限制返回长度
+            start_time = time.time()
+            deadline = start_time + timeout_sec
+            out_chunks = []
+            err_chunks = []
+            exit_code = None
+            timed_out = False
+            stopped = False
             max_len = 8000
+
+            # 轮询流排空机制，防御输出缓冲区满导致的双端死锁，并可靠响应超时与停止信号
+            while True:
+                # 1. 检查停止信号 (已发命令中途停止)
+                if context.stop_requested and context.stop_requested():
+                    stopped = True
+                    try:
+                        chan.close()
+                    except Exception:
+                        pass
+                    break
+
+                # 2. 检查超时
+                if time.time() > deadline:
+                    timed_out = True
+                    try:
+                        chan.close()
+                    except Exception:
+                        pass
+                    break
+
+                # 3. 检查是否为真实 Channel / 支持非阻塞检查的对象
+                is_nonblocking_ready = hasattr(chan, "exit_status_ready") and isinstance(chan.exit_status_ready(), bool)
+
+                if is_nonblocking_ready:
+                    has_data = False
+                    if hasattr(chan, "recv_ready") and chan.recv_ready():
+                        chunk = chan.recv(4096)
+                        if chunk:
+                            out_chunks.append(chunk)
+                            has_data = True
+                    if hasattr(chan, "recv_stderr_ready") and chan.recv_stderr_ready():
+                        chunk = chan.recv_stderr(4096)
+                        if chunk:
+                            err_chunks.append(chunk)
+                            has_data = True
+
+                    if chan.exit_status_ready():
+                        # 彻底排空剩余数据
+                        if hasattr(chan, "recv_ready"):
+                            while chan.recv_ready():
+                                chunk = chan.recv(4096)
+                                if not chunk:
+                                    break
+                                out_chunks.append(chunk)
+                        if hasattr(chan, "recv_stderr_ready"):
+                            while chan.recv_stderr_ready():
+                                chunk = chan.recv_stderr(4096)
+                                if not chunk:
+                                    break
+                                err_chunks.append(chunk)
+                        exit_code = chan.recv_exit_status()
+                        break
+
+                    if not has_data:
+                        time.sleep(0.05)
+                else:
+                    # 兼容普通 mock 行为
+                    out_b = stdout.read() if hasattr(stdout, "read") else b""
+                    err_b = stderr.read() if hasattr(stderr, "read") else b""
+                    out_chunks.append(out_b)
+                    err_chunks.append(err_b)
+                    exit_code = chan.recv_exit_status() if hasattr(chan, "recv_exit_status") else 0
+                    break
+
+            out_str = b"".join(out_chunks).decode("utf-8", errors="replace")
+            err_str = b"".join(err_chunks).decode("utf-8", errors="replace")
             truncated = len(out_str) > max_len or len(err_str) > max_len
+
+            if stopped:
+                return ToolResult(
+                    operation_id=context.operation_id,
+                    tool="vps_exec",
+                    status="UNKNOWN",
+                    error_code="STOPPED_DURING_EXEC",
+                    error_message=(
+                        "User requested stop during command execution. The remote command may still be running "
+                        "or may have partially executed on the VPS. Please check remote state before retrying."
+                    ),
+                    output={
+                        "profile_id": profile_id,
+                        "command": command,
+                        "partial_stdout": out_str[:max_len],
+                        "partial_stderr": err_str[:max_len],
+                        "status": "UNKNOWN",
+                    },
+                    truncated=truncated,
+                )
+
+            if timed_out:
+                return ToolResult(
+                    operation_id=context.operation_id,
+                    tool="vps_exec",
+                    status="UNKNOWN",
+                    error_code="TIMEOUT",
+                    error_message=(
+                        f"Command execution timed out after {timeout_sec} seconds. The command was sent to the remote "
+                        "server and may have already produced side effects or still be running. Check remote status first."
+                    ),
+                    output={
+                        "profile_id": profile_id,
+                        "command": command,
+                        "partial_stdout": out_str[:max_len],
+                        "partial_stderr": err_str[:max_len],
+                        "status": "UNKNOWN",
+                    },
+                    truncated=truncated,
+                )
 
             return ToolResult(
                 operation_id=context.operation_id,
@@ -185,33 +339,38 @@ def handle_vps_exec(args: Dict[str, Any], context: ToolContext) -> ToolResult:
                 },
                 truncated=truncated,
             )
-    except paramiko.AuthenticationException:
-        return ToolResult(
-            operation_id=context.operation_id,
-            tool="vps_exec",
-            status="FAILED",
-            error_code="AUTHENTICATION_FAILED",
-            error_message=f"SSH authentication failed for profile '{profile_id}'. Please check credentials.",
-        )
-    except TimeoutError:
-        return ToolResult(
-            operation_id=context.operation_id,
-            tool="vps_exec",
-            status="FAILED",
-            error_code="TIMEOUT",
-            error_message=f"Command execution timed out after {timeout_sec} seconds.",
-        )
     except Exception as e:
+        if paramiko and isinstance(e, paramiko.AuthenticationException):
+            return ToolResult(
+                operation_id=context.operation_id,
+                tool="vps_exec",
+                status="FAILED",
+                error_code="AUTHENTICATION_FAILED",
+                error_message=f"SSH authentication failed for profile '{profile_id}'. Please check credentials.",
+            )
+        err_text = str(e)
+        if "Profile" in err_text or "not found" in err_text or "INVALID_PROFILE_ID" in err_text or "PATH_TRAVERSAL" in err_text:
+            return ToolResult(
+                operation_id=context.operation_id,
+                tool="vps_exec",
+                status="FAILED",
+                error_code="PROFILE_ERROR",
+                error_message=err_text,
+            )
         return ToolResult(
             operation_id=context.operation_id,
             tool="vps_exec",
-            status="FAILED",
+            status="UNKNOWN",
             error_code="EXEC_ERROR",
-            error_message=f"VPS connection or execution error: {str(e)}",
+            error_message=f"VPS connection or execution error: {err_text}",
         )
 
 
 def handle_vps_list_files(args: Dict[str, Any], context: ToolContext) -> ToolResult:
+    dep_err = check_paramiko(context.operation_id, "vps_list_files")
+    if dep_err:
+        return dep_err
+
     profile_id = str(args.get("profile_id", "owner_vps")).strip()
     remote_path = str(args.get("path", ".")).strip() or "."
     offset = int(args.get("offset", 0))
@@ -268,6 +427,10 @@ def handle_vps_list_files(args: Dict[str, Any], context: ToolContext) -> ToolRes
 
 
 def handle_vps_read_file(args: Dict[str, Any], context: ToolContext) -> ToolResult:
+    dep_err = check_paramiko(context.operation_id, "vps_read_file")
+    if dep_err:
+        return dep_err
+
     profile_id = str(args.get("profile_id", "owner_vps")).strip()
     remote_path = str(args.get("path", "")).strip()
     if not remote_path:
@@ -332,6 +495,10 @@ def handle_vps_read_file(args: Dict[str, Any], context: ToolContext) -> ToolResu
 
 
 def handle_vps_write_file(args: Dict[str, Any], context: ToolContext) -> ToolResult:
+    dep_err = check_paramiko(context.operation_id, "vps_write_file")
+    if dep_err:
+        return dep_err
+
     profile_id = str(args.get("profile_id", "owner_vps")).strip()
     remote_path = str(args.get("path", "")).strip()
     content = str(args.get("content", ""))
@@ -379,16 +546,22 @@ def handle_vps_write_file(args: Dict[str, Any], context: ToolContext) -> ToolRes
                 },
             )
     except Exception as e:
+        err_text = str(e)
+        # 连接成功后的写入中途异常标记为 UNKNOWN
         return ToolResult(
             operation_id=context.operation_id,
             tool="vps_write_file",
-            status="FAILED",
-            error_code="SFTP_WRITE_ERROR",
-            error_message=f"Failed to write remote file '{remote_path}': {str(e)}",
+            status="UNKNOWN",
+            error_code="WRITE_INTERRUPTED_UNKNOWN",
+            error_message=f"Writing to remote file '{remote_path}' was interrupted or failed: {err_text}. Remote file may be partially modified.",
         )
 
 
 def handle_vps_upload_file(args: Dict[str, Any], context: ToolContext) -> ToolResult:
+    dep_err = check_paramiko(context.operation_id, "vps_upload_file")
+    if dep_err:
+        return dep_err
+
     profile_id = str(args.get("profile_id", "owner_vps")).strip()
     source_kind = str(args.get("source_kind", "artifact")).strip()
     source_path = str(args.get("source_path", "")).strip()
@@ -427,6 +600,17 @@ def handle_vps_upload_file(args: Dict[str, Any], context: ToolContext) -> ToolRe
                 status="FAILED",
                 error_code="PATH_ACCESS_DENIED",
                 error_message=err,
+            )
+        # 严禁将敏感凭据配置文件或私钥文件上传到远程 VPS
+        if is_sensitive_credential_path(res_p):
+            return ToolResult(
+                operation_id=context.operation_id,
+                tool="vps_upload_file",
+                status="FAILED",
+                error_code="CREDENTIAL_UPLOAD_FORBIDDEN",
+                error_message=(
+                    f"Uploading sensitive credential profile or key file '{res_p.name}' to remote VPS is strictly forbidden."
+                ),
             )
         local_file = res_p
     else:
@@ -482,13 +666,17 @@ def handle_vps_upload_file(args: Dict[str, Any], context: ToolContext) -> ToolRe
         return ToolResult(
             operation_id=context.operation_id,
             tool="vps_upload_file",
-            status="FAILED",
-            error_code="SFTP_UPLOAD_ERROR",
-            error_message=f"Failed to upload file to '{remote_path}': {str(e)}",
+            status="UNKNOWN",
+            error_code="UPLOAD_INTERRUPTED_UNKNOWN",
+            error_message=f"Upload of '{source_path}' to '{remote_path}' was interrupted or failed during transfer: {str(e)}. Remote file status is unknown.",
         )
 
 
 def handle_vps_download_file(args: Dict[str, Any], context: ToolContext) -> ToolResult:
+    dep_err = check_paramiko(context.operation_id, "vps_download_file")
+    if dep_err:
+        return dep_err
+
     profile_id = str(args.get("profile_id", "owner_vps")).strip()
     remote_path = str(args.get("remote_path", "")).strip()
     artifact_filename = str(args.get("artifact_filename", "")).strip()

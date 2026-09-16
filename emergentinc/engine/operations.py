@@ -125,6 +125,7 @@ class OperationExecutor:
                     message_id=message_id or "direct",
                     operation_id=op_id,
                     stop_requested=stop_requested,
+                    core_store=core_store,
                 )
 
                 tool_result: ToolResult = self.registry.execute(tool, args, context)

@@ -7,6 +7,7 @@
 """
 
 import os
+import re
 import json
 import base64
 from pathlib import Path
@@ -16,6 +17,52 @@ from .contracts import ToolSpec, ToolContext, ToolResult
 
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"}
 BINARY_EXTENSIONS = IMAGE_EXTENSIONS | {".pdf", ".zip", ".tar", ".gz", ".bin", ".ico"}
+
+SENSITIVE_FILENAME_PATTERNS = [
+    re.compile(r".*_profile\.json$", re.IGNORECASE),
+    re.compile(r".*credential.*", re.IGNORECASE),
+    re.compile(r".*secret.*", re.IGNORECASE),
+    re.compile(r"^id_rsa.*", re.IGNORECASE),
+    re.compile(r"^id_ed25519.*", re.IGNORECASE),
+    re.compile(r"^id_dsa.*", re.IGNORECASE),
+    re.compile(r"^id_ecdsa.*", re.IGNORECASE),
+    re.compile(r".*\.pem$", re.IGNORECASE),
+    re.compile(r".*\.key$", re.IGNORECASE),
+    re.compile(r".*\.ppk$", re.IGNORECASE),
+]
+
+SENSITIVE_CONTENT_SNIPPETS = [
+    b"-----BEGIN RSA PRIVATE KEY-----",
+    b"-----BEGIN OPENSSH PRIVATE KEY-----",
+    b"-----BEGIN PRIVATE KEY-----",
+    b"-----BEGIN EC PRIVATE KEY-----",
+    b"-----BEGIN DSA PRIVATE KEY-----",
+    b"\"password\":",
+    b"\"private_key_path\":",
+    b"\"api_key\":",
+]
+
+
+def is_sensitive_credential_path(path: Path) -> bool:
+    """判断指定文件是否属于敏感凭据/私钥/密钥文件."""
+    name = path.name.lower()
+    for pattern in SENSITIVE_FILENAME_PATTERNS:
+        if pattern.match(name):
+            return True
+
+    # 尝试内容头部嗅探 (防御命名不规范的私钥/凭据文件)
+    if path.exists() and path.is_file():
+        try:
+            size = path.stat().st_size
+            if 0 < size <= 256 * 1024:
+                header = path.read_bytes()[:2048]
+                for snippet in SENSITIVE_CONTENT_SNIPPETS:
+                    if snippet in header:
+                        return True
+        except Exception:
+            pass
+
+    return False
 
 
 def resolve_private_path(private_root: Path, target_path_str: str) -> Tuple[bool, Optional[Path], Optional[str]]:
@@ -160,29 +207,42 @@ def handle_read_private_file(args: Dict[str, Any], context: ToolContext) -> Tool
             error_message=f"File '{path_arg}' not found in workspace/private.",
         )
 
-    # 1. 对特定凭据配置文件做安全投影拦截
-    if target_path.name in ("owner_vps_profile.json", "vps_profile.json"):
-        try:
-            raw_data = json.loads(target_path.read_text(encoding="utf-8"))
-            masked = mask_sensitive_profile(raw_data)
-            return ToolResult(
-                operation_id=context.operation_id,
-                tool="read_private_file",
-                status="SUCCESS",
-                output={
-                    "type": "vps_profile",
-                    "path": str(target_path.relative_to(context.private_root.resolve())).replace("\\", "/"),
-                    "data": masked,
-                },
-            )
-        except Exception as e:
-            return ToolResult(
-                operation_id=context.operation_id,
-                tool="read_private_file",
-                status="FAILED",
-                error_code="PROFILE_PARSE_ERROR",
-                error_message=f"Failed to parse vps profile: {str(e)}",
-            )
+    # 1. 凭据文件安全拦截与脱敏投影
+    if is_sensitive_credential_path(target_path):
+        # 尝试作为 profile JSON 脱敏读取
+        if target_path.suffix.lower() == ".json":
+            try:
+                raw_data = json.loads(target_path.read_text(encoding="utf-8"))
+                masked = mask_sensitive_profile(raw_data)
+                return ToolResult(
+                    operation_id=context.operation_id,
+                    tool="read_private_file",
+                    status="SUCCESS",
+                    output={
+                        "type": "vps_profile",
+                        "path": str(target_path.relative_to(context.private_root.resolve())).replace("\\", "/"),
+                        "data": masked,
+                    },
+                )
+            except Exception as e:
+                return ToolResult(
+                    operation_id=context.operation_id,
+                    tool="read_private_file",
+                    status="FAILED",
+                    error_code="PROFILE_PARSE_ERROR",
+                    error_message=f"Failed to parse vps profile: {str(e)}",
+                )
+        # 非 profile JSON (如 id_ed25519、id_rsa、.pem、.key 等私钥文件)，严禁读取明文内容
+        return ToolResult(
+            operation_id=context.operation_id,
+            tool="read_private_file",
+            status="FAILED",
+            error_code="CREDENTIAL_READ_BLOCKED",
+            error_message=(
+                f"Direct reading of credential or private key file '{target_path.name}' is strictly blocked for security. "
+                "Credentials must only be consumed by configured authentication drivers."
+            ),
+        )
 
     # 2. 检查扩展名是否为二进制
     suffix = target_path.suffix.lower()
@@ -238,7 +298,7 @@ def handle_read_private_file(args: Dict[str, Any], context: ToolContext) -> Tool
 
 
 def handle_inspect_private_image(args: Dict[str, Any], context: ToolContext) -> ToolResult:
-    """真实调用多模态视觉模型解析 private 图片内容."""
+    """真实调用多模态视觉模型解析 private 图片内容 (受预算硬约束控制)."""
     path_arg = str(args.get("path", "")).strip()
     question = str(args.get("question", "请详细描述这张图片的内容。")).strip()
 
@@ -289,6 +349,25 @@ def handle_inspect_private_image(args: Dict[str, Any], context: ToolContext) -> 
             error_message="Vision model is not configured. Please set MCL_VISION_MODEL in .env to enable image content inspection.",
         )
 
+    # 预算预留 (若 context 中有 core_store)
+    call_id: Optional[str] = None
+    estimated_tokens = 1500
+    if context.core_store is not None and hasattr(context.core_store, "reserve_call_budget") and context.pixel_id:
+        ok_res, cid, err_msg = context.core_store.reserve_call_budget(
+            run_id=context.run_id,
+            pixel_id=context.pixel_id,
+            estimated_tokens=estimated_tokens,
+        )
+        if not ok_res:
+            return ToolResult(
+                operation_id=context.operation_id,
+                tool="inspect_private_image",
+                status="FAILED",
+                error_code="BUDGET_EXCEEDED",
+                error_message=f"Vision model call budget reserve failed: {err_msg}",
+            )
+        call_id = cid
+
     try:
         img_bytes = target_path.read_bytes()
         b64_data = base64.b64encode(img_bytes).decode("utf-8")
@@ -317,6 +396,16 @@ def handle_inspect_private_image(args: Dict[str, Any], context: ToolContext) -> 
         with httpx.Client(timeout=30.0) as client:
             resp = client.post(url, json=req_body, headers=headers)
             if resp.status_code != 200:
+                if context.core_store and call_id and hasattr(context.core_store, "settle_call_budget"):
+                    try:
+                        context.core_store.settle_call_budget(
+                            call_id=call_id,
+                            actual_tokens=0,
+                            outcome="FAILED",
+                            details={"error": resp.text[:200]},
+                        )
+                    except Exception:
+                        pass
                 return ToolResult(
                     operation_id=context.operation_id,
                     tool="inspect_private_image",
@@ -327,6 +416,18 @@ def handle_inspect_private_image(args: Dict[str, Any], context: ToolContext) -> 
             res_json = resp.json()
             description = res_json["choices"][0]["message"]["content"]
             usage = res_json.get("usage", {})
+            actual_tokens = int(usage.get("total_tokens") or estimated_tokens)
+
+            if context.core_store and call_id and hasattr(context.core_store, "settle_call_budget"):
+                try:
+                    context.core_store.settle_call_budget(
+                        call_id=call_id,
+                        actual_tokens=actual_tokens,
+                        outcome="SUCCESS",
+                        details={"model": vision_model, "image": str(target_path)},
+                    )
+                except Exception:
+                    pass
 
             return ToolResult(
                 operation_id=context.operation_id,
@@ -336,11 +437,51 @@ def handle_inspect_private_image(args: Dict[str, Any], context: ToolContext) -> 
                     "image_path": str(target_path.relative_to(context.private_root.resolve())).replace("\\", "/"),
                     "question": question,
                     "description": description,
-                    "tokens_used": usage.get("total_tokens", 0),
+                    "tokens_used": actual_tokens,
                 },
                 details={"usage": usage, "model": vision_model},
             )
     except Exception as e:
+        is_timeout_or_net = False
+        try:
+            import httpx
+            if isinstance(e, (httpx.TimeoutException, httpx.NetworkError)):
+                is_timeout_or_net = True
+        except Exception:
+            pass
+
+        if is_timeout_or_net:
+            if context.core_store and call_id and hasattr(context.core_store, "mark_call_unknown"):
+                try:
+                    context.core_store.mark_call_unknown(
+                        call_id=call_id,
+                        run_id=context.run_id,
+                        pixel_id=context.pixel_id,
+                        message_id=context.message_id or "direct",
+                        error_msg=str(e),
+                        model=vision_model,
+                    )
+                except Exception:
+                    pass
+            return ToolResult(
+                operation_id=context.operation_id,
+                tool="inspect_private_image",
+                status="UNKNOWN",
+                error_code="VISION_API_TIMEOUT",
+                error_message=f"Vision model request timed out or network broken: {str(e)}",
+            )
+
+        if context.core_store and call_id and hasattr(context.core_store, "settle_call_budget"):
+            try:
+                context.core_store.settle_call_budget(
+                    call_id=call_id,
+                    actual_tokens=0,
+                    outcome="FAILED",
+                    details={"error": str(e)},
+                )
+            except Exception:
+                pass
+
         return ToolResult(
             operation_id=context.operation_id,
             tool="inspect_private_image",

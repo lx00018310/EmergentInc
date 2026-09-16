@@ -18,6 +18,7 @@ class ToolContext:
     message_id: str
     operation_id: str
     stop_requested: Optional[Callable[[], bool]] = None
+    core_store: Optional[Any] = None
     extra: Dict[str, Any] = field(default_factory=dict)
 
     @property

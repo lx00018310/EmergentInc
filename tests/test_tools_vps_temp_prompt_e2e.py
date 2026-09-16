@@ -16,7 +16,7 @@ import os
 import json
 import time
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, patch, ANY
 
 import pytest
 from fastapi.testclient import TestClient
@@ -486,3 +486,300 @@ def test_ui_api_endpoints_for_tools_and_temporary_prompt(tmp_path):
     r_dl = client.get("/api/pixels/0_0_0/artifacts/test_out.txt/download")
     assert r_dl.status_code == 200
     assert r_dl.text == "deliverable content"
+
+
+# ==================== 10. T1 缺陷专项修复测试 (凭据、逃逸、死锁与UNKNOWN、预算、降级) ====================
+
+def test_t1_credential_leak_prevention(tmp_path):
+    """验证 T1: 凭据与私钥文件禁止明文读取，且严禁上传至远程 VPS."""
+    private_root = tmp_path / "private"
+    private_root.mkdir(parents=True, exist_ok=True)
+
+    # 1. 放置敏感私钥与配置文件
+    id_key = private_root / "id_ed25519"
+    id_key.write_text("-----BEGIN OPENSSH PRIVATE KEY-----\nfake_key_material\n-----END OPENSSH PRIVATE KEY-----", encoding="utf-8")
+
+    cert_key = private_root / "server.pem"
+    cert_key.write_text("-----BEGIN RSA PRIVATE KEY-----\nfake_rsa_material\n-----END RSA PRIVATE KEY-----", encoding="utf-8")
+
+    prof = private_root / "owner_vps_profile.json"
+    prof.write_text(json.dumps({"host": "1.1.1.1", "password": "REAL_PASSWORD"}), encoding="utf-8")
+
+    ctx = ToolContext(
+        workspace_root=tmp_path,
+        pixel_id="0_0_0",
+        run_id="run_1",
+        message_id="msg_1",
+        operation_id="op_1",
+    )
+
+    from emergentinc.tools.private_files import handle_read_private_file
+    from emergentinc.tools.vps import handle_vps_upload_file
+
+    # 2. 读取私钥必须被严格阻断
+    res_key = handle_read_private_file({"path": "id_ed25519"}, ctx)
+    assert res_key.status == "FAILED"
+    assert res_key.error_code == "CREDENTIAL_READ_BLOCKED"
+
+    res_pem = handle_read_private_file({"path": "server.pem"}, ctx)
+    assert res_pem.status == "FAILED"
+    assert res_pem.error_code == "CREDENTIAL_READ_BLOCKED"
+
+    # 3. 读取 profile 做安全脱敏投影
+    res_prof = handle_read_private_file({"path": "owner_vps_profile.json"}, ctx)
+    assert res_prof.status == "SUCCESS"
+    assert "REAL_PASSWORD" not in json.dumps(res_prof.to_dict())
+
+    # 4. 上传私钥与 profile 到远程 VPS 必须被严格拦截
+    res_up_key = handle_vps_upload_file({
+        "source_kind": "private",
+        "source_path": "id_ed25519",
+        "remote_path": "/tmp/id_ed25519"
+    }, ctx)
+    assert res_up_key.status == "FAILED"
+    assert res_up_key.error_code == "CREDENTIAL_UPLOAD_FORBIDDEN"
+
+    res_up_prof = handle_vps_upload_file({
+        "source_kind": "private",
+        "source_path": "owner_vps_profile.json",
+        "remote_path": "/tmp/stolen_profile.json"
+    }, ctx)
+    assert res_up_prof.status == "FAILED"
+    assert res_up_prof.error_code == "CREDENTIAL_UPLOAD_FORBIDDEN"
+
+
+def test_t1_vps_profile_path_traversal_prevention(tmp_path):
+    """验证 T1: profile_id 路径逃逸与非法字符防御."""
+    private_root = tmp_path / "private"
+    private_root.mkdir(parents=True, exist_ok=True)
+
+    from emergentinc.tools.vps import load_vps_profile, handle_vps_exec
+
+    # 1. 尝试路径逃逸
+    ok, data, err = load_vps_profile(private_root, "../outside")
+    assert ok is False
+    assert "INVALID_PROFILE_ID" in err or "PATH_TRAVERSAL" in err
+
+    ok, data, err = load_vps_profile(private_root, "subdir/profile")
+    assert ok is False
+    assert "INVALID_PROFILE_ID" in err
+
+    ok, data, err = load_vps_profile(private_root, "bad;injection")
+    assert ok is False
+    assert "INVALID_PROFILE_ID" in err
+
+    # 2. 调用 vps_exec 传入非法 profile_id
+    ctx = ToolContext(
+        workspace_root=tmp_path,
+        pixel_id="0_0_0",
+        run_id="run_1",
+        message_id="msg_1",
+        operation_id="op_1",
+    )
+    res = handle_vps_exec({"profile_id": "../outside", "command": "uname -a"}, ctx)
+    assert res.status == "FAILED"
+    assert res.error_code == "PROFILE_ERROR"
+
+
+def test_t1_vps_exec_nonblocking_deadlock_and_unknown_status(tmp_path):
+    """验证 T1: vps_exec 流排空轮询机制、超时 UNKNOWN 状态及中途停止 UNKNOWN 状态."""
+    private_root = tmp_path / "private"
+    private_root.mkdir(parents=True, exist_ok=True)
+    profile = {"host": "10.0.0.1", "username": "admin", "password": "pwd"}
+    (private_root / "owner_vps_profile.json").write_text(json.dumps(profile), encoding="utf-8")
+
+    from emergentinc.tools.vps import handle_vps_exec
+
+    # 1. 模拟超时导致 UNKNOWN 状态
+    mock_ssh = MagicMock()
+    mock_stdout = MagicMock()
+    mock_channel = MagicMock()
+    # exit_status_ready 返回 bool 从而启用非阻塞流排空
+    mock_channel.exit_status_ready.return_value = False
+    mock_channel.recv_ready.return_value = False
+    mock_channel.recv_stderr_ready.return_value = False
+    mock_stdout.channel = mock_channel
+    mock_stderr = MagicMock()
+    mock_ssh.exec_command.return_value = (None, mock_stdout, mock_stderr)
+
+    ctx = ToolContext(
+        workspace_root=tmp_path,
+        pixel_id="0_0_0",
+        run_id="run_1",
+        message_id="msg_1",
+        operation_id="op_1",
+    )
+
+    with patch("emergentinc.tools.vps.get_ssh_client") as mock_client:
+        mock_client.return_value.__enter__.return_value = (mock_ssh, None)
+
+        # 超时时间设为 0.05 秒
+        res_timeout = handle_vps_exec({"command": "sleep 100", "timeout_seconds": 0.05}, ctx)
+        assert res_timeout.status == "UNKNOWN"
+        assert res_timeout.error_code == "TIMEOUT"
+        assert "timed out" in res_timeout.error_message
+        mock_channel.close.assert_called()
+
+    # 2. 模拟执行中途用户发出停止信号导致 UNKNOWN 状态
+    stop_flags = [False, True]
+    def mock_stop():
+        return stop_flags.pop(0) if stop_flags else True
+
+    ctx_stop = ToolContext(
+        workspace_root=tmp_path,
+        pixel_id="0_0_0",
+        run_id="run_1",
+        message_id="msg_1",
+        operation_id="op_2",
+        stop_requested=mock_stop,
+    )
+
+    with patch("emergentinc.tools.vps.get_ssh_client") as mock_client:
+        mock_client.return_value.__enter__.return_value = (mock_ssh, None)
+        res_stopped = handle_vps_exec({"command": "long_task", "timeout_seconds": 10.0}, ctx_stop)
+        assert res_stopped.status == "UNKNOWN"
+        assert res_stopped.error_code == "STOPPED_DURING_EXEC"
+
+
+def test_t1_vps_file_interruption_unknown_status(tmp_path):
+    """验证 T1: VPS 写文件与上传文件传输中途中断标为 UNKNOWN."""
+    private_root = tmp_path / "private"
+    private_root.mkdir(parents=True, exist_ok=True)
+    profile = {"host": "10.0.0.1", "username": "admin", "password": "pwd"}
+    (private_root / "owner_vps_profile.json").write_text(json.dumps(profile), encoding="utf-8")
+
+    from emergentinc.tools.vps import handle_vps_write_file, handle_vps_upload_file
+
+    ctx = ToolContext(
+        workspace_root=tmp_path,
+        pixel_id="0_0_0",
+        run_id="run_1",
+        message_id="msg_1",
+        operation_id="op_1",
+    )
+
+    # 1. 模拟写入中途异常
+    mock_sftp = MagicMock()
+    mock_sftp.stat.side_effect = FileNotFoundError()
+    mock_sftp.open.side_effect = OSError("Connection reset by peer during write")
+
+    with patch("emergentinc.tools.vps.get_ssh_client") as mock_client:
+        mock_client.return_value.__enter__.return_value = (MagicMock(), mock_sftp)
+        res_w = handle_vps_write_file({"path": "/app/test.txt", "content": "hello"}, ctx)
+        assert res_w.status == "UNKNOWN"
+        assert res_w.error_code == "WRITE_INTERRUPTED_UNKNOWN"
+
+    # 2. 模拟上传传输中断
+    test_src = tmp_path / "live" / "artifacts" / "0_0_0" / "data.bin"
+    test_src.parent.mkdir(parents=True, exist_ok=True)
+    test_src.write_bytes(b"binary content")
+
+    mock_sftp.put.side_effect = ConnectionError("SFTP stream severed")
+    with patch("emergentinc.tools.vps.get_ssh_client") as mock_client:
+        mock_client.return_value.__enter__.return_value = (MagicMock(), mock_sftp)
+        res_up = handle_vps_upload_file({
+            "source_kind": "artifact",
+            "source_path": "data.bin",
+            "remote_path": "/app/data.bin"
+        }, ctx)
+        assert res_up.status == "UNKNOWN"
+        assert res_up.error_code == "UPLOAD_INTERRUPTED_UNKNOWN"
+
+
+def test_t1_inspect_private_image_budget_and_unknown(tmp_path):
+    """验证 T1: inspect_private_image 接入 core_store 预算预留与结算，网络中断记为 UNKNOWN."""
+    private_root = tmp_path / "private"
+    private_root.mkdir(parents=True, exist_ok=True)
+    img_file = private_root / "sample.jpg"
+    img_file.write_bytes(b"\xff\xd8\xff\xe0" + b"\x00" * 20)
+
+    from emergentinc.tools.private_files import handle_inspect_private_image
+
+    mock_store = MagicMock()
+
+    ctx = ToolContext(
+        workspace_root=tmp_path,
+        pixel_id="0_0_0",
+        run_id="run_1",
+        message_id="msg_1",
+        operation_id="op_1",
+        core_store=mock_store,
+        extra={"vision_model": "gpt-4o"},
+    )
+
+    env = {
+        "MCL_VISION_MODEL": "gpt-4o",
+        "MCL_API_KEY": "fake_key",
+        "MCL_BASE_URL": "https://api.openai.com/v1",
+    }
+
+    with patch.dict(os.environ, env, clear=True):
+        # 1. 预算超限阻断
+        mock_store.reserve_call_budget.return_value = (False, None, "RUN_LIMIT_EXCEEDED")
+        res_budget = handle_inspect_private_image({"path": "sample.jpg"}, ctx)
+        assert res_budget.status == "FAILED"
+        assert res_budget.error_code == "BUDGET_EXCEEDED"
+
+        # 2. 网络超时进入 UNKNOWN 并通知 core_store.mark_call_unknown
+        mock_store.reserve_call_budget.return_value = (True, "res_123", None)
+        with patch("httpx.Client") as mock_client_cls:
+            import httpx
+            mock_client = MagicMock()
+            mock_client.__enter__.return_value = mock_client
+            mock_client.post.side_effect = httpx.TimeoutException("Gateway Timeout")
+            mock_client_cls.return_value = mock_client
+
+            res_timeout = handle_inspect_private_image({"path": "sample.jpg"}, ctx)
+            assert res_timeout.status == "UNKNOWN"
+            assert res_timeout.error_code == "VISION_API_TIMEOUT"
+            mock_store.mark_call_unknown.assert_called_once()
+
+        # 3. 正常调用成功结算
+        with patch("httpx.Client") as mock_client_cls:
+            mock_client = MagicMock()
+            mock_client.__enter__.return_value = mock_client
+            mock_resp = MagicMock()
+            mock_resp.status_code = 200
+            mock_resp.json.return_value = {
+                "choices": [{"message": {"content": "这是一张测试图片"}}],
+                "usage": {"total_tokens": 850},
+            }
+            mock_client.post.return_value = mock_resp
+            mock_client_cls.return_value = mock_client
+
+            res_ok = handle_inspect_private_image({"path": "sample.jpg"}, ctx)
+            assert res_ok.status == "SUCCESS"
+            assert res_ok.output["tokens_used"] == 850
+            mock_store.settle_call_budget.assert_called_with(
+                call_id="res_123",
+                actual_tokens=850,
+                outcome="SUCCESS",
+                details=ANY,
+            )
+
+
+def test_t1_paramiko_missing_graceful_degradation(tmp_path):
+    """验证 T1: 当运行环境缺少 paramiko 库时平滑降级，明确返回 DEPENDENCY_MISSING."""
+    ctx = ToolContext(
+        workspace_root=tmp_path,
+        pixel_id="0_0_0",
+        run_id="run_1",
+        message_id="msg_1",
+        operation_id="op_1",
+    )
+
+    from emergentinc.tools.vps import handle_vps_exec, handle_vps_upload_file
+
+    with patch("emergentinc.tools.vps.PARAMIKO_AVAILABLE", False):
+        res_exec = handle_vps_exec({"command": "uptime"}, ctx)
+        assert res_exec.status == "FAILED"
+        assert res_exec.error_code == "DEPENDENCY_MISSING"
+
+        res_up = handle_vps_upload_file({
+            "source_kind": "artifact",
+            "source_path": "any.txt",
+            "remote_path": "/tmp/any.txt"
+        }, ctx)
+        assert res_up.status == "FAILED"
+        assert res_up.error_code == "DEPENDENCY_MISSING"
+
