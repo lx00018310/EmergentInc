@@ -273,6 +273,51 @@ body {
   gap: 8px;
 }
 
+.owner-request-card {
+  background: rgba(13, 17, 23, 0.55);
+  border: 1px solid #6e5a1e;
+  border-radius: 4px;
+  padding: 8px;
+  margin-top: 8px;
+}
+
+.owner-request-meta {
+  color: var(--accent-yellow);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  margin-bottom: 5px;
+}
+
+.owner-request-description {
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin-bottom: 6px;
+}
+
+.owner-reason-input {
+  width: 100%;
+  resize: vertical;
+  min-height: 48px;
+  background: #0d1117;
+  color: var(--text-bright);
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  padding: 6px;
+  font-family: var(--font-sans);
+  margin-bottom: 6px;
+}
+
+.owner-request-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.owner-action-hint {
+  color: var(--text-dim);
+  font-size: 11px;
+}
+
 /* Console Box */
 .console-box {
   height: 180px;

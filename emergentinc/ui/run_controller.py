@@ -87,6 +87,24 @@ class RunController:
             manifest = self.loop_store.get_manifest()
             current_loop_id = self._current_loop or manifest.get('current_loop')
 
+            persisted_pending = []
+            try:
+                persisted_ids = set()
+                for request_id in self.storage.external_request_ids():
+                    persisted_ids.add(request_id)
+                    request = self.storage.external_request(request_id)
+                    if request.get("status") == "PENDING_OWNER":
+                        persisted_pending.append(request_id)
+                # Surface an ID returned by the scheduler even if its file
+                # write failed; a persisted APPROVED/REJECTED record wins.
+                persisted_pending.extend(
+                    request_id for request_id in self._pending_owner_requests
+                    if request_id not in persisted_ids
+                )
+            except Exception:
+                persisted_pending = list(self._pending_owner_requests)
+            self._pending_owner_requests = sorted(set(persisted_pending))
+
             return {
                 "running": self._running,
                 "requested_rounds": self._requested_rounds,
@@ -160,6 +178,17 @@ class RunController:
             preview = ", ".join(round_inconsistencies[:5])
             raise RuntimeError(
                 "RECOVERY_REQUIRED: Pixel round state is ahead of world round: " + preview
+            )
+
+        pending_owner = []
+        for request_id in self.storage.external_request_ids():
+            request = self.storage.external_request(request_id)
+            if request.get("status") == "PENDING_OWNER":
+                pending_owner.append(request_id)
+        if pending_owner:
+            raise RuntimeError(
+                f"OWNER_ACTION_REQUIRED: 请先处理 {len(pending_owner)} 个待审批请求: "
+                + ", ".join(pending_owner[:5])
             )
 
     def start(

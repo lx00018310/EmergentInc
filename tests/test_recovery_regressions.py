@@ -98,6 +98,28 @@ def test_response_and_settlement_rollback_together(tmp_path, monkeypatch):
     assert store.get_run("run")["run_spent"] == 0
 
 
+def test_promote_repaired_response_is_atomic_and_one_time(tmp_path):
+    scheduler = setup_world(tmp_path)
+    store = scheduler.core_store
+    store.create_run("run", run_limit=10000, global_limit=100000)
+    message_id = scheduler.router.send_message("ENGINE", "0_0_0", "tick", hop=0)
+    store.enqueue_message(message_id, "ENGINE", "0_0_0", "tick", 1, 0, run_id="run")
+    ok, call_id, _ = store.reserve_call_budget("run", "0_0_0", 100, message_id=message_id)
+    assert ok
+    store.settle_call_budget(call_id, 10, outcome="FAILED_RESPONSE", model_call={
+        "call_id": call_id, "run_id": "run", "pixel_id": "0_0_0",
+        "message_id": message_id, "model": "mock", "prompt_hash": "hash",
+        "raw_response": '{"send_to":["STOP"]}', "normalized_response": "",
+        "outcome": "FAILED_RESPONSE",
+    })
+    store.transition_message(message_id, "QUEUED")
+    normalized = '{"send_to":["STOP"]}'
+    assert store.promote_repaired_response(call_id, normalized)
+    assert store.get_message(message_id)["status"] == "RESPONSE_STORED"
+    assert store.get_model_call_by_message(message_id)["outcome"] == "REPAIRED_RESPONSE"
+    assert not store.promote_repaired_response(call_id, normalized)
+
+
 def test_workspace_lock_rejects_second_instance_and_releases(tmp_path):
     with WorkspaceLock(tmp_path):
         with pytest.raises(RuntimeError, match="WORKSPACE_IN_USE"):
@@ -105,6 +127,25 @@ def test_workspace_lock_rejects_second_instance_and_releases(tmp_path):
                 pass
     with WorkspaceLock(tmp_path):
         pass
+
+
+def test_run_server_reuses_verified_existing_instance(tmp_path, monkeypatch):
+    from emergentinc.ui import app as app_module
+    opened = []
+    with WorkspaceLock(tmp_path):
+        monkeypatch.setattr(app_module, "is_emergentinc_server", lambda url: True)
+        monkeypatch.setattr(app_module.webbrowser, "open", opened.append)
+        result = app_module.run_server(port=8765, workspace=tmp_path)
+    assert result == "REUSED_EXISTING_SERVER"
+    assert opened == ["http://127.0.0.1:8765"]
+
+
+def test_run_server_does_not_reuse_unverified_port(tmp_path, monkeypatch):
+    from emergentinc.ui import app as app_module
+    with WorkspaceLock(tmp_path):
+        monkeypatch.setattr(app_module, "is_emergentinc_server", lambda url: False)
+        with pytest.raises(RuntimeError, match="WORKSPACE_IN_USE"):
+            app_module.run_server(port=8765, workspace=tmp_path)
 
 
 def test_audit_api_defers_during_run(tmp_path, monkeypatch):

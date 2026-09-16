@@ -3,6 +3,10 @@ import os
 from pathlib import Path
 
 
+class WorkspaceInUseError(RuntimeError):
+    """Another process currently owns this workspace."""
+
+
 class WorkspaceLock:
     def __init__(self, workspace):
         self.path = Path(workspace) / "runtime" / "server.lock"
@@ -26,7 +30,9 @@ class WorkspaceLock:
         except OSError as exc:
             self.file.close()
             self.file = None
-            raise RuntimeError("WORKSPACE_IN_USE: 此工作区已有服务运行，请使用已有页面。") from exc
+            raise WorkspaceInUseError(
+                "WORKSPACE_IN_USE: 此工作区已有服务运行，请使用已有页面。"
+            ) from exc
         return self
 
     def __exit__(self, *args):

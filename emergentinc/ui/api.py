@@ -28,7 +28,7 @@ class CheckoutRequest(BaseModel):
     branch_name: Optional[str] = None
 
 class ApproveRequest(BaseModel):
-    profile_file: str
+    profile_file: Optional[str] = None
     capability_id: Optional[str] = None
     reason: str = "approved"
 

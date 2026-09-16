@@ -1,4 +1,5 @@
 import pytest
+import json
 from pathlib import Path
 from types import SimpleNamespace
 from emergentinc.engine.llm import V9LLMClient, CognitiveIsolationViolation, LLMResponseError
@@ -117,3 +118,24 @@ def test_invalid_json_response_preserves_usage_for_settlement():
     assert captured_request["max_completion_tokens"] == 8192
     assert captured_request["reasoning_effort"] == "low"
     assert "max_tokens" not in captured_request
+
+
+def test_only_missing_json_closers_are_repaired():
+    from emergentinc.engine.llm import parse_pixel_json
+
+    malformed = '{"operations":[{"tool":"save_artifact","args":{"name":"x"}}}'
+    parsed, repaired = parse_pixel_json(malformed)
+    assert repaired is True
+    assert parsed == {"operations": [{"tool": "save_artifact", "args": {"name": "x"}}]}
+
+
+@pytest.mark.parametrize("malformed", [
+    '{"a": 1 "b": 2}',
+    '{"a": "unterminated}',
+    '{"a": 1]]',
+])
+def test_ambiguous_json_damage_is_not_repaired(malformed):
+    from emergentinc.engine.llm import parse_pixel_json
+
+    with pytest.raises(json.JSONDecodeError):
+        parse_pixel_json(malformed)

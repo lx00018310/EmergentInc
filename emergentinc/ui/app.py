@@ -1,7 +1,9 @@
 import argparse
+import json
 import socket
 import sys
 import threading
+import urllib.request
 import webbrowser
 from pathlib import Path
 from typing import Optional, Union
@@ -13,6 +15,7 @@ from fastapi.staticfiles import StaticFiles
 
 from emergentinc.paths import ProjectPaths, get_paths
 from .api import init_api
+from .workspace_lock import WorkspaceInUseError, WorkspaceLock
 
 
 def create_app(base_dir: Optional[Union[str, Path, ProjectPaths]] = None) -> FastAPI:
@@ -44,17 +47,37 @@ def is_port_in_use(port: int, host: str = "127.0.0.1") -> bool:
         return s.connect_ex((host, port)) == 0
 
 
+def is_emergentinc_server(url: str) -> bool:
+    """Only reuse a port after verifying that it is this application."""
+    try:
+        with urllib.request.urlopen(f"{url}/api/run/status", timeout=1.5) as response:
+            if response.status != 200:
+                return False
+            data = json.loads(response.read().decode("utf-8"))
+            return isinstance(data, dict) and "running" in data and "current_round" in data
+    except Exception:
+        return False
+
+
 def run_server(
     host: str = "127.0.0.1",
     port: int = 8765,
     open_browser: bool = True,
     workspace: Optional[Union[str, Path, ProjectPaths]] = None,
 ):
-    from .workspace_lock import WorkspaceLock
     paths = workspace if isinstance(workspace, ProjectPaths) else get_paths(workspace)
     # Acquire before recovery, browser opening, or any workspace mutation.
-    with WorkspaceLock(paths.workspace_root):
-        return _run_server_locked(host, port, open_browser, paths)
+    try:
+        with WorkspaceLock(paths.workspace_root):
+            return _run_server_locked(host, port, open_browser, paths)
+    except WorkspaceInUseError:
+        url = f"http://127.0.0.1:{port}"
+        if not is_emergentinc_server(url):
+            raise
+        print(f"[ALREADY RUNNING] 正在复用已有服务：{url}")
+        if open_browser:
+            webbrowser.open(url)
+        return "REUSED_EXISTING_SERVER"
 
 
 def _run_server_locked(
@@ -100,4 +123,8 @@ if __name__ == "__main__":
     ap.add_argument("--port", type=int, default=8765)
     ap.add_argument("--no-browser", action="store_true")
     args = ap.parse_args()
-    run_server(port=args.port, open_browser=not args.no_browser, workspace=args.workspace)
+    try:
+        run_server(port=args.port, open_browser=not args.no_browser, workspace=args.workspace)
+    except (WorkspaceInUseError, RuntimeError) as exc:
+        print(f"[START FAILED] {exc}", file=sys.stderr)
+        sys.exit(1)

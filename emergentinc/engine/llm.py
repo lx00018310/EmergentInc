@@ -204,6 +204,69 @@ class PricingOrTokenizerNotConfiguredError(RuntimeError):
     pass
 
 
+def repair_missing_json_closers(raw: str) -> Optional[str]:
+    """Insert only structurally forced missing `]`/`}` delimiters.
+
+    No values, commas, quotes, or content are invented. Unterminated strings
+    and unmatched closing delimiters are deliberately rejected.
+    """
+    matching_open = {"}": "{", "]": "["}
+    matching_close = {"{": "}", "[": "]"}
+    stack = []
+    output = []
+    in_string = False
+    escaped = False
+
+    for char in raw:
+        if in_string:
+            output.append(char)
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_string = False
+            continue
+
+        if char == '"':
+            in_string = True
+            output.append(char)
+        elif char in matching_close:
+            stack.append(char)
+            output.append(char)
+        elif char in matching_open:
+            required = matching_open[char]
+            if required not in stack:
+                return None
+            while stack and stack[-1] != required:
+                output.append(matching_close[stack.pop()])
+            stack.pop()
+            output.append(char)
+        else:
+            output.append(char)
+
+    if in_string:
+        return None
+    while stack:
+        output.append(matching_close[stack.pop()])
+    repaired = "".join(output)
+    return repaired if repaired != raw else None
+
+
+def parse_pixel_json(raw: str) -> Tuple[Any, bool]:
+    """Parse JSON, allowing only deterministic missing-closer repair."""
+    try:
+        return json.loads(raw), False
+    except json.JSONDecodeError as original_error:
+        repaired = repair_missing_json_closers(raw)
+        if repaired is not None:
+            try:
+                return json.loads(repaired), True
+            except json.JSONDecodeError:
+                pass
+        raise original_error
+
+
 
 class V9LLMClient:
     """V9 统一模型客户端，保证纯三输入上下文与输出 Schema 校验."""
@@ -445,10 +508,11 @@ class V9LLMClient:
             raw = re.sub(r"^```(?:json)?\s*", "", raw)
             raw = re.sub(r"\s*```$", "", raw).strip()
 
+        json_repaired = False
         try:
-            data = json.loads(raw)
+            data, json_repaired = parse_pixel_json(raw)
         except Exception as e:
-            failure = f"invalid JSON response: {e}"
+            failure = f"invalid JSON response: {e} (finish_reason={finish_reason or 'unknown'})"
             if not raw and finish_reason == "length":
                 failure = "response truncated before final JSON (finish_reason=length)"
             raise LLMResponseError(
@@ -481,5 +545,7 @@ class V9LLMClient:
             "genesis_revision": self.genesis_revision,
             "token_usage": usage,
             "raw_response": raw,
+            "finish_reason": finish_reason,
+            "json_repaired": json_repaired,
         }
         return data, audit

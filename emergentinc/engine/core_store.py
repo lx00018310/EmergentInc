@@ -930,6 +930,31 @@ class CoreStore:
                 conn.commit()
             return True
 
+    def promote_repaired_response(self, call_id: str, normalized_response: str) -> bool:
+        """Reuse an already billed failed response after deterministic validation."""
+        with self.get_connection() as conn:
+            cur = conn.cursor()
+            cur.execute("BEGIN IMMEDIATE")
+            row = cur.execute(
+                "SELECT message_id, outcome FROM model_calls WHERE call_id = ?", (call_id,)
+            ).fetchone()
+            if not row or row["outcome"] != "FAILED_RESPONSE" or not row["message_id"]:
+                conn.rollback()
+                return False
+            cur.execute(
+                "UPDATE model_calls SET normalized_response = ?, outcome = 'REPAIRED_RESPONSE' WHERE call_id = ?",
+                (normalized_response, call_id),
+            )
+            cur.execute(
+                "UPDATE messages SET status = 'RESPONSE_STORED' WHERE message_id = ? AND status = 'QUEUED'",
+                (row["message_id"],),
+            )
+            if cur.rowcount != 1:
+                conn.rollback()
+                return False
+            conn.commit()
+            return True
+
     # ==================== 经济动作：回款、退款、转账、繁殖 ====================
 
     def credit_revenue(

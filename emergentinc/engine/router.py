@@ -12,6 +12,7 @@ import uuid
 from dataclasses import dataclass, field
 from typing import List, Optional, Tuple, Dict, Any
 from .world import World
+from .utils import write_json
 
 MAX_MESSAGE_MD_CHARS = 2000
 MAX_HOPS_PER_ROUND = 20
@@ -101,10 +102,7 @@ class MessageRouter:
             "processed_count": self.processed_count,
             "in_progress": self.current_in_progress.to_dict() if self.current_in_progress else None,
         }
-        # 使用同目录临时文件原子替换
-        tmp_file = self.state_file.with_suffix(".tmp")
-        tmp_file.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-        tmp_file.replace(self.state_file)
+        write_json(self.state_file, data)
 
     def defer_in_progress(self):
         """Move the current envelope to the next round without duplicating it."""

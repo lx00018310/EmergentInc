@@ -55,7 +55,7 @@ def create_snapshot(live_dir: PathLike, target_dir: PathLike) -> Path:
         if dst.exists():
             shutil.rmtree(dst)
         if src.exists():
-            shutil.copytree(src, dst)
+            shutil.copytree(src, dst, ignore=shutil.ignore_patterns("*.tmp"))
         else:
             dst.mkdir(parents=True, exist_ok=True)
 
@@ -87,6 +87,6 @@ def restore_snapshot(snapshot_dir: PathLike, live_dir: PathLike) -> None:
         if dst.exists():
             shutil.rmtree(dst)
         if src.exists():
-            shutil.copytree(src, dst)
+            shutil.copytree(src, dst, ignore=shutil.ignore_patterns("*.tmp"))
         else:
             dst.mkdir(parents=True, exist_ok=True)

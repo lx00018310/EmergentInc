@@ -8,6 +8,7 @@ let currentWorld = null;
 let currentRunStatus = null;
 let isPolling = false;
 let lastKnownRound = -1;
+let pendingOwnerRequestCount = 0;
 
 document.addEventListener('DOMContentLoaded', () => {
   pixelMap = new PixelMap('pixel-canvas', 'pixel-hover-card');
@@ -235,6 +236,54 @@ function updateRunStatusUI(status) {
   if (genesisTextarea) genesisTextarea.disabled = Boolean(status.running);
   if (btnSaveGenesis) btnSaveGenesis.disabled = Boolean(status.running);
   if (btnClearGenesis) btnClearGenesis.disabled = Boolean(status.running);
+  if (btnRun) btnRun.disabled = Boolean(status.running) || pendingOwnerRequestCount > 0;
+  document.querySelectorAll('.run-quick-btn').forEach(button => {
+    button.disabled = Boolean(status.running) || pendingOwnerRequestCount > 0;
+  });
+}
+
+function createOwnerRequestCard(request) {
+  const requestId = String(request.id || request.request_id || 'unknown');
+  const card = document.createElement('div');
+  card.className = 'owner-request-card';
+  card.id = `owner-request-${requestId}`;
+  card.dataset.requestId = requestId;
+
+  const meta = document.createElement('div');
+  meta.className = 'owner-request-meta';
+  const description = document.createElement('div');
+  description.className = 'owner-request-description';
+
+  const reason = document.createElement('textarea');
+  reason.className = 'owner-reason-input';
+  reason.id = `owner-reason-${requestId}`;
+  reason.rows = 2;
+  reason.maxLength = 2000;
+  reason.placeholder = '必填：给 Pixel 的明确答复、授权范围或拒绝理由';
+
+  const buttonRow = document.createElement('div');
+  buttonRow.className = 'owner-request-actions';
+  const approveButton = document.createElement('button');
+  approveButton.className = 'btn btn-sm btn-primary';
+  approveButton.textContent = '批准并发送答复';
+  approveButton.addEventListener('click', () => resolveOwnerRequest(requestId, 'approve'));
+  const rejectButton = document.createElement('button');
+  rejectButton.className = 'btn btn-sm btn-danger';
+  rejectButton.textContent = '拒绝并发送理由';
+  rejectButton.addEventListener('click', () => resolveOwnerRequest(requestId, 'reject'));
+  buttonRow.append(approveButton, rejectButton);
+  card.append(meta, description, reason, buttonRow);
+  return card;
+}
+
+function updateOwnerRequestCard(card, request) {
+  const requestId = String(request.id || request.request_id || 'unknown');
+  const metaText = `${requestId} · Pixel ${request.pixel_id || request.requester || '-'} · ${request.type || 'request'} · Round ${request.round ?? '-'}`;
+  const descriptionText = request.description || request.purpose || '未提供说明';
+  const meta = card.querySelector('.owner-request-meta');
+  const description = card.querySelector('.owner-request-description');
+  if (meta.textContent !== metaText) meta.textContent = metaText;
+  if (description.textContent !== descriptionText) description.textContent = descriptionText;
 }
 
 async function refreshWorld() {
@@ -266,6 +315,103 @@ async function refreshRunStatus() {
     const status = await res.json();
     updateRunStatusUI(status);
   } catch (e) {}
+}
+
+async function resolveOwnerRequest(requestId, decision) {
+  const reasonInput = document.getElementById(`owner-reason-${requestId}`);
+  const reason = (reasonInput?.value || '').trim();
+  if (!reason) {
+    alert(decision === 'approve' ? '请填写给 Pixel 的明确答复。' : '请填写拒绝理由。');
+    reasonInput?.focus();
+    return;
+  }
+
+  const card = document.getElementById(`owner-request-${requestId}`);
+  const buttons = card ? card.querySelectorAll('button') : [];
+  buttons.forEach(button => { button.disabled = true; });
+  try {
+    const res = await fetch(`/api/owner/requests/${encodeURIComponent(requestId)}/${decision}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reason })
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || data.error || '请求处理失败');
+    appendConsole(
+      `Owner 请求 ${requestId} 已${decision === 'approve' ? '批准' : '拒绝'}，反馈已发送给 Pixel。`,
+      decision === 'approve' ? 'success' : 'warn'
+    );
+    await refreshOwnerRequests();
+    await refreshRunStatus();
+    await refreshWorld();
+  } catch (error) {
+    buttons.forEach(button => { button.disabled = false; });
+    alert(`处理失败: ${error.message}`);
+  }
+}
+
+async function refreshOwnerRequests() {
+  const container = document.getElementById('owner-alert-container');
+  const title = document.getElementById('alert-title');
+  const body = document.getElementById('alert-body');
+  const actions = document.getElementById('alert-actions');
+  if (!container || !title || !body || !actions) return;
+
+  try {
+    const res = await fetch('/api/owner/requests');
+    if (!res.ok) return;
+    const allRequests = await res.json();
+    const pending = (Array.isArray(allRequests) ? allRequests : [])
+      .filter(request => request.status === 'PENDING_OWNER');
+    pendingOwnerRequestCount = pending.length;
+
+    const runButton = document.getElementById('btn-run');
+    if (runButton) runButton.disabled = Boolean(currentRunStatus?.running) || pending.length > 0;
+    document.querySelectorAll('.run-quick-btn').forEach(button => {
+      button.disabled = Boolean(currentRunStatus?.running) || pending.length > 0;
+    });
+
+    if (pending.length === 0) {
+      container.style.display = 'none';
+      body.replaceChildren();
+      actions.replaceChildren();
+      if (currentRunStatus) updateRunStatusUI(currentRunStatus);
+      return;
+    }
+
+    container.style.display = 'block';
+    title.textContent = `⚠ 需要 Owner 处理：${pending.length} 个待审批请求`;
+    if (!currentRunStatus?.running) {
+      const indicator = document.getElementById('run-status-indicator');
+      indicator.textContent = `WAITING OWNER (${pending.length})`;
+      indicator.className = 'run-status-indicator stopped';
+      indicator.title = '处理完全部待审批请求后才能继续演化。';
+    }
+    const pendingIds = new Set();
+    for (const request of pending) {
+      const requestId = String(request.id || request.request_id || 'unknown');
+      pendingIds.add(requestId);
+      let card = Array.from(body.children).find(item => item.dataset.requestId === requestId);
+      if (!card) {
+        card = createOwnerRequestCard(request);
+        body.appendChild(card);
+      }
+      updateOwnerRequestCard(card, request);
+    }
+
+    for (const card of Array.from(body.children)) {
+      if (!pendingIds.has(card.dataset.requestId)) card.remove();
+    }
+
+    if (!actions.querySelector('.owner-action-hint')) {
+      const hint = document.createElement('div');
+      hint.className = 'owner-action-hint';
+      hint.textContent = '处理完全部请求后，演化按钮会恢复；系统不会自动继续运行。';
+      actions.appendChild(hint);
+    }
+  } catch (error) {
+    appendConsole(`读取 Owner 请求失败: ${error.message}`, 'error');
+  }
 }
 
 async function refreshLoops() {
@@ -334,6 +480,7 @@ function startPolling() {
   const poll = async () => {
     await refreshWorld();
     await refreshRunStatus();
+    await refreshOwnerRequests();
     await refreshAuditStatus();
 
     const interval = (currentRunStatus && currentRunStatus.running) ? 600 : 1500;
