@@ -50,18 +50,26 @@ def run_server(
     open_browser: bool = True,
     workspace: Optional[Union[str, Path, ProjectPaths]] = None,
 ):
+    from .workspace_lock import WorkspaceLock
+    paths = workspace if isinstance(workspace, ProjectPaths) else get_paths(workspace)
+    # Acquire before recovery, browser opening, or any workspace mutation.
+    with WorkspaceLock(paths.workspace_root):
+        return _run_server_locked(host, port, open_browser, paths)
+
+
+def _run_server_locked(
+    host: str = "127.0.0.1",
+    port: int = 8765,
+    open_browser: bool = True,
+    workspace: Optional[Union[str, Path, ProjectPaths]] = None,
+):
     if host != "127.0.0.1":
         print("[SECURITY WARNING] Overriding host to 127.0.0.1 for local sandbox isolation.")
         host = "127.0.0.1"
 
     if is_port_in_use(port, host):
         print(f"[PORT CONFLICT] Port {port} on {host} is already in use.")
-        # Try finding next available port
-        for fallback_port in range(port + 1, port + 20):
-            if not is_port_in_use(fallback_port, host):
-                port = fallback_port
-                print(f"[FALLBACK] Using port {port} instead.")
-                break
+        raise RuntimeError(f"PORT_IN_USE: 请使用已有页面 http://{host}:{port}，不要重复启动。")
 
     url = f"http://{host}:{port}"
     print("=" * 60)

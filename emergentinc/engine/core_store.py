@@ -669,6 +669,7 @@ class CoreStore:
         cost_cny: float = 0.0,
         outcome: str = "SUCCESS",
         details: Optional[Dict[str, Any]] = None,
+        model_call: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """原子结算预留: 扣减实际消耗，退还或补足差额，释放 Run 与全局预留."""
         """原子结算预留: 扣减实际消耗，退还或补足差额，释放 Run 与全局预留."""
@@ -730,6 +731,12 @@ class CoreStore:
                     **(details or {})
                 })))
 
+                if model_call is not None:
+                    self.record_model_call(**model_call, _connection=conn)
+                    message_id = model_call.get("message_id")
+                    if message_id:
+                        status = "RESPONSE_STORED" if outcome == "SUCCESS" else "QUEUED"
+                        cur.execute("UPDATE messages SET status = ? WHERE message_id = ?", (status, message_id))
                 conn.commit()
                 return {
                     "call_id": call_id,
@@ -749,6 +756,8 @@ class CoreStore:
         pixel_id: str,
         message_id: Optional[str],
         error_msg: str,
+        model: str = "UNKNOWN",
+        pricing_revision: Optional[str] = None,
     ):
         """未知调用结果: 保留预留，进入 CALL_OUTCOME_UNKNOWN，挂起 Run 为 PAUSED_RECOVERY_REQUIRED."""
         now = time.time()
@@ -760,9 +769,19 @@ class CoreStore:
                 cur.execute("UPDATE reservations SET status = 'OPEN' WHERE call_id = ?", (call_id,))
                 cur.execute("""
                     INSERT OR REPLACE INTO model_calls (
-                        call_id, run_id, pixel_id, message_id, model, outcome, created_at
-                    ) VALUES (?, ?, ?, ?, 'UNKNOWN', 'CALL_OUTCOME_UNKNOWN', ?)
-                """, (call_id, run_id, pixel_id, message_id, now))
+                        call_id, run_id, pixel_id, message_id, model, pricing_revision,
+                        raw_response, outcome, created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, 'CALL_OUTCOME_UNKNOWN', ?)
+                """, (
+                    call_id,
+                    run_id,
+                    pixel_id,
+                    message_id,
+                    model,
+                    pricing_revision,
+                    json.dumps({"error": error_msg}, ensure_ascii=False),
+                    now,
+                ))
 
                 if message_id:
                     cur.execute("UPDATE messages SET status = 'CALL_OUTCOME_UNKNOWN', updated_at = ? WHERE message_id = ?", (now, message_id))
@@ -777,6 +796,98 @@ class CoreStore:
             except Exception as e:
                 conn.rollback()
                 raise CoreStoreError(f"mark_call_unknown transaction failed: {e}")
+
+    def resolve_unknown_call_no_charge(
+        self,
+        call_id: str,
+        reason: str = "OWNER_RESET_NO_CHARGE",
+    ) -> Dict[str, Any]:
+        """Owner 确认未计费后，原子退款预留、解除未知调用并将消息重新排队."""
+        now = time.time()
+        with self.get_connection() as conn:
+            cur = conn.cursor()
+            cur.execute("BEGIN IMMEDIATE")
+            try:
+                cur.execute("SELECT * FROM model_calls WHERE call_id = ?", (call_id,))
+                call = cur.fetchone()
+                if not call or call["outcome"] != "CALL_OUTCOME_UNKNOWN":
+                    raise CoreStoreError(f"Unknown call is not unresolved: {call_id}")
+
+                cur.execute("SELECT * FROM reservations WHERE call_id = ?", (call_id,))
+                reservation = cur.fetchone()
+                if not reservation or reservation["status"] != "OPEN":
+                    raise CoreStoreError(f"Open reservation not found: {call_id}")
+
+                run_id = reservation["run_id"]
+                pixel_id = reservation["pixel_id"]
+                reserved = int(reservation["amount"])
+
+                cur.execute("SELECT energy FROM pixel_accounts WHERE pixel_id = ?", (pixel_id,))
+                account = cur.fetchone()
+                if not account:
+                    raise CoreStoreError(f"Pixel account not found: {pixel_id}")
+                new_energy = int(account["energy"]) + reserved
+
+                cur.execute(
+                    "UPDATE pixel_accounts SET energy = ?, active = ?, updated_at = ? WHERE pixel_id = ?",
+                    (new_energy, 1 if new_energy > 0 else 0, now, pixel_id),
+                )
+                cur.execute(
+                    "UPDATE runs SET run_reserved = max(0, run_reserved - ?), status = ?, stop_reason = ?, finished_at = ? WHERE run_id = ?",
+                    (reserved, "RECOVERED_NO_CHARGE", reason, now, run_id),
+                )
+                cur.execute(
+                    "UPDATE global_budget SET total_reserved = max(0, total_reserved - ?), updated_at = ? WHERE id = 'GLOBAL'",
+                    (reserved, now),
+                )
+                cur.execute(
+                    "UPDATE reservations SET status = 'SETTLED', settled_at = ? WHERE call_id = ?",
+                    (now, call_id),
+                )
+                cur.execute(
+                    "UPDATE model_calls SET outcome = 'RESET_NO_CHARGE', actual_tokens = 0, cost_cny = 0.0 WHERE call_id = ?",
+                    (call_id,),
+                )
+
+                message_id = call["message_id"]
+                if message_id:
+                    cur.execute(
+                        "UPDATE messages SET status = 'QUEUED', updated_at = ? WHERE message_id = ?",
+                        (now, message_id),
+                    )
+
+                settle_id = f"settle_{call_id.replace('res_', '')}"
+                cur.execute("""
+                    INSERT INTO ledger_entries (entry_id, timestamp, pixel_id, entry_type, amount, balance_after, details)
+                    VALUES (?, ?, ?, 'settle', ?, ?, ?)
+                """, (
+                    settle_id,
+                    now,
+                    pixel_id,
+                    reserved,
+                    new_energy,
+                    json.dumps({
+                        "call_id": call_id,
+                        "reserved": reserved,
+                        "actual_tokens": 0,
+                        "resolution": reason,
+                    }, ensure_ascii=False),
+                ))
+
+                conn.commit()
+                return {
+                    "call_id": call_id,
+                    "run_id": run_id,
+                    "pixel_id": pixel_id,
+                    "message_id": message_id,
+                    "refunded_tokens": reserved,
+                    "pixel_balance_after": new_energy,
+                }
+            except Exception as e:
+                conn.rollback()
+                if isinstance(e, CoreStoreError):
+                    raise
+                raise CoreStoreError(f"resolve_unknown_call_no_charge transaction failed: {e}")
 
     def record_model_call(
         self,
@@ -795,10 +906,12 @@ class CoreStore:
         outcome: str = "SUCCESS",
         pricing_revision: Optional[str] = None,
         message_id: Optional[str] = None,
+        _connection=None,
     ) -> bool:
         """记录模型调用明细与元数据."""
         now = time.time()
-        with self.get_connection() as conn:
+        from contextlib import nullcontext
+        with (nullcontext(_connection) if _connection is not None else self.get_connection()) as conn:
             cur = conn.cursor()
             cur.execute("""
                 INSERT OR REPLACE INTO model_calls (
@@ -813,7 +926,8 @@ class CoreStore:
                 completion_tokens, cached_tokens, actual_tokens, cost_cny,
                 outcome, now
             ))
-            conn.commit()
+            if _connection is None:
+                conn.commit()
             return True
 
     # ==================== 经济动作：回款、退款、转账、繁殖 ====================
@@ -1287,11 +1401,28 @@ class CoreStore:
         now = time.time()
         with self.get_connection() as conn:
             cur = conn.cursor()
+            cur.execute("BEGIN IMMEDIATE")
+            cur.execute("SELECT * FROM pixel_accounts WHERE pixel_id = ?", (pixel_id,))
+            existing = cur.fetchone()
+            if existing:
+                conn.commit()
+                return dict(existing)
+
             cur.execute("""
                 INSERT INTO pixel_accounts (pixel_id, energy, active, refund_deficit_tokens, spend_blocked_reason, updated_at)
                 VALUES (?, ?, ?, ?, ?, ?)
-                ON CONFLICT(pixel_id) DO NOTHING
             """, (pixel_id, initial_energy, 1 if active else 0, refund_deficit_tokens, spend_blocked_reason, now))
+            cur.execute("""
+                INSERT INTO ledger_entries (entry_id, timestamp, pixel_id, entry_type, amount, balance_after, details)
+                VALUES (?, ?, ?, 'initial', ?, ?, ?)
+            """, (
+                f"initial_{pixel_id}",
+                now,
+                pixel_id,
+                initial_energy,
+                initial_energy,
+                json.dumps({"source": "ensure_pixel_account"}),
+            ))
             conn.commit()
             return self.get_pixel_account(pixel_id)
 
@@ -1397,4 +1528,3 @@ class CoreStore:
                 raise CoreStoreError(f"credit_pixel_revenue failed: {e}")
 
     settle_call = settle_call_budget
-

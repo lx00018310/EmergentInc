@@ -148,6 +148,9 @@ class EnergyManager:
 
         details = {
             "model": model,
+            "billing_mode": pricing.get("billing_mode", "per_token"),
+            "plan_price_cny": pricing.get("plan_price_cny"),
+            "plan_quota_tokens": pricing.get("plan_quota_tokens"),
             "pricing_effective_from": pricing.get("effective_from"),
             "cost_cny": round(cost_cny, 6),
             "regular_input_tokens": regular_in,

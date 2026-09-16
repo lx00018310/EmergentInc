@@ -32,6 +32,16 @@
       "output_cost_per_million": 72.0,
       "effective_from": "2026-09-01T00:00:00Z"
     },
+    "glm-5.3-flash": {
+      "billing_mode": "subscription_quota_amortized",
+      "plan_price_cny": 50.0,
+      "plan_quota_tokens": 2000000000,
+      "input_cost_per_million": 0.025,
+      "cached_input_cost_per_million": 0.025,
+      "output_cost_per_million": 0.025,
+      "effective_from": "2026-09-16T00:00:00+08:00",
+      "pricing_note": "50 CNY Coding Plan / 2,000M tokens; uniformly amortized because no token-type weighting was provided."
+    },
     "gemini-3.8-flash-high": {
       "input_cost_per_million": 0.5,
       "cached_input_cost_per_million": 0.25,

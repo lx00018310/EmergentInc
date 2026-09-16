@@ -11,6 +11,7 @@
 """
 
 import json
+import inspect
 import time
 import uuid
 from pathlib import Path
@@ -22,7 +23,7 @@ from .router import MessageRouter, MessageEnvelope, MAX_HOPS_PER_ROUND
 from .energy import EnergyManager
 from .environment import Environment
 from .operations import OperationExecutor, is_valid_coord_id
-from .llm import V9LLMClient, LLMInfrastructureError
+from .llm import V9LLMClient, LLMInfrastructureError, LLMResponseError
 from .genesis import GenesisPromptManager
 from .runner import OwnerActionRequired
 from .utils import read_json, write_json, id_to_coord, coord_to_id, neighbors6, sha256_text
@@ -91,6 +92,27 @@ class V9RoundScheduler:
         global_budget_tokens: Optional[int] = None,
         run_id: Optional[str] = None,
     ) -> Dict[str, Any]:
+        self._round_state = None
+        self._round_has_commits = False
+        try:
+            return self._run_round(stop_requested, run_budget_tokens, global_budget_tokens, run_id)
+        except Exception:
+            # Earlier messages may already be committed; a later failure must
+            # not leave their last_active_round ahead of world.round.
+            self.router.revert_in_progress()
+            if self._round_state is not None and self._round_has_commits:
+                self.router.roll_to_next_round()
+                self._round_state["active_pixels"] = len(self.world.list_pixel_ids(active_only=True))
+                self.save_world_state(self._round_state)
+            raise
+
+    def _run_round(
+        self,
+        stop_requested: Optional[Callable[[], bool]] = None,
+        run_budget_tokens: Optional[int] = None,
+        global_budget_tokens: Optional[int] = None,
+        run_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
         w_state = self.load_world_state()
         current_round = int(w_state.get("round", 0)) + 1
         w_state["round"] = current_round
@@ -123,6 +145,7 @@ class V9RoundScheduler:
                 self.core_store.sync_account_to_storage(pid, st_p)
 
         # 1. 刷新物理六邻域拓扑
+        self._round_state = w_state
         self.world.refresh_all_neighbors()
 
         # 2. 自然唤醒检查 (Natural Wake)
@@ -134,6 +157,8 @@ class V9RoundScheduler:
         round_pixel_spent: Dict[str, int] = {}
         total_round_spent = 0
         stop_reason = None
+        stop_detail = None
+        owner_request_ids: List[str] = []
 
         while True:
             # 停止信号拦截 (调模型前细粒度退出)
@@ -246,8 +271,7 @@ class V9RoundScheduler:
                 # 层级 1: Pixel 单轮调用预算上限
                 pixel_spent = round_pixel_spent.get(msg.recipient, 0)
                 if pixel_spent + estimated_reserve > r_state.inbox_call_budget_per_round:
-                    self.router.delayed_queue.append(msg)
-                    self.router.save_state()
+                    self.router.defer_in_progress()
                     continue
 
                 # 层级 2 & 3: 数据库三层硬预算预留 (原子校验 Pixel 余额、Deficit、Run 预算、全局预算)
@@ -267,8 +291,7 @@ class V9RoundScheduler:
                             r_state.active = True
                             recipient_storage.save_state(r_state)
                             self.core_store.transition_message(msg.id, "WAITING_PIXEL_BUDGET")
-                            self.router.delayed_queue.append(msg)
-                            self.router.save_state()
+                            self.router.defer_in_progress()
                             continue
                         else:
                             # 零余额失活
@@ -285,8 +308,7 @@ class V9RoundScheduler:
                         break
                     else:
                         # 其他原因（如退款赤字阻断 SPEND_BLOCKED）
-                        self.router.delayed_queue.append(msg)
-                        self.router.save_state()
+                        self.router.defer_in_progress()
                         continue
 
                 # 预留成功
@@ -297,7 +319,8 @@ class V9RoundScheduler:
                 # 3.3 模型决策调用
                 try:
                     if stop_requested and stop_requested():
-                        self.core_store.settle_call_budget(call_id, 0, {"reason": "STOP_BEFORE_CALL"})
+                        self.core_store.settle_call_budget(call_id, 0, details={"reason": "STOP_BEFORE_CALL"})
+                        self.core_store.transition_message(msg.id, "QUEUED")
                         self.core_store.sync_account_to_storage(msg.recipient, recipient_storage)
                         self.router.revert_in_progress()
                         stop_reason = "USER_STOPPED"
@@ -305,19 +328,12 @@ class V9RoundScheduler:
 
                     self.core_store.transition_message(msg.id, "CALLING")
 
-                    try:
-                        response_data, audit = self.llm.step(
-                            state_dict=r_state.to_dict(),
-                            pixel_md=pixel_md_content,
-                            message_md=msg.content,
-                            prepared_prompt=prep,
-                        )
-                    except TypeError:
-                        response_data, audit = self.llm.step(
-                            state_dict=r_state.to_dict(),
-                            pixel_md=pixel_md_content,
-                            message_md=msg.content,
-                        )
+                    # Never retry a possibly billed call on an internal TypeError.
+                    kwargs = dict(state_dict=r_state.to_dict(), pixel_md=pixel_md_content, message_md=msg.content)
+                    params = inspect.signature(self.llm.step).parameters
+                    if "prepared_prompt" in params or any(p.kind == p.VAR_KEYWORD for p in params.values()):
+                        kwargs["prepared_prompt"] = prep
+                    response_data, audit = self.llm.step(**kwargs)
 
                     usage = audit.get("token_usage", {})
                     actual_tokens, pricing_details = self.energy_mgr.calculate_call_energy(
@@ -326,9 +342,49 @@ class V9RoundScheduler:
                         completion_tokens=usage.get("completion_tokens", 0),
                         cached_tokens=usage.get("cached_tokens", 0),
                     )
+                except LLMResponseError as e:
+                    usage = e.token_usage
+                    actual_tokens, pricing_details = self.energy_mgr.calculate_call_energy(
+                        model=e.model,
+                        prompt_tokens=usage.get("prompt_tokens", 0),
+                        completion_tokens=usage.get("completion_tokens", 0),
+                        cached_tokens=usage.get("cached_tokens", 0),
+                    )
+                    call_record = dict(
+                        call_id=call_id,
+                        run_id=run_id,
+                        pixel_id=msg.recipient,
+                        message_id=msg.id,
+                        model=e.model,
+                        pricing_revision=e.pricing_revision,
+                        prompt_hash=prep.prompt_hash,
+                        raw_response=e.raw_response,
+                        normalized_response="",
+                        prompt_tokens=usage.get("prompt_tokens", 0),
+                        completion_tokens=usage.get("completion_tokens", 0),
+                        cached_tokens=usage.get("cached_tokens", 0),
+                        actual_tokens=actual_tokens,
+                        cost_cny=float(pricing_details.get("cost_cny", 0.0)),
+                        outcome="FAILED_RESPONSE",
+                    )
+                    self.core_store.settle_call_budget(
+                        call_id,
+                        actual_tokens,
+                        cost_cny=float(pricing_details.get("cost_cny", 0.0)),
+                        outcome="FAILED_RESPONSE",
+                        details={**pricing_details, "failure": str(e)},
+                        model_call=call_record,
+                    )
+                    self.core_store.sync_account_to_storage(msg.recipient, recipient_storage)
+                    self.core_store.transition_message(msg.id, "QUEUED")
+                    self.router.revert_in_progress()
+                    stop_reason = "MODEL_RESPONSE_INVALID"
+                    stop_detail = str(e)
+                    break
                 except LLMInfrastructureError as e:
                     # 基础设施级网络/认证/代理故障: 全额退还预留，消息放回队首，立即熔断向上抛出
-                    self.core_store.settle_call_budget(call_id, 0, {"error": f"INFRASTRUCTURE_FAILURE: {str(e)}"})
+                    self.core_store.settle_call_budget(call_id, 0, details={"error": f"INFRASTRUCTURE_FAILURE: {str(e)}"})
+                    self.core_store.transition_message(msg.id, "QUEUED")
                     self.core_store.sync_account_to_storage(msg.recipient, recipient_storage)
                     self.router.revert_in_progress()
                     raise
@@ -340,18 +396,34 @@ class V9RoundScheduler:
                         pixel_id=msg.recipient,
                         message_id=msg.id,
                         error_msg=str(e),
+                        model=prep.model_name,
+                        pricing_revision=prep.pricing_revision,
                     )
                     self.router.revert_in_progress()
                     stop_reason = "PAUSED_RECOVERY_REQUIRED"
+                    stop_detail = f"CALL_OUTCOME_UNKNOWN: {e}"
                     break
 
                 # 3.4 响应持久化与实际结算
-                self.core_store.transition_message(msg.id, "RESPONSE_STORED")
                 self.core_store.settle_call_budget(
                     call_id,
                     actual_tokens,
-                    {**pricing_details, "model": audit.get("model")},
+                    cost_cny=float(pricing_details.get("cost_cny", 0.0)),
+                    details={**pricing_details, "model": audit.get("model")},
+                    model_call=dict(
+                        call_id=call_id, run_id=run_id, pixel_id=msg.recipient,
+                        message_id=msg.id, model=audit.get("model", prep.model_name),
+                        pricing_revision=prep.pricing_revision, prompt_hash=prep.prompt_hash,
+                        raw_response=audit.get("raw_response", json.dumps(response_data, ensure_ascii=False)),
+                        normalized_response=json.dumps(response_data, ensure_ascii=False),
+                        prompt_tokens=usage.get("prompt_tokens", 0),
+                        completion_tokens=usage.get("completion_tokens", 0),
+                        cached_tokens=usage.get("cached_tokens", 0),
+                        actual_tokens=actual_tokens,
+                        cost_cny=float(pricing_details.get("cost_cny", 0.0)),
+                    ),
                 )
+                self._round_has_commits = True
                 self.core_store.sync_account_to_storage(msg.recipient, recipient_storage)
 
                 round_pixel_spent[msg.recipient] = round_pixel_spent.get(msg.recipient, 0) + actual_tokens
@@ -371,6 +443,7 @@ class V9RoundScheduler:
                 executed_steps.append(step_summary)
 
             # 兼容 actions 数组格式
+            self._round_has_commits = True
             if isinstance(response_data, dict) and "actions" in response_data and isinstance(response_data["actions"], list):
                 for act in response_data["actions"]:
                     atype = act.get("type")
@@ -427,7 +500,10 @@ class V9RoundScheduler:
 
                 self.core_store.transition_message(msg.id, "COMMITTED")
                 self.router.commit_in_progress(msg)
-                raise OwnerActionRequired(request_ids=[req_id])
+                owner_request_ids.append(req_id)
+                stop_reason = "OWNER_ACTION_REQUIRED"
+                stop_detail = f"Pending owner request: {req_id}"
+                break
 
             # 3.7 环境主动读取
             if response_data.get("environment_read", False):
@@ -545,9 +621,14 @@ class V9RoundScheduler:
         return {
             "round": current_round,
             "hops_executed": round_hops,
+            "messages_processed": round_hops,
+            "model_calls_completed": len(executed_steps),
+            "activity_status": "ACTIVE" if executed_steps else "NO_MODEL_CALLS",
             "steps": executed_steps,
             "active_pixels": len(active_ids),
             "stop_reason": stop_reason,
+            "stop_detail": stop_detail,
+            "owner_requests": owner_request_ids,
         }
 
     def _check_natural_wake(self, current_round: int):

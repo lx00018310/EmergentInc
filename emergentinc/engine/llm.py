@@ -13,7 +13,7 @@ import json
 from pathlib import Path
 from typing import Optional, Union, Dict, Any, Tuple, Callable
 import httpx
-from openai import OpenAI
+from openai import OpenAI, APIStatusError, APIConnectionError, APITimeoutError
 import jsonschema
 from .utils import sha256_text, read_json
 from emergentinc.paths import ProjectPaths, get_paths
@@ -180,6 +180,25 @@ class LLMInfrastructureError(RuntimeError):
     pass
 
 
+class LLMResponseError(RuntimeError):
+    """供应商已返回响应，但响应无法作为合法 Pixel 决策使用；保留 usage 供确定性结算."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        raw_response: str,
+        token_usage: Dict[str, int],
+        model: str,
+        pricing_revision: str,
+    ):
+        super().__init__(message)
+        self.raw_response = raw_response
+        self.token_usage = token_usage
+        self.model = model
+        self.pricing_revision = pricing_revision
+
+
 class PricingOrTokenizerNotConfiguredError(RuntimeError):
     """未配置模型定价或没有可用 Token 估算器时抛出的异常 (Fail Closed)."""
     pass
@@ -260,6 +279,7 @@ class V9LLMClient:
             self.client = OpenAI(
                 api_key=self.api_key,
                 base_url=self.base_url,
+                max_retries=0,
                 http_client=httpx.Client(
                     trust_env=False,
                     timeout=httpx.Timeout(timeout_sec, connect=10.0),
@@ -317,6 +337,10 @@ class V9LLMClient:
 
         mc = self.cfg.get("model", {})
         max_output_tokens = int(mc.get("max_output_tokens", {}).get("decision", 2000))
+        if model.lower() == "glm-5.3-flash":
+            # GLM-5.3-Flash 为强制思考模型；思考 Token 与最终正文共享输出上限。
+            # 1600 会在最终 JSON 生成前被截断，因此适配层保证一个可用的最低输出窗口。
+            max_output_tokens = max(max_output_tokens, 8192)
 
         return PreparedPrompt(
             system_prompt=effective_system_prompt,
@@ -377,29 +401,46 @@ class V9LLMClient:
 
         mc = self.cfg.get("model", {})
         try:
-            r = self.client.chat.completions.create(
-                model=prep.model_name,
-                messages=[
+            request_args: Dict[str, Any] = {
+                "model": prep.model_name,
+                "messages": [
                     {"role": "system", "content": effective_system_prompt},
                     {"role": "user", "content": user_content},
                 ],
-                temperature=float(mc.get("temperature", {}).get("decision", 0.6)),
-                max_tokens=prep.max_output_tokens,
-                response_format={"type": "json_object"},
+                "temperature": float(mc.get("temperature", {}).get("decision", 0.6)),
+                "response_format": {"type": "json_object"},
+            }
+            if prep.model_name.lower() == "glm-5.3-flash":
+                request_args["max_completion_tokens"] = prep.max_output_tokens
+                request_args["reasoning_effort"] = "low"
+            else:
+                request_args["max_tokens"] = prep.max_output_tokens
+
+            r = self.client.chat.completions.create(
+                **request_args,
             )
         except Exception as e:
-            err_msg = str(e)
-            err_lower = err_msg.lower()
-            infra_keywords = [
-                "proxy", "disabled", "connection", "connect", "timeout",
-                "unauthorized", "401", "403", "429", "quota", "502", "503", "504",
-                "refused", "network", "getaddrinfo", "dns", "authentication"
-            ]
-            if any(k in err_lower for k in infra_keywords):
+            # Explicit rejection proves no successful inference. Read timeouts
+            # and server errors do not prove that the provider did not charge.
+            rejected = isinstance(e, APIStatusError) and e.status_code in (400, 401, 403, 404, 422, 429)
+            connect_failed = isinstance(e, APIConnectionError) and not isinstance(e, APITimeoutError) and isinstance(e.__cause__, (httpx.ConnectError, httpx.ConnectTimeout))
+            if rejected or connect_failed:
                 raise LLMInfrastructureError(f"API_INFRASTRUCTURE_FAILURE: {e}") from e
             raise RuntimeError(f"CALL_FAILED: V9_STEP: {e}") from e
 
-        raw = (r.choices[0].message.content or "").strip()
+        u = r.usage
+        if u is None or getattr(u, "prompt_tokens", None) is None or getattr(u, "completion_tokens", None) is None:
+            raise RuntimeError("CALL_USAGE_UNKNOWN: provider returned no complete token usage")
+        usage = {
+            "prompt_tokens": getattr(u, "prompt_tokens", 0) if u else 0,
+            "completion_tokens": getattr(u, "completion_tokens", 0) if u else 0,
+            "cached_tokens": getattr(u, "cached_tokens", 0) if u else 0,
+            "total_tokens": getattr(u, "total_tokens", 0) if u else 0,
+        }
+
+        choice = r.choices[0]
+        finish_reason = getattr(choice, "finish_reason", None)
+        raw = (choice.message.content or "").strip()
         if raw.startswith("```"):
             raw = re.sub(r"^```(?:json)?\s*", "", raw)
             raw = re.sub(r"\s*```$", "", raw).strip()
@@ -407,18 +448,29 @@ class V9LLMClient:
         try:
             data = json.loads(raw)
         except Exception as e:
-            raise RuntimeError(f"CALL_FAILED: V9_STEP: invalid JSON response: {e}") from e
+            failure = f"invalid JSON response: {e}"
+            if not raw and finish_reason == "length":
+                failure = "response truncated before final JSON (finish_reason=length)"
+            raise LLMResponseError(
+                f"CALL_FAILED: V9_STEP: {failure}",
+                raw_response=raw,
+                token_usage=usage,
+                model=prep.model_name,
+                pricing_revision=prep.pricing_revision,
+            ) from e
 
         # 4. 容错归一化与 Schema 校验
-        data = normalize_pixel_response(data, pixel_md)
-        jsonschema.validate(data, self.schema)
-
-        u = r.usage
-        usage = {
-            "prompt_tokens": getattr(u, "prompt_tokens", 0) if u else 0,
-            "completion_tokens": getattr(u, "completion_tokens", 0) if u else 0,
-            "total_tokens": getattr(u, "total_tokens", 0) if u else 0,
-        }
+        try:
+            data = normalize_pixel_response(data, pixel_md)
+            jsonschema.validate(data, self.schema)
+        except Exception as e:
+            raise LLMResponseError(
+                f"CALL_FAILED: V9_STEP: invalid response schema: {e}",
+                raw_response=raw,
+                token_usage=usage,
+                model=prep.model_name,
+                pricing_revision=prep.pricing_revision,
+            ) from e
 
         audit = {
             "kind": "V9_STEP",
@@ -428,5 +480,6 @@ class V9LLMClient:
             "pricing_revision": prep.pricing_revision,
             "genesis_revision": self.genesis_revision,
             "token_usage": usage,
+            "raw_response": raw,
         }
         return data, audit

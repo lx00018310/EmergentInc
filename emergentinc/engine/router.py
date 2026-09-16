@@ -106,6 +106,13 @@ class MessageRouter:
         tmp_file.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         tmp_file.replace(self.state_file)
 
+    def defer_in_progress(self):
+        """Move the current envelope to the next round without duplicating it."""
+        if self.current_in_progress is not None:
+            self.delayed_queue.append(self.current_in_progress)
+            self.current_in_progress = None
+            self.save_state()
+
     def load_state(self):
         """从持久化状态恢复队列与消费记录 (Fail Closed: 损坏时保存 .quarantine 并抛出异常)."""
         if not self.state_file or not self.state_file.exists():

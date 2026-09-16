@@ -172,6 +172,7 @@ function updateHeaderMetrics(world) {
 }
 
 function updateRunStatusUI(status) {
+  const previousStatus = currentRunStatus;
   currentRunStatus = status;
   const indicator = document.getElementById('run-status-indicator');
   const btnRun = document.getElementById('btn-run');
@@ -181,7 +182,7 @@ function updateRunStatusUI(status) {
   document.getElementById('loop-badge').textContent = `loop: ${status.current_loop || '-'}`;
 
   if (status.running) {
-    indicator.textContent = `EVOLVING (${status.completed_rounds}/${status.requested_rounds})`;
+    indicator.textContent = `EVOLVING (${status.completed_rounds}/${status.requested_rounds}, LLM: ${status.model_calls_completed || 0})`;
     indicator.className = 'run-status-indicator running';
     btnRun.disabled = true;
     btnStop.disabled = false;
@@ -197,12 +198,35 @@ function updateRunStatusUI(status) {
     indicator.title = status.stop_reason;
     btnRun.disabled = false;
     btnStop.disabled = true;
+  } else if (status.result_status === 'COMPLETED_NO_ACTIVITY') {
+    indicator.textContent = 'NO ACTIVITY (API 未调用)';
+    indicator.className = 'run-status-indicator stopped';
+    indicator.title = 'Round 已推进，但没有消息处理或模型调用；本次结果不能证明底层 API 可用。';
+    btnRun.disabled = false;
+    btnStop.disabled = true;
   } else {
     indicator.textContent = 'IDLE';
     indicator.className = 'run-status-indicator';
     indicator.title = '';
     btnRun.disabled = false;
     btnStop.disabled = true;
+  }
+
+  if (previousStatus?.running && !status.running) {
+    const calls = Number(status.model_calls_completed || 0);
+    const messages = Number(status.messages_processed || 0);
+    const idleRounds = Number(status.idle_rounds || 0);
+    if (status.result_status === 'COMPLETED_NO_ACTIVITY') {
+      appendConsole(
+        `Run结束：推进 ${status.completed_rounds || 0} 轮，但处理消息 0 条、LLM调用 0 次；底层 API 未被测试。`,
+        'warn'
+      );
+    } else if (!status.last_error && !status.stop_reason) {
+      appendConsole(
+        `Run完成：消息 ${messages} 条，LLM调用 ${calls} 次，空轮 ${idleRounds} 轮。`,
+        'info'
+      );
+    }
   }
 
   const genesisTextarea = document.getElementById('genesis-textarea');
@@ -221,7 +245,10 @@ async function refreshWorld() {
     currentWorld = world;
 
     if (lastKnownRound !== -1 && world.round > lastKnownRound) {
-      appendConsole(`世界步进至 Round ${world.round} (存活元胞: ${world.metrics?.active_pixels})`, 'info');
+      appendConsole(
+        `世界时钟推进至 Round ${world.round} (存活元胞: ${world.metrics?.active_pixels})；该提示不代表 LLM/API 已调用。`,
+        'info'
+      );
     }
     lastKnownRound = world.round;
 
@@ -268,6 +295,11 @@ async function refreshAuditStatus() {
       }
     }
 
+    if (audit.audit_status === 'DEFERRED_RUNNING') {
+      if (healthEl) { healthEl.textContent = 'RUNNING'; healthEl.style.color = '#63b3ed'; }
+      if (recoveryAlert) recoveryAlert.style.display = 'none';
+      return;
+    }
     if (!audit.allowed_to_start || audit.recovery_required) {
       if (healthEl) {
         healthEl.textContent = 'BLOCKED';

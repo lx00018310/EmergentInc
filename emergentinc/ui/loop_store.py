@@ -26,8 +26,8 @@ class LoopStore:
         return json.loads(path.read_text(encoding='utf-8'))
 
     def _write_json(self, path: Path, data: Any) -> None:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
+        from emergentinc.engine.utils import write_json
+        write_json(path, data)
 
     def ensure_initialized(self) -> None:
         self.branches_dir.mkdir(parents=True, exist_ok=True)
@@ -138,7 +138,14 @@ class LoopStore:
             raise ValueError(f"Loop not found: {loop_id}")
 
         after_dir = ckpt_dir / 'after'
-        snapshot.create_snapshot(self.live_dir, after_dir)
+        try:
+            snapshot.create_snapshot(self.live_dir, after_dir)
+        except Exception as exc:
+            meta.update(end_round=end_round, status="ERROR",
+                        stop_reason=f"SNAPSHOT_FAILED: {exc}",
+                        finished_at=datetime.now(timezone.utc).isoformat())
+            self._write_json(meta_path, meta)
+            raise
 
         meta['end_round'] = end_round
         meta['status'] = status

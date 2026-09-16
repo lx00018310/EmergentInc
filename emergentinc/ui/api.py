@@ -278,8 +278,14 @@ def init_api(base_dir: Optional[Union[str, Path, ProjectPaths]] = None) -> APIRo
     @router.get("/audit/workspace")
     def get_workspace_audit():
         from emergentinc.engine.audit import audit_workspace
-        curr_run_id = run_controller.status().get("current_loop")
-        rep = audit_workspace(paths.workspace_root, run_id=curr_run_id)
-        return rep.to_dict()
+        # Audit only a quiescent workspace. Holding the controller lock prevents
+        # a new Run from starting between the status check and file/DB reads.
+        with run_controller.lock:
+            run_status = run_controller.status()
+            if run_status.get("running"):
+                return {"audit_status": "DEFERRED_RUNNING", "allowed_to_start": False,
+                        "recovery_required": False, "block_reasons": ["RUN_IN_PROGRESS"]}
+            rep = audit_workspace(paths.workspace_root, run_id=run_status.get("current_loop"))
+            return rep.to_dict()
 
     return router

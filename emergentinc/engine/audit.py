@@ -104,7 +104,11 @@ class AuditReport:
         return "\n".join(lines)
 
 
-def audit_workspace(workspace_dir: Union[str, Path], run_id: Optional[str] = None) -> AuditReport:
+def audit_workspace(
+    workspace_dir: Union[str, Path],
+    run_id: Optional[str] = None,
+    active_run_id: Optional[str] = None,
+) -> AuditReport:
     ws = Path(workspace_dir).resolve()
     live_dir = ws / "live"
     pixels_dir = live_dir / "pixels"
@@ -232,12 +236,28 @@ def audit_workspace(workspace_dir: Union[str, Path], run_id: Optional[str] = Non
             conn.row_factory = sqlite3.Row
             cur = conn.cursor()
 
-            # (1) 未结预留
-            cur.execute("SELECT * FROM reservations WHERE status = 'OPEN'")
+            # SQLite 是迁移后的唯一账务事实源；JSONL 只保留兼容历史，不再用于余额核对。
+            cur.execute("SELECT COALESCE(SUM(amount), 0) AS total FROM ledger_entries")
+            ledger_net_energy = int(cur.fetchone()["total"])
+
+            # (1) 未结预留。正在执行的 Run 中 OPEN reservation 是正常事务中间态，不是恢复事故。
+            if active_run_id:
+                cur.execute(
+                    "SELECT * FROM reservations WHERE status = 'OPEN' AND run_id != ?",
+                    (active_run_id,),
+                )
+            else:
+                cur.execute("SELECT * FROM reservations WHERE status = 'OPEN'")
             unsettled_reservations = [dict(r) for r in cur.fetchall()]
 
             # (2) 未知模型调用
-            cur.execute("SELECT * FROM model_calls WHERE outcome = 'CALL_OUTCOME_UNKNOWN'")
+            if active_run_id:
+                cur.execute(
+                    "SELECT * FROM model_calls WHERE outcome = 'CALL_OUTCOME_UNKNOWN' AND run_id != ?",
+                    (active_run_id,),
+                )
+            else:
+                cur.execute("SELECT * FROM model_calls WHERE outcome = 'CALL_OUTCOME_UNKNOWN'")
             unknown_calls = [dict(r) for r in cur.fetchall()]
 
             # (3) 赤字与受阻元胞
@@ -269,7 +289,7 @@ def audit_workspace(workspace_dir: Union[str, Path], run_id: Optional[str] = Non
             if d.is_dir() and meta_file.exists():
                 try:
                     meta = json.loads(meta_file.read_text(encoding="utf-8"))
-                    if meta.get("status") == "RUNNING":
+                    if meta.get("status") == "RUNNING" and meta.get("id", d.name) != active_run_id:
                         stale_running_loops.append({
                             "loop_id": meta.get("id", d.name),
                             "command": meta.get("command"),
@@ -321,10 +341,18 @@ def audit_workspace(workspace_dir: Union[str, Path], run_id: Optional[str] = Non
         block_reasons.append(f"存在 {len(stale_running_loops)} 个卡死的 RUNNING 快照 Loop")
     if len(incomplete_pixels) > 0:
         block_reasons.append(f"存在 {len(incomplete_pixels)} 个残缺或破损元胞")
+    if len(round_inconsistencies) > 0:
+        preview = ", ".join(
+            f"{item['pixel_id']}(last_active={item['last_active_round']}, world={item['world_round']})"
+            for item in round_inconsistencies[:5]
+        )
+        block_reasons.append(f"Pixel 回合状态领先于世界回合: {preview}")
+    if energy_diff != 0:
+        block_reasons.append(f"Pixel 能量与 SQLite 账本不一致: {energy_diff}")
     if budget_state.get("global_remaining_tokens", 1) <= 0:
         block_reasons.append("全局预算已耗尽 (GLOBAL_BUDGET_EXHAUSTED)")
 
-    allowed_to_start = (len(block_reasons) == 0)
+    allowed_to_start = not recovery_required and len(block_reasons) == 0
 
     return AuditReport(
         workspace=str(ws),
@@ -360,7 +388,9 @@ def generate_run_report(workspace_dir: Union[str, Path], run_id: str) -> Dict[st
     report_file = runs_dir / "run_report.json"
 
     audit_rep = audit_workspace(ws, run_id=run_id)
-    sqlite_db_path = ws / "core_store.sqlite3"
+    sqlite_db_path = ws / "ledger" / "v9_core.sqlite3"
+    if not sqlite_db_path.exists():
+        sqlite_db_path = ws / "core_store.sqlite3"
 
     run_meta: Dict[str, Any] = {}
     calls_count = 0
@@ -403,10 +433,10 @@ def generate_run_report(workspace_dir: Union[str, Path], run_id: str) -> Dict[st
         "run_id": run_id,
         "status": run_meta.get("status", "UNKNOWN"),
         "stop_reason": run_meta.get("stop_reason", ""),
-        "rounds": run_meta.get("rounds", 0),
-        "run_budget_tokens": run_meta.get("run_budget_tokens", 0),
-        "global_budget_tokens": run_meta.get("global_budget_tokens", 0),
-        "spent_tokens": run_meta.get("spent_tokens", 0),
+        "rounds": max(0, (run_meta.get("end_round") or 0) - (run_meta.get("start_round") or 1) + 1),
+        "run_budget_tokens": run_meta.get("run_limit", 0),
+        "global_budget_tokens": run_meta.get("global_limit", 0),
+        "spent_tokens": run_meta.get("run_spent", 0),
         "genesis_revision": audit_rep.genesis_revision,
         "pricing_revision": audit_rep.pricing_revision,
         "calls_count": calls_count,

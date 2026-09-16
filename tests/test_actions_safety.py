@@ -122,9 +122,12 @@ def test_owner_request_action_and_bridge_feedback(tmp_path):
     )
     scheduler.router.enqueue([msg])
 
-    # 调度器执行时应抛出 OwnerActionRequired
-    with pytest.raises(OwnerActionRequired):
-        scheduler.run_round()
+    # Owner 请求必须在本轮状态完整提交后暂停，不能用异常中断回合收尾。
+    result = scheduler.run_round()
+    assert result["stop_reason"] == "OWNER_ACTION_REQUIRED"
+    assert len(result["owner_requests"]) == 1
+    assert scheduler.load_world_state()["round"] == 1
+    assert storage.load_state().last_active_round == 1
 
     # 检查 external_requests 目录是否成功生成请求文件
     req_files = list(scheduler.owner_requests_dir.glob("*.json"))
@@ -133,6 +136,7 @@ def test_owner_request_action_and_bridge_feedback(tmp_path):
 
     # 测试 OwnerBridge 审批批准
     bridge = OwnerBridge(paths)
+    assert [r["id"] for r in bridge.list_requests()] == [req_path.stem]
     ok_app = bridge.approve_request(req_path.stem, reason="Approved by admin")
     assert ok_app.get("status") == "APPROVED"
 

@@ -50,6 +50,49 @@ def test_estimate_call_reserve(tmp_path):
     assert res_large > res_min
 
 
+def test_glm_53_flash_coding_plan_uses_amortized_package_cost(tmp_path):
+    ledger_path = tmp_path / "ledger" / "energy_ledger.jsonl"
+    project_root = Path(__file__).resolve().parents[1]
+    pricing_path = project_root / "resources" / "config" / "model_pricing.json"
+    mgr = EnergyManager(
+        ledger_path,
+        cost_per_million_equivalent_tokens=1.0,
+        pricing_config_path=pricing_path,
+    )
+
+    # 50 CNY / 2,000M tokens = 0.025 CNY / 1M tokens.
+    # 未提供输入、缓存输入、输出的额度权重，因此三类 token 按同价摊销。
+    tokens, details = mgr.calculate_call_energy(
+        model="glm-5.3-flash",
+        prompt_tokens=1_500_000_000,
+        completion_tokens=500_000_000,
+        cached_tokens=500_000_000,
+    )
+
+    assert details["cost_cny"] == pytest.approx(50.0)
+    assert tokens == 50_000_000
+    assert details["billing_mode"] == "subscription_quota_amortized"
+    assert details["plan_price_cny"] == 50.0
+    assert details["plan_quota_tokens"] == 2_000_000_000
+
+    reserve = mgr.estimate_call_reserve(
+        "glm-5.3-flash",
+        estimated_prompt_tokens=1_000_000_000,
+        max_output_tokens=1_000_000_000,
+    )
+    assert reserve == 50_000_000
+
+    # 覆盖此前的真实异常路径：非 mock 模型必须能命中精确的 pricing 配置。
+    client = V9LLMClient(base_dir=project_root)
+    client.model_name = "glm-5.3-flash"
+    prepared = client.prepare_prompt(
+        state_dict={"id": "0_0_0"},
+        pixel_md="# Pixel",
+        message_md="hello",
+    )
+    assert prepared.pricing_revision == "2026-09-16T00:00:00+08:00"
+
+
 def test_inbox_call_budget_per_round_deferred(tmp_path):
     ws = tmp_path / "ws"
     ws.mkdir(parents=True, exist_ok=True)

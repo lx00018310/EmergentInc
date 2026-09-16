@@ -1,5 +1,7 @@
 import pytest
-from emergentinc.engine.llm import V9LLMClient, CognitiveIsolationViolation
+from pathlib import Path
+from types import SimpleNamespace
+from emergentinc.engine.llm import V9LLMClient, CognitiveIsolationViolation, LLMResponseError
 
 
 def test_cognitive_isolation_strict_three_inputs(tmp_path):
@@ -76,3 +78,42 @@ def test_normalize_pixel_response_robustness():
     assert "messages" not in normalized
     assert "extra_field_unwanted" not in normalized
 
+
+def test_invalid_json_response_preserves_usage_for_settlement():
+    project_root = Path(__file__).resolve().parents[1]
+    client = V9LLMClient(base_dir=project_root)
+    client.model_name = "glm-5.3-flash"
+    captured_request = {}
+
+    class FakeCompletions:
+        def create(self, **kwargs):
+            captured_request.update(kwargs)
+            return SimpleNamespace(
+                choices=[SimpleNamespace(message=SimpleNamespace(content=""))],
+                usage=SimpleNamespace(
+                    prompt_tokens=1200,
+                    completion_tokens=25,
+                    cached_tokens=100,
+                    total_tokens=1225,
+                ),
+            )
+
+    client.client = SimpleNamespace(
+        chat=SimpleNamespace(completions=FakeCompletions())
+    )
+
+    with pytest.raises(LLMResponseError) as exc_info:
+        client.step({"id": "0_0_0"}, "# Pixel", "hello")
+
+    err = exc_info.value
+    assert err.raw_response == ""
+    assert err.model == "glm-5.3-flash"
+    assert err.token_usage == {
+        "prompt_tokens": 1200,
+        "completion_tokens": 25,
+        "cached_tokens": 100,
+        "total_tokens": 1225,
+    }
+    assert captured_request["max_completion_tokens"] == 8192
+    assert captured_request["reasoning_effort"] == "low"
+    assert "max_tokens" not in captured_request

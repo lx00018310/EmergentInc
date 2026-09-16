@@ -154,7 +154,8 @@ class Storage:
         return f'{prefix}{max(nums, default=0)+1:04d}'
 
     def external_request_ids(self):
-        return self._ids('external_requests', 'ER')
+        # V9 调度器使用 req_*，旧版本使用 ER*；二者都是同一目录中的合法 Owner 请求。
+        return sorted(p.stem for p in (self.live / 'external_requests').glob('*.json'))
 
     def next_external_request_id(self):
         return self._next_id('external_requests', 'ER')
@@ -301,5 +302,4 @@ class Storage:
         if src.exists():
             dst.parent.mkdir(parents=True, exist_ok=True)
             src.rename(dst)
-
 
