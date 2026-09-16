@@ -40,6 +40,7 @@ def init_workspace(
     # 建立目录骨架
     for sub in [
         paths.live_root,
+        paths.live_root / "artifacts",
         paths.loops_root / "branches",
         paths.loops_root / "checkpoints",
         paths.runtime_root,
@@ -54,6 +55,7 @@ def init_workspace(
     live_items = [
         "world_state.json",
         "world_state.md",
+        "environment.md",
         "pixels",
         "problems",
         "rounds",
@@ -71,7 +73,37 @@ def init_workspace(
         elif src.is_dir():
             shutil.copytree(src, dst, dirs_exist_ok=True)
 
-    # 复制 loops 初始状态
+    # 确保 environment.md 存在
+    env_file = paths.live_root / "environment.md"
+    if not env_file.exists():
+        from emergentinc.engine.environment import DEFAULT_ENVIRONMENT_MD
+        env_file.write_text(DEFAULT_ENVIRONMENT_MD, encoding="utf-8")
+
+    # 投递且仅投递一次创世启动消息，保证首轮执行可真正触发模型调用
+    queue_file = paths.runtime_root / "v9_message_queue.json"
+    if not queue_file.exists():
+        import time
+        from emergentinc.engine.router import MessageEnvelope
+        init_msg = MessageEnvelope(
+            id=f"msg_0_genesis_{int(time.time())}",
+            sender="SYSTEM",
+            recipient="0_0_0",
+            content="创世唤醒：你已被激活。请查阅自身状态与规则，决定是否探索外部环境或开始演化。",
+            round=1,
+            hop=1,
+            timestamp=time.time(),
+            source_type="system",
+            is_feedback=False,
+        )
+        queue_data = {
+            "queue": [init_msg.to_dict()],
+            "delayed_queue": [],
+            "consumed_ids": [],
+            "current_round": 1,
+        }
+        queue_file.write_text(json.dumps(queue_data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    # 复制 loops 初始状态 (若存在)
     loops_src = bootstrap_dir / "loops"
     if loops_src.exists():
         for src_f in loops_src.glob("*.json"):
@@ -81,12 +113,10 @@ def init_workspace(
             for b_f in branches_src.glob("*.json"):
                 shutil.copy2(b_f, paths.loops_root / "branches" / b_f.name)
 
-    # 校验已复制的 JSON 可解析性
+    # 校验已复制的 JSON 与心智文件可解析性
     test_json_paths = [
         paths.live_root / "world_state.json",
         paths.live_root / "pixels" / "0_0_0" / "state.json",
-        paths.loops_root / "manifest.json",
-        paths.loops_root / "branches" / "main.json",
     ]
     for jp in test_json_paths:
         if jp.exists():
@@ -94,6 +124,10 @@ def init_workspace(
                 json.loads(jp.read_text(encoding="utf-8"))
             except Exception as e:
                 raise ValueError(f"初始 JSON 校验失败: {jp}: {e}") from e
+
+    p0_mind = paths.live_root / "pixels" / "0_0_0" / "pixel.md"
+    if not p0_mind.exists():
+        raise ValueError(f"初始创世元胞心智缺失: {p0_mind}")
 
     print(f"[OK] 工作区初始化成功: {ws_dir}")
     return ws_dir

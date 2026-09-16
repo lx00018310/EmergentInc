@@ -43,7 +43,7 @@ class OwnerBridge:
                 source_type="engine_feedback",
                 is_feedback=True,
             )
-            router.enqueue([msg])
+            router.enqueue_front([msg])
         except Exception:
             pass
 

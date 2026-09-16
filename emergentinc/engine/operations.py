@@ -127,7 +127,7 @@ class OperationExecutor:
                 tool=tool,
                 status="FAILED",
                 output=None,
-                error=f"Unknown tool: '{tool}'",
+                error=f"CAPABILITY_UNAVAILABLE: Tool '{tool}' is not supported. Only save_artifact, read_artifact, and list_artifacts are allowed.",
             )
 
     def _tool_save_artifact(self, op_id: str, pixel_id: str, args: Dict[str, Any]) -> OperationReceipt:

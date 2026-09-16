@@ -65,11 +65,16 @@
     },
     "owner_request": {
       "type": ["object", "null"],
+      "description": "本期外部审批未开放，必须传 null",
       "properties": {
         "type": { "type": "string" },
         "description": { "type": "string" }
       },
       "required": ["type", "description"]
+    },
+    "unsupported_owner_request": {
+      "type": ["object", "null"],
+      "description": "归一化阶段记录的暂不支持的能力请求"
     },
     "operations": {
       "type": "array",

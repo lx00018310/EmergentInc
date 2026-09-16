@@ -25,6 +25,9 @@
   "environment_read": false, // 布尔值，是否在下一跳主动读取外部环境 environment.md
   "reproduce": null, // 或 {"target": [x, y, z], "child_energy": 正整数, "child_pixel_md": "..."}
   "energy_transfer": [], // 或 [{"to": "邻居ID", "amount": 正整数, "ref_message_id": null}]
-  "owner_request": null, // 或 {"type": "...", "description": "..."}
-  "operations": [] // 工具操作数组，最多3项，如 [{"tool": "save_artifact", "args": {...}}]
+  "owner_request": null, // 本期外部审批与外部请求未开放，必须传 null
+  "operations": [] // 本地文件工具操作数组，最多3项。仅支持以下三项工具，其他工具不可用：
+                   // 1. save_artifact: {"tool": "save_artifact", "args": {"filename": "文件名.txt", "content": "内容"}}
+                   // 2. read_artifact: {"tool": "read_artifact", "args": {"filename": "文件名.txt"}}
+                   // 3. list_artifacts: {"tool": "list_artifacts", "args": {}}
 }

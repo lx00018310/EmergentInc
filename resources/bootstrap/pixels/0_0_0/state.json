@@ -1,19 +1,16 @@
 {
-  "active": 1,
+  "id": "0_0_0",
   "position": [
     0,
     0,
     0
   ],
-  "resource": 100.0,
-  "current_problem": null,
-  "grace_remaining": 3,
-  "last_effective_exchange_round": 0,
+  "active": true,
+  "energy": 100000000,
   "parent": null,
   "born_round": 0,
-  "pending_self_trigger": false,
-  "waiting_external_request": null,
-  "waiting_for": [],
-  "sleep_until_round": null,
-  "capability_ids": []
+  "last_active_round": 0,
+  "generation": 0,
+  "neighbors": [],
+  "state_version": 9
 }

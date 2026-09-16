@@ -281,6 +281,17 @@ class MessageRouter:
                 self.queue.append(m)
         self.save_state()
 
+    def enqueue_front(self, messages: List[MessageEnvelope]):
+        """将需要立即处理的控制反馈插入队首，避免被旧消息永久饿死."""
+        queued_ids = {m.id for m in self.queue}
+        delayed_ids = {m.id for m in self.delayed_queue}
+        for m in reversed(messages):
+            if m.id in self.consumed_ids or m.id in queued_ids or m.id in delayed_ids:
+                continue
+            self.queue.insert(0, m)
+            queued_ids.add(m.id)
+        self.save_state()
+
     def pop_next(self) -> Optional[MessageEnvelope]:
         if not self.queue:
             return None

@@ -167,23 +167,18 @@ def test_audit_api_defers_during_run(tmp_path, monkeypatch):
 def test_snapshot_failure_does_not_leave_worker_or_loop_running(tmp_path, monkeypatch):
     setup_world(tmp_path)
     controller = RunController(tmp_path)
-    original = controller.loop_store.finish_loop
 
-    def finish(*args, **kwargs):
-        def fail(*a, **k):
-            raise OSError("snapshot disk failure")
-        with monkeypatch.context() as m:
-            m.setattr("emergentinc.ui.loop_store.snapshot.create_snapshot", fail)
-            return original(*args, **kwargs)
+    from emergentinc.engine.core_store import CoreStore
+    def fail_update(*args, **kwargs):
+        raise OSError("run status write failure")
 
-    monkeypatch.setattr(controller.loop_store, "finish_loop", finish)
+    monkeypatch.setattr(CoreStore, "update_run_status", fail_update)
     controller.start(1)
     controller._worker_thread.join(10)
     status = controller.status()
     assert not status["running"]
     assert status["result_status"] == "ERROR"
-    assert "FINALIZATION_FAILED" in status["last_error"]
-    assert controller.loop_store.get_loop(status["current_loop"])["status"] == "ERROR"
+    assert "RUN_STATUS_WRITE_FAILED" in status["last_error"]
 
 
 def test_missing_usage_is_not_invented_or_refunded(tmp_path):

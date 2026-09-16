@@ -38,6 +38,25 @@ class QueueCorruptedError(CoreStoreError):
     pass
 
 
+class _ClosingConnection:
+    """包装 SQLite 连接，确保在上下文退出时自动提交/回滚并关闭文件句柄."""
+    def __init__(self, conn: sqlite3.Connection):
+        self._conn = conn
+
+    def __enter__(self) -> sqlite3.Connection:
+        self._conn.__enter__()
+        return self._conn
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        try:
+            return self._conn.__exit__(exc_type, exc_val, exc_tb)
+        finally:
+            self._conn.close()
+
+    def __getattr__(self, name):
+        return getattr(self._conn, name)
+
+
 class CoreStore:
     """V9.5 SQLite 单一事务事实源核心."""
 
@@ -46,14 +65,14 @@ class CoreStore:
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._init_tables()
 
-    def get_connection(self) -> sqlite3.Connection:
-        """获取 SQLite 连接，配置超时与 WAL 模式."""
+    def get_connection(self):
+        """获取 SQLite 连接，配置超时与 WAL 模式，退出上下文时自动释放."""
         conn = sqlite3.connect(str(self.db_path), timeout=30.0)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA journal_mode=WAL;")
         conn.execute("PRAGMA foreign_keys=ON;")
         conn.execute("PRAGMA busy_timeout=30000;")
-        return conn
+        return _ClosingConnection(conn)
 
     def _init_tables(self):
         """初始化核心表结构."""
@@ -518,6 +537,19 @@ class CoreStore:
                 WHERE run_id = ?
             """, (status, stop_reason, end_round, now, run_id))
             conn.commit()
+
+    def recover_stale_runs(self) -> int:
+        """修正处于 RUNNING 状态的遗留 Run 为 INTERRUPTED."""
+        now = time.time()
+        with self.get_connection() as conn:
+            cur = conn.cursor()
+            cur.execute("""
+                UPDATE runs
+                SET status = 'INTERRUPTED', stop_reason = 'PROCESS_RESTARTED', finished_at = ?
+                WHERE status = 'RUNNING'
+            """, (now,))
+            conn.commit()
+            return cur.rowcount
 
     # ==================== 模型调用预算原子预留与结算 ====================
 

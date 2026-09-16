@@ -225,6 +225,30 @@ def init_api(base_dir: Optional[Union[str, Path, ProjectPaths]] = None) -> APIRo
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
 
+    @router.get("/pixels/{pixel_id}/artifacts")
+    def list_pixel_artifacts(pixel_id: str):
+        try:
+            items = world_reader.list_pixel_artifacts(pixel_id)
+            return {"pixel_id": pixel_id, "artifacts": items}
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+
+    @router.get("/pixels/{pixel_id}/artifacts/{filename}")
+    def get_pixel_artifact(pixel_id: str, filename: str):
+        try:
+            content = world_reader.get_pixel_artifact(pixel_id, filename)
+            return {"pixel_id": pixel_id, "filename": filename, "content": content}
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        except PermissionError as e:
+            raise HTTPException(status_code=403, detail=str(e))
+        except FileNotFoundError as e:
+            raise HTTPException(status_code=404, detail=str(e))
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+
     @router.get("/owner/requests")
     def get_owner_requests():
         return owner_bridge.list_requests(pending_only=False)

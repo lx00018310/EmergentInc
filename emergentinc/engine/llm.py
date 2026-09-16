@@ -130,25 +130,29 @@ def normalize_pixel_response(raw_data: Any, fallback_pixel_md: str) -> Dict[str,
                     pass
     out["energy_transfer"] = clean_transfers
 
-    # 6. owner_request
+    # 6. owner_request (首期断开外部审批：非空请求归一化为不支持能力记录，不生成审批、不触发停机)
     owner_req = raw_data.get("owner_request")
-    if isinstance(owner_req, dict) and "type" in owner_req and "description" in owner_req:
-        out["owner_request"] = {
-            "type": str(owner_req["type"]),
-            "description": str(owner_req["description"]),
+    if isinstance(owner_req, dict) and ("type" in owner_req or "description" in owner_req):
+        out["unsupported_owner_request"] = {
+            "type": str(owner_req.get("type", "")),
+            "description": str(owner_req.get("description", "")),
         }
     else:
-        out["owner_request"] = None
+        out["unsupported_owner_request"] = None
+    out["owner_request"] = None
 
     # 7. operations
     ops = raw_data.get("operations")
     clean_ops = []
     if isinstance(ops, list):
         for op in ops[:3]:
-            if isinstance(op, dict) and "tool" in op and "args" in op:
+            if isinstance(op, dict) and "tool" in op:
+                raw_args = op.get("args")
+                if raw_args is None and "arguments" in op:
+                    raw_args = op.get("arguments")
                 clean_ops.append({
                     "tool": str(op["tool"]),
-                    "args": dict(op.get("args") or {}),
+                    "args": dict(raw_args or {}) if isinstance(raw_args, dict) else {},
                 })
     out["operations"] = clean_ops
 

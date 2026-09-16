@@ -52,9 +52,10 @@ def test_empty_round_is_reported_as_no_activity_not_normal_api_success(tmp_path)
     assert status["idle_rounds"] == 1
     assert status["result_status"] == "COMPLETED_NO_ACTIVITY"
 
-    loop = controller.loop_store.get_loop(status["current_loop"])
-    assert loop is not None
-    assert loop["status"] == "COMPLETED_NO_ACTIVITY"
+    store = CoreStore(paths.workspace_root / "ledger" / "v9_core.sqlite3")
+    run_rec = store.get_run(status["run_id"])
+    assert run_rec is not None
+    assert run_rec["status"] == "COMPLETED_NO_ACTIVITY"
 
 
 def test_startup_audit_blocks_pixel_round_ahead_of_world(tmp_path):
@@ -105,10 +106,10 @@ def test_recovery_required_is_not_overwritten_as_no_activity(tmp_path, monkeypat
 
     status = controller.status()
     assert status["result_status"] == "PAUSED_RECOVERY_REQUIRED"
-    assert status["last_error"] == "CALL_OUTCOME_UNKNOWN: provider timeout"
-    loop = controller.loop_store.get_loop(status["current_loop"])
-    assert loop["status"] == "PAUSED_RECOVERY_REQUIRED"
-    assert loop["stop_reason"] == "CALL_OUTCOME_UNKNOWN: provider timeout"
+    store = CoreStore(paths.workspace_root / "ledger" / "v9_core.sqlite3")
+    run_rec = store.get_run(status["run_id"])
+    assert run_rec["status"] == "PAUSED_RECOVERY_REQUIRED"
+    assert run_rec["stop_reason"] == "CALL_OUTCOME_UNKNOWN: provider timeout"
 
 
 def test_audit_does_not_treat_active_run_transaction_as_stale_recovery(tmp_path):
@@ -187,7 +188,7 @@ def test_controller_stops_cleanly_after_committed_owner_request(tmp_path, monkey
     status = controller.status()
     assert status["result_status"] == "STOPPED"
     assert status["stop_reason"] == "OWNER_ACTION_REQUIRED"
-    assert status["pending_owner_requests"] == ["req_1_test"]
-    loop = controller.loop_store.get_loop(status["current_loop"])
-    assert loop["status"] == "STOPPED"
-    assert loop["end_round"] == 1
+    store = CoreStore(paths.workspace_root / "ledger" / "v9_core.sqlite3")
+    run_rec = store.get_run(status["run_id"])
+    assert run_rec["status"] == "STOPPED"
+    assert run_rec["end_round"] == 1

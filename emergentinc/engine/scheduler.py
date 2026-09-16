@@ -477,33 +477,21 @@ class V9RoundScheduler:
                 )
                 self.router.enqueue([fb_msg])
 
-            # 3.6 owner_request 处理
-            owner_req = response_data.get("owner_request")
+            # 3.6 owner_request 处理 (首期断开审批支线：记录不可用反馈，不写待审批文件，不触发停机，不打断后续工具与路由执行)
+            owner_req = response_data.get("owner_request") or response_data.get("unsupported_owner_request")
             if owner_req and isinstance(owner_req, dict) and owner_req.get("type"):
-                req_id = f"req_{current_round}_{uuid.uuid4().hex[:6]}"
-                req_data = {
-                    "id": req_id,
-                    "request_id": req_id,
-                    "pixel_id": msg.recipient,
-                    "requester": msg.recipient,
-                    "round": current_round,
-                    "message_id": msg.id,
-                    "type": str(owner_req.get("type")),
-                    "capability_type": str(owner_req.get("type")),
-                    "description": str(owner_req.get("description", "")),
-                    "purpose": str(owner_req.get("description", "")),
-                    "status": "PENDING_OWNER",
-                    "created_at": time.time(),
-                }
-                req_file = self.owner_requests_dir / f"{req_id}.json"
-                write_json(req_file, req_data)
-
-                self.core_store.transition_message(msg.id, "COMMITTED")
-                self.router.commit_in_progress(msg)
-                owner_request_ids.append(req_id)
-                stop_reason = "OWNER_ACTION_REQUIRED"
-                stop_detail = f"Pending owner request: {req_id}"
-                break
+                req_type = str(owner_req.get("type"))
+                fb = f"[ENGINE_FEEDBACK]\n\nCAPABILITY_UNAVAILABLE: External owner_request '{req_type}' is disabled in this phase."
+                fb_msg = self.router.create_message(
+                    sender="ENGINE",
+                    recipient=msg.recipient,
+                    content=fb,
+                    hop=msg.hop + 1,
+                    round_num=current_round,
+                    source_type="engine_feedback",
+                    is_feedback=True,
+                )
+                self.router.enqueue([fb_msg])
 
             # 3.7 环境主动读取
             if response_data.get("environment_read", False):

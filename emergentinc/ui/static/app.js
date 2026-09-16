@@ -3,16 +3,13 @@
  */
 
 let pixelMap = null;
-let loopTree = null;
 let currentWorld = null;
 let currentRunStatus = null;
 let isPolling = false;
 let lastKnownRound = -1;
-let pendingOwnerRequestCount = 0;
 
 document.addEventListener('DOMContentLoaded', () => {
   pixelMap = new PixelMap('pixel-canvas', 'pixel-hover-card');
-  loopTree = new LoopTreeViewer('loop-tree-container');
 
   initCommandInputs();
   initGenesisPromptEvents();
@@ -163,13 +160,19 @@ function printStatus() {
 
 function updateHeaderMetrics(world) {
   if (!world) return;
-  document.getElementById('metric-round').textContent = world.round || 0;
+  const roundEl = document.getElementById('metric-round');
+  if (roundEl) roundEl.textContent = world.round || 0;
   const m = world.metrics || {};
-  document.getElementById('metric-pixels').textContent = `${m.active_pixels || 0} / ${m.total_pixels || 0}`;
-  document.getElementById('metric-energy').textContent = Number(m.energy_metrics?.total || 0).toLocaleString();
-  const cny = ((m.financial_metrics?.total_revenue_equivalent_tokens || 0) / 1000000).toFixed(2);
-  document.getElementById('metric-revenue').textContent = `¥${cny}`;
-  document.getElementById('metric-spent').textContent = Number(m.financial_metrics?.total_spent_equivalent_tokens || 0).toLocaleString();
+  const pixelsEl = document.getElementById('metric-pixels');
+  if (pixelsEl) pixelsEl.textContent = `${m.active_pixels || 0} / ${m.total_pixels || 0}`;
+  const energyEl = document.getElementById('metric-energy');
+  if (energyEl) energyEl.textContent = Number(m.energy_metrics?.total || 0).toLocaleString();
+  const spentEl = document.getElementById('metric-spent');
+  if (spentEl) spentEl.textContent = Number(m.financial_metrics?.total_spent_equivalent_tokens || 0).toLocaleString();
+  const runLimitEl = document.getElementById('metric-run-limit');
+  if (runLimitEl && currentRunStatus) {
+    runLimitEl.textContent = `${currentRunStatus.completed_rounds || 0} / ${currentRunStatus.requested_rounds || 0} 轮`;
+  }
 }
 
 function updateRunStatusUI(status) {
@@ -179,8 +182,8 @@ function updateRunStatusUI(status) {
   const btnRun = document.getElementById('btn-run');
   const btnStop = document.getElementById('btn-stop');
 
-  document.getElementById('branch-badge').textContent = `branch: ${status.current_branch || 'main'}`;
-  document.getElementById('loop-badge').textContent = `loop: ${status.current_loop || '-'}`;
+  const runBadge = document.getElementById('run-badge');
+  if (runBadge) runBadge.textContent = `run: ${status.run_id || status.current_run || status.current_loop || '-'}`;
 
   if (status.running) {
     indicator.textContent = `EVOLVING (${status.completed_rounds}/${status.requested_rounds}, LLM: ${status.model_calls_completed || 0})`;
@@ -236,9 +239,9 @@ function updateRunStatusUI(status) {
   if (genesisTextarea) genesisTextarea.disabled = Boolean(status.running);
   if (btnSaveGenesis) btnSaveGenesis.disabled = Boolean(status.running);
   if (btnClearGenesis) btnClearGenesis.disabled = Boolean(status.running);
-  if (btnRun) btnRun.disabled = Boolean(status.running) || pendingOwnerRequestCount > 0;
+  if (btnRun) btnRun.disabled = Boolean(status.running);
   document.querySelectorAll('.run-quick-btn').forEach(button => {
-    button.disabled = Boolean(status.running) || pendingOwnerRequestCount > 0;
+    button.disabled = Boolean(status.running);
   });
 }
 
@@ -480,15 +483,12 @@ function startPolling() {
   const poll = async () => {
     await refreshWorld();
     await refreshRunStatus();
-    await refreshOwnerRequests();
-    await refreshAuditStatus();
 
     const interval = (currentRunStatus && currentRunStatus.running) ? 600 : 1500;
     setTimeout(poll, interval);
   };
 
   poll();
-  setInterval(refreshLoops, 3000);
 }
 
 // 文档查看弹窗
@@ -513,6 +513,89 @@ async function openPixelDoc(docName) {
     document.getElementById('doc-modal').style.display = 'flex';
   } catch (e) {
     alert(`读取错误: ${e.message}`);
+  }
+}
+
+// 本地交付物查看弹窗
+async function openPixelArtifacts() {
+  const p = pixelMap?.hoveredPixel || pixelMap?.selectedPixel;
+  if (!p) {
+    alert('请先在右侧地图上悬停或点击选中一个元胞。');
+    return;
+  }
+
+  const pid = p.id;
+  try {
+    const res = await fetch(`/api/pixels/${pid}/artifacts`);
+    if (!res.ok) {
+      alert('获取交付物列表失败');
+      return;
+    }
+    const data = await res.json();
+    const artifacts = data.artifacts || [];
+    const titleEl = document.getElementById('doc-modal-title');
+    const contentEl = document.getElementById('doc-view-content');
+    titleEl.textContent = `Pixel ${pid} - 本地交付物 (${artifacts.length} 个)`;
+    contentEl.replaceChildren();
+
+    if (artifacts.length === 0) {
+      contentEl.textContent = `该元胞 (${pid}) 尚未保存任何本地交付物。\n元胞可在 operations 中调用 save_artifact 工具将成果文件写入本地磁盘。`;
+    } else {
+      const headerText = document.createElement('div');
+      headerText.style.cssText = 'margin-bottom: 12px; color: #a0aec0;';
+      headerText.textContent = `=== 交付物文件列表 (磁盘实际落盘文件) ===`;
+      contentEl.appendChild(headerText);
+
+      artifacts.forEach((item, idx) => {
+        const itemRow = document.createElement('div');
+        itemRow.style.cssText = 'margin: 6px 0; padding: 6px 10px; background: #2d3748; border-radius: 4px; display: flex; justify-content: space-between; align-items: center;';
+        
+        const nameSpan = document.createElement('span');
+        nameSpan.textContent = `📄 ${item.filename} (${item.size_bytes} 字节)`;
+        
+        const viewBtn = document.createElement('button');
+        viewBtn.className = 'btn btn-xs btn-primary';
+        viewBtn.textContent = '查看内容';
+        viewBtn.onclick = () => viewPixelArtifactContent(pid, item.filename);
+
+        itemRow.appendChild(nameSpan);
+        itemRow.appendChild(viewBtn);
+        contentEl.appendChild(itemRow);
+      });
+    }
+
+    document.getElementById('doc-modal').style.display = 'flex';
+  } catch (e) {
+    alert(`读取交付物列表失败: ${e.message}`);
+  }
+}
+
+async function viewPixelArtifactContent(pid, filename) {
+  try {
+    const res = await fetch(`/api/pixels/${pid}/artifacts/${encodeURIComponent(filename)}`);
+    if (!res.ok) {
+      const err = await res.json();
+      alert(`读取交付物失败: ${err.detail || err.error}`);
+      return;
+    }
+    const data = await res.json();
+    document.getElementById('doc-modal-title').textContent = `Pixel ${pid} - 交付物: ${filename}`;
+    const contentEl = document.getElementById('doc-view-content');
+    contentEl.replaceChildren();
+
+    const backBtn = document.createElement('button');
+    backBtn.className = 'btn btn-xs btn-secondary';
+    backBtn.style.cssText = 'margin-bottom: 10px; display: block;';
+    backBtn.textContent = '← 返回交付物列表';
+    backBtn.onclick = () => openPixelArtifacts();
+    contentEl.appendChild(backBtn);
+
+    const pre = document.createElement('pre');
+    pre.style.cssText = 'white-space: pre-wrap; word-break: break-all; margin: 0;';
+    pre.textContent = data.content || '(空文件)';
+    contentEl.appendChild(pre);
+  } catch (e) {
+    alert(`读取交付物内容失败: ${e.message}`);
   }
 }
 

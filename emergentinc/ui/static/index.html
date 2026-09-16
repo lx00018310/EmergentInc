@@ -11,22 +11,20 @@
     <div class="logo-title">
       <span class="logo-icon">▣</span>
       <h1>EmergentInc V9 商业元胞自动机</h1>
-      <span class="badge" id="branch-badge">branch: main</span>
-      <span class="badge" id="loop-badge">loop: -</span>
+      <span class="badge" id="run-badge">run: -</span>
     </div>
     <div class="header-metrics">
       <div class="metric-item"><span class="m-label">Round:</span> <span class="m-val" id="metric-round">0</span></div>
       <div class="metric-item"><span class="m-label">活跃元胞:</span> <span class="m-val" id="metric-pixels">0 / 0</span></div>
       <div class="metric-item"><span class="m-label">总能量(Tokens):</span> <span class="m-val" id="metric-energy">0</span></div>
-      <div class="metric-item"><span class="m-label">核验净回款:</span> <span class="m-val" id="metric-revenue">¥0.0</span></div>
       <div class="metric-item"><span class="m-label">支出折算:</span> <span class="m-val" id="metric-spent">0</span></div>
-      <div class="metric-item"><span class="m-label">Run剩余:</span> <span class="m-val" id="metric-run-remaining">-</span></div>
+      <div class="metric-item"><span class="m-label">本次上限:</span> <span class="m-val" id="metric-run-limit">-</span></div>
       <div class="metric-item"><span class="m-label">系统状态:</span> <span class="m-val" id="metric-system-health" style="color: #48bb78;">HEALTHY</span></div>
     </div>
   </header>
 
   <main class="main-layout">
-    <!-- 左侧：系统控制、消息流日志与 LOOP 树 -->
+    <!-- 左侧：系统控制与控制台日志 -->
     <section class="left-panel">
       <!-- 运行与控制窗口 -->
       <div class="panel-card" id="control-card">
@@ -37,11 +35,11 @@
 
         <div class="budget-input-row" style="display: flex; gap: 8px; margin-bottom: 8px; font-size: 12px; color: #a0aec0;">
           <div style="flex: 1;">
-            <label for="input-run-budget">本轮预算 (Run Tokens):</label>
+            <label for="input-run-budget">本次运行上限 (Run Tokens):</label>
             <input type="number" id="input-run-budget" value="100000" min="1000" step="1000" style="width: 100%; background: #1a202c; color: #fff; border: 1px solid #4a5568; border-radius: 4px; padding: 4px 6px;" />
           </div>
           <div style="flex: 1;">
-            <label for="input-global-budget">全局预算 (Global Tokens):</label>
+            <label for="input-global-budget">累计总上限 (Global Tokens):</label>
             <input type="number" id="input-global-budget" value="1000000" min="10000" step="10000" style="width: 100%; background: #1a202c; color: #fff; border: 1px solid #4a5568; border-radius: 4px; padding: 4px 6px;" />
           </div>
         </div>
@@ -57,19 +55,9 @@
           <button class="btn btn-sm run-quick-btn" onclick="sendQuickCommand('跑5轮')">跑 5 轮</button>
           <button class="btn btn-sm run-quick-btn" onclick="sendQuickCommand('跑10轮')">跑 10 轮</button>
           <button class="btn btn-sm" onclick="openEnvironmentModal()">外部环境 (Environment)</button>
-          <button class="btn btn-sm" onclick="openRevenueModal()">+ 核验回款</button>
         </div>
 
-        <!-- 停机/审批拦截告警框 -->
-        <div id="owner-alert-container" class="owner-alert-container" style="display: none;">
-          <div class="alert-box">
-            <div class="alert-title" id="alert-title">⚠ 停机提醒：需 Owner 介入</div>
-            <div class="alert-body" id="alert-body"></div>
-            <div class="alert-actions" id="alert-actions"></div>
-          </div>
-        </div>
-
-        <!-- 崩溃/故障/赤字恢复告警框 -->
+        <!-- 崩溃/故障恢复告警框 -->
         <div id="recovery-alert-container" class="owner-alert-container" style="display: none;">
           <div class="alert-box" style="border-left: 4px solid #e53e3e; background: #2d3748; padding: 10px; margin-bottom: 8px; border-radius: 4px;">
             <div class="alert-title" id="recovery-alert-title" style="color: #fc8181; font-weight: bold; margin-bottom: 4px;">🚨 启动受阻：需恢复审计介入 (RECOVERY_REQUIRED)</div>
@@ -79,7 +67,7 @@
 
         <!-- 控制台日志输出窗口 -->
         <div class="console-box" id="console-output">
-          <div class="console-line system-line">[SYSTEM] V9 商业元胞自动机内核就绪。严格认知隔离已激活。</div>
+          <div class="console-line system-line">[SYSTEM] V9 商业元胞自动机内核就绪。本地演化闭环已激活。</div>
         </div>
       </div>
 
@@ -100,17 +88,6 @@
         <div class="genesis-actions" style="display: flex; gap: 8px; justify-content: flex-end;">
           <button id="btn-save-genesis" class="btn btn-sm btn-primary" onclick="saveGenesisPrompt()">保存提示词</button>
           <button id="btn-clear-genesis" class="btn btn-sm btn-secondary" onclick="clearGenesisPrompt()">清空并关闭</button>
-        </div>
-      </div>
-
-      <!-- LOOP 树窗口 -->
-      <div class="panel-card" id="loop-card">
-        <div class="panel-header">
-          <h2>LOOP 快照树 (认知分支与回退)</h2>
-          <button class="btn btn-sm" onclick="refreshLoops()">刷新快照</button>
-        </div>
-        <div class="loop-tree-container" id="loop-tree-container">
-          <div class="tree-loading">加载 Loop 快照历史...</div>
         </div>
       </div>
     </section>
@@ -160,6 +137,7 @@
             <button class="btn btn-xs" onclick="openPixelDoc('pixel')">完整 pixel.md</button>
             <button class="btn btn-xs" onclick="openPixelDoc('state')">物理 state.json</button>
             <button class="btn btn-xs" onclick="openPixelDoc('environment')">全局 environment.md</button>
+            <button class="btn btn-xs" onclick="openPixelArtifacts()">查看交付物</button>
           </div>
         </div>
       </div>
@@ -197,36 +175,6 @@
     </div>
   </div>
 
-  <!-- 真实外部回款核验弹窗 -->
-  <div class="modal-overlay" id="revenue-modal" style="display: none;">
-    <div class="modal-content">
-      <div class="modal-header">
-        <h3>核验真实外部净回款 (Revenue Credit)</h3>
-        <button class="btn-close" onclick="closeModal('revenue-modal')">&times;</button>
-      </div>
-      <div class="modal-body">
-        <p class="form-hint">只有经外部核验的真实经营净回款方可注入系统，并按固定比率 P 换算为归属元胞的等效 Token 预算：</p>
-        <div class="form-group">
-          <label>归属元胞 ID (Pixel ID):</label>
-          <input type="text" id="rev-pixel-id" class="form-input" placeholder="例如: 0_0_0" />
-        </div>
-        <div class="form-group">
-          <label>可投入净回款金额 (CNY):</label>
-          <input type="number" id="rev-amount" class="form-input" step="0.01" placeholder="例如: 10.0" />
-        </div>
-        <div class="form-group">
-          <label>第三方支付唯一交易流水号 (Transaction ID):</label>
-          <input type="text" id="rev-tx-id" class="form-input" placeholder="例如: alipay_20260915_xxxx" />
-        </div>
-      </div>
-      <div class="modal-footer">
-        <button class="btn btn-secondary" onclick="closeModal('revenue-modal')">取消</button>
-        <button class="btn btn-primary" onclick="submitRevenueCredit()">核验并注入预算</button>
-      </div>
-    </div>
-  </div>
-
-  <script src="/static/loop_tree.js"></script>
   <script src="/static/pixel_map.js"></script>
   <script src="/static/app.js"></script>
 </body>

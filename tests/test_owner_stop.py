@@ -9,56 +9,59 @@ from emergentinc.engine.storage import Storage
 from emergentinc.ui.run_controller import RunController
 
 
-def test_owner_stop():
-    with tempfile.TemporaryDirectory() as tmpdir:
-        base = Path(tmpdir)
-        live = base / "live"
-        live.mkdir(parents=True)
-        (live / "world_state.json").write_text(
-            json.dumps({
-                "round": 0,
-                "accounting": {},
-                "llm_accounting": {},
-                "counters": {},
-            }),
-            encoding="utf-8",
-        )
-        (live / "pixels").mkdir(parents=True)
+from emergentinc.engine.core_store import CoreStore
 
-        storage = Storage(base)
-        storage.ensure_v5_defaults()
 
-        controller = RunController(base)
+def test_owner_stop(tmp_path):
+    base = Path(tmp_path)
+    live = base / "live"
+    live.mkdir(parents=True)
+    (live / "world_state.json").write_text(
+        json.dumps({
+            "round": 0,
+            "accounting": {},
+            "llm_accounting": {},
+            "counters": {},
+        }),
+        encoding="utf-8",
+    )
+    (live / "pixels").mkdir(parents=True)
 
-        mock_runner = MagicMock()
+    storage = Storage(base)
+    storage.ensure_v5_defaults()
 
-        def mock_step():
-            w = storage.world()
-            w["round"] = int(w.get("round", 0)) + 1
-            storage.save_world(w)
-            raise OwnerActionRequired(["ER0001"])
+    controller = RunController(base)
 
-        mock_runner.run_one.side_effect = mock_step
+    mock_scheduler = MagicMock()
 
-        with patch("emergentinc.ui.run_controller.RoundRunner", return_value=mock_runner):
-            controller.start(rounds=5, command_text="run 5")
+    def mock_step(**kwargs):
+        w = storage.world()
+        w["round"] = int(w.get("round", 0)) + 1
+        storage.save_world(w)
+        raise OwnerActionRequired(["ER0001"])
 
-            # Wait for worker thread to process
-            for _ in range(40):
-                if not controller.status()["running"]:
-                    break
-                time.sleep(0.05)
+    mock_scheduler.run_round.side_effect = mock_step
 
-            st = controller.status()
-            assert st["running"] is False
-            assert st["stop_reason"] == "OWNER_ACTION_REQUIRED"
-            assert "ER0001" in st["pending_owner_requests"]
+    with patch.object(controller, "_get_scheduler", return_value=mock_scheduler):
+        controller.start(rounds=5, command_text="run 5")
 
-            # Check loop meta recorded in loop_store
-            loop = controller.loop_store.get_loop(st["current_loop"])
-            assert loop is not None
-            assert loop["status"] == "STOPPED"
-            assert loop["stop_reason"] == "OWNER_ACTION_REQUIRED"
+        # Wait for worker thread to process
+        for _ in range(40):
+            if not controller.status()["running"]:
+                break
+            time.sleep(0.05)
+
+        st = controller.status()
+        assert st["running"] is False
+        assert st["stop_reason"] == "OWNER_ACTION_REQUIRED"
+        assert "ER0001" in st["pending_owner_requests"]
+
+        # Check run recorded in core store
+        store = CoreStore(base / "ledger" / "v9_core.sqlite3")
+        run_rec = store.get_run(st["run_id"])
+        assert run_rec is not None
+        assert run_rec["status"] == "STOPPED"
+        assert run_rec["stop_reason"] == "OWNER_ACTION_REQUIRED"
 
 
 if __name__ == "__main__":

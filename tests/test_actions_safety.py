@@ -95,10 +95,22 @@ def test_owner_request_action_and_bridge_feedback(tmp_path):
     ))
     storage.save_pixel_md("# Genesis Pixel\n")
 
-    # 构造 mock LLM 返回 owner_request
+    # 构造 mock LLM 返回 owner_request 并验证 feedback 接收
+    received_messages = []
+
     class MockOwnerRequestLLM:
         model_name = "mock"
         def step(self, state_dict, pixel_md, message_md):
+            received_messages.append(message_md)
+            if "[ENGINE_FEEDBACK]" in message_md:
+                return {
+                    "pixel_md": pixel_md,
+                    "owner_request": None,
+                    "send_to": ["STOP"],
+                }, {
+                    "token_usage": {"prompt_tokens": 10, "completion_tokens": 5, "cached_tokens": 0},
+                    "model": "mock",
+                }
             return {
                 "pixel_md": pixel_md,
                 "owner_request": {
@@ -122,27 +134,15 @@ def test_owner_request_action_and_bridge_feedback(tmp_path):
     )
     scheduler.router.enqueue([msg])
 
-    # Owner 请求必须在本轮状态完整提交后暂停，不能用异常中断回合收尾。
+    # 首期断开外部审批：owner_request 自动转为不支持能力提示，不阻断停机，不落盘审批单
     result = scheduler.run_round()
-    assert result["stop_reason"] == "OWNER_ACTION_REQUIRED"
-    assert len(result["owner_requests"]) == 1
+    assert result["stop_reason"] != "OWNER_ACTION_REQUIRED"
     assert scheduler.load_world_state()["round"] == 1
     assert storage.load_state().last_active_round == 1
 
-    # 检查 external_requests 目录是否成功生成请求文件
+    # 检查 external_requests 目录不生成审批单
     req_files = list(scheduler.owner_requests_dir.glob("*.json"))
-    assert len(req_files) == 1
-    req_path = req_files[0]
+    assert len(req_files) == 0
 
-    # 测试 OwnerBridge 审批批准
-    bridge = OwnerBridge(paths)
-    assert [r["id"] for r in bridge.list_requests()] == [req_path.stem]
-    ok_app = bridge.approve_request(req_path.stem, reason="Approved by admin")
-    assert ok_app.get("status") == "APPROVED"
-
-    # 审批后应给该元胞队列投递 feedback 唤醒消息
-    scheduler.router.load_state()
-    assert len(scheduler.router.queue) == 1
-    fb_msg = scheduler.router.queue[0]
-    assert fb_msg.recipient == "0_0_0"
-    assert "APPROVED" in fb_msg.content
+    # 验证元胞在下一 Hop 实际接收到了能力不可用的反馈消息
+    assert any("CAPABILITY_UNAVAILABLE" in m for m in received_messages)
