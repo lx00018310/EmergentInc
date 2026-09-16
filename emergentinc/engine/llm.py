@@ -298,6 +298,9 @@ class V9LLMClient:
 
         self.genesis_prompt: Optional[str] = genesis_prompt
         self.genesis_revision: int = genesis_revision
+        self.temporary_prompt: Optional[str] = None
+        self.temporary_revision: int = 0
+        self.tools_catalog: Optional[str] = None
 
         if self.schema_file.exists():
             self.schema = read_json(self.schema_file)
@@ -313,6 +316,15 @@ class V9LLMClient:
         """为当前 Run 锁定统一的创世提示词与版本号."""
         self.genesis_prompt = prompt_text.strip() if prompt_text else None
         self.genesis_revision = revision
+
+    def lock_temporary_prompt(self, prompt_text: str, revision: int = 0):
+        """为当前 Run 锁定统一的临时提示词与版本号."""
+        self.temporary_prompt = prompt_text.strip() if prompt_text else None
+        self.temporary_revision = revision
+
+    def set_tools_catalog(self, catalog_text: str):
+        """设置统一工具目录说明."""
+        self.tools_catalog = catalog_text.strip() if catalog_text else None
 
     def _init_client(self):
         mc = self.cfg.get("model", {})
@@ -371,9 +383,14 @@ class V9LLMClient:
         if extra_check and len(payload.keys()) != 3:
             raise CognitiveIsolationViolation("Context payload must strictly contain exactly 3 keys: state, pixel_md, message_md")
 
-        effective_system_prompt = self.system_prompt
+        prompt_parts = [self.system_prompt.strip()]
+        if self.tools_catalog and self.tools_catalog.strip():
+            prompt_parts.append(self.tools_catalog.strip())
         if self.genesis_prompt and self.genesis_prompt.strip():
-            effective_system_prompt = f"{self.system_prompt}\n\n[GENESIS_CONTEXT]\n{self.genesis_prompt.strip()}"
+            prompt_parts.append(f"[GENESIS_CONTEXT]\n{self.genesis_prompt.strip()}")
+        if self.temporary_prompt and self.temporary_prompt.strip():
+            prompt_parts.append(f"[TEMPORARY_CONTEXT]\n{self.temporary_prompt.strip()}")
+        effective_system_prompt = "\n\n".join(prompt_parts)
 
         user_content = json.dumps(payload, ensure_ascii=False, indent=2)
         prompt_full = f"{effective_system_prompt}\n\n{user_content}"
@@ -454,6 +471,7 @@ class V9LLMClient:
                 "effective_prompt_hash": prompt_hash,
                 "pricing_revision": prep.pricing_revision,
                 "genesis_revision": self.genesis_revision,
+                "temporary_revision": self.temporary_revision,
                 "token_usage": {
                     "prompt_tokens": len(prep.prompt_full) // 4,
                     "completion_tokens": len(json.dumps(data)) // 4,
@@ -547,6 +565,7 @@ class V9LLMClient:
             "effective_prompt_hash": prompt_hash,
             "pricing_revision": prep.pricing_revision,
             "genesis_revision": self.genesis_revision,
+            "temporary_revision": self.temporary_revision,
             "token_usage": usage,
             "raw_response": raw,
             "finish_reason": finish_reason,

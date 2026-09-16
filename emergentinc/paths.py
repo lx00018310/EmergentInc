@@ -23,6 +23,10 @@ class ProjectPaths:
     scratch_root: Path
 
     @property
+    def ledger_root(self) -> Path:
+        return self.workspace_root / "ledger"
+
+    @property
     def config_dir(self) -> Path:
         return self.resources_root / "config"
 

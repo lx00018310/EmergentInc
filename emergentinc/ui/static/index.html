@@ -50,11 +50,14 @@
           <button id="btn-stop" class="btn btn-danger" disabled>停止</button>
         </div>
 
-        <div class="quick-action-bar">
+        <div class="quick-action-bar" style="display: flex; flex-wrap: wrap; gap: 6px;">
           <button class="btn btn-sm run-quick-btn" onclick="sendQuickCommand('跑1轮')">跑 1 轮</button>
           <button class="btn btn-sm run-quick-btn" onclick="sendQuickCommand('跑5轮')">跑 5 轮</button>
           <button class="btn btn-sm run-quick-btn" onclick="sendQuickCommand('跑10轮')">跑 10 轮</button>
-          <button class="btn btn-sm" onclick="openEnvironmentModal()">外部环境 (Environment)</button>
+          <button class="btn btn-sm" onclick="openEnvironmentModal()">外部环境</button>
+          <button class="btn btn-sm" onclick="openToolsModal()">工具目录</button>
+          <button class="btn btn-sm" onclick="openPrivateFilesModal()">私有资料</button>
+          <button class="btn btn-sm" onclick="openToolExecutionsModal()">执行记录</button>
         </div>
 
         <!-- 崩溃/故障恢复告警框 -->
@@ -88,6 +91,26 @@
         <div class="genesis-actions" style="display: flex; gap: 8px; justify-content: flex-end;">
           <button id="btn-save-genesis" class="btn btn-sm btn-primary" onclick="saveGenesisPrompt()">保存提示词</button>
           <button id="btn-clear-genesis" class="btn btn-sm btn-secondary" onclick="clearGenesisPrompt()">清空并关闭</button>
+        </div>
+      </div>
+
+      <!-- 临时提示词 (当前任务指引) 独立编辑卡片 -->
+      <div class="panel-card" id="temp-prompt-card">
+        <div class="panel-header">
+          <h2>临时提示词 (任务指引)</h2>
+          <span class="badge" id="temp-prompt-status-badge">已关闭</span>
+        </div>
+        <p class="form-hint" style="margin-bottom: 8px; font-size: 12px; color: #a0aec0;">
+          独立于创世提示词，随时可保存、修改、清空；仅在下次运行生效，补充当前任务指引。
+        </p>
+        <textarea id="temp-prompt-textarea" class="modal-textarea" rows="4" maxlength="12000" placeholder="可输入当前任务的临时提示词 (如 VPS 运维指令)..."></textarea>
+        <div class="temp-prompt-meta-bar" style="display: flex; justify-content: space-between; align-items: center; margin: 8px 0; font-size: 12px; color: #a0aec0;">
+          <span>Revision: <b id="temp-prompt-revision">-</b> | Hash: <code id="temp-prompt-hash">-</code></span>
+          <span id="temp-prompt-char-count">0 / 12000</span>
+        </div>
+        <div class="temp-prompt-actions" style="display: flex; gap: 8px; justify-content: flex-end;">
+          <button id="btn-save-temp-prompt" class="btn btn-sm btn-primary" onclick="saveTemporaryPrompt()">保存临时词</button>
+          <button id="btn-clear-temp-prompt" class="btn btn-sm btn-secondary" onclick="clearTemporaryPrompt()">清空并关闭</button>
         </div>
       </div>
     </section>
@@ -171,6 +194,22 @@
       <div class="modal-footer">
         <button class="btn btn-secondary" onclick="closeModal('env-modal')">取消</button>
         <button class="btn btn-primary" onclick="saveEnvironment()">保存更新</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 通用弹窗：工具目录 / 私有文件 / 执行记录 -->
+  <div class="modal-overlay" id="common-modal" style="display: none;">
+    <div class="modal-content" style="max-width: 840px; max-height: 85vh; display: flex; flex-direction: column;">
+      <div class="modal-header">
+        <h3 id="common-modal-title">弹窗标题</h3>
+        <button class="btn-close" onclick="closeModal('common-modal')">&times;</button>
+      </div>
+      <div class="modal-body" id="common-modal-body" style="overflow-y: auto; flex: 1; padding: 12px; font-size: 13px;">
+        <!-- 动态渲染内容 -->
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="closeModal('common-modal')">关闭</button>
       </div>
     </div>
   </div>

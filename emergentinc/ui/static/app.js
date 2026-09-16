@@ -13,13 +13,25 @@ document.addEventListener('DOMContentLoaded', () => {
 
   initCommandInputs();
   initGenesisPromptEvents();
+  initTemporaryPromptEvents();
   loadGenesisPrompt();
+  loadTemporaryPrompt();
   startPolling();
 });
 
 function initGenesisPromptEvents() {
   const textarea = document.getElementById('genesis-textarea');
   const countEl = document.getElementById('genesis-char-count');
+  if (textarea && countEl) {
+    textarea.addEventListener('input', () => {
+      countEl.textContent = `${textarea.value.length} / 12000`;
+    });
+  }
+}
+
+function initTemporaryPromptEvents() {
+  const textarea = document.getElementById('temp-prompt-textarea');
+  const countEl = document.getElementById('temp-prompt-char-count');
   if (textarea && countEl) {
     textarea.addEventListener('input', () => {
       countEl.textContent = `${textarea.value.length} / 12000`;
@@ -235,6 +247,20 @@ function updateRunStatusUI(status) {
     btnRun.disabled = false;
     btnStop.disabled = true;
   }
+
+  const genTextarea = document.getElementById('genesis-textarea');
+  const btnSaveGen = document.getElementById('btn-save-genesis');
+  const btnClearGen = document.getElementById('btn-clear-genesis');
+  if (genTextarea) genTextarea.disabled = status.running;
+  if (btnSaveGen) btnSaveGen.disabled = status.running;
+  if (btnClearGen) btnClearGen.disabled = status.running;
+
+  const tempTextarea = document.getElementById('temp-prompt-textarea');
+  const btnSaveTemp = document.getElementById('btn-save-temp-prompt');
+  const btnClearTemp = document.getElementById('btn-clear-temp-prompt');
+  if (tempTextarea) tempTextarea.disabled = status.running;
+  if (btnSaveTemp) btnSaveTemp.disabled = status.running;
+  if (btnClearTemp) btnClearTemp.disabled = status.running;
 
   if (previousStatus?.running && !status.running) {
     const calls = Number(status.model_calls_completed || 0);
@@ -513,15 +539,26 @@ async function openPixelArtifacts() {
         itemRow.style.cssText = 'margin: 6px 0; padding: 6px 10px; background: #2d3748; border-radius: 4px; display: flex; justify-content: space-between; align-items: center;';
         
         const nameSpan = document.createElement('span');
-        nameSpan.textContent = `📄 ${item.filename} (${item.size_bytes} 字节)`;
+        nameSpan.textContent = `📄 ${item.filename} (${item.size_bytes.toLocaleString()} 字节)`;
         
+        const btnGroup = document.createElement('div');
+        btnGroup.style.cssText = 'display: flex; gap: 6px;';
+
         const viewBtn = document.createElement('button');
         viewBtn.className = 'btn btn-xs btn-primary';
-        viewBtn.textContent = '查看内容';
+        viewBtn.textContent = '查看/预览';
         viewBtn.onclick = () => viewPixelArtifactContent(pid, item.filename);
 
+        const dlBtn = document.createElement('a');
+        dlBtn.className = 'btn btn-xs btn-secondary';
+        dlBtn.textContent = '下载';
+        dlBtn.href = `/api/pixels/${encodeURIComponent(pid)}/artifacts/${encodeURIComponent(item.filename)}/download`;
+        dlBtn.setAttribute('download', item.filename);
+
+        btnGroup.appendChild(viewBtn);
+        btnGroup.appendChild(dlBtn);
         itemRow.appendChild(nameSpan);
-        itemRow.appendChild(viewBtn);
+        itemRow.appendChild(btnGroup);
         contentEl.appendChild(itemRow);
       });
     }
@@ -534,28 +571,54 @@ async function openPixelArtifacts() {
 
 async function viewPixelArtifactContent(pid, filename) {
   try {
-    const res = await fetch(`/api/pixels/${pid}/artifacts/${encodeURIComponent(filename)}`);
-    if (!res.ok) {
-      const err = await res.json();
-      alert(`读取交付物失败: ${err.detail || err.error}`);
-      return;
-    }
-    const data = await res.json();
     document.getElementById('doc-modal-title').textContent = `Pixel ${pid} - 交付物: ${filename}`;
     const contentEl = document.getElementById('doc-view-content');
     contentEl.replaceChildren();
 
+    const topBar = document.createElement('div');
+    topBar.style.cssText = 'margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center;';
+
     const backBtn = document.createElement('button');
     backBtn.className = 'btn btn-xs btn-secondary';
-    backBtn.style.cssText = 'margin-bottom: 10px; display: block;';
     backBtn.textContent = '← 返回交付物列表';
     backBtn.onclick = () => openPixelArtifacts();
-    contentEl.appendChild(backBtn);
+    topBar.appendChild(backBtn);
 
-    const pre = document.createElement('pre');
-    pre.style.cssText = 'white-space: pre-wrap; word-break: break-all; margin: 0;';
-    pre.textContent = data.content || '(空文件)';
-    contentEl.appendChild(pre);
+    const dlLink = document.createElement('a');
+    dlLink.className = 'btn btn-xs btn-primary';
+    dlLink.textContent = '下载原始文件';
+    dlLink.href = `/api/pixels/${encodeURIComponent(pid)}/artifacts/${encodeURIComponent(filename)}/download`;
+    dlLink.setAttribute('download', filename);
+    topBar.appendChild(dlLink);
+
+    contentEl.appendChild(topBar);
+
+    const isImage = /\.(jpe?g|png|webp|gif|bmp)$/i.test(filename);
+    if (isImage) {
+      const imgContainer = document.createElement('div');
+      imgContainer.style.cssText = 'text-align: center; padding: 12px; background: #1a202c; border-radius: 4px;';
+      const img = document.createElement('img');
+      img.src = `/api/pixels/${encodeURIComponent(pid)}/artifacts/${encodeURIComponent(filename)}/download`;
+      img.alt = filename;
+      img.style.cssText = 'max-width: 100%; max-height: 500px; border-radius: 4px; box-shadow: 0 4px 6px rgba(0,0,0,0.3);';
+      imgContainer.appendChild(img);
+      contentEl.appendChild(imgContainer);
+    } else {
+      const res = await fetch(`/api/pixels/${encodeURIComponent(pid)}/artifacts/${encodeURIComponent(filename)}`);
+      if (res.ok) {
+        const data = await res.json();
+        const pre = document.createElement('pre');
+        pre.style.cssText = 'white-space: pre-wrap; word-break: break-all; margin: 0; font-family: monospace; background: #1a202c; padding: 12px; border-radius: 4px;';
+        pre.textContent = data.content || '(空文件)';
+        contentEl.appendChild(pre);
+      } else {
+        const err = await res.json();
+        const errBox = document.createElement('div');
+        errBox.style.cssText = 'color: #fc8181; padding: 12px;';
+        errBox.textContent = `文本解码失败或为二进制文件: ${err.detail || '请直接点击上方下载按钮获取原始文件'}`;
+        contentEl.appendChild(errBox);
+      }
+    }
   } catch (e) {
     alert(`读取交付物内容失败: ${e.message}`);
   }
@@ -789,5 +852,257 @@ async function clearGenesisPrompt() {
     }
   } catch (e) {
     alert(`清空异常: ${e.message}`);
+  }
+}
+
+// ==================== 临时提示词操作 ====================
+
+async function loadTemporaryPrompt() {
+  try {
+    const res = await fetch('/api/temporary-prompt');
+    if (!res.ok) return;
+    const data = await res.json();
+    const textarea = document.getElementById('temp-prompt-textarea');
+    const badge = document.getElementById('temp-prompt-status-badge');
+    const revEl = document.getElementById('temp-prompt-revision');
+    const hashEl = document.getElementById('temp-prompt-hash');
+    const countEl = document.getElementById('temp-prompt-char-count');
+
+    if (textarea) textarea.value = data.content || '';
+    if (revEl) revEl.textContent = data.revision !== undefined ? data.revision : '-';
+    if (hashEl) hashEl.textContent = data.sha256 ? data.sha256.slice(0, 12) : '-';
+    if (countEl) countEl.textContent = `${(data.content || '').length} / 12000`;
+
+    if (badge) {
+      if (data.active) {
+        badge.textContent = '已激活';
+        badge.className = 'badge active-dot';
+      } else {
+        badge.textContent = '已关闭';
+        badge.className = 'badge';
+      }
+    }
+  } catch (e) {
+    console.error('Failed to load temporary prompt:', e);
+  }
+}
+
+async function saveTemporaryPrompt() {
+  const textarea = document.getElementById('temp-prompt-textarea');
+  if (!textarea) return;
+  const content = textarea.value;
+  if (content.length > 12000) {
+    alert('临时提示词长度不能超过 12,000 字符！');
+    return;
+  }
+
+  try {
+    const res = await fetch('/api/temporary-prompt', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content: content })
+    });
+    if (res.ok) {
+      const data = await res.json();
+      appendConsole(`临时提示词已保存 (Revision ${data.revision})，将在下一次 Run 注入系统提示词。`, 'success');
+      await loadTemporaryPrompt();
+    } else {
+      const err = await res.json();
+      alert(`保存失败: ${err.detail || err.error}`);
+    }
+  } catch (e) {
+    alert(`保存异常: ${e.message}`);
+  }
+}
+
+async function clearTemporaryPrompt() {
+  if (!confirm('确定清空临时提示词吗？\n清空后下一次 Run 将不再注入当前任务指引。此前已形成的交付物与远程操作不会被撤销。')) {
+    return;
+  }
+
+  try {
+    const res = await fetch('/api/temporary-prompt', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content: '' })
+    });
+    if (res.ok) {
+      const data = await res.json();
+      appendConsole(`临时提示词已清空并关闭 (Revision ${data.revision})。`, 'warn');
+      await loadTemporaryPrompt();
+    } else {
+      const err = await res.json();
+      alert(`清空失败: ${err.detail || err.error}`);
+    }
+  } catch (e) {
+    alert(`清空异常: ${e.message}`);
+  }
+}
+
+// ==================== 通用弹窗：工具目录 / 私有文件 / 执行记录 ====================
+
+async function openToolsModal() {
+  try {
+    const res = await fetch('/api/tools');
+    if (!res.ok) {
+      alert('获取工具目录失败');
+      return;
+    }
+    const data = await res.json();
+    const tools = data.tools || [];
+    document.getElementById('common-modal-title').textContent = `受控工具目录 (共 ${tools.length} 项)`;
+    const body = document.getElementById('common-modal-body');
+    body.replaceChildren();
+
+    const desc = document.createElement('div');
+    desc.style.cssText = 'color: #a0aec0; margin-bottom: 12px; font-size: 12px;';
+    desc.textContent = '以下为已接入 V9 统一受控注册层的工具清单与输入参数 Schema (所有工具调用通过 operations 数组安全分发，凭据不回传前端)：';
+    body.appendChild(desc);
+
+    tools.forEach(t => {
+      const card = document.createElement('div');
+      card.style.cssText = 'background: #2d3748; padding: 10px; margin-bottom: 8px; border-radius: 4px; border-left: 3px solid ' + (t.enabled ? '#48bb78' : '#e53e3e') + ';';
+      
+      const head = document.createElement('div');
+      head.style.cssText = 'display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;';
+      head.innerHTML = `<strong><code>${t.name}</code></strong> <span style="font-size: 11px; color: ${t.enabled ? '#68d391' : '#fc8181'};">[${t.effect.toUpperCase()}] ${t.enabled ? '启用' : '禁用'} (超时: ${t.timeout_seconds}s)</span>`;
+      card.appendChild(head);
+
+      const d = document.createElement('div');
+      d.style.cssText = 'color: #e2e8f0; font-size: 12px; margin-bottom: 6px;';
+      d.textContent = t.description;
+      card.appendChild(d);
+
+      const schemaPre = document.createElement('pre');
+      schemaPre.style.cssText = 'background: #1a202c; padding: 6px 8px; border-radius: 3px; font-size: 11px; margin: 0; overflow-x: auto; color: #cbd5e0;';
+      schemaPre.textContent = JSON.stringify(t.input_schema, null, 2);
+      card.appendChild(schemaPre);
+
+      body.appendChild(card);
+    });
+
+    document.getElementById('common-modal').style.display = 'flex';
+  } catch (e) {
+    alert(`加载工具目录失败: ${e.message}`);
+  }
+}
+
+async function openPrivateFilesModal(subPath = '') {
+  try {
+    const res = await fetch(`/api/private-files?path=${encodeURIComponent(subPath)}`);
+    if (!res.ok) {
+      alert('获取私有文件列表失败');
+      return;
+    }
+    const data = await res.json();
+    const files = data.files || [];
+    document.getElementById('common-modal-title').textContent = `私有文件空间 (workspace/private${subPath ? '/' + subPath : ''})`;
+    const body = document.getElementById('common-modal-body');
+    body.replaceChildren();
+
+    const hint = document.createElement('div');
+    hint.style.cssText = 'color: #a0aec0; margin-bottom: 12px; font-size: 12px;';
+    hint.textContent = '存放私有配置、业务资料、凭据与多模态图片。已知凭据文件受脱敏保护；图片可在线预览：';
+    body.appendChild(hint);
+
+    if (files.length === 0) {
+      const empty = document.createElement('div');
+      empty.textContent = '当前目录下无文件。';
+      body.appendChild(empty);
+    } else {
+      files.forEach(f => {
+        const row = document.createElement('div');
+        row.style.cssText = 'display: flex; justify-content: space-between; align-items: center; padding: 8px 10px; background: #2d3748; margin-bottom: 6px; border-radius: 4px;';
+        
+        const left = document.createElement('span');
+        const icon = f.type === 'directory' ? '📁' : (/\.(jpe?g|png|webp|gif)$/i.test(f.name) ? '🖼️' : '📄');
+        left.textContent = `${icon} ${f.name} ${f.size_bytes ? '(' + f.size_bytes.toLocaleString() + ' 字节)' : ''}`;
+        if (f.is_sensitive) {
+          left.innerHTML += ' <span style="color: #f6ad55; font-size: 11px;">[凭据脱敏保护]</span>';
+        }
+        row.appendChild(left);
+
+        const right = document.createElement('div');
+        if (/\.(jpe?g|png|webp|gif)$/i.test(f.name) && !f.is_sensitive) {
+          const prevBtn = document.createElement('button');
+          prevBtn.className = 'btn btn-xs btn-primary';
+          prevBtn.textContent = '预览图片';
+          prevBtn.onclick = () => previewPrivateImage(f.path);
+          right.appendChild(prevBtn);
+        }
+        row.appendChild(right);
+        body.appendChild(row);
+      });
+    }
+
+    document.getElementById('common-modal').style.display = 'flex';
+  } catch (e) {
+    alert(`加载私有文件失败: ${e.message}`);
+  }
+}
+
+function previewPrivateImage(path) {
+  document.getElementById('common-modal-title').textContent = `图片预览: ${path}`;
+  const body = document.getElementById('common-modal-body');
+  body.replaceChildren();
+
+  const backBtn = document.createElement('button');
+  backBtn.className = 'btn btn-xs btn-secondary';
+  backBtn.style.cssText = 'margin-bottom: 10px; display: block;';
+  backBtn.textContent = '← 返回文件列表';
+  backBtn.onclick = () => openPrivateFilesModal();
+  body.appendChild(backBtn);
+
+  const imgBox = document.createElement('div');
+  imgBox.style.cssText = 'text-align: center; background: #1a202c; padding: 12px; border-radius: 4px;';
+  const img = document.createElement('img');
+  img.src = `/api/private-files/preview?path=${encodeURIComponent(path)}`;
+  img.alt = path;
+  img.style.cssText = 'max-width: 100%; max-height: 500px; border-radius: 4px; box-shadow: 0 4px 6px rgba(0,0,0,0.3);';
+  imgBox.appendChild(img);
+  body.appendChild(imgBox);
+}
+
+async function openToolExecutionsModal() {
+  try {
+    const res = await fetch('/api/tool-executions?limit=50');
+    if (!res.ok) {
+      alert('获取工具执行记录失败');
+      return;
+    }
+    const data = await res.json();
+    const list = data.executions || [];
+    document.getElementById('common-modal-title').textContent = `外部工具执行历史 (最近 ${list.length} 条)`;
+    const body = document.getElementById('common-modal-body');
+    body.replaceChildren();
+
+    if (list.length === 0) {
+      const empty = document.createElement('div');
+      empty.textContent = '暂无外部工具执行记录。在提示词中指示元胞执行 operations 后可在此查看真实状态。';
+      body.appendChild(empty);
+    } else {
+      list.forEach(ex => {
+        const item = document.createElement('div');
+        const color = ex.status === 'SUCCESS' ? '#48bb78' : (ex.status === 'UNKNOWN' ? '#ecc94b' : '#e53e3e');
+        item.style.cssText = `background: #2d3748; padding: 10px; margin-bottom: 8px; border-radius: 4px; border-left: 3px solid ${color};`;
+        
+        const header = document.createElement('div');
+        header.style.cssText = 'display: flex; justify-content: space-between; font-size: 12px; margin-bottom: 4px;';
+        const dateStr = ex.started_at ? new Date(ex.started_at * 1000).toLocaleTimeString() : '-';
+        header.innerHTML = `<strong>${ex.tool}</strong> <span style="color: ${color}; font-weight: bold;">[${ex.status}]</span> <span style="color: #a0aec0;">${dateStr} (Pixel: ${ex.pixel_id})</span>`;
+        item.appendChild(header);
+
+        const resPre = document.createElement('pre');
+        resPre.style.cssText = 'background: #1a202c; padding: 6px 8px; border-radius: 3px; font-size: 11px; margin: 0; overflow-x: auto; color: #cbd5e0; max-height: 120px;';
+        resPre.textContent = JSON.stringify(ex.result, null, 2);
+        item.appendChild(resPre);
+
+        body.appendChild(item);
+      });
+    }
+
+    document.getElementById('common-modal').style.display = 'flex';
+  } catch (e) {
+    alert(`加载执行历史失败: ${e.message}`);
   }
 }

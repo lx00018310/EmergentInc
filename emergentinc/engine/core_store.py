@@ -229,6 +229,22 @@ class CoreStore:
                 timestamp REAL NOT NULL
             );
             """)
+
+            cur.execute("""
+            CREATE TABLE IF NOT EXISTS tool_executions (
+                operation_id TEXT PRIMARY KEY,
+                run_id TEXT,
+                message_id TEXT NOT NULL,
+                pixel_id TEXT NOT NULL,
+                op_index INTEGER NOT NULL,
+                tool TEXT NOT NULL,
+                args_hash TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'STARTED',
+                result TEXT,
+                started_at REAL NOT NULL,
+                finished_at REAL
+            );
+            """)
             conn.commit()
 
     # ==================== 迁移与初始装载 ====================
@@ -539,8 +555,9 @@ class CoreStore:
             conn.commit()
 
     def recover_stale_runs(self) -> int:
-        """修正处于 RUNNING 状态的遗留 Run 为 INTERRUPTED."""
+        """修正处于 RUNNING 状态的遗留 Run 为 INTERRUPTED，并恢复遗留 STARTED 状态的工具调用为 UNKNOWN."""
         now = time.time()
+        self.recover_stale_tool_executions()
         with self.get_connection() as conn:
             cur = conn.cursor()
             cur.execute("""
@@ -1585,3 +1602,159 @@ class CoreStore:
                 raise CoreStoreError(f"credit_pixel_revenue failed: {e}")
 
     settle_call = settle_call_budget
+
+    # ==================== 统一外部工具执行记录 (Tool Executions) ====================
+
+    def record_tool_started(
+        self,
+        operation_id: str,
+        run_id: Optional[str],
+        message_id: str,
+        pixel_id: str,
+        op_index: int,
+        tool: str,
+        args_hash: str,
+    ) -> Tuple[bool, Optional[Dict[str, Any]]]:
+        """在执行外部工具前原子登记 STARTED 状态.
+        
+        返回 (is_new, existing_or_updated_record).
+        若 is_new 为 False，则表明该操作已存在或上次中断，调用方应复用结果而不重复执行副作用.
+        """
+        now = time.time()
+        with self.get_connection() as conn:
+            cur = conn.cursor()
+            cur.execute("BEGIN IMMEDIATE")
+            try:
+                cur.execute("SELECT * FROM tool_executions WHERE operation_id = ?", (operation_id,))
+                row = cur.fetchone()
+                if row:
+                    rec = dict(row)
+                    if rec["result"]:
+                        try:
+                            rec["result"] = json.loads(rec["result"])
+                        except Exception:
+                            pass
+                    # 如果原先是 STARTED，说明上次执行未正常结束即重启/中断，标记为 UNKNOWN
+                    if rec["status"] == "STARTED":
+                        err_res = {
+                            "operation_id": operation_id,
+                            "tool": tool,
+                            "status": "UNKNOWN",
+                            "error_code": "SYSTEM_INTERRUPTED",
+                            "error_message": "Previous execution was interrupted before completion.",
+                        }
+                        cur.execute(
+                            "UPDATE tool_executions SET status = 'UNKNOWN', result = ?, finished_at = ? WHERE operation_id = ?",
+                            (json.dumps(err_res, ensure_ascii=False), now, operation_id),
+                        )
+                        conn.commit()
+                        rec["status"] = "UNKNOWN"
+                        rec["result"] = err_res
+                        return False, rec
+                    # 已经是终态 (SUCCESS/FAILED/UNKNOWN)，直接复用
+                    conn.commit()
+                    return False, rec
+
+                # 插入全新 STARTED 记录
+                cur.execute("""
+                    INSERT INTO tool_executions (
+                        operation_id, run_id, message_id, pixel_id, op_index, tool, args_hash, status, started_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, 'STARTED', ?)
+                """, (operation_id, run_id, message_id, pixel_id, op_index, tool, args_hash, now))
+                conn.commit()
+                return True, None
+            except Exception as e:
+                conn.rollback()
+                raise CoreStoreError(f"record_tool_started failed: {e}")
+
+    def record_tool_finished(
+        self,
+        operation_id: str,
+        status: str,
+        result: Dict[str, Any],
+    ) -> None:
+        """记录工具执行的真实结果 (SUCCESS / FAILED / UNKNOWN)."""
+        now = time.time()
+        with self.get_connection() as conn:
+            cur = conn.cursor()
+            try:
+                res_str = json.dumps(result, ensure_ascii=False)
+                cur.execute("""
+                    UPDATE tool_executions
+                    SET status = ?, result = ?, finished_at = ?
+                    WHERE operation_id = ?
+                """, (status, res_str, now, operation_id))
+                conn.commit()
+            except Exception as e:
+                conn.rollback()
+                raise CoreStoreError(f"record_tool_finished failed: {e}")
+
+    def get_tool_execution(self, operation_id: str) -> Optional[Dict[str, Any]]:
+        """获取单条工具执行记录."""
+        with self.get_connection() as conn:
+            cur = conn.cursor()
+            cur.execute("SELECT * FROM tool_executions WHERE operation_id = ?", (operation_id,))
+            row = cur.fetchone()
+            if not row:
+                return None
+            rec = dict(row)
+            if rec["result"]:
+                try:
+                    rec["result"] = json.loads(rec["result"])
+                except Exception:
+                    pass
+            return rec
+
+    def list_tool_executions(
+        self,
+        run_id: Optional[str] = None,
+        pixel_id: Optional[str] = None,
+        limit: int = 50,
+    ) -> List[Dict[str, Any]]:
+        """列出工具执行记录 (按时间倒序)."""
+        with self.get_connection() as conn:
+            cur = conn.cursor()
+            conditions = []
+            params: List[Any] = []
+            if run_id:
+                conditions.append("run_id = ?")
+                params.append(run_id)
+            if pixel_id:
+                conditions.append("pixel_id = ?")
+                params.append(pixel_id)
+
+            where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+            sql = f"SELECT * FROM tool_executions {where_clause} ORDER BY started_at DESC LIMIT ?"
+            params.append(limit)
+
+            cur.execute(sql, tuple(params))
+            rows = cur.fetchall()
+            results = []
+            for r in rows:
+                d = dict(r)
+                if d["result"]:
+                    try:
+                        d["result"] = json.loads(d["result"])
+                    except Exception:
+                        pass
+                results.append(d)
+            return results
+
+    def recover_stale_tool_executions(self) -> int:
+        """修正处于 STARTED 状态的遗留工具调用记录为 UNKNOWN."""
+        now = time.time()
+        with self.get_connection() as conn:
+            cur = conn.cursor()
+            err_res = json.dumps({
+                "status": "UNKNOWN",
+                "error_code": "SYSTEM_RESTARTED",
+                "error_message": "Execution interrupted by system restart.",
+            }, ensure_ascii=False)
+            cur.execute("""
+                UPDATE tool_executions
+                SET status = 'UNKNOWN', result = ?, finished_at = ?
+                WHERE status = 'STARTED'
+            """, (err_res, now))
+            conn.commit()
+            return cur.rowcount
+

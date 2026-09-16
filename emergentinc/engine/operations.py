@@ -1,48 +1,26 @@
-"""通用工具执行通道与隔离交付物管理 (V9 Operations & Artifacts).
+"""通用工具执行通道与薄适配器 (V9 Operations Adapter).
 
 核心规则:
 1. 单次响应最多执行 3 个工具操作，按顺序执行。
-2. 某步失败则停止剩余操作，保留已发生结果。
-3. 交付物存储于 artifacts/ 目录，按 Pixel 身份严格隔离。
-4. 提供代码隔离执行器 (run_isolated_code)，配置时间与进程限制，不访问敏感环境变量。
+2. 某步失败或结果未知则停止剩余操作，保留已发生结果。
+3. 委托底层统一 ToolRegistry 分发执行，不写日益庞大的 if/else。
+4. 支持传入 CoreStore 进行原子 STARTED/SUCCESS/FAILED/UNKNOWN 记录与重放去重。
 5. 工具结果通过 [ENGINE_FEEDBACK] 消息回传元胞。
 """
 
-import sys
-import os
-import re
-import subprocess
-import time
+import json
 import uuid
 from pathlib import Path
 from dataclasses import dataclass
-from typing import List, Dict, Any, Tuple, Optional
+from typing import List, Dict, Any, Tuple, Optional, Callable
+
+from emergentinc.tools.contracts import ToolContext, ToolResult
+from emergentinc.tools.registry import ToolRegistry
+from emergentinc.tools.registry_manifest import default_registry, create_default_registry
+from emergentinc.tools.artifacts import is_valid_coord_id, validate_artifact_filename
 from .utils import sha256_text
 
 MAX_OPERATIONS_PER_STEP = 3
-DEFAULT_CODE_TIMEOUT_SECONDS = 5
-
-COORD_ID_PATTERN = re.compile(r"^-?\d+_-?\d+_-?\d+$")
-
-
-def is_valid_coord_id(pixel_id: str) -> bool:
-    """验证 pixel_id 是否符合 3D 坐标规范."""
-    if not isinstance(pixel_id, str):
-        return False
-    return bool(COORD_ID_PATTERN.match(pixel_id.strip()))
-
-
-def validate_artifact_filename(filename: str) -> Tuple[bool, Optional[str]]:
-    """严格校验 artifact 文件名，防范目录穿越、盘符逃逸与 Windows ADS 流."""
-    if not filename or not isinstance(filename, str):
-        return False, "Missing or invalid 'filename'"
-    name = filename.strip()
-    if ".." in name or "/" in name or "\\" in name or ":" in name:
-        return False, "Invalid artifact filename: directory traversal or path separators forbidden"
-    forbidden_chars = set('<>"/\\|?*:\0')
-    if any(c in forbidden_chars for c in name):
-        return False, "Invalid artifact filename: forbidden characters detected"
-    return True, None
 
 
 @dataclass
@@ -66,34 +44,114 @@ class OperationReceipt:
 
 
 class OperationExecutor:
-    """工具操作执行器与交付物空间."""
+    """薄适配器：委托统一工具注册表执行，并提供兼容既有调用的回执接口."""
 
-    def __init__(self, artifacts_root: Path):
+    def __init__(
+        self,
+        artifacts_root: Path,
+        registry: Optional[ToolRegistry] = None,
+        private_root: Optional[Path] = None,
+        workspace_root: Optional[Path] = None,
+    ):
         self.artifacts_root = Path(artifacts_root).resolve()
         self.artifacts_root.mkdir(parents=True, exist_ok=True)
+        self.workspace_root = Path(workspace_root).resolve() if workspace_root else self.artifacts_root.parent.parent
+        self.private_root = Path(private_root).resolve() if private_root else (self.workspace_root / "private")
 
-    def _pixel_artifact_dir(self, pixel_id: str) -> Path:
-        if not is_valid_coord_id(pixel_id):
-            raise ValueError(f"Invalid pixel_id format: '{pixel_id}'")
-        d = (self.artifacts_root / pixel_id).resolve()
-        if not str(d).startswith(str(self.artifacts_root)):
-            raise ValueError(f"Path escape detected for pixel_id: '{pixel_id}'")
-        d.mkdir(parents=True, exist_ok=True)
-        return d
+        if registry is not None:
+            self.registry = registry
+        elif self.private_root.exists():
+            self.registry = create_default_registry(self.private_root)
+        else:
+            self.registry = default_registry
 
     def execute_all(
         self,
         pixel_id: str,
         operations: List[Dict[str, Any]],
+        run_id: Optional[str] = None,
+        message_id: Optional[str] = None,
+        stop_requested: Optional[Callable[[], bool]] = None,
+        core_store: Optional[Any] = None,
     ) -> Tuple[List[OperationReceipt], str]:
         """按顺序执行操作，最多 3 个，若某步失败则中断后续操作并汇总回执."""
         receipts: List[OperationReceipt] = []
         truncated_ops = operations[:MAX_OPERATIONS_PER_STEP]
 
-        for op in truncated_ops:
+        for idx, op in enumerate(truncated_ops):
             tool = op.get("tool", "")
             args = op.get("args", {})
-            receipt = self._dispatch(pixel_id, tool, args)
+            if not isinstance(args, dict):
+                args = {}
+
+            # 生成稳定 operation_id (若有 message_id 则基于 message_id + op_index 保证确定性)
+            if message_id:
+                op_id = f"op_{sha256_text(f'{message_id}_{idx}_{tool}')[:12]}"
+            else:
+                op_id = f"op_{uuid.uuid4().hex[:8]}"
+
+            args_hash = sha256_text(json.dumps(args, sort_keys=True, ensure_ascii=False))
+
+            receipt: Optional[OperationReceipt] = None
+
+            # 若提供了 core_store，执行原子持久化与重放去重判定
+            if core_store is not None and hasattr(core_store, "record_tool_started"):
+                is_new, existing = core_store.record_tool_started(
+                    operation_id=op_id,
+                    run_id=run_id,
+                    message_id=message_id or "direct",
+                    pixel_id=pixel_id,
+                    op_index=idx,
+                    tool=tool,
+                    args_hash=args_hash,
+                )
+                if not is_new and existing:
+                    # 重放已有记录，不执行外部副作用
+                    res_data = existing.get("result") or {}
+                    receipt = OperationReceipt(
+                        operation_id=op_id,
+                        tool=tool,
+                        status=existing.get("status", "UNKNOWN"),
+                        output=res_data.get("output"),
+                        error=res_data.get("error_message") or res_data.get("error"),
+                    )
+
+            if receipt is None:
+                # 实际执行工具
+                context = ToolContext(
+                    workspace_root=self.workspace_root,
+                    pixel_id=pixel_id,
+                    run_id=run_id or "direct",
+                    message_id=message_id or "direct",
+                    operation_id=op_id,
+                    stop_requested=stop_requested,
+                )
+
+                tool_result: ToolResult = self.registry.execute(tool, args, context)
+
+                # 落库终态记录
+                if core_store is not None and hasattr(core_store, "record_tool_finished"):
+                    core_store.record_tool_finished(
+                        operation_id=op_id,
+                        status=tool_result.status,
+                        result=tool_result.to_dict(),
+                    )
+
+                err_msg = tool_result.error_message
+                if tool_result.error_code:
+                    if err_msg:
+                        err_msg = f"{tool_result.error_code}: {err_msg}"
+                    else:
+                        err_msg = tool_result.error_code
+
+                receipt = OperationReceipt(
+                    operation_id=op_id,
+                    tool=tool,
+                    status=tool_result.status,
+                    output=tool_result.output,
+                    error=err_msg,
+                )
+
             receipts.append(receipt)
             if receipt.status != "SUCCESS":
                 break
@@ -111,123 +169,6 @@ class OperationExecutor:
         return receipts, feedback_md
 
     def _dispatch(self, pixel_id: str, tool: str, args: Dict[str, Any]) -> OperationReceipt:
-        op_id = f"op_{uuid.uuid4().hex[:8]}"
-
-        if tool == "save_artifact":
-            return self._tool_save_artifact(op_id, pixel_id, args)
-        elif tool == "read_artifact":
-            return self._tool_read_artifact(op_id, pixel_id, args)
-        elif tool == "list_artifacts":
-            return self._tool_list_artifacts(op_id, pixel_id, args)
-        elif tool == "run_isolated_code":
-            return self._tool_run_isolated_code(op_id, pixel_id, args)
-        else:
-            return OperationReceipt(
-                operation_id=op_id,
-                tool=tool,
-                status="FAILED",
-                output=None,
-                error=f"CAPABILITY_UNAVAILABLE: Tool '{tool}' is not supported. Only save_artifact, read_artifact, and list_artifacts are allowed.",
-            )
-
-    def _tool_save_artifact(self, op_id: str, pixel_id: str, args: Dict[str, Any]) -> OperationReceipt:
-        if not is_valid_coord_id(pixel_id):
-            return OperationReceipt(op_id, "save_artifact", "FAILED", None, f"Invalid pixel_id format: '{pixel_id}'")
-        filename = args.get("filename", "")
-        content = args.get("content", "")
-        ok, err = validate_artifact_filename(filename)
-        if not ok:
-            return OperationReceipt(op_id, "save_artifact", "FAILED", None, err)
-
-        try:
-            p_dir = self._pixel_artifact_dir(pixel_id)
-            target_file = (p_dir / filename.strip()).resolve()
-            if not str(target_file).startswith(str(p_dir.resolve())):
-                return OperationReceipt(op_id, "save_artifact", "FAILED", None, "Path traversal escape detected")
-
-            target_file.parent.mkdir(parents=True, exist_ok=True)
-            target_file.write_text(content, encoding="utf-8")
-
-            artifact_hash = sha256_text(content)
-            return OperationReceipt(
-                operation_id=op_id,
-                tool="save_artifact",
-                status="SUCCESS",
-                output={
-                    "pixel_id": pixel_id,
-                    "filename": filename.strip(),
-                    "size_bytes": len(content.encode("utf-8")),
-                    "sha256": artifact_hash,
-                },
-            )
-        except Exception as e:
-            return OperationReceipt(op_id, "save_artifact", "FAILED", None, str(e))
-
-    def _tool_read_artifact(self, op_id: str, pixel_id: str, args: Dict[str, Any]) -> OperationReceipt:
-        if not is_valid_coord_id(pixel_id):
-            return OperationReceipt(op_id, "read_artifact", "FAILED", None, f"Invalid pixel_id format: '{pixel_id}'")
-        target_pixel_id = str(args.get("pixel_id", pixel_id)).strip()
-        if target_pixel_id != pixel_id:
-            return OperationReceipt(
-                op_id,
-                "read_artifact",
-                "FAILED",
-                None,
-                "CROSS_PIXEL_READ_FORBIDDEN: Cross-pixel artifact reading is strictly disabled.",
-            )
-
-        filename = args.get("filename", "")
-        ok, err = validate_artifact_filename(filename)
-        if not ok:
-            return OperationReceipt(op_id, "read_artifact", "FAILED", None, err)
-
-        try:
-            p_dir = self._pixel_artifact_dir(pixel_id)
-            target_file = (p_dir / filename.strip()).resolve()
-            if not str(target_file).startswith(str(p_dir.resolve())):
-                return OperationReceipt(op_id, "read_artifact", "FAILED", None, "Path traversal escape detected")
-
-            if not target_file.exists() or not target_file.is_file():
-                return OperationReceipt(op_id, "read_artifact", "FAILED", None, f"Artifact '{filename.strip()}' not found")
-
-            content = target_file.read_text(encoding="utf-8")
-            return OperationReceipt(
-                operation_id=op_id,
-                tool="read_artifact",
-                status="SUCCESS",
-                output={"content": content, "size": len(content)},
-            )
-        except Exception as e:
-            return OperationReceipt(op_id, "read_artifact", "FAILED", None, str(e))
-
-    def _tool_list_artifacts(self, op_id: str, pixel_id: str, args: Dict[str, Any]) -> OperationReceipt:
-        if not is_valid_coord_id(pixel_id):
-            return OperationReceipt(op_id, "list_artifacts", "FAILED", None, f"Invalid pixel_id format: '{pixel_id}'")
-        try:
-            p_dir = self._pixel_artifact_dir(pixel_id)
-            items = []
-            for p in sorted(p_dir.glob("*")):
-                if p.is_file():
-                    items.append({
-                        "filename": p.name,
-                        "size_bytes": p.stat().st_size,
-                        "sha256": sha256_text(p.read_text(encoding="utf-8", errors="ignore")),
-                    })
-            return OperationReceipt(
-                operation_id=op_id,
-                tool="list_artifacts",
-                status="SUCCESS",
-                output={"artifacts": items},
-            )
-        except Exception as e:
-            return OperationReceipt(op_id, "list_artifacts", "FAILED", None, str(e))
-
-    def _tool_run_isolated_code(self, op_id: str, pixel_id: str, args: Dict[str, Any]) -> OperationReceipt:
-        # T0-01: 未配置真实沙箱时，禁止宿主代码执行，固定返回不可用
-        return OperationReceipt(
-            operation_id=op_id,
-            tool="run_isolated_code",
-            status="FAILED",
-            output=None,
-            error="CAPABILITY_UNAVAILABLE: Isolated code execution is not configured.",
-        )
+        """向后兼容的单操作分发接口."""
+        receipts, _ = self.execute_all(pixel_id, [{"tool": tool, "args": args}])
+        return receipts[0]

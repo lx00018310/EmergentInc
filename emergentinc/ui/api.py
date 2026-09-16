@@ -1,6 +1,7 @@
 from pathlib import Path
 from typing import Dict, Any, Optional, List, Union
 from fastapi import APIRouter, HTTPException, Query, Body
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 from emergentinc.paths import ProjectPaths, get_paths
@@ -19,6 +20,9 @@ class RunStartRequest(BaseModel):
     global_budget_tokens: int = Field(..., gt=0, description="Global budget in tokens, must be positive integer")
 
 class GenesisPromptUpdateRequest(BaseModel):
+    content: str
+
+class TemporaryPromptUpdateRequest(BaseModel):
     content: str
 
 class BranchRequest(BaseModel):
@@ -171,7 +175,15 @@ def init_api(base_dir: Optional[Union[str, Path, ProjectPaths]] = None) -> APIRo
 
 
     from emergentinc.engine.genesis import GenesisPromptManager
+    from emergentinc.engine.temporary_prompt import TemporaryPromptManager
+    from emergentinc.tools.registry_manifest import create_default_registry
+    from emergentinc.tools.private_files import resolve_private_path
+    from emergentinc.engine.core_store import CoreStore
+
     genesis_mgr = GenesisPromptManager(paths.runtime_root)
+    temp_prompt_mgr = TemporaryPromptManager(paths.runtime_root)
+    core_store = CoreStore(paths.ledger_root / "v9_core.sqlite3")
+    tool_registry = create_default_registry(paths.private_root)
 
     @router.get("/genesis-prompt")
     def get_genesis_prompt():
@@ -187,6 +199,101 @@ def init_api(base_dir: Optional[Union[str, Path, ProjectPaths]] = None) -> APIRo
             return genesis_mgr.update_prompt(req.content)
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+
+    @router.get("/temporary-prompt")
+    def get_temporary_prompt():
+        return temp_prompt_mgr.get_prompt()
+
+    @router.put("/temporary-prompt")
+    def update_temporary_prompt(req: TemporaryPromptUpdateRequest):
+        if run_controller.status()['running']:
+            raise HTTPException(status_code=409, detail="Cannot update temporary prompt while run is in progress.")
+        if not isinstance(req.content, str):
+            raise HTTPException(status_code=422, detail="Temporary prompt content must be a string.")
+        try:
+            return temp_prompt_mgr.update_prompt(req.content)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+
+    @router.get("/tools")
+    def get_tools_catalog():
+        """返回只读工具目录及配置状态，绝对不暴露任何凭据."""
+        specs = tool_registry.list_specs(enabled_only=False)
+        return {
+            "tools": [
+                {
+                    "name": s.name,
+                    "description": s.description,
+                    "effect": s.effect,
+                    "enabled": s.enabled,
+                    "timeout_seconds": s.timeout_seconds,
+                    "input_schema": s.input_schema,
+                }
+                for s in specs
+            ]
+        }
+
+    @router.get("/tool-executions")
+    def get_tool_executions(
+        run_id: Optional[str] = Query(None),
+        pixel_id: Optional[str] = Query(None),
+        limit: int = Query(50, ge=1, le=200),
+    ):
+        """返回持久化的外部工具执行历史记录."""
+        return {"executions": core_store.list_tool_executions(run_id=run_id, pixel_id=pixel_id, limit=limit)}
+
+    @router.get("/private-files")
+    def list_private_files(path: str = Query("", description="子目录相对路径")):
+        ok, resolved, err = resolve_private_path(paths.private_root, path)
+        if not ok or resolved is None:
+            raise HTTPException(status_code=403, detail=err or "Access denied")
+        if not resolved.exists():
+            if not path:
+                resolved.mkdir(parents=True, exist_ok=True)
+            else:
+                raise HTTPException(status_code=404, detail="Directory not found")
+        if not resolved.is_dir():
+            raise HTTPException(status_code=404, detail="Directory not found")
+        items = []
+        for p in sorted(resolved.iterdir()):
+            items.append({
+                "name": p.name,
+                "type": "directory" if p.is_dir() else "file",
+                "size_bytes": p.stat().st_size if p.is_file() else 0,
+                "path": str(p.relative_to(paths.private_root.resolve())).replace("\\", "/"),
+                "is_sensitive": p.name in ("owner_vps_profile.json", "known_hosts"),
+            })
+        return {"files": items, "base_path": path}
+
+    @router.get("/private-files/preview")
+    def preview_private_image(path: str = Query(..., description="私有图片相对路径")):
+        ok, resolved, err = resolve_private_path(paths.private_root, path)
+        if not ok or resolved is None:
+            raise HTTPException(status_code=403, detail=err or "Access denied")
+        if not resolved.exists() or not resolved.is_file():
+            raise HTTPException(status_code=404, detail="File not found")
+        # 敏感凭据与非图片禁止直接返回文件流
+        if resolved.name in ("owner_vps_profile.json", "known_hosts"):
+            raise HTTPException(status_code=403, detail="Access to credentials forbidden")
+        if resolved.suffix.lower() not in (".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp"):
+            raise HTTPException(status_code=400, detail="Preview only supported for images")
+        return FileResponse(str(resolved))
+
+    @router.get("/pixels/{pixel_id}/artifacts/{filename}/download")
+    def download_pixel_artifact(pixel_id: str, filename: str):
+        try:
+            target_path = world_reader.get_pixel_artifact_path(pixel_id, filename)
+            return FileResponse(str(target_path), filename=filename)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        except PermissionError as e:
+            raise HTTPException(status_code=403, detail=str(e))
+        except FileNotFoundError as e:
+            raise HTTPException(status_code=404, detail=str(e))
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
 

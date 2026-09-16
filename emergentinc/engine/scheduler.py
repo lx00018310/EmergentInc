@@ -25,6 +25,7 @@ from .environment import Environment
 from .operations import OperationExecutor, is_valid_coord_id
 from .llm import V9LLMClient, LLMInfrastructureError, LLMResponseError
 from .genesis import GenesisPromptManager
+from .temporary_prompt import TemporaryPromptManager
 from .runner import OwnerActionRequired
 from .utils import read_json, write_json, id_to_coord, coord_to_id, neighbors6, sha256_text
 
@@ -60,21 +61,37 @@ class V9RoundScheduler:
         self.router = MessageRouter(self.world, state_file=self.queue_file)
         self.energy_mgr = EnergyManager(self.ledger_file, db_path=self.db_path)
         self.env = Environment(self.env_file)
-        self.ops = OperationExecutor(self.artifacts_dir)
+        self.ops = OperationExecutor(
+            self.artifacts_dir,
+            private_root=self.workspace_dir / "private",
+            workspace_root=self.workspace_dir,
+        )
         self.genesis_mgr = GenesisPromptManager(self.runtime_dir)
+        self.temp_prompt_mgr = TemporaryPromptManager(self.runtime_dir)
 
         if llm_client:
             self.llm = llm_client
         else:
             self.llm = V9LLMClient(base_dir=self.workspace_dir.parent, mock_handler=mock_handler)
 
-        # 锁定当前 Run 的创世提示词版本
+        # 锁定当前 Run 的创世提示词版本与临时提示词版本
         gen_data = self.genesis_mgr.get_prompt()
         if hasattr(self.llm, "lock_genesis_prompt"):
             self.llm.lock_genesis_prompt(
                 prompt_text=gen_data.get("content", ""),
                 revision=int(gen_data.get("revision", 0)),
             )
+
+        temp_data = self.temp_prompt_mgr.get_prompt()
+        if hasattr(self.llm, "lock_temporary_prompt"):
+            self.llm.lock_temporary_prompt(
+                prompt_text=temp_data.get("content", ""),
+                revision=int(temp_data.get("revision", 0)),
+            )
+
+        # 注入统一工具目录
+        if hasattr(self.llm, "set_tools_catalog") and hasattr(self.ops, "registry"):
+            self.llm.set_tools_catalog(self.ops.registry.render_catalog_for_prompt())
 
     def load_world_state(self) -> Dict[str, Any]:
         if not self.world_state_file.exists():
@@ -135,6 +152,24 @@ class V9RoundScheduler:
                     loop_id=run_id,
                     start_round=current_round,
                 )
+
+        # 确保当前 Run 锁定最新的创世与临时提示词及工具目录
+        gen_data = self.genesis_mgr.get_prompt()
+        if hasattr(self.llm, "lock_genesis_prompt"):
+            self.llm.lock_genesis_prompt(
+                prompt_text=gen_data.get("content", ""),
+                revision=int(gen_data.get("revision", 0)),
+            )
+
+        temp_data = self.temp_prompt_mgr.get_prompt()
+        if hasattr(self.llm, "lock_temporary_prompt"):
+            self.llm.lock_temporary_prompt(
+                prompt_text=temp_data.get("content", ""),
+                revision=int(temp_data.get("revision", 0)),
+            )
+
+        if hasattr(self.llm, "set_tools_catalog") and hasattr(self.ops, "registry"):
+            self.llm.set_tools_catalog(self.ops.registry.render_catalog_for_prompt())
 
         # 确保现有 Pixel 在数据库中建账并以权威数据库为准双向同步到文件投影
         for pid in self.world.list_pixel_ids():
@@ -508,13 +543,20 @@ class V9RoundScheduler:
                     )
                     self.router.enqueue([env_msg])
 
-            # 3.8 工具操作执行 (Exactly-Once)
+            # 3.8 工具操作执行 (统一受控状态机与反馈保障)
             ops_list = response_data.get("operations", [])
             if ops_list and not (stop_requested and stop_requested()):
-                for idx, op in enumerate(ops_list):
-                    op_eff_id = sha256_text(f"{msg.id}_op_{idx}_{json.dumps(op)}")
-                    if self.core_store.record_effect_once(op_eff_id, msg.id, "operation", idx, op_eff_id, op):
-                        receipts, op_feedback = self.ops.execute_all(msg.recipient, [op])
+                receipts, op_feedback = self.ops.execute_all(
+                    pixel_id=msg.recipient,
+                    operations=ops_list,
+                    run_id=run_id,
+                    message_id=msg.id,
+                    stop_requested=stop_requested,
+                    core_store=self.core_store,
+                )
+                if receipts:
+                    feed_eff_id = sha256_text(f"{msg.id}_op_feedback")
+                    if self.core_store.record_effect_once(feed_eff_id, msg.id, "op_feedback", 0, feed_eff_id):
                         op_msg = self.router.create_message(
                             sender="ENGINE",
                             recipient=msg.recipient,

@@ -201,3 +201,19 @@ class WorldReader:
         if not target.exists() or not target.is_file():
             raise FileNotFoundError(f"Artifact '{filename}' not found for pixel '{pixel_id}'")
         return target.read_text(encoding="utf-8", errors="replace")
+
+    def get_pixel_artifact_path(self, pixel_id: str, filename: str) -> Path:
+        """安全解析指定 Pixel 的交付物物理路径，校验合法性与路径越界."""
+        from emergentinc.engine.operations import is_valid_coord_id, validate_artifact_filename
+        if not is_valid_coord_id(pixel_id):
+            raise ValueError(f"Invalid pixel_id format: '{pixel_id}'")
+        ok, err = validate_artifact_filename(filename)
+        if not ok:
+            raise ValueError(err or "Invalid filename")
+        artifacts_p_dir = (self.artifacts_dir / pixel_id).resolve()
+        target = (artifacts_p_dir / filename.strip()).resolve()
+        if not str(target).startswith(str(artifacts_p_dir)):
+            raise PermissionError("Path traversal attack detected")
+        if not target.exists() or not target.is_file():
+            raise FileNotFoundError(f"Artifact '{filename}' not found for pixel '{pixel_id}'")
+        return target
