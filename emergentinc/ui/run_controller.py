@@ -52,21 +52,7 @@ class RunController:
             self._current_round = 0
 
     def _recover_stale_runs(self):
-        """应用启动时，将处于 RUNNING 状态但本进程无 worker 的 Run 与 Loop 标为 INTERRUPTED."""
-        try:
-            for loop in self.loop_store.list_loops():
-                if loop.get("status") == "RUNNING":
-                    loop_id = loop["id"]
-                    end_round = int(loop.get("start_round", 0))
-                    self.loop_store.finish_loop(
-                        loop_id=loop_id,
-                        end_round=end_round,
-                        status="INTERRUPTED",
-                        stop_reason="PROCESS_RESTARTED",
-                    )
-        except Exception:
-            pass
-
+        """应用启动时，将处于 RUNNING 状态但本进程无 worker 的 Run 标为 INTERRUPTED (不修改旧 Loop 历史)."""
         db_path = self.paths.workspace_root / "ledger" / "v9_core.sqlite3"
         if db_path.exists():
             try:
@@ -76,7 +62,6 @@ class RunController:
             except Exception:
                 pass
 
-    _recover_stale_loops = _recover_stale_runs
 
     def _log_command(self, command_text: str, rounds: int, extra: Optional[Dict[str, Any]] = None) -> None:
         record = {
@@ -238,39 +223,46 @@ class RunController:
                 start_round=start_round + 1,
             )
 
-            self._log_command(command_text, rounds, {
-                "run_id": run_id,
-                "run_budget_tokens": run_budget_tokens,
-                "global_budget_tokens": global_budget_tokens,
-            })
-
-            self._current_round = start_round
-            self._requested_rounds = rounds
-            self._completed_rounds = 0
-            self._messages_processed = 0
-            self._model_calls_completed = 0
-            self._idle_rounds = 0
-            self._stop_requested = False
-            self._stop_reason = None
-            self._last_error = None
-            self._result_status = None
-
-            self._worker_thread = threading.Thread(
-                target=self._run_loop,
-                args=(rounds, run_id, start_round, run_budget_tokens, global_budget_tokens),
-                daemon=True
-            )
-            self._running = True
             try:
+                self._log_command(command_text, rounds, {
+                    "run_id": run_id,
+                    "run_budget_tokens": run_budget_tokens,
+                    "global_budget_tokens": global_budget_tokens,
+                })
+
+                self._current_round = start_round
+                self._requested_rounds = rounds
+                self._completed_rounds = 0
+                self._messages_processed = 0
+                self._model_calls_completed = 0
+                self._idle_rounds = 0
+                self._stop_requested = False
+                self._stop_reason = None
+                self._last_error = None
+                self._result_status = None
+
+                self._worker_thread = threading.Thread(
+                    target=self._run_loop,
+                    args=(rounds, run_id, start_round, run_budget_tokens, global_budget_tokens),
+                    daemon=True
+                )
+                self._running = True
                 self._worker_thread.start()
             except Exception as e:
                 self._running = False
-                store.update_run_status(
-                    run_id=run_id,
-                    status="ERROR",
-                    stop_reason=f"START_FAILED: {e}",
-                    end_round=start_round,
-                )
+                self._worker_thread = None
+                self._stop_reason = f"START_FAILED: {e}"
+                self._last_error = f"START_FAILED: {e}"
+                self._result_status = "ERROR"
+                try:
+                    store.update_run_status(
+                        run_id=run_id,
+                        status="ERROR",
+                        stop_reason=f"START_FAILED: {e}",
+                        end_round=start_round,
+                    )
+                except Exception:
+                    pass
                 raise
 
             return self.status()

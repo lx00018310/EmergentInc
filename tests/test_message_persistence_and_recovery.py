@@ -81,19 +81,33 @@ def test_consumed_message_idempotent_deduplication(tmp_path):
     assert len(router2.queue) == 0
 
 
-def test_recover_stale_running_loops(tmp_path):
+def test_recover_stale_running_runs_preserves_loop_history(tmp_path):
     paths = get_paths(tmp_path)
     store = LoopStore(paths)
 
-    # 制造一个假死的 RUNNING 状态 Loop (如上次断电前遗留)
+    # 制造一个旧的 RUNNING 状态 Loop (历史遗留数据)
     loop_meta = store.start_loop(command_text="run_test", start_round=1)
     loop_id = loop_meta["id"]
     assert store.get_loop(loop_id)["status"] == "RUNNING"
+    checkpoints_before = list(paths.loops_root.glob("checkpoints/*"))
 
-    # 启动 RunController 时自动执行 _recover_stale_loops
+    # 制造一个数据库中处于 RUNNING 的 Run
+    from emergentinc.engine.core_store import CoreStore
+    db_path = paths.workspace_root / "ledger" / "v9_core.sqlite3"
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    c_store = CoreStore(db_path)
+    c_store.create_run(run_id="run_stale_1", run_limit=10000, global_limit=100000)
+    assert c_store.get_run("run_stale_1")["status"] == "RUNNING"
+
+    # 启动 RunController 时自动执行 _recover_stale_runs
     controller = RunController(paths)
 
-    # 验证该 Loop 状态被修复为 INTERRUPTED，原因记为 PROCESS_RESTARTED
-    recovered_loop = store.get_loop(loop_id)
-    assert recovered_loop["status"] == "INTERRUPTED"
-    assert recovered_loop["stop_reason"] == "PROCESS_RESTARTED"
+    # 1. 验证 CoreStore 的 Run 被安全恢复为 INTERRUPTED
+    assert c_store.get_run("run_stale_1")["status"] == "INTERRUPTED"
+    assert c_store.get_run("run_stale_1")["stop_reason"] == "PROCESS_RESTARTED"
+
+    # 2. 验证旧的 LoopStore 历史保持原样，绝不改写也不生成新快照
+    assert store.get_loop(loop_id)["status"] == "RUNNING"
+    checkpoints_after = list(paths.loops_root.glob("checkpoints/*"))
+    assert len(checkpoints_after) == len(checkpoints_before)
+

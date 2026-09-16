@@ -99,51 +99,7 @@ def init_api(base_dir: Optional[Union[str, Path, ProjectPaths]] = None) -> APIRo
             "manifest": loop_store.get_manifest()
         }
 
-    @router.post("/loops/{loop_id}/checkout")
-    def checkout_loop(loop_id: str, req: CheckoutRequest = Body(default=CheckoutRequest())):
-        if run_controller.status()['running']:
-            raise HTTPException(status_code=409, detail="Cannot checkout while running.")
-        try:
-            return loop_store.checkout_loop(loop_id, new_branch_name=req.branch_name)
-        except (ValueError, FileNotFoundError) as e:
-            raise HTTPException(status_code=400, detail=str(e))
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=str(e))
-
-    @router.post("/loops/{loop_id}/branch")
-    def branch_loop(loop_id: str, req: BranchRequest):
-        if run_controller.status()['running']:
-            raise HTTPException(status_code=409, detail="Cannot branch while running.")
-        try:
-            return loop_store.branch_from(loop_id, branch_name=req.branch_name)
-        except (ValueError, FileNotFoundError) as e:
-            raise HTTPException(status_code=400, detail=str(e))
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=str(e))
-
-    @router.delete("/loops/{loop_id}")
-    def delete_loop(loop_id: str):
-        if run_controller.status()['running']:
-            raise HTTPException(status_code=409, detail="Cannot delete loop while running.")
-        try:
-            loop_store.delete_loop(loop_id)
-            return {"status": "DELETED", "loop_id": loop_id}
-        except ValueError as e:
-            raise HTTPException(status_code=400, detail=str(e))
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=str(e))
-
-    @router.delete("/branches/{branch_name}")
-    def delete_branch(branch_name: str):
-        if run_controller.status()['running']:
-            raise HTTPException(status_code=409, detail="Cannot delete branch while running.")
-        try:
-            loop_store.delete_branch(branch_name)
-            return {"status": "DELETED", "branch": branch_name}
-        except ValueError as e:
-            raise HTTPException(status_code=400, detail=str(e))
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=str(e))
+    # Loop 写接口已在此阶段断开 (checkout, branch, delete)，保留底层 LoopStore 实现供只读或离线工具调用。
 
     @router.get("/environment")
     def get_environment():
@@ -155,50 +111,8 @@ def init_api(base_dir: Optional[Union[str, Path, ProjectPaths]] = None) -> APIRo
         world_reader.env.update_content(content)
         return {"status": "UPDATED", "length": len(content)}
 
-    @router.post("/revenue/credit")
-    def credit_revenue(req: Dict[str, Any] = Body(...)):
-        from emergentinc.engine.energy import EnergyManager
-        pixel_id = req.get("pixel_id")
-        net_amount = float(req.get("net_amount", 0.0))
-        tx_id = str(req.get("tx_id", "")).strip()
-        if not pixel_id or net_amount <= 0 or not tx_id:
-            raise HTTPException(status_code=400, detail="Invalid revenue credit parameters")
+    # 外部回款与退款写接口已在此阶段断开，保留底层 EnergyManager 实现。
 
-        ledger_file = paths.workspace_root / "ledger" / "energy_ledger.jsonl"
-        mgr = EnergyManager(ledger_file)
-        storage_p = world_reader.world.get_pixel_storage(pixel_id)
-        if not storage_p.state_file.exists():
-            raise HTTPException(status_code=404, detail="Pixel not found")
-
-        res = mgr.credit_external_revenue(storage_p, net_amount, tx_id, req.get("details"))
-        if not res.ok:
-            if res.status == "CONFLICT_TX_MISMATCH":
-                raise HTTPException(status_code=409, detail=f"Transaction '{tx_id}' exists with different parameters")
-            raise HTTPException(status_code=400, detail=res.status)
-        return {"status": res.status, "pixel_id": pixel_id, "tokens_added": res.tokens}
-
-    @router.post("/revenue/refund")
-    def refund_revenue(req: Dict[str, Any] = Body(...)):
-        from emergentinc.engine.energy import EnergyManager
-        pixel_id = req.get("pixel_id")
-        tx_id = str(req.get("tx_id", "")).strip()
-        refund_amount = req.get("refund_amount")
-        if refund_amount is not None:
-            refund_amount = float(refund_amount)
-        reason = str(req.get("reason", "manual refund"))
-        if not pixel_id or not tx_id:
-            raise HTTPException(status_code=400, detail="Missing pixel_id or tx_id")
-
-        ledger_file = paths.workspace_root / "ledger" / "energy_ledger.jsonl"
-        mgr = EnergyManager(ledger_file)
-        storage_p = world_reader.world.get_pixel_storage(pixel_id)
-        if not storage_p.state_file.exists():
-            raise HTTPException(status_code=404, detail="Pixel not found")
-
-        ok, tokens_deducted, err = mgr.refund_external_revenue(storage_p, tx_id, refund_amount, reason)
-        if not ok:
-            raise HTTPException(status_code=400, detail=err or "Refund failed")
-        return {"status": "REFUNDED", "pixel_id": pixel_id, "tokens_deducted": tokens_deducted, "tx_id": tx_id}
 
     @router.get("/pixels/{pixel_id}")
     def get_pixel(pixel_id: str):
@@ -253,31 +167,8 @@ def init_api(base_dir: Optional[Union[str, Path, ProjectPaths]] = None) -> APIRo
     def get_owner_requests():
         return owner_bridge.list_requests(pending_only=False)
 
-    @router.post("/owner/requests/{request_id}/approve")
-    def approve_owner_request(request_id: str, req: ApproveRequest):
-        try:
-            return owner_bridge.approve_request(
-                request_id=request_id,
-                capability_id=req.capability_id,
-                profile_file=req.profile_file,
-                reason=req.reason
-            )
-        except (RuntimeError, ValueError, FileNotFoundError) as e:
-            raise HTTPException(status_code=400, detail=str(e))
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=str(e))
+    # 外部审批写接口已在此阶段断开 (approve, reject)，保留只读与底层 OwnerBridge 实现。
 
-    @router.post("/owner/requests/{request_id}/reject")
-    def reject_owner_request(request_id: str, req: RejectRequest):
-        try:
-            return owner_bridge.reject_request(
-                request_id=request_id,
-                reason=req.reason
-            )
-        except (RuntimeError, ValueError) as e:
-            raise HTTPException(status_code=400, detail=str(e))
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=str(e))
 
     from emergentinc.engine.genesis import GenesisPromptManager
     genesis_mgr = GenesisPromptManager(paths.runtime_root)

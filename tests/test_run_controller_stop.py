@@ -62,6 +62,35 @@ def test_run_controller_stop(tmp_path):
         assert st["completed_rounds"] < 10
 
 
-if __name__ == "__main__":
-    test_run_controller_stop()
-    print("[PASS] test_run_controller_stop")
+def test_start_failure_during_log_command_sets_error_in_db_and_controller(tmp_path):
+    """验证 create_run 后若启动步骤失败，状态被原子收尾为 ERROR，不留假死 RUNNING."""
+    import pytest
+    from emergentinc.engine.core_store import CoreStore
+    base = Path(tmp_path)
+    (base / "live" / "pixels").mkdir(parents=True)
+    (base / "live" / "world_state.json").write_text(json.dumps({"round": 0}), encoding="utf-8")
+    controller = RunController(base)
+
+    # 模拟 _log_command 写入失败
+    def fail_log(*args, **kwargs):
+        raise OSError("disk full during log_command")
+
+    controller._log_command = fail_log
+
+    with pytest.raises(OSError, match="disk full during log_command"):
+        controller.start(1)
+
+    status = controller.status()
+    assert status["running"] is False
+    assert status["result_status"] == "ERROR"
+    assert "START_FAILED" in status["last_error"]
+    assert "disk full" in status["last_error"]
+
+    # 验证数据库中该 run 状态已被收尾为 ERROR，而非残留 RUNNING
+    run_id = status["run_id"]
+    db_path = base / "ledger" / "v9_core.sqlite3"
+    store = CoreStore(db_path)
+    db_run = store.get_run(run_id)
+    assert db_run["status"] == "ERROR"
+    assert "START_FAILED" in db_run["stop_reason"]
+

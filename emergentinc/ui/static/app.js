@@ -185,6 +185,26 @@ function updateRunStatusUI(status) {
   const runBadge = document.getElementById('run-badge');
   if (runBadge) runBadge.textContent = `run: ${status.run_id || status.current_run || status.current_loop || '-'}`;
 
+  const healthEl = document.getElementById('metric-system-health');
+  if (healthEl) {
+    if (status.running) {
+      healthEl.textContent = 'RUNNING';
+      healthEl.style.color = '#63b3ed';
+    } else if (status.last_error || status.result_status === 'ERROR') {
+      healthEl.textContent = 'ERROR';
+      healthEl.style.color = '#fc8181';
+    } else if (status.stop_reason === 'PAUSED_RECOVERY_REQUIRED') {
+      healthEl.textContent = 'RECOVERY_REQ';
+      healthEl.style.color = '#f6ad55';
+    } else if (status.stop_reason === 'BUDGET_EXHAUSTED') {
+      healthEl.textContent = 'BUDGET_EXHAUSTED';
+      healthEl.style.color = '#ecc94b';
+    } else {
+      healthEl.textContent = 'READY';
+      healthEl.style.color = '#48bb78';
+    }
+  }
+
   if (status.running) {
     indicator.textContent = `EVOLVING (${status.completed_rounds}/${status.requested_rounds}, LLM: ${status.model_calls_completed || 0})`;
     indicator.className = 'run-status-indicator running';
@@ -417,64 +437,6 @@ async function refreshOwnerRequests() {
   }
 }
 
-async function refreshLoops() {
-  try {
-    const res = await fetch('/api/loops');
-    if (!res.ok) return;
-    const data = await res.json();
-    loopTree.render(data);
-  } catch (e) {}
-}
-
-async function refreshAuditStatus() {
-  try {
-    const res = await fetch('/api/audit/workspace');
-    if (!res.ok) return;
-    const audit = await res.json();
-
-    const healthEl = document.getElementById('metric-system-health');
-    const runRemainingEl = document.getElementById('metric-run-remaining');
-    const recoveryAlert = document.getElementById('recovery-alert-container');
-    const recoveryBody = document.getElementById('recovery-alert-body');
-
-    if (audit.budget_state) {
-      const rRem = audit.budget_state.run_remaining_tokens;
-      if (runRemainingEl) {
-        runRemainingEl.textContent = (rRem !== undefined && rRem !== null) ? Number(rRem).toLocaleString() : '-';
-      }
-    }
-
-    if (audit.audit_status === 'DEFERRED_RUNNING') {
-      if (healthEl) { healthEl.textContent = 'RUNNING'; healthEl.style.color = '#63b3ed'; }
-      if (recoveryAlert) recoveryAlert.style.display = 'none';
-      return;
-    }
-    if (!audit.allowed_to_start || audit.recovery_required) {
-      if (healthEl) {
-        healthEl.textContent = 'BLOCKED';
-        healthEl.style.color = '#fc8181';
-      }
-      if (recoveryAlert && recoveryBody) {
-        recoveryAlert.style.display = 'block';
-        let msg = `<b>系统可靠性审计未通过，启动已拦截：</b><br/>`;
-        if (audit.block_reasons && audit.block_reasons.length > 0) {
-          msg += audit.block_reasons.map(r => `• ${r}`).join('<br/>');
-        } else {
-          msg += `• 存在未解决预留、未知调用或账本差异，请执行恢复。`;
-        }
-        recoveryBody.innerHTML = msg;
-      }
-    } else {
-      if (healthEl) {
-        healthEl.textContent = 'HEALTHY';
-        healthEl.style.color = '#48bb78';
-      }
-      if (recoveryAlert) {
-        recoveryAlert.style.display = 'none';
-      }
-    }
-  } catch (e) {}
-}
 
 function startPolling() {
   if (isPolling) return;

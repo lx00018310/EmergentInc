@@ -55,17 +55,23 @@ def test_generic_v9_request_can_be_approved_without_profile_file(tmp_path):
     )
     router.enqueue([old_message])
 
+    # 1. 验证 HTTP 写端点已断开 (404/405)
     with TestClient(create_app(paths)) as client:
         response = client.post(
             "/api/owner/requests/req_6_test/approve",
             json={"reason": "Use the owner-provided public page; no payment authority granted."},
         )
-        assert response.status_code == 200, response.text
-        assert response.json()["status"] == "APPROVED"
-        requests = client.get("/api/owner/requests").json()
-        assert requests[0]["status"] == "APPROVED"
-        status = client.get("/api/run/status").json()
-        assert status["pending_owner_requests"] == []
+        assert response.status_code in (404, 405)
+
+    # 2. 验证底层 OwnerBridge 核心实现完整保留
+    from emergentinc.ui.owner_bridge import OwnerBridge
+    bridge = OwnerBridge(paths)
+    app_res = bridge.approve_request(
+        "req_6_test",
+        reason="Use the owner-provided public page; no payment authority granted."
+    )
+    assert app_res["status"] == "APPROVED"
+    assert bridge.list_requests(pending_only=True) == []
 
     queue = json.loads((paths.runtime_root / "v9_message_queue.json").read_text(encoding="utf-8"))
     assert len(queue["queue"]) == 2

@@ -158,41 +158,25 @@ def test_api_revenue_credit_and_refund(tmp_path):
     app = create_app(paths)
     client = TestClient(app)
 
-    # 1. 成功充值
-    resp1 = client.post("/api/revenue/credit", json={
-        "pixel_id": "0_0_0",
-        "net_amount": 2.0,
-        "tx_id": "api_tx_100"
-    })
-    assert resp1.status_code == 200
-    data1 = resp1.json()
-    assert data1["status"] == "CREDITED"
-    assert data1["tokens_added"] == 2_000_000
+    # 1. 验证 HTTP 写端点已断开 (404/405)
+    resp_credit = client.post("/api/revenue/credit", json={"pixel_id": "0_0_0", "net_amount": 2.0, "tx_id": "api_tx_100"})
+    assert resp_credit.status_code in (404, 405)
+    resp_refund = client.post("/api/revenue/refund", json={"pixel_id": "0_0_0", "tx_id": "api_tx_100", "refund_amount": 1.0})
+    assert resp_refund.status_code in (404, 405)
 
-    # 2. 幂等重放
-    resp2 = client.post("/api/revenue/credit", json={
-        "pixel_id": "0_0_0",
-        "net_amount": 2.0,
-        "tx_id": "api_tx_100"
-    })
-    assert resp2.status_code == 200
-    assert resp2.json()["status"] == "ALREADY_CREDITED"
+    # 2. 验证底层 EnergyManager 核心充值与退款功能完整可用
+    mgr = EnergyManager(paths.workspace_root / "ledger" / "energy_ledger.jsonl")
+    res1 = mgr.credit_external_revenue(s, 2.0, "api_tx_100")
+    assert res1.ok is True
+    assert res1.status == "CREDITED"
+    assert res1.tokens == 2_000_000
 
-    # 3. 参数冲突 409
-    resp3 = client.post("/api/revenue/credit", json={
-        "pixel_id": "0_0_0",
-        "net_amount": 99.0,
-        "tx_id": "api_tx_100"
-    })
-    assert resp3.status_code == 409
+    # 幂等重放
+    res2 = mgr.credit_external_revenue(s, 2.0, "api_tx_100")
+    assert res2.ok is True
+    assert res2.status == "ALREADY_CREDITED"
 
-    # 4. 退款
-    resp_ref = client.post("/api/revenue/refund", json={
-        "pixel_id": "0_0_0",
-        "tx_id": "api_tx_100",
-        "refund_amount": 1.0,
-        "reason": "user_cancelled"
-    })
-    assert resp_ref.status_code == 200
-    assert resp_ref.json()["status"] == "REFUNDED"
-    assert resp_ref.json()["tokens_deducted"] == 1_000_000
+    # 退款
+    ok_ref, tok_ded, err_ref = mgr.refund_external_revenue(s, "api_tx_100", 1.0, "user_cancelled")
+    assert ok_ref is True
+    assert tok_ded == 1_000_000
