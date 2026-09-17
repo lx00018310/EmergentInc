@@ -6,6 +6,8 @@ import {
   handleReadArtifact,
   listArtifactsDefinition,
   handleListArtifacts,
+  transferArtifactDefinition,
+  handleTransferArtifact,
 } from "./artifacts.js";
 import {
   listPrivateFilesDefinition,
@@ -34,6 +36,7 @@ export const BUILTIN_DEFINITIONS = [
   saveArtifactDefinition,
   readArtifactDefinition,
   listArtifactsDefinition,
+  transferArtifactDefinition,
   listPrivateFilesDefinition,
   readPrivateFileDefinition,
   inspectPrivateImageDefinition,
@@ -53,6 +56,7 @@ export function registerAllBuiltinTools(
     { def: saveArtifactDefinition, handler: handleSaveArtifact },
     { def: readArtifactDefinition, handler: handleReadArtifact },
     { def: listArtifactsDefinition, handler: handleListArtifacts },
+    { def: transferArtifactDefinition, handler: handleTransferArtifact },
     { def: listPrivateFilesDefinition, handler: handleListPrivateFiles },
     { def: readPrivateFileDefinition, handler: handleReadPrivateFile },
     { def: inspectPrivateImageDefinition, handler: handleInspectPrivateImage },

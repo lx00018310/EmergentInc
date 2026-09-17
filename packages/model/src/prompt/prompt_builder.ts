@@ -18,10 +18,19 @@ export interface PromptBuilderOptions {
   maxOutputTokens?: number;
 }
 
+export interface ExternalInputs {
+  humanInstructions?: string | null;
+  environmentInfo?: string | null;
+  humanMaterials?: string | null;
+  humanMandate?: string | null;
+}
+
 export interface PromptInputs {
   state: Record<string, any>;
   pixelMd: string;
   messageMd: string;
+  external?: ExternalInputs | null;
+  pixelFiles?: string[] | null;
 }
 
 export class PromptBuilder {
@@ -46,7 +55,7 @@ export class PromptBuilder {
   }
 
   public assembleSystemPrompt(): string {
-    const parts: string[] = [this.baseSystemPrompt.trim()];
+    const parts: string[] = ["=== CONSTITUTION ===\n" + this.baseSystemPrompt.trim()];
 
     if (this.toolsCatalog && this.toolsCatalog.trim()) {
       parts.push(this.toolsCatalog.trim());
@@ -69,24 +78,45 @@ export class PromptBuilder {
     promptHash: string;
     estimatedTokens: number;
   } {
-    // 1. 三输入隔离校验：严格只能包含 state, pixelMd, messageMd
+    // 1. 认知隔离校验：严格只能包含 state, pixelMd, messageMd, external, pixelFiles
     const inputKeys = Object.keys(inputs);
-    const allowedKeys = new Set(["state", "pixelMd", "messageMd"]);
-    if (inputKeys.length !== 3 || inputKeys.some((k) => !allowedKeys.has(k))) {
+    const allowedKeys = new Set(["state", "pixelMd", "messageMd", "external", "pixelFiles"]);
+    if (inputKeys.some((k) => !allowedKeys.has(k)) || !inputs.state || inputs.pixelMd === undefined || inputs.messageMd === undefined) {
       throw new CognitiveIsolationViolation(
-        "Context payload must strictly contain exactly 3 keys: state, pixel_md, message_md"
+        "Context payload must strictly contain only valid pixel inputs: state, pixelMd, messageMd, external, pixelFiles"
       );
     }
 
-    const payload = {
-      state: inputs.state,
-      pixel_md: inputs.pixelMd,
-      message_md: inputs.messageMd,
-    };
+    // 2. 严格五层分离格式组织内容
+    const external = inputs.external || {};
+    const externalLines: string[] = [];
+    if (external.environmentInfo) externalLines.push(`Environment Information:\n${external.environmentInfo.trim()}`);
+    if (external.humanInstructions) externalLines.push(`Human Instructions:\n${external.humanInstructions.trim()}`);
+    if (external.humanMandate) externalLines.push(`Human Mandate:\n${external.humanMandate.trim()}`);
+    if (external.humanMaterials) externalLines.push(`Human Provided Materials:\n${external.humanMaterials.trim()}`);
+    const externalSection = externalLines.length > 0 ? externalLines.join("\n\n") : "(none)";
 
-    // 2. 组装提示词
+    const pixelFiles = Array.isArray(inputs.pixelFiles) && inputs.pixelFiles.length > 0
+      ? inputs.pixelFiles.map((f) => `- ${f}`).join("\n")
+      : "(no private files)";
+
+    const userContent = [
+      "=== EXTERNAL ===",
+      externalSection,
+      "",
+      "=== PIXEL SELF ===",
+      `Pixel State:\n${JSON.stringify(inputs.state, null, 2)}`,
+      "",
+      `Pixel Mind (pixel.md):\n${inputs.pixelMd}`,
+      "",
+      "=== YOUR FILES ===",
+      pixelFiles,
+      "",
+      "=== LOCAL MESSAGES ===",
+      inputs.messageMd,
+    ].join("\n");
+
     const effectiveSystemPrompt = this.assembleSystemPrompt();
-    const userContent = JSON.stringify(payload, null, 2);
     const fullPrompt = `${effectiveSystemPrompt}\n\n${userContent}`;
 
     // 3. 计算 SHA-256 哈希

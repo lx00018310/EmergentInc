@@ -66,7 +66,26 @@ export class AgentStepRunner {
       };
       this.store.messages.updateStatus(message.messageId, "RESPONSE_STORED");
     } else {
-      // 2. 组装 PreparedPrompt
+      // 读取私有 artifacts 列表 (历史私有)
+      const pixelDir = path.resolve(this.workspaceRoot, "live", "pixels", pixelState.pixelId);
+      const pixelArtifactsDir = path.resolve(pixelDir, "artifacts");
+      let pixelFiles: string[] = [];
+      if (fs.existsSync(pixelArtifactsDir)) {
+        try {
+          pixelFiles = fs.readdirSync(pixelArtifactsDir).filter((f) => !f.startsWith("."));
+        } catch {}
+      }
+
+      // 读取 Human Mandate (独立 External，严禁写入 pixel.md)
+      const mandateFile = path.resolve(pixelDir, "mandate.md");
+      let humanMandate: string | null = null;
+      if (fs.existsSync(mandateFile)) {
+        try {
+          humanMandate = fs.readFileSync(mandateFile, "utf-8").trim();
+        } catch {}
+      }
+
+      // 2. 组装 PreparedPrompt (V11 严格五层分离)
       const { request, promptHash, estimatedTokens } = this.promptBuilder.prepare({
         state: {
           pixel_id: pixelState.pixelId,
@@ -77,6 +96,8 @@ export class AgentStepRunner {
         },
         pixelMd: pixelMind,
         messageMd: message.content,
+        external: humanMandate ? { humanMandate } : null,
+        pixelFiles,
       });
 
       // 3. 多级预算检查与预留
@@ -166,6 +187,7 @@ export class AgentStepRunner {
         runId: trace.runId,
         pixelId: pixelState.pixelId,
         messageId: message.messageId,
+        roundNum: round,
         model: request.model,
         pricingRevision: request.pricingRevision,
         promptHash,

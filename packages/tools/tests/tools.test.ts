@@ -21,7 +21,7 @@ describe("Tools: Registry & Manifest Baseline", () => {
     registerAllBuiltinTools(registry);
 
     const registered = registry.listDefinitions();
-    expect(registered).toHaveLength(12);
+    expect(registered).toHaveLength(13);
 
     const registeredNames = registered.map((r) => r.name);
     for (const item of manifest) {
@@ -29,6 +29,7 @@ describe("Tools: Registry & Manifest Baseline", () => {
       const def = registry.get(item.name)?.definition;
       expect(def?.effect).toBe(item.effect);
     }
+    expect(registeredNames).toContain("transfer_artifact");
   });
 });
 
@@ -101,6 +102,54 @@ describe("Tools: Artifact Tools (save_artifact, read_artifact, list_artifacts)",
     );
     expect(res.status).toBe("FAILED");
     expect(res.error_code).toBe("CROSS_PIXEL_FORBIDDEN");
+  });
+
+  it("should support transfer_artifact (copy to direct neighbor) and preserve original", async () => {
+    // 1. 创建源文件
+    await runtime.execute(
+      "save_artifact",
+      { filename: "db_guide.md", content: "# DB Guide Content" },
+      ctx
+    );
+
+    // 2. 尝试复制给非直接邻居 (例如 5_5_5) 应被拒绝
+    const nonNeighborRes = await runtime.execute(
+      "transfer_artifact",
+      { filename: "db_guide.md", target_pixel_id: "5_5_5" },
+      ctx
+    );
+    expect(nonNeighborRes.status).toBe("FAILED");
+    expect(nonNeighborRes.error_code).toBe("NON_NEIGHBOR_TRANSFER");
+
+    // 3. 复制给直接邻居 (0_1_0) 应成功
+    const transferRes = await runtime.execute(
+      "transfer_artifact",
+      { filename: "db_guide.md", target_pixel_id: "0_1_0" },
+      ctx
+    );
+    expect(transferRes.status).toBe("SUCCESS");
+    expect(transferRes.output.copied).toBe(true);
+    expect(transferRes.output.from_pixel).toBe("0_0_0");
+    expect(transferRes.output.to_pixel).toBe("0_1_0");
+
+    // 4. 验证 A 原文件依然存在
+    const readA = await runtime.execute(
+      "read_artifact",
+      { filename: "db_guide.md" },
+      ctx
+    );
+    expect(readA.status).toBe("SUCCESS");
+    expect(readA.output.content).toBe("# DB Guide Content");
+
+    // 5. 验证 B 获得了完全相同的副本
+    const ctxB = { ...ctx, pixelId: "0_1_0" };
+    const readB = await runtime.execute(
+      "read_artifact",
+      { filename: "db_guide.md" },
+      ctxB
+    );
+    expect(readB.status).toBe("SUCCESS");
+    expect(readB.output.content).toBe("# DB Guide Content");
   });
 });
 

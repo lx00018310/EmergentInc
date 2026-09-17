@@ -173,9 +173,64 @@ describe("Server: API Contract Integration Tests", () => {
     });
     expect(res.statusCode).toBe(200);
     const tools = res.json().tools;
-    expect(tools).toHaveLength(12);
+    expect(tools).toHaveLength(13);
     expect(tools.map((t: any) => t.name)).toContain("save_artifact");
+    expect(tools.map((t: any) => t.name)).toContain("transfer_artifact");
     expect(tools.map((t: any) => t.name)).toContain("vps_exec");
+  });
+
+  it("should support Human Mandate and External Reward APIs", async () => {
+    // 准备测试元胞
+    const pixelDir = path.join(tmpDir, "live", "pixels", "0_0_0");
+    fs.mkdirSync(pixelDir, { recursive: true });
+    fs.writeFileSync(path.join(pixelDir, "state.json"), JSON.stringify({ id: "0_0_0", energy: 100 }), "utf-8");
+    store.pixels.upsertPixelAccount({
+      pixelId: "0_0_0",
+      energy: 100,
+      active: true,
+      refundDeficitTokens: 0,
+      spendBlockedReason: null,
+    });
+
+    // 1. 设置 Mandate
+    const putMandate = await app.inject({
+      method: "PUT",
+      url: "/api/pixels/0_0_0/mandate",
+      payload: { mandate: "Lead project coordination" },
+    });
+    expect(putMandate.statusCode).toBe(200);
+    expect(putMandate.json().mandate).toBe("Lead project coordination");
+
+    // 2. 获取 Mandate
+    const getMandate = await app.inject({
+      method: "GET",
+      url: "/api/pixels/0_0_0/mandate",
+    });
+    expect(getMandate.statusCode).toBe(200);
+    expect(getMandate.json().mandate).toBe("Lead project coordination");
+
+    // 3. 删除 Mandate
+    const delMandate = await app.inject({
+      method: "DELETE",
+      url: "/api/pixels/0_0_0/mandate",
+    });
+    expect(delMandate.statusCode).toBe(200);
+
+    const getMandateAfter = await app.inject({
+      method: "GET",
+      url: "/api/pixels/0_0_0/mandate",
+    });
+    expect(getMandateAfter.json().mandate).toBeNull();
+
+    // 4. 外部激励注入 (External Reward)
+    const rewardRes = await app.inject({
+      method: "POST",
+      url: "/api/pixels/0_0_0/reward",
+      payload: { amount: 500, reason: "Excellent performance" },
+    });
+    expect(rewardRes.statusCode).toBe(200);
+    expect(rewardRes.json().amount).toBe(500);
+    expect(rewardRes.json().newBalance).toBeGreaterThanOrEqual(500);
   });
 
   it("should support document short aliases (pixel, state, environment) with authoritative data and safety checks", async () => {

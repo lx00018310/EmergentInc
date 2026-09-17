@@ -57,6 +57,8 @@ export class CoreStore {
     promptHash: string;
     rawResponse: string;
     normalizedResponse?: string | null;
+    roundNum?: number;
+    toolCost?: number;
     usage: {
       promptTokens: number;
       completionTokens: number;
@@ -76,6 +78,7 @@ export class CoreStore {
         runId: params.runId,
         pixelId: params.pixelId,
         messageId: params.messageId,
+        roundNum: params.roundNum ?? 0,
         model: params.model,
         pricingRevision: params.pricingRevision,
         promptHash: params.promptHash,
@@ -86,6 +89,7 @@ export class CoreStore {
         cachedTokens: params.usage.cachedTokens || 0,
         actualTokens: params.usage.actualTokens,
         costCny: params.usage.costCny,
+        toolCost: params.toolCost ?? 0.0,
         outcome: "SUCCESS",
         createdAt: Date.now() / 1000,
       });
@@ -201,6 +205,58 @@ export class CoreStore {
         reconciledMessages: callingMsgs.length,
         reconciledCalls: unknownCalls.length,
         reconciledTools: startedTools.length,
+      };
+    });
+  }
+
+  /**
+   * 外部激励注入 (V11 External Reward)
+   */
+  public applyExternalReward(params: {
+    pixelId: string;
+    amount: number;
+    round?: number;
+    source?: string;
+    reason?: string;
+  }): { pixelId: string; newBalance: number; amount: number } {
+    if (params.amount <= 0 || !Number.isInteger(params.amount)) {
+      throw new Error(`Reward amount must be a positive integer, got ${params.amount}`);
+    }
+
+    return this.db.transaction(() => {
+      let account = this.pixels.getPixelAccount(params.pixelId);
+      if (!account) {
+        this.pixels.upsertPixelAccount({
+          pixelId: params.pixelId,
+          energy: 0,
+          active: true,
+          refundDeficitTokens: 0,
+          spendBlockedReason: null,
+        });
+      }
+
+      const newBalance = this.pixels.updateEnergy(params.pixelId, params.amount);
+      const now = Date.now() / 1000;
+      const entryId = `reward_${params.pixelId}_${Date.now()}`;
+
+      this.ledger.appendEntry({
+        entry_id: entryId,
+        timestamp: now,
+        pixel_id: params.pixelId,
+        entry_type: "external_reward",
+        amount: params.amount,
+        balance_after: newBalance,
+        details: JSON.stringify({
+          round: params.round ?? 0,
+          source: params.source || "human",
+          reason: params.reason || "External Reward",
+        }),
+      });
+
+      return {
+        pixelId: params.pixelId,
+        newBalance,
+        amount: params.amount,
       };
     });
   }

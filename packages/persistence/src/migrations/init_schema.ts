@@ -76,6 +76,8 @@ export function initSchema(db: SqliteDatabase): void {
           cached_tokens INTEGER NOT NULL DEFAULT 0,
           actual_tokens INTEGER NOT NULL DEFAULT 0,
           cost_cny REAL NOT NULL DEFAULT 0.0,
+          tool_cost REAL NOT NULL DEFAULT 0.0,
+          round_num INTEGER NOT NULL DEFAULT 0,
           outcome TEXT NOT NULL DEFAULT 'SUCCESS',
           created_at REAL NOT NULL
       );
@@ -162,5 +164,13 @@ export function initSchema(db: SqliteDatabase): void {
       CREATE INDEX IF NOT EXISTS idx_reservations_pixel
       ON reservations(pixel_id, status);
     `);
+
+    // 平滑升级已有数据库列 (V11 Cost Ledger)
+    try {
+      db.exec("ALTER TABLE model_calls ADD COLUMN round_num INTEGER NOT NULL DEFAULT 0;");
+    } catch {}
+    try {
+      db.exec("ALTER TABLE model_calls ADD COLUMN tool_cost REAL NOT NULL DEFAULT 0.0;");
+    } catch {}
   });
 }

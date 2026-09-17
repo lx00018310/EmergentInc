@@ -36,6 +36,20 @@ export interface RawModelResponse {
 }
 
 /**
+ * Pixel 单步成本台账 (V11 Cost Ledger)
+ */
+export interface PixelStepCost {
+  pixelId: string;
+  round: number;
+  inputTokens: number;
+  cachedInputTokens: number;
+  outputTokens: number;
+  actualTokens?: number;
+  modelCost: number;
+  toolCost: number;
+}
+
+/**
  * 模型调用完整落库记录
  */
 export interface ModelCallRecord {
@@ -43,6 +57,7 @@ export interface ModelCallRecord {
   runId: string;
   pixelId: string;
   messageId?: string | null;
+  roundNum?: number;
   model: string;
   pricingRevision?: string | null;
   promptHash?: string | null;
@@ -53,6 +68,7 @@ export interface ModelCallRecord {
   cachedTokens: number;
   actualTokens: number;
   costCny: number;
+  toolCost?: number;
   outcome: ModelCallOutcome;
   createdAt: number;
 }

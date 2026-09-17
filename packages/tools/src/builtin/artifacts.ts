@@ -317,3 +317,157 @@ export async function handleListArtifacts(
     };
   }
 }
+
+function parseCoord(id: string): [number, number, number] | null {
+  const parts = id.split("_").map((p) => parseInt(p, 10));
+  if (parts.length !== 3 || parts.some(isNaN)) return null;
+  return [parts[0], parts[1], parts[2]];
+}
+
+function checkIsDirectNeighbor(id1: string, id2: string): boolean {
+  if (id1 === id2) return false;
+  const c1 = parseCoord(id1);
+  const c2 = parseCoord(id2);
+  if (!c1 || !c2) return false;
+  const dist = Math.abs(c1[0] - c2[0]) + Math.abs(c1[1] - c2[1]) + Math.abs(c1[2] - c2[2]);
+  return dist === 1;
+}
+
+export const transferArtifactDefinition: ToolDefinition = {
+  name: "transfer_artifact",
+  description: "将当前元胞的指定交付物文件复制一份给直接拓扑邻居元胞 (副本传递，本元胞保留原文件)",
+  input_schema: {
+    type: "object",
+    properties: {
+      filename: { type: "string", description: "交付物文件名" },
+      target_pixel_id: { type: "string", description: "接收方直接拓扑邻居元胞 ID" },
+    },
+    required: ["filename", "target_pixel_id"],
+  },
+  effect: "write",
+  enabled: true,
+  timeout_seconds: 30,
+};
+
+export async function handleTransferArtifact(
+  args: Record<string, any>,
+  ctx: ToolContext
+): Promise<ToolResult> {
+  const pixelId = ctx.pixelId;
+  const targetPixelId = String(args.target_pixel_id || "").trim();
+  const filename = String(args.filename || "").trim();
+
+  if (!isValidCoordId(pixelId)) {
+    return {
+      operation_id: ctx.operationId,
+      tool: "transfer_artifact",
+      status: "FAILED",
+      error_code: "INVALID_PIXEL_ID",
+      error_message: `Invalid sender pixel_id format: '${pixelId}'`,
+      duration_ms: 0,
+      truncated: false,
+    };
+  }
+
+  if (!isValidCoordId(targetPixelId)) {
+    return {
+      operation_id: ctx.operationId,
+      tool: "transfer_artifact",
+      status: "FAILED",
+      error_code: "INVALID_TARGET_ID",
+      error_message: `Invalid target_pixel_id format: '${targetPixelId}'`,
+      duration_ms: 0,
+      truncated: false,
+    };
+  }
+
+  if (pixelId === targetPixelId) {
+    return {
+      operation_id: ctx.operationId,
+      tool: "transfer_artifact",
+      status: "FAILED",
+      error_code: "SELF_TRANSFER_DISALLOWED",
+      error_message: "Self artifact transfer is disallowed",
+      duration_ms: 0,
+      truncated: false,
+    };
+  }
+
+  if (!checkIsDirectNeighbor(pixelId, targetPixelId)) {
+    return {
+      operation_id: ctx.operationId,
+      tool: "transfer_artifact",
+      status: "FAILED",
+      error_code: "NON_NEIGHBOR_TRANSFER",
+      error_message: `Target pixel '${targetPixelId}' is not a direct 6-neighbor of '${pixelId}'`,
+      duration_ms: 0,
+      truncated: false,
+    };
+  }
+
+  const check = validateArtifactFilename(filename);
+  if (!check.valid) {
+    return {
+      operation_id: ctx.operationId,
+      tool: "transfer_artifact",
+      status: "FAILED",
+      error_code: "INVALID_FILENAME",
+      error_message: check.error,
+      duration_ms: 0,
+      truncated: false,
+    };
+  }
+
+  try {
+    const artifactsRoot = getArtifactsRoot(ctx);
+    const srcDir = getPixelArtifactsDir(artifactsRoot, pixelId);
+    const srcFile = path.resolve(srcDir, filename);
+
+    if (!fs.existsSync(srcFile)) {
+      return {
+        operation_id: ctx.operationId,
+        tool: "transfer_artifact",
+        status: "FAILED",
+        error_code: "FILE_NOT_FOUND",
+        error_message: `Artifact '${filename}' does not exist in sender '${pixelId}' workspace`,
+        duration_ms: 0,
+        truncated: false,
+      };
+    }
+
+    const content = fs.readFileSync(srcFile, "utf-8");
+    const dstDir = getPixelArtifactsDir(artifactsRoot, targetPixelId);
+    const dstFile = path.resolve(dstDir, filename);
+
+    // 复制副本到目标元胞目录，原文件完好无损
+    fs.writeFileSync(dstFile, content, "utf-8");
+    const sha256 = crypto.createHash("sha256").update(content, "utf8").digest("hex");
+    const sizeBytes = Buffer.byteLength(content, "utf-8");
+
+    return {
+      operation_id: ctx.operationId,
+      tool: "transfer_artifact",
+      status: "SUCCESS",
+      output: {
+        from_pixel: pixelId,
+        to_pixel: targetPixelId,
+        filename,
+        size_bytes: sizeBytes,
+        sha256,
+        copied: true,
+      },
+      duration_ms: 0,
+      truncated: false,
+    };
+  } catch (err: any) {
+    return {
+      operation_id: ctx.operationId,
+      tool: "transfer_artifact",
+      status: "FAILED",
+      error_code: "TRANSFER_ERROR",
+      error_message: err.message || String(err),
+      duration_ms: 0,
+      truncated: false,
+    };
+  }
+}

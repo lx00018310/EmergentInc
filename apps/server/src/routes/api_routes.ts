@@ -163,8 +163,107 @@ export async function registerApiRoutes(
       });
     }
 
+    // 4. mandate.md 别名与全名支持 (Human Mandate 独立外部输入)
+    if (docName === "mandate" || docName === "mandate.md") {
+      const mandatePath = path.resolve(pixelDir, "mandate.md");
+      return reply.send({
+        pixel_id: pixelId,
+        document: "mandate.md",
+        content: fs.existsSync(mandatePath) ? fs.readFileSync(mandatePath, "utf-8") : "",
+      });
+    }
+
     // 非法/未授权文档拒绝
     return reply.status(403).send({ detail: `Document '${docName}' is not in the allowlist` });
+  });
+
+  server.get("/pixels/:pixel_id/mandate", async (req, reply) => {
+    const params: any = req.params;
+    const pixelId = String(params.pixel_id || "");
+    if (pixelId.includes("..") || pixelId.includes("/") || pixelId.includes("\\")) {
+      return reply.status(400).send({ detail: "Invalid pixel_id" });
+    }
+    const mandatePath = path.resolve(workspaceRoot, "live", "pixels", pixelId, "mandate.md");
+    if (!fs.existsSync(mandatePath)) {
+      return reply.send({ pixel_id: pixelId, mandate: null });
+    }
+    return reply.send({
+      pixel_id: pixelId,
+      mandate: fs.readFileSync(mandatePath, "utf-8"),
+    });
+  });
+
+  server.put("/pixels/:pixel_id/mandate", async (req, reply) => {
+    const params: any = req.params;
+    const pixelId = String(params.pixel_id || "");
+    if (pixelId.includes("..") || pixelId.includes("/") || pixelId.includes("\\")) {
+      return reply.status(400).send({ detail: "Invalid pixel_id" });
+    }
+    const pixelDir = path.resolve(workspaceRoot, "live", "pixels", pixelId);
+    if (!fs.existsSync(pixelDir)) {
+      return reply.status(404).send({ detail: `Pixel '${pixelId}' not found` });
+    }
+    const body: any = req.body || {};
+    const content = String(body.mandate ?? body.content ?? "");
+    const mandatePath = path.resolve(pixelDir, "mandate.md");
+    // 独立 External Input：绝对禁止修改 pixel.md，仅写入 mandate.md
+    fs.writeFileSync(mandatePath, content, "utf-8");
+    return reply.send({
+      pixel_id: pixelId,
+      mandate: content,
+    });
+  });
+
+  server.delete("/pixels/:pixel_id/mandate", async (req, reply) => {
+    const params: any = req.params;
+    const pixelId = String(params.pixel_id || "");
+    if (pixelId.includes("..") || pixelId.includes("/") || pixelId.includes("\\")) {
+      return reply.status(400).send({ detail: "Invalid pixel_id" });
+    }
+    const mandatePath = path.resolve(workspaceRoot, "live", "pixels", pixelId, "mandate.md");
+    if (fs.existsSync(mandatePath)) {
+      fs.unlinkSync(mandatePath);
+    }
+    return reply.send({
+      pixel_id: pixelId,
+      status: "DELETED",
+    });
+  });
+
+  server.post("/pixels/:pixel_id/reward", async (req, reply) => {
+    const params: any = req.params;
+    const pixelId = String(params.pixel_id || "");
+    if (pixelId.includes("..") || pixelId.includes("/") || pixelId.includes("\\")) {
+      return reply.status(400).send({ detail: "Invalid pixel_id" });
+    }
+    const pixel = worldService.getPixel(pixelId);
+    if (!pixel) {
+      return reply.status(404).send({ detail: `Pixel '${pixelId}' not found` });
+    }
+    const body: any = req.body || {};
+    const amount = Number(body.amount);
+    if (!amount || amount <= 0 || !Number.isInteger(amount)) {
+      return reply.status(400).send({ detail: "Amount must be a positive integer" });
+    }
+    const currentRound = runService.getWorldRound();
+    const result = coreStore.applyExternalReward({
+      pixelId,
+      amount,
+      round: currentRound,
+      source: String(body.source || "human"),
+      reason: String(body.reason || "External Reward"),
+    });
+
+    const statePath = path.resolve(workspaceRoot, "live", "pixels", pixelId, "state.json");
+    if (fs.existsSync(statePath)) {
+      try {
+        const stateObj = JSON.parse(fs.readFileSync(statePath, "utf-8"));
+        stateObj.energy = result.newBalance;
+        fs.writeFileSync(statePath, JSON.stringify(stateObj, null, 2), "utf-8");
+      } catch {}
+    }
+
+    return reply.send(result);
   });
 
   // 5. Artifacts
