@@ -89,20 +89,71 @@ export async function registerApiRoutes(
 
   server.get("/pixels/:pixel_id/document/:doc_name", async (req, reply) => {
     const params: any = req.params;
-    const allowlist = ["pixel.md", "state.json"];
-    if (!allowlist.includes(params.doc_name)) {
-      return reply.status(403).send({ detail: `Document '${params.doc_name}' is not in the allowlist` });
+    const pixelId = String(params.pixel_id || "");
+    const docName = String(params.doc_name || "");
+
+    // 防御路径穿越与特殊字符
+    if (pixelId.includes("..") || pixelId.includes("/") || pixelId.includes("\\")) {
+      return reply.status(400).send({ detail: "Invalid pixel_id" });
+    }
+    if (docName.includes("..") || docName.includes("/") || docName.includes("\\")) {
+      return reply.status(400).send({ detail: "Invalid doc_name" });
     }
 
-    const docPath = path.resolve(workspaceRoot, "live", "pixels", params.pixel_id, params.doc_name);
-    if (!fs.existsSync(docPath)) {
-      return reply.status(404).send({ detail: "Document not found" });
+    const pixelDir = path.resolve(workspaceRoot, "live", "pixels", pixelId);
+    if (!fs.existsSync(pixelDir)) {
+      return reply.status(404).send({ detail: `Pixel '${pixelId}' not found` });
     }
-    return reply.send({
-      pixel_id: params.pixel_id,
-      document: params.doc_name,
-      content: fs.readFileSync(docPath, "utf-8"),
-    });
+
+    // 1. pixel.md 别名与全名支持
+    if (docName === "pixel" || docName === "pixel.md") {
+      const docPath = path.resolve(pixelDir, "pixel.md");
+      if (!fs.existsSync(docPath)) {
+        return reply.status(404).send({ detail: "Document not found" });
+      }
+      return reply.send({
+        pixel_id: pixelId,
+        document: "pixel.md",
+        content: fs.readFileSync(docPath, "utf-8"),
+      });
+    }
+
+    // 2. state.json 别名与全名支持 (融合权威账户状态，避免旧磁盘数据)
+    if (docName === "state" || docName === "state.json") {
+      const pixel = worldService.getPixel(pixelId);
+      if (!pixel) {
+        return reply.status(404).send({ detail: "Document not found" });
+      }
+      const stateFile = path.resolve(pixelDir, "state.json");
+      let diskState: any = {};
+      if (fs.existsSync(stateFile)) {
+        try {
+          diskState = JSON.parse(fs.readFileSync(stateFile, "utf-8"));
+        } catch {}
+      }
+      const authoritativeState = {
+        ...diskState,
+        ...pixel.state,
+      };
+      return reply.send({
+        pixel_id: pixelId,
+        document: "state.json",
+        content: JSON.stringify(authoritativeState, null, 2),
+      });
+    }
+
+    // 3. environment.md 别名与全名支持 (读取权威全局环境)
+    if (docName === "environment" || docName === "environment.md") {
+      const env = worldService.getEnvironment();
+      return reply.send({
+        pixel_id: pixelId,
+        document: "environment.md",
+        content: env.content,
+      });
+    }
+
+    // 非法/未授权文档拒绝
+    return reply.status(403).send({ detail: `Document '${docName}' is not in the allowlist` });
   });
 
   // 5. Artifacts

@@ -32,9 +32,19 @@ async function bootstrap() {
   const dbPath = path.resolve(ledgerDir, "v9_core.sqlite3");
   const store = new CoreStore(dbPath);
 
-  // 2. 初始化工具
+  // 2. 初始化工具并同步 tools.json 配置
   const toolRegistry = new ToolRegistry();
   registerAllBuiltinTools(toolRegistry);
+
+  const toolsConfigFile = path.resolve(privateDir, "tools.json");
+  if (fs.existsSync(toolsConfigFile)) {
+    try {
+      const toolsConfig = JSON.parse(fs.readFileSync(toolsConfigFile, "utf-8"));
+      toolRegistry.applyConfigOverrides(toolsConfig);
+    } catch (e) {
+      console.warn("[EmergentInc V10 Server] Failed to parse private/tools.json, using defaults:", e);
+    }
+  }
   const toolRuntime = new ToolRuntime(toolRegistry);
 
   // 3. 模型与定价装配
@@ -44,29 +54,52 @@ async function bootstrap() {
     : { models: {} };
   const usageMeter = new UsageMeter(pricingConfig);
 
+  const isMockMode = process.argv.includes("--mock") || process.env.EMERGENT_MOCK_MODE === "1";
   const baseUrl = process.env.MCL_BASE_URL || "https://api.openai.com/v1";
-  const apiKey = process.env.MCL_API_KEY || "mock-key";
+  const apiKey = process.env.MCL_API_KEY || "";
   const modelName = process.env.MCL_DECISION_MODEL || process.env.MCL_MODEL || "gpt-4o-mini";
+  const isModelConfigured = Boolean(apiKey && apiKey !== "mock-key" && !apiKey.includes("CONFIGURE_ME"));
 
   let provider: ModelProvider;
-  if (apiKey !== "mock-key" && !baseUrl.includes("CONFIGURE_ME")) {
+  if (isModelConfigured) {
     provider = new OpenAICompatibleProvider({ baseUrl, apiKey });
-  } else {
-    // 离线/开发安全 Mock
+  } else if (isMockMode) {
+    console.warn("[EmergentInc V10 Server] RUNNING IN EXPLICIT --mock SANDBOX MODE");
     provider = {
       async call(req) {
         return {
           rawText: JSON.stringify({
-            message_md: "V10 Small Runtime is running safely in offline mode.",
+            message_md: "[MOCK_SANDBOX] V10 Small Runtime is running in explicit mock mode.",
             send_to: "STOP",
           }),
           usage: { promptTokens: 50, completionTokens: 20 },
         };
       },
     };
+  } else {
+    // 未配置且未指定 --mock：阻断调用，防止伪造成功
+    provider = {
+      async call(req) {
+        throw new Error(
+          "MODEL_NOT_CONFIGURED: Valid MCL_API_KEY is not configured. Set environment variable or start server with --mock for sandbox testing."
+        );
+      },
+    };
   }
 
-  const promptBuilder = new PromptBuilder({ modelName });
+  // 4. 读取基础系统提示词与生成工具目录
+  const systemPromptPath = path.resolve(projectRoot, "resources", "prompts", "v9_system_prompt.md");
+  const baseSystemPrompt = fs.existsSync(systemPromptPath)
+    ? fs.readFileSync(systemPromptPath, "utf-8")
+    : undefined;
+  const toolsCatalog = toolRegistry.renderCatalogForPrompt();
+
+  const promptBuilder = new PromptBuilder({
+    baseSystemPrompt,
+    toolsCatalog,
+    modelName,
+  });
+
   const stepRunner = new AgentStepRunner({
     workspaceRoot,
     store,
@@ -82,10 +115,17 @@ async function bootstrap() {
     stepRunner,
   });
 
-  // 4. 初始化应用服务
-  const worldService = new WorldService(workspaceRoot, store);
-  const runService = new RunService(store, scheduler);
+  // 5. 初始化应用服务
   const promptService = new PromptService(runtimeDir);
+  const worldService = new WorldService(workspaceRoot, store);
+  const runService = new RunService({
+    workspaceRoot,
+    store,
+    scheduler,
+    promptService,
+    isMockMode,
+    isModelConfigured,
+  });
 
   // 5. 创建 Fastify 服务器
   const app = await createServer({

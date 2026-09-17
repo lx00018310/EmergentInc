@@ -172,6 +172,81 @@ describe("Server: API Contract Integration Tests", () => {
     expect(tools.map((t: any) => t.name)).toContain("vps_exec");
   });
 
+  it("should support document short aliases (pixel, state, environment) with authoritative data and safety checks", async () => {
+    // 准备测试元胞数据与文件
+    const pixelDir = path.join(tmpDir, "live", "pixels", "0_0_0");
+    fs.mkdirSync(pixelDir, { recursive: true });
+    fs.writeFileSync(path.join(pixelDir, "pixel.md"), "I am pixel 0_0_0 mind.", "utf-8");
+    fs.writeFileSync(path.join(pixelDir, "state.json"), JSON.stringify({ id: "0_0_0", energy: 9999 }), "utf-8");
+    store.pixels.upsertPixelAccount({
+      pixelId: "0_0_0",
+      energy: 9999,
+      active: true,
+      refundDeficitTokens: 0,
+      spendBlockedReason: null,
+    });
+
+    // 1. 短别名 'pixel'
+    const pixelRes = await app.inject({
+      method: "GET",
+      url: "/api/pixels/0_0_0/document/pixel",
+    });
+    expect(pixelRes.statusCode).toBe(200);
+    expect(pixelRes.json().document).toBe("pixel.md");
+    expect(pixelRes.json().content).toBe("I am pixel 0_0_0 mind.");
+
+    // 2. 短别名 'state' (返回权威数据)
+    const stateRes = await app.inject({
+      method: "GET",
+      url: "/api/pixels/0_0_0/document/state",
+    });
+    expect(stateRes.statusCode).toBe(200);
+    expect(stateRes.json().document).toBe("state.json");
+    const parsedState = JSON.parse(stateRes.json().content);
+    expect(parsedState.energy).toBeDefined();
+
+    // 3. 短别名 'environment'
+    const envRes = await app.inject({
+      method: "GET",
+      url: "/api/pixels/0_0_0/document/environment",
+    });
+    expect(envRes.statusCode).toBe(200);
+    expect(envRes.json().document).toBe("environment.md");
+
+    // 4. 未知文档返回 403
+    const unknownRes = await app.inject({
+      method: "GET",
+      url: "/api/pixels/0_0_0/document/confidential.txt",
+    });
+    expect(unknownRes.statusCode).toBe(403);
+    expect(unknownRes.json().detail).toContain("allowlist");
+
+    // 5. 路径穿越返回 400
+    const traversalRes = await app.inject({
+      method: "GET",
+      url: "/api/pixels/0_0_0/document/..%2F..%2Fsecret",
+    });
+    expect(traversalRes.statusCode).toBe(400);
+  });
+
+  it("should prevent starting run without valid model configuration or explicit mock mode", async () => {
+    const unconfiguredRunService = new RunService({
+      workspaceRoot: tmpDir,
+      store,
+      scheduler: (runService as any).scheduler,
+      isModelConfigured: false,
+      isMockMode: false,
+    });
+
+    await expect(
+      unconfiguredRunService.start({
+        rounds: 1,
+        runBudgetTokens: 1000,
+        globalBudgetTokens: 10000,
+      })
+    ).rejects.toThrow("MODEL_NOT_CONFIGURED");
+  });
+
   it("should return standard 404 with detail for unknown route", async () => {
     const res = await app.inject({
       method: "GET",

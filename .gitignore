@@ -13,7 +13,8 @@ owner_*_profile.json
 *.key
 id_rsa
 id_ed25519
-runtime/
+/runtime/
+workspace/runtime/
 runtime_v4_legacy/
 cache
 
@@ -21,3 +22,4 @@ cache
 node_modules/
 frontend/dist/
 dist/
+*.tsbuildinfo

@@ -2,6 +2,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { CoreStore } from "@emergentinc/persistence";
 import { idToCoord, getNeighbors6 } from "@emergentinc/domain";
+import { getUnicodeLength } from "@emergentinc/protocol";
 
 export class WorldService {
   constructor(
@@ -33,33 +34,113 @@ export class WorldService {
         if (ent.isDirectory()) {
           const pid = ent.name;
           const account = this.store.pixels.getPixelAccount(pid);
-          let coord = [0, 0, 0];
+          let coord: [number, number, number] = [0, 0, 0];
           try {
-            coord = idToCoord(pid);
+            coord = idToCoord(pid) as [number, number, number];
           } catch {}
 
-          const neighbors = getNeighbors6(pid)
-            .filter((nId) => fs.existsSync(path.resolve(pixelsDir, nId)))
-            .map((nId) => ({
-              id: nId,
-              active: activePixelIds.has(nId),
-            }));
+          // 1. 读取 disk 状态文件中的世代与父代数据
+          const stateFile = path.resolve(pixelsDir, pid, "state.json");
+          let diskState: any = null;
+          if (fs.existsSync(stateFile)) {
+            try {
+              diskState = JSON.parse(fs.readFileSync(stateFile, "utf-8"));
+            } catch {}
+          }
+
+          // 2. 读取 pixel.md 内容与计算 Unicode 码点字数
+          const pixelFile = path.resolve(pixelsDir, pid, "pixel.md");
+          let pixelMd = "";
+          if (fs.existsSync(pixelFile)) {
+            try {
+              pixelMd = fs.readFileSync(pixelFile, "utf-8");
+            } catch {}
+          }
+          const pixelMdLength = getUnicodeLength(pixelMd);
+
+          // 3. 统计交付物数量
+          let artifactsCount = 0;
+          const artifactsDir = path.resolve(liveDir, "artifacts", pid);
+          if (fs.existsSync(artifactsDir)) {
+            try {
+              artifactsCount = fs.readdirSync(artifactsDir).length;
+            } catch {}
+          }
+
+          // 4. 严格解析 parent：创世元胞为 null，子代如存在记录则输出，缺失则为 "unknown"（禁止伪标 Genesis）
+          const isGenesisCoord = coord[0] === 0 && coord[1] === 0 && coord[2] === 0;
+          let parentVal: string | null = null;
+          if (diskState && typeof diskState.parent === "string" && diskState.parent.trim().length > 0) {
+            parentVal = diskState.parent;
+          } else if (isGenesisCoord) {
+            parentVal = null;
+          } else {
+            parentVal = "unknown";
+          }
+
+          // 5. 邻居列表：前端契约定义为 string[] (即邻居元胞 ID 数组)
+          const neighbors: string[] = getNeighbors6(pid).filter((nId) =>
+            fs.existsSync(path.resolve(pixelsDir, nId))
+          );
 
           pixelItems.push({
             id: pid,
             position: coord,
             energy: account?.energy || 0,
             active: account ? account.active : false,
+            parent: parentVal,
+            born_round: typeof diskState?.born_round === "number" ? diskState.born_round : 0,
+            generation: typeof diskState?.generation === "number" ? diskState.generation : (isGenesisCoord ? 0 : 1),
+            last_active_round: typeof diskState?.last_active_round === "number" ? diskState.last_active_round : 0,
+            pixel_md: pixelMd,
+            pixel_md_length: pixelMdLength,
+            artifacts_count: artifactsCount,
             neighbors,
           });
         }
       }
     }
 
+    // 读取全局环境 environment.md
+    const envFile = path.resolve(liveDir, "environment.md");
+    let environmentMd = "";
+    if (fs.existsSync(envFile)) {
+      try {
+        environmentMd = fs.readFileSync(envFile, "utf-8");
+      } catch {}
+    }
+
+    // 统计全局度量与支出
+    const globalBudget = this.store.budgets.getGlobalBudget();
+    const totalEnergy = pixelItems.reduce((sum, p) => sum + (p.energy || 0), 0);
+
+    const metrics = {
+      alive_pixels: accounts.length,
+      total_pixels: pixelItems.length,
+      total_energy: totalEnergy,
+      total_spent_tokens: globalBudget?.totalSpent || 0,
+      total_spent_cny: 0.0,
+      system_status: "READY",
+    };
+
+    // 读取最近消息流并转换为 MessageFlowDto 格式
+    const recentMessages = this.store.messages.listRecentMessages(20);
+    const latestMessageFlow = recentMessages.map((m) => ({
+      source: m.sender,
+      target: m.recipient,
+      from: m.sender,
+      to: m.recipient,
+      message_id: m.messageId,
+      round: m.roundNum,
+    }));
+
     return {
       round: worldMeta.round || 0,
       active_pixels: accounts.length,
       pixels: pixelItems,
+      environment_md: environmentMd,
+      metrics,
+      latest_message_flow: latestMessageFlow,
       external_accounting: worldMeta.external_accounting || {
         CNY_in: 0.0,
         CNY_out: 0.0,

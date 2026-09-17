@@ -1,0 +1,15 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": "dist"
+  },
+  "include": ["src/**/*"],
+  "references": [
+    { "path": "../protocol" },
+    { "path": "../domain" },
+    { "path": "../persistence" },
+    { "path": "../model" },
+    { "path": "../tools" }
+  ]
+}

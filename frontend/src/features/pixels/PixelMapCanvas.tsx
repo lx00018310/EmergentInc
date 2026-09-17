@@ -19,14 +19,21 @@ export const PixelMapCanvas: React.FC<PixelMapCanvasProps> = ({
 }) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const rendererRef = useRef<PixelMapRenderer | null>(null);
+  const onSelectPixelRef = useRef(onSelectPixel);
+  const onHoverPixelRef = useRef(onHoverPixel);
+
+  useEffect(() => {
+    onSelectPixelRef.current = onSelectPixel;
+    onHoverPixelRef.current = onHoverPixel;
+  });
 
   useEffect(() => {
     if (!canvasRef.current) return;
 
     const renderer = new PixelMapRenderer({
       canvas: canvasRef.current,
-      onSelectPixel,
-      onHoverPixel,
+      onSelectPixel: (id) => onSelectPixelRef.current(id),
+      onHoverPixel: (id) => onHoverPixelRef.current(id),
     });
     rendererRef.current = renderer;
 
@@ -34,7 +41,7 @@ export const PixelMapCanvas: React.FC<PixelMapCanvasProps> = ({
       renderer.dispose();
       rendererRef.current = null;
     };
-  }, [onSelectPixel, onHoverPixel]);
+  }, []);
 
   useEffect(() => {
     if (rendererRef.current) {

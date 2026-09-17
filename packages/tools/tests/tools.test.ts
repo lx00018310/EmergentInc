@@ -161,3 +161,68 @@ describe("Tools: Private Files & Security Masking", () => {
     expect(res.output.content).toContain("[CREDENTIAL_MASKED]");
   });
 });
+
+describe("Tools: VPS Execution & Prompt Catalog", () => {
+  let tmpDir: string;
+  let registry: ToolRegistry;
+  let runtime: ToolRuntime;
+  let ctx: ToolContext;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "vps_test_"));
+    registry = new ToolRegistry();
+    registerAllBuiltinTools(registry);
+    runtime = new ToolRuntime(registry);
+
+    ctx = {
+      workspaceRoot: tmpDir,
+      pixelId: "0_0_0",
+      runId: "run_test",
+      messageId: "msg_1",
+      operationId: "op_vps_1",
+    };
+  });
+
+  it("should fail gracefully when VPS profile/credentials are missing, without forging SUCCESS", async () => {
+    const res = await runtime.execute("vps_exec", { command: "ls -la" }, ctx);
+    expect(res.status).toBe("FAILED");
+    expect(res.error_code).toBe("CAPABILITY_UNAVAILABLE");
+    expect(res.error_message).toContain("unavailable");
+  });
+
+  it("should reject vps_exec when command is empty", async () => {
+    const res = await runtime.execute("vps_exec", { command: "" }, ctx);
+    expect(res.status).toBe("FAILED");
+    expect(res.error_code).toBe("INVALID_COMMAND");
+  });
+
+  it("should successfully execute VPS operation when mock handler is injected in test context", async () => {
+    const mockCtx: ToolContext = {
+      ...ctx,
+      mockVpsHandler: (tool, args) => ({
+        exit_code: 0,
+        stdout: "Linux mock-vps 5.15.0",
+      }),
+    };
+    const res = await runtime.execute("vps_exec", { command: "uname -a" }, mockCtx);
+    expect(res.status).toBe("SUCCESS");
+    expect(res.output.stdout).toContain("Linux mock-vps");
+  });
+
+  it("should correctly render prompt catalog and respect tools.json config overrides", () => {
+    const initialCatalog = registry.renderCatalogForPrompt();
+    expect(initialCatalog).toContain("- **`save_artifact`** (write):");
+    expect(initialCatalog).toContain("- **`vps_exec`** (write):");
+
+    // 禁用 vps_exec
+    registry.applyConfigOverrides({
+      tools: {
+        vps_exec: { enabled: false },
+      },
+    });
+
+    const updatedCatalog = registry.renderCatalogForPrompt();
+    expect(updatedCatalog).not.toContain("- **`vps_exec`**");
+    expect(updatedCatalog).toContain("- **`save_artifact`**");
+  });
+});

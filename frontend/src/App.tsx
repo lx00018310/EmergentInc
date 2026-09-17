@@ -165,6 +165,12 @@ export const App: React.FC = () => {
     }
   };
 
+  const handleSelectPixel = useCallback((id: string) => {
+    setSelectedPixelId(id);
+  }, []);
+
+  const handleHoverPixel = useCallback((_id: string | null) => {}, []);
+
   return (
     <>
       <RunStatus world={world} runStatus={runStatus} audit={audit} />
@@ -231,8 +237,8 @@ export const App: React.FC = () => {
             pixels={world?.pixels || []}
             messageFlow={world?.latest_message_flow || []}
             selectedPixelId={selectedPixelId}
-            onSelectPixel={(id) => setSelectedPixelId(id)}
-            onHoverPixel={() => {}}
+            onSelectPixel={handleSelectPixel}
+            onHoverPixel={handleHoverPixel}
           />
 
           <PixelDetails

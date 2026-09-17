@@ -59,6 +59,16 @@ export class MessageRepository {
     return this.mapRowToEnvelope(row);
   }
 
+  public listRecentMessages(limit: number = 20): MessageEnvelope[] {
+    const stmt = this.db.prepare(`
+      SELECT * FROM messages
+      ORDER BY created_at DESC
+      LIMIT ?
+    `);
+    const rows = stmt.all(limit) as any[];
+    return rows.map((r) => this.mapRowToEnvelope(r));
+  }
+
   /**
    * 原子领取下一条可处理消息
    * 
@@ -143,6 +153,38 @@ export class MessageRepository {
     const stmt = this.db.prepare(sql);
     const row = stmt.get(...params) as any;
     return Number(row?.count ?? 0);
+  }
+
+  /**
+   * 在新 Run 启动或新轮次开始时，将因 Run 预算不足等待的消息重置为 QUEUED
+   */
+  public resetWaitingRunBudgetMessages(): number {
+    const now = Date.now() / 1000;
+    const stmt = this.db.prepare(`
+      UPDATE messages
+      SET status = 'QUEUED', updated_at = ?
+      WHERE status = 'WAITING_RUN_BUDGET'
+    `);
+    const res = stmt.run(now);
+    return Number(res.changes);
+  }
+
+  /**
+   * 尝试恢复已补足能量的 Pixel 预算等待消息
+   */
+  public tryRecoverWaitingPixelBudgetMessages(minEnergyRequired: number = 100): number {
+    const now = Date.now() / 1000;
+    const stmt = this.db.prepare(`
+      UPDATE messages
+      SET status = 'QUEUED', updated_at = ?
+      WHERE status = 'WAITING_PIXEL_BUDGET'
+        AND recipient IN (
+          SELECT pixel_id FROM pixel_accounts
+          WHERE energy >= ? AND active = 1 AND refund_deficit_tokens = 0
+        )
+    `);
+    const res = stmt.run(now, minEnergyRequired);
+    return Number(res.changes);
   }
 
   private mapRowToEnvelope(row: any): MessageEnvelope {

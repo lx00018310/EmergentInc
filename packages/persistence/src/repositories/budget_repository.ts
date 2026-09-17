@@ -1,9 +1,11 @@
 import { SqliteDatabase } from "../sqlite/db.js";
 
 export class BudgetExceededError extends Error {
-  constructor(message: string) {
+  public readonly kind: "PIXEL" | "RUN" | "GLOBAL";
+  constructor(message: string, kind: "PIXEL" | "RUN" | "GLOBAL" = "PIXEL") {
     super(message);
     this.name = "BudgetExceededError";
+    this.kind = kind;
   }
 }
 
@@ -47,16 +49,22 @@ export class BudgetRepository {
     return this.getGlobalBudget()!;
   }
 
+  /**
+   * 获取全局总预算
+   */
   public getGlobalBudget(): GlobalBudgetRecord | null {
-    const stmt = this.db.prepare("SELECT * FROM global_budget WHERE id = 'GLOBAL'");
+    const stmt = this.db.prepare(`
+      SELECT id, total_limit, total_spent, total_reserved, currency, updated_at
+      FROM global_budget WHERE id = 'GLOBAL'
+    `);
     const row = stmt.get() as any;
     if (!row) return null;
     return {
-      id: row.id,
+      id: String(row.id),
       totalLimit: Number(row.total_limit),
       totalSpent: Number(row.total_spent),
       totalReserved: Number(row.total_reserved),
-      currency: row.currency,
+      currency: String(row.currency),
       updatedAt: Number(row.updated_at),
     };
   }
@@ -90,7 +98,8 @@ export class BudgetRepository {
       }
       if (pixel.energy < estimatedTokens) {
         throw new BudgetExceededError(
-          `Pixel ${pixelId} insufficient energy: balance ${pixel.energy} < estimated ${estimatedTokens}`
+          `Pixel ${pixelId} insufficient energy: balance ${pixel.energy} < estimated ${estimatedTokens}`,
+          "PIXEL"
         );
       }
 
@@ -102,7 +111,8 @@ export class BudgetRepository {
       if (run) {
         if (run.run_spent + run.run_reserved + estimatedTokens > run.run_limit) {
           throw new BudgetExceededError(
-            `Run ${runId} budget exceeded: limit=${run.run_limit}, current=${run.run_spent + run.run_reserved}, request=${estimatedTokens}`
+            `Run ${runId} budget exceeded: limit=${run.run_limit}, current=${run.run_spent + run.run_reserved}, request=${estimatedTokens}`,
+            "RUN"
           );
         }
       }
@@ -112,7 +122,8 @@ export class BudgetRepository {
       if (global) {
         if (global.totalSpent + global.totalReserved + estimatedTokens > global.totalLimit) {
           throw new BudgetExceededError(
-            `Global budget exceeded: limit=${global.totalLimit}, current=${global.totalSpent + global.totalReserved}, request=${estimatedTokens}`
+            `Global budget exceeded: limit=${global.totalLimit}, current=${global.totalSpent + global.totalReserved}, request=${estimatedTokens}`,
+            "GLOBAL"
           );
         }
       }

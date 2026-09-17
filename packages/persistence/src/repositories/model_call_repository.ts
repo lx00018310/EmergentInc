@@ -56,4 +56,10 @@ export class ModelCallRepository {
       createdAt: Number(row.created_at),
     };
   }
+
+  public countByRunId(runId: string): number {
+    const stmt = this.db.prepare("SELECT COUNT(*) as count FROM model_calls WHERE run_id = ?");
+    const row = stmt.get(runId) as any;
+    return Number(row?.count ?? 0);
+  }
 }

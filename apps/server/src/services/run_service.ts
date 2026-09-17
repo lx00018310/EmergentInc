@@ -1,5 +1,8 @@
+import * as fs from "node:fs";
+import * as path from "node:path";
 import { CoreStore } from "@emergentinc/persistence";
 import { RoundScheduler, RoundSummary } from "@emergentinc/runtime";
+import { PromptService } from "./prompt_service.js";
 
 export interface RunStartOptions {
   rounds: number;
@@ -8,30 +11,124 @@ export interface RunStartOptions {
   globalBudgetTokens: number;
 }
 
+export interface RunServiceOptions {
+  workspaceRoot: string;
+  store: CoreStore;
+  scheduler: RoundScheduler;
+  promptService?: PromptService;
+  isMockMode?: boolean;
+  isModelConfigured?: boolean;
+}
+
 export class RunService {
+  private workspaceRoot: string;
+  private store: CoreStore;
+  private scheduler: RoundScheduler;
+  private promptService?: PromptService;
+  private isMockMode: boolean;
+  private isModelConfigured: boolean;
+
   private isRunning: boolean = false;
   private currentRunId: string | null = null;
   private currentRound: number = 0;
+  private requestedRounds: number = 0;
+  private completedRounds: number = 0;
+  private messagesProcessed: number = 0;
+  private idleRounds: number = 0;
   private abortController: AbortController | null = null;
   private lastStopReason: string | null = null;
+  private lastError: string | null = null;
 
   constructor(
-    private store: CoreStore,
-    private scheduler: RoundScheduler
-  ) {}
+    optionsOrStore: RunServiceOptions | CoreStore,
+    maybeScheduler?: RoundScheduler
+  ) {
+    if ("store" in (optionsOrStore as any)) {
+      const opts = optionsOrStore as RunServiceOptions;
+      this.workspaceRoot = opts.workspaceRoot;
+      this.store = opts.store;
+      this.scheduler = opts.scheduler;
+      this.promptService = opts.promptService;
+      this.isMockMode = Boolean(opts.isMockMode);
+      this.isModelConfigured = Boolean(opts.isModelConfigured);
+    } else {
+      this.store = optionsOrStore as CoreStore;
+      this.scheduler = maybeScheduler!;
+      this.workspaceRoot = "";
+      this.isMockMode = true; // 兼容单元测试环境默认 mock
+      this.isModelConfigured = true;
+    }
+  }
+
+  public getWorldRound(): number {
+    if (!this.workspaceRoot) return 0;
+    const worldFile = path.resolve(this.workspaceRoot, "live", "world_state.json");
+    if (!fs.existsSync(worldFile)) return 0;
+    try {
+      const data = JSON.parse(fs.readFileSync(worldFile, "utf-8"));
+      return Number(data.round || 0);
+    } catch {
+      return 0;
+    }
+  }
+
+  private updateWorldRound(round: number): void {
+    if (!this.workspaceRoot) return;
+    const worldFile = path.resolve(this.workspaceRoot, "live", "world_state.json");
+    try {
+      let data: any = { round: 0 };
+      if (fs.existsSync(worldFile)) {
+        data = JSON.parse(fs.readFileSync(worldFile, "utf-8"));
+      }
+      data.round = round;
+      fs.writeFileSync(worldFile, JSON.stringify(data, null, 2), "utf-8");
+    } catch (err) {
+      console.error("[RunService] Failed to persist world_state.json round:", err);
+    }
+  }
 
   public getStatus(): any {
+    const modelCallsCount = this.currentRunId
+      ? this.store.modelCalls.countByRunId(this.currentRunId)
+      : 0;
+
+    let resultStatus = "READY";
+    if (this.isRunning) {
+      resultStatus = "RUNNING";
+    } else if (this.lastError) {
+      resultStatus = "FAILED";
+    } else if (this.lastStopReason) {
+      resultStatus = this.lastStopReason === "ROUND_LIMIT_REACHED" ? "COMPLETED" : "STOPPED";
+    }
+
     return {
       running: this.isRunning,
+      run_id: this.currentRunId,
       current_loop: this.currentRunId,
-      current_round: this.currentRound,
-      last_stop_reason: this.lastStopReason,
+      current_run: this.currentRunId,
+      current_round: this.currentRound || this.getWorldRound(),
+      requested_rounds: this.requestedRounds,
+      completed_rounds: this.completedRounds,
+      messages_processed: this.messagesProcessed,
+      model_calls_completed: modelCallsCount,
+      idle_rounds: this.idleRounds,
+      stop_requested: Boolean(this.abortController?.signal?.aborted),
+      stop_reason: this.lastStopReason,
+      last_error: this.lastError,
+      result_status: resultStatus,
+      is_mock_mode: this.isMockMode,
     };
   }
 
   public async start(options: RunStartOptions): Promise<any> {
     if (this.isRunning) {
       throw new Error("Run is already in progress.");
+    }
+
+    if (!this.isModelConfigured && !this.isMockMode) {
+      throw new Error(
+        "MODEL_NOT_CONFIGURED: Valid MCL_API_KEY is not configured. Set environment variable or start server with --mock for sandbox testing."
+      );
     }
 
     if (options.rounds <= 0) {
@@ -45,35 +142,54 @@ export class RunService {
     }
 
     const runId = `run_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+    const currentWorldRound = this.getWorldRound();
+    const startRound = currentWorldRound + 1;
+    const endRound = currentWorldRound + options.rounds;
+
     this.currentRunId = runId;
     this.isRunning = true;
+    this.requestedRounds = options.rounds;
+    this.completedRounds = 0;
+    this.messagesProcessed = 0;
+    this.idleRounds = 0;
+    this.currentRound = currentWorldRound;
     this.lastStopReason = null;
+    this.lastError = null;
     this.abortController = new AbortController();
+
+    // 读取创世提示词真实版本
+    const genesisPrompt = this.promptService?.getPrompt("genesis_prompt.json");
+    const genesisRevision = genesisPrompt?.revision || 1;
 
     // 记录 Run 实体
     this.store.runs.createRun({
       run_id: runId,
-      start_round: 1,
-      end_round: options.rounds,
+      start_round: startRound,
+      end_round: endRound,
       run_limit: options.runBudgetTokens,
       run_spent: 0,
       run_reserved: 0,
       global_limit: options.globalBudgetTokens,
       global_spent: 0,
       global_reserved: 0,
-      genesis_revision: 1,
+      genesis_revision: genesisRevision,
       status: "RUNNING",
       created_at: Date.now() / 1000,
     });
 
+    // 尝试激活上一轮因 Run 预算等待的消息
+    this.store.messages.resetWaitingRunBudgetMessages();
+
     // 异步执行轮次调度，不阻塞 HTTP 响应
-    this.runLoop(runId, options.rounds, this.abortController.signal).catch((err) => {
+    this.runLoop(runId, startRound, endRound, this.abortController.signal).catch((err) => {
       console.error(`Run ${runId} execution encountered an error:`, err);
     });
 
     return {
       status: "STARTED",
       run_id: runId,
+      start_round: startRound,
+      end_round: endRound,
       rounds: options.rounds,
     };
   }
@@ -86,9 +202,14 @@ export class RunService {
     return { status: "STOPPING", message: "Stop request signaled to active run." };
   }
 
-  private async runLoop(runId: string, maxRounds: number, signal: AbortSignal): Promise<void> {
+  private async runLoop(
+    runId: string,
+    startRound: number,
+    endRound: number,
+    signal: AbortSignal
+  ): Promise<void> {
     try {
-      for (let r = 1; r <= maxRounds; r++) {
+      for (let r = startRound; r <= endRound; r++) {
         if (signal.aborted) {
           this.lastStopReason = "USER_STOPPED";
           break;
@@ -96,6 +217,14 @@ export class RunService {
 
         this.currentRound = r;
         const summary: RoundSummary = await this.scheduler.executeRound(r, runId, signal);
+        this.completedRounds++;
+        this.messagesProcessed += summary.messagesProcessed;
+        if (summary.messagesProcessed === 0) {
+          this.idleRounds++;
+        }
+
+        // 同步推进绝对世界轮次
+        this.updateWorldRound(r);
 
         if (summary.stopReason) {
           this.lastStopReason = summary.stopReason;
@@ -103,9 +232,14 @@ export class RunService {
         }
       }
 
+      const isStopped = signal.aborted || this.lastStopReason === "USER_STOPPED" || this.lastStopReason === "RUN_BUDGET_EXHAUSTED";
+      const isFailed = this.lastStopReason === "INFRASTRUCTURE_FAILURE";
+      const finalStatus = isFailed ? "FAILED" : isStopped ? "STOPPED" : "COMPLETED";
       const finalReason = this.lastStopReason || (signal.aborted ? "USER_STOPPED" : "ROUND_LIMIT_REACHED");
-      this.store.runs.updateRunStatus(runId, signal.aborted ? "STOPPED" : "COMPLETED", finalReason as any);
+
+      this.store.runs.updateRunStatus(runId, finalStatus, finalReason as any);
     } catch (err: any) {
+      this.lastError = err.message || String(err);
       this.lastStopReason = "INFRASTRUCTURE_FAILURE";
       this.store.runs.updateRunStatus(runId, "FAILED", "INFRASTRUCTURE_FAILURE");
     } finally {
