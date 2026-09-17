@@ -4,11 +4,11 @@ import { ModelCallOutcome } from "../enums.js";
  * 模型用量与成本核算
  */
 export interface ModelUsage {
-  promptTokens: number;
-  completionTokens: number;
-  cachedTokens: number;
-  actualTokens: number;
-  costCny: number;
+  promptTokens: number | null;
+  completionTokens: number | null;
+  cachedTokens: number | null;
+  actualTokens: number | null;
+  costCny: number | null;
 }
 
 /**
@@ -41,12 +41,12 @@ export interface RawModelResponse {
 export interface PixelStepCost {
   pixelId: string;
   round: number;
-  inputTokens: number;
-  cachedInputTokens: number;
-  outputTokens: number;
-  actualTokens?: number;
-  modelCost: number;
-  toolCost: number;
+  inputTokens: number | null;
+  cachedInputTokens: number | null;
+  outputTokens: number | null;
+  actualTokens?: number | null;
+  modelCost: number | null;
+  toolCost: number | null;
 }
 
 /**
@@ -63,12 +63,12 @@ export interface ModelCallRecord {
   promptHash?: string | null;
   rawResponse?: string | null;
   normalizedResponse?: string | null;
-  promptTokens: number;
-  completionTokens: number;
-  cachedTokens: number;
-  actualTokens: number;
-  costCny: number;
-  toolCost?: number;
+  promptTokens: number | null;
+  completionTokens: number | null;
+  cachedTokens: number | null;
+  actualTokens: number | null;
+  costCny: number | null;
+  toolCost?: number | null;
   outcome: ModelCallOutcome;
   createdAt: number;
 }

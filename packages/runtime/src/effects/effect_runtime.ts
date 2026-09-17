@@ -30,6 +30,7 @@ export interface EffectRuntimeContext {
   round: number;
   runId: string | null;
   signal?: AbortSignal;
+  modelCallId?: string;
 }
 
 export class EffectRuntime {
@@ -220,6 +221,7 @@ export class EffectRuntime {
     // 记录工具执行开始
     this.ctx.store.toolExecutions.recordStarted({
       operation_id: effect.operationId,
+      model_call_id: this.ctx.modelCallId ?? this.ctx.store.modelCalls.getLatestByMessageId(effect.messageId)?.callId,
       run_id: this.ctx.runId,
       message_id: effect.messageId,
       pixel_id: effect.pixelId,
@@ -241,6 +243,7 @@ export class EffectRuntime {
       status: result.status,
       result: JSON.stringify(result.output || result.error_message || ""),
       finishedAt: Date.now() / 1000,
+      costCny: result.costCny,
     });
 
     this.ctx.store.effects.recordEffect({

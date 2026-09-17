@@ -105,6 +105,16 @@ describe("Tools: Artifact Tools (save_artifact, read_artifact, list_artifacts)",
   });
 
   it("should support transfer_artifact (copy to direct neighbor) and preserve original", async () => {
+    // 0. 播种接收方为真实活跃元胞 (transfer 校验 SQLite pixel_accounts)
+    const { CoreStore } = await import("../../persistence/src/index.js");
+    fs.mkdirSync(path.join(tmpDir, "ledger"), { recursive: true });
+    const store = new CoreStore(path.join(tmpDir, "ledger", "v9_core.sqlite3"));
+    try {
+      store.pixels.upsertPixelAccount({ pixelId: "0_1_0", energy: 1000, active: true, refundDeficitTokens: 0, spendBlockedReason: null });
+    } finally {
+      store.close();
+    }
+
     // 1. 创建源文件
     await runtime.execute(
       "save_artifact",

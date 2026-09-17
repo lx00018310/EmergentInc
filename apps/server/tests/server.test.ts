@@ -231,6 +231,33 @@ describe("Server: API Contract Integration Tests", () => {
     expect(rewardRes.statusCode).toBe(200);
     expect(rewardRes.json().amount).toBe(500);
     expect(rewardRes.json().newBalance).toBeGreaterThanOrEqual(500);
+
+    // 5. Rewards 观察端点
+    const rewardsRes = await app.inject({
+      method: "GET",
+      url: "/api/pixels/0_0_0/rewards",
+    });
+    expect(rewardsRes.statusCode).toBe(200);
+    const rewards = rewardsRes.json().rewards;
+    expect(rewards).toBeInstanceOf(Array);
+    expect(rewards).toHaveLength(1);
+    expect(rewards[0]).toMatchObject({ pixel_id: "0_0_0", amount: 500, source: "human", reason: "Excellent performance" });
+    expect(rewards[0].event_id).toBeDefined();
+
+    // 6. Step Costs 观察端点 (无调用记录时为空数组)
+    const costsRes = await app.inject({
+      method: "GET",
+      url: "/api/pixels/0_0_0/step-costs",
+    });
+    expect(costsRes.statusCode).toBe(200);
+    expect(costsRes.json().costs).toBeInstanceOf(Array);
+
+    // 7. 路径穿越防护
+    const traversalRewards = await app.inject({
+      method: "GET",
+      url: "/api/pixels/..%2Fetc/rewards",
+    });
+    expect(traversalRewards.statusCode).toBe(400);
   });
 
   it("should support document short aliases (pixel, state, environment) with authoritative data and safety checks", async () => {

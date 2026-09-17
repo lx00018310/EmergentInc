@@ -1,10 +1,11 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import {
   PromptBuilder,
   CognitiveIsolationViolation,
   repairMissingJsonClosers,
   parseAndNormalizeResponse,
   UsageMeter,
+  OpenAICompatibleProvider,
 } from "../src/index.js";
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -111,6 +112,31 @@ Have a great day!
 });
 
 describe("Model: Usage Meter & Pricing", () => {
+  it("provider preserves unknown token fields and billing usage on invalid content", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      choices: [{ message: { content: null } }], usage: { prompt_tokens: 12, total_tokens: 20 },
+    }), { status: 200 })));
+    try {
+      const provider = new OpenAICompatibleProvider({ baseUrl: "https://model.invalid", apiKey: "test" });
+      const response = await provider.call({ model: "m", messages: [], promptHash: "h" });
+      expect(response.rawText).toBe("");
+      expect(response.usage).toEqual({ promptTokens: 12, completionTokens: null, cachedTokens: null, actualTokens: 20 });
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+  it("keeps missing usage/pricing unknown and honors explicit zero cache pricing", () => {
+    const unknown = new UsageMeter({ models: {} });
+    expect(unknown.calculateUsage({ model: "unpriced", promptTokens: 10, completionTokens: 5 }).costCny).toBeNull();
+    expect(unknown.calculateUsage({ model: "unpriced" })).toEqual({
+      promptTokens: null, completionTokens: null, cachedTokens: null, actualTokens: null, costCny: null,
+    });
+    const meter = new UsageMeter({ models: { priced: {
+      input_cost_per_million: 2, output_cost_per_million: 6, cached_cost_per_million: 0,
+    } } });
+    expect(meter.calculateUsage({ model: "priced", promptTokens: 100, completionTokens: 0, cachedTokens: 100 }).costCny).toBe(0);
+    expect(meter.calculateUsage({ model: "priced", promptTokens: 100, completionTokens: 0 }).costCny).toBeNull();
+  });
   it("should accurately compute token cost in CNY", () => {
     const meter = new UsageMeter({
       models: {

@@ -105,4 +105,4 @@ export type EffectType =
 /**
  * 消息来源类型
  */
-export type SourceType = "pixel" | "system" | "environment" | "feedback";
+export type SourceType = "pixel" | "system" | "human" | "material" | "environment" | "feedback";

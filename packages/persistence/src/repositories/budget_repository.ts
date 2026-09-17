@@ -148,10 +148,13 @@ export class BudgetRepository {
    */
   public settle(params: {
     callId: string;
-    actualTokens: number;
-    costCny: number;
+    actualTokens: number | null;
+    costCny: number | null;
   }): void {
-    const { callId, actualTokens, costCny } = params;
+    const { callId, actualTokens } = params;
+    // Unknown usage is not free and is not an estimate: retain the reservation.
+    if (actualTokens === null) return;
+    if (!Number.isSafeInteger(actualTokens) || actualTokens < 0) throw new Error("Invalid actual token count");
     const now = Date.now() / 1000;
 
     this.db.transaction(() => {

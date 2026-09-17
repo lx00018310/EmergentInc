@@ -1,6 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as crypto from "node:crypto";
+import { DatabaseSync } from "node:sqlite";
 import { ToolDefinition, ToolResult } from "@emergentinc/protocol";
 import { ToolContext, getArtifactsRoot } from "../context.js";
 
@@ -418,9 +419,43 @@ export async function handleTransferArtifact(
     };
   }
 
+  // Account existence/liveness is canonical in SQLite, not in live/pixels/state.json.
+  // Read-only open must fail closed without creating a database or pixel directories.
+  try {
+    const db = new DatabaseSync(path.resolve(ctx.workspaceRoot, "ledger", "v9_core.sqlite3"), {
+      readOnly: true,
+    });
+    try {
+      const target = db.prepare("SELECT active FROM pixel_accounts WHERE pixel_id = ?").get(targetPixelId);
+      if (!target || target.active !== 1) {
+        return {
+          operation_id: ctx.operationId,
+          tool: "transfer_artifact",
+          status: "FAILED",
+          error_code: target ? "TARGET_PIXEL_INACTIVE" : "TARGET_PIXEL_NOT_FOUND",
+          error_message: `Target pixel '${targetPixelId}' ${target ? "is inactive" : "does not exist"}`,
+          duration_ms: 0,
+          truncated: false,
+        };
+      }
+    } finally {
+      db.close();
+    }
+  } catch (err: any) {
+    return {
+      operation_id: ctx.operationId,
+      tool: "transfer_artifact",
+      status: "FAILED",
+      error_code: "TARGET_STATE_UNAVAILABLE",
+      error_message: err.message || String(err),
+      duration_ms: 0,
+      truncated: false,
+    };
+  }
+
   try {
     const artifactsRoot = getArtifactsRoot(ctx);
-    const srcDir = getPixelArtifactsDir(artifactsRoot, pixelId);
+    const srcDir = path.resolve(artifactsRoot, pixelId);
     const srcFile = path.resolve(srcDir, filename);
 
     if (!fs.existsSync(srcFile)) {
@@ -439,8 +474,9 @@ export async function handleTransferArtifact(
     const dstDir = getPixelArtifactsDir(artifactsRoot, targetPixelId);
     const dstFile = path.resolve(dstDir, filename);
 
-    // 复制副本到目标元胞目录，原文件完好无损
-    fs.writeFileSync(dstFile, content, "utf-8");
+    // O_EXCL rejects collisions atomically, including a destination created concurrently.
+    // Never truncate the recipient's history, even when the content is identical.
+    fs.writeFileSync(dstFile, content, { encoding: "utf-8", flag: "wx" });
     const sha256 = crypto.createHash("sha256").update(content, "utf8").digest("hex");
     const sizeBytes = Buffer.byteLength(content, "utf-8");
 
@@ -460,6 +496,17 @@ export async function handleTransferArtifact(
       truncated: false,
     };
   } catch (err: any) {
+    if (err?.code === "EEXIST") {
+      return {
+        operation_id: ctx.operationId,
+        tool: "transfer_artifact",
+        status: "FAILED",
+        error_code: "ARTIFACT_NAME_CONFLICT",
+        error_message: `Artifact '${filename}' already exists in target pixel '${targetPixelId}' workspace; history preserved and untouched`,
+        duration_ms: 0,
+        truncated: false,
+      };
+    }
     return {
       operation_id: ctx.operationId,
       tool: "transfer_artifact",

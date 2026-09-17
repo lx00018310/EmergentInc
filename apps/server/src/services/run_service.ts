@@ -290,6 +290,22 @@ export class RunService {
     // 尝试激活上一轮因 Run 预算等待的消息
     this.store.messages.resetWaitingRunBudgetMessages();
 
+    // 接通 Human Command：/run/start 的 commandText 作为 human 来源消息广播给活跃元胞
+    if (options.commandText && options.commandText.trim()) {
+      const activePixels = this.store.pixels.listActivePixels();
+      for (const pixel of activePixels) {
+        this.store.messages.enqueueMessage({
+          runId,
+          roundNum: startRound,
+          sender: "human",
+          recipient: pixel.pixelId,
+          content: options.commandText.trim(),
+          isFeedback: false,
+          sourceType: "human",
+        });
+      }
+    }
+
     // 异步执行轮次调度，不阻塞 HTTP 响应
     this.runLoop(runId, startRound, endRound, this.abortController.signal).catch((err) => {
       console.error(`Run ${runId} execution encountered an error:`, err);

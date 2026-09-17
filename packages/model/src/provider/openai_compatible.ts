@@ -83,20 +83,20 @@ export class OpenAICompatibleProvider implements ModelProvider {
         );
       });
 
-      const choice = data.choices?.[0];
-      const rawText = choice?.message?.content || "";
-      const usage = data.usage;
+      const choice = data?.choices?.[0];
+      const rawText = typeof choice?.message?.content === "string" ? choice.message.content : "";
+      const usage = data?.usage;
+      const token = (value: unknown): number | null =>
+        typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : null;
 
       return {
         rawText,
         usage: usage
           ? {
-              promptTokens: typeof usage.prompt_tokens === "number" ? usage.prompt_tokens : 0,
-              completionTokens: typeof usage.completion_tokens === "number" ? usage.completion_tokens : 0,
-              cachedTokens:
-                typeof usage.prompt_tokens_details?.cached_tokens === "number"
-                  ? usage.prompt_tokens_details.cached_tokens
-                  : (typeof usage.cached_tokens === "number" ? usage.cached_tokens : 0),
+              promptTokens: token(usage.prompt_tokens),
+              completionTokens: token(usage.completion_tokens),
+              cachedTokens: token(usage.prompt_tokens_details?.cached_tokens ?? usage.cached_tokens),
+              actualTokens: token(usage.total_tokens),
             }
           : undefined,
       };

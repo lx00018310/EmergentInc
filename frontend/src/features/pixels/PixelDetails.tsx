@@ -5,12 +5,14 @@ export interface PixelDetailsProps {
   pixel: PixelSummaryDto | null;
   onOpenDoc: (docName: string) => void;
   onOpenArtifacts: () => void;
+  onOpenOperation: (tab: 'mandate' | 'reward' | 'cost') => void;
 }
 
 export const PixelDetails: React.FC<PixelDetailsProps> = ({
   pixel,
   onOpenDoc,
   onOpenArtifacts,
+  onOpenOperation,
 }) => {
   if (!pixel) return null;
 
@@ -86,6 +88,15 @@ export const PixelDetails: React.FC<PixelDetailsProps> = ({
         </button>
         <button className="btn btn-xs" onClick={onOpenArtifacts}>
           查看交付物
+        </button>
+        <button className="btn btn-xs" onClick={() => onOpenOperation('mandate')}>
+          Human Mandate
+        </button>
+        <button className="btn btn-xs" onClick={() => onOpenOperation('reward')}>
+          External Reward
+        </button>
+        <button className="btn btn-xs" onClick={() => onOpenOperation('cost')}>
+          Step Cost
         </button>
       </div>
     </div>

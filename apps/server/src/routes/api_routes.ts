@@ -266,6 +266,40 @@ export async function registerApiRoutes(
     return reply.send(result);
   });
 
+  // Rewards / Step Costs 观察 (V11)
+  server.get("/pixels/:pixel_id/rewards", async (req, reply) => {
+    const params: any = req.params;
+    const pixelId = String(params.pixel_id || "");
+    if (pixelId.includes("..") || pixelId.includes("/") || pixelId.includes("\\")) {
+      return reply.status(400).send({ detail: "Invalid pixel_id" });
+    }
+    const entries = coreStore.ledger.listEntriesByPixel(pixelId).filter((e) => e.entry_type === "external_reward");
+    const rewards = entries.map((e) => {
+      let details: any = {};
+      try { details = JSON.parse(e.details || "{}"); } catch {}
+      return {
+        event_id: e.entry_id,
+        pixel_id: e.pixel_id,
+        round: Number(details.round ?? 0),
+        amount: Number(e.amount),
+        source: String(details.source ?? "human"),
+        reason: String(details.reason ?? ""),
+        created_at: Number(e.timestamp),
+      };
+    });
+    return reply.send({ rewards });
+  });
+
+  server.get("/pixels/:pixel_id/step-costs", async (req, reply) => {
+    const params: any = req.params;
+    const pixelId = String(params.pixel_id || "");
+    if (pixelId.includes("..") || pixelId.includes("/") || pixelId.includes("\\")) {
+      return reply.status(400).send({ detail: "Invalid pixel_id" });
+    }
+    const costs = coreStore.modelCalls.getPixelStepCosts(pixelId);
+    return reply.send({ costs });
+  });
+
   // 5. Artifacts
   server.get("/pixels/:pixel_id/artifacts", async (req, reply) => {
     const params: any = req.params;

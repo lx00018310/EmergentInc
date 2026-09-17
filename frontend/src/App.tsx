@@ -7,6 +7,7 @@ import { PromptEditor } from './features/prompts/PromptEditor';
 import { EnvironmentEditor } from './features/environment/EnvironmentEditor';
 import { PixelMapCanvas } from './features/pixels/PixelMapCanvas';
 import { PixelDetails } from './features/pixels/PixelDetails';
+import { PixelOperations, type PixelOperationTab } from './features/pixels/PixelOperations';
 import { FilePreview } from './features/files/FilePreview';
 import { ArtifactBrowser } from './features/files/ArtifactBrowser';
 import { PrivateFileBrowser } from './features/files/PrivateFileBrowser';
@@ -30,7 +31,7 @@ export const App: React.FC = () => {
     {
       id: 'init',
       type: 'system',
-      text: '[SYSTEM] V9 商业元胞自动机控制台 (React + TypeScript) 核心就绪。',
+      text: '[SYSTEM] V11 商业元胞自动机控制台 (React + TypeScript) 核心就绪。',
       time: new Date().toLocaleTimeString(),
     },
   ]);
@@ -95,6 +96,7 @@ export const App: React.FC = () => {
   const [isPrivateFilesModalOpen, setIsPrivateFilesModalOpen] = useState<boolean>(false);
   const [isToolExecutionsModalOpen, setIsToolExecutionsModalOpen] = useState<boolean>(false);
   const [isArtifactsModalOpen, setIsArtifactsModalOpen] = useState<boolean>(false);
+  const [pixelOperation, setPixelOperation] = useState<{ pixelId: string; tab: PixelOperationTab } | null>(null);
 
   // 统一预览弹窗 (支持文本、图片、二进制多模态)
   const [previewTitle, setPreviewTitle] = useState<string>('');
@@ -188,12 +190,23 @@ export const App: React.FC = () => {
             onRefresh={refreshImmediately}
           />
 
+          <details className="panel-card context-guide">
+            <summary>V11 五层上下文说明</summary>
+            <ol>
+              <li><strong>CONSTITUTION</strong>：系统规则。当前 system 消息还包含工具目录、创世和临时提示词；它们不是 Pixel Self。</li>
+              <li><strong>EXTERNAL</strong>：外部来源输入，Human Mandate 独立于 pixel.md。环境、人类指令与资料只有经 runtime 传入才进入此层；当前链路传入 Mandate，并非所有外部文件自动注入。</li>
+              <li><strong>PIXEL SELF</strong>：元胞物理 state 与自主心智 pixel.md；删除 Mandate 不重置心智或历史。</li>
+              <li><strong>YOUR FILES / PIXEL FILES</strong>：该元胞可用的私有 artifacts 文件列表，不是全局私有资料，也不自动读取全部文件正文。</li>
+              <li><strong>LOCAL MESSAGES</strong>：当前投递给元胞的局部消息，不是全局聊天历史。</li>
+            </ol>
+          </details>
+
           <ConsolePanel messages={messages} audit={audit} runStatus={runStatus} />
 
           <PromptEditor
             cardId="genesis-card"
             title="创世提示词 (临时初速度)"
-            hint="该提示词仅作为系统提示词的临时初速度，影响后续所有元胞调用；不进入三输入 payload，清空后不再注入。"
+            hint="当前注入 system 消息的 GENESIS_CONTEXT，作为临时初速度；不是 Pixel Self，也不写入 pixel.md。运行期间不可编辑，清空后后续运行不再注入。"
             placeholder="可输入创世提示词，清空则完全关闭..."
             rows={5}
             promptData={genesisPrompt}
@@ -213,7 +226,7 @@ export const App: React.FC = () => {
           <PromptEditor
             cardId="temp-prompt-card"
             title="临时提示词 (任务指引)"
-            hint="独立于创世提示词，随时可保存、修改、清空；仅在下次运行生效，补充当前任务指引。"
+            hint="独立的 TEMPORARY_CONTEXT，当前注入 system 消息，不是单个元胞的 Human Mandate；仅在空闲时编辑，下次运行生效。"
             placeholder="可输入当前任务的临时提示词 (如 VPS 运维指令)..."
             rows={4}
             promptData={tempPrompt}
@@ -245,11 +258,19 @@ export const App: React.FC = () => {
             pixel={selectedPixel}
             onOpenDoc={handleOpenDoc}
             onOpenArtifacts={() => setIsArtifactsModalOpen(true)}
+            onOpenOperation={(tab) => { if (selectedPixelId) setPixelOperation({ pixelId: selectedPixelId, tab }); }}
           />
         </section>
       </main>
 
       {/* 弹窗群 */}
+      {pixelOperation && <PixelOperations
+        key={pixelOperation.pixelId}
+        pixelId={pixelOperation.pixelId}
+        initialTab={pixelOperation.tab}
+        onClose={() => setPixelOperation(null)}
+        onRefresh={refreshImmediately}
+      />}
       <EnvironmentEditor
         isOpen={isEnvModalOpen}
         onClose={() => setIsEnvModalOpen(false)}

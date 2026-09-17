@@ -29,7 +29,7 @@ export class ModelCallRepository {
       record.cachedTokens,
       record.actualTokens,
       record.costCny,
-      record.toolCost ?? 0.0,
+      record.toolCost ?? null,
       record.outcome,
       record.createdAt
     );
@@ -66,12 +66,12 @@ export class ModelCallRepository {
       promptHash: row.prompt_hash,
       rawResponse: row.raw_response,
       normalizedResponse: row.normalized_response,
-      promptTokens: Number(row.prompt_tokens),
-      completionTokens: Number(row.completion_tokens),
-      cachedTokens: Number(row.cached_tokens),
-      actualTokens: Number(row.actual_tokens),
-      costCny: Number(row.cost_cny),
-      toolCost: Number(row.tool_cost || 0),
+      promptTokens: row.prompt_tokens == null ? null : Number(row.prompt_tokens),
+      completionTokens: row.completion_tokens == null ? null : Number(row.completion_tokens),
+      cachedTokens: row.cached_tokens == null ? null : Number(row.cached_tokens),
+      actualTokens: row.actual_tokens == null ? null : Number(row.actual_tokens),
+      costCny: row.cost_cny == null ? null : Number(row.cost_cny),
+      toolCost: row.tool_cost == null ? null : Number(row.tool_cost),
       outcome: row.outcome,
       createdAt: Number(row.created_at),
     };
@@ -85,21 +85,26 @@ export class ModelCallRepository {
 
   public getPixelStepCosts(pixelId: string): PixelStepCost[] {
     const stmt = this.db.prepare(`
-      SELECT pixel_id, round_num, prompt_tokens, cached_tokens, completion_tokens, actual_tokens, cost_cny, tool_cost
-      FROM model_calls
-      WHERE pixel_id = ? AND outcome = 'SUCCESS'
-      ORDER BY created_at ASC
+      SELECT m.*,
+        (SELECT COUNT(*) FROM tool_executions t WHERE t.model_call_id = m.call_id) AS tool_count,
+        (SELECT COUNT(*) FROM tool_executions t WHERE t.model_call_id = m.call_id AND t.cost_cny IS NULL) AS unknown_tool_count,
+        (SELECT SUM(t.cost_cny) FROM tool_executions t WHERE t.model_call_id = m.call_id) AS actual_tool_cost
+      FROM model_calls m
+      WHERE m.pixel_id = ?
+      ORDER BY m.created_at ASC, m.rowid ASC
     `);
     const rows = stmt.all(pixelId) as any[];
     return rows.map((r) => ({
       pixelId: r.pixel_id,
       round: Number(r.round_num || 0),
-      inputTokens: Number(r.prompt_tokens || 0),
-      cachedInputTokens: Number(r.cached_tokens || 0),
-      outputTokens: Number(r.completion_tokens || 0),
-      actualTokens: Number(r.actual_tokens || 0),
-      modelCost: Number(r.cost_cny || 0),
-      toolCost: Number(r.tool_cost || 0),
+      inputTokens: r.prompt_tokens == null ? null : Number(r.prompt_tokens),
+      cachedInputTokens: r.cached_tokens == null ? null : Number(r.cached_tokens),
+      outputTokens: r.completion_tokens == null ? null : Number(r.completion_tokens),
+      actualTokens: r.actual_tokens == null ? null : Number(r.actual_tokens),
+      modelCost: r.cost_cny == null ? null : Number(r.cost_cny),
+      toolCost: r.tool_count > 0
+        ? (r.unknown_tool_count > 0 ? null : Number(r.actual_tool_cost))
+        : (r.tool_cost == null ? null : Number(r.tool_cost)),
     }));
   }
 }

@@ -48,7 +48,7 @@ export class AgentStepRunner {
 
   public async execute(input: AgentStepInput, signal?: AbortSignal): Promise<AgentStepResult> {
     const { trace, pixelState, pixelMind, message, round } = input;
-    const callId = `call_${message.messageId}_${Date.now()}`;
+    let callId = `call_${message.messageId}_${Date.now()}`;
 
     // 1. 检查当前消息是否已有成功的 ModelCall (响应复用：支持安全重试与崩溃恢复)
     const existingModelCall = this.store.modelCalls.getLatestByMessageId(message.messageId);
@@ -56,6 +56,7 @@ export class AgentStepRunner {
     let usage: ModelUsage | undefined;
 
     if (existingModelCall && existingModelCall.outcome === "SUCCESS" && existingModelCall.rawResponse) {
+      callId = existingModelCall.callId;
       rawText = existingModelCall.rawResponse;
       usage = {
         promptTokens: existingModelCall.promptTokens,
@@ -66,9 +67,8 @@ export class AgentStepRunner {
       };
       this.store.messages.updateStatus(message.messageId, "RESPONSE_STORED");
     } else {
-      // 读取私有 artifacts 列表 (历史私有)
-      const pixelDir = path.resolve(this.workspaceRoot, "live", "pixels", pixelState.pixelId);
-      const pixelArtifactsDir = path.resolve(pixelDir, "artifacts");
+      // 读取私有 artifacts 列表 (历史私有) — canonical root 与工具层 live/artifacts/<pixelId> 一致
+      const pixelArtifactsDir = path.resolve(this.workspaceRoot, "live", "artifacts", pixelState.pixelId);
       let pixelFiles: string[] = [];
       if (fs.existsSync(pixelArtifactsDir)) {
         try {
@@ -77,12 +77,44 @@ export class AgentStepRunner {
       }
 
       // 读取 Human Mandate (独立 External，严禁写入 pixel.md)
+      const pixelDir = path.resolve(this.workspaceRoot, "live", "pixels", pixelState.pixelId);
       const mandateFile = path.resolve(pixelDir, "mandate.md");
       let humanMandate: string | null = null;
       if (fs.existsSync(mandateFile)) {
         try {
           humanMandate = fs.readFileSync(mandateFile, "utf-8").trim();
         } catch {}
+      }
+
+      // 读取全局环境 (External: environment info)
+      let environmentInfo: string | null = null;
+      const envFile = path.resolve(this.workspaceRoot, "live", "environment.md");
+      if (fs.existsSync(envFile)) {
+        try {
+          const raw = fs.readFileSync(envFile, "utf-8").trim();
+          if (raw) environmentInfo = raw;
+        } catch {}
+      }
+
+      // 按来源分层：pixel→human/material 间消息进 Local Messages；feedback/environment/system 进 External
+      let messageMd = message.content;
+      const feedbackLines: string[] = [];
+      const systemLines: string[] = [];
+      let humanMaterial: string | null = null;
+      if (message.sourceType === "environment") {
+        environmentInfo = environmentInfo ? `${environmentInfo}\n\n${message.content}` : message.content;
+        messageMd = "";
+      } else if (message.sourceType === "feedback") {
+        feedbackLines.push(message.content);
+        messageMd = "";
+      } else if (message.sourceType === "system") {
+        systemLines.push(message.content);
+        messageMd = "";
+      } else if (message.sourceType === "material") {
+        humanMaterial = message.content;
+        messageMd = "";
+      } else if (message.sourceType === "human" && message.sender !== message.recipient) {
+        messageMd = message.content;
       }
 
       // 2. 组装 PreparedPrompt (V11 严格五层分离)
@@ -95,8 +127,14 @@ export class AgentStepRunner {
           generation: pixelState.generation,
         },
         pixelMd: pixelMind,
-        messageMd: message.content,
-        external: humanMandate ? { humanMandate } : null,
+        messageMd: messageMd || "(no local messages)",
+        external: {
+          humanMandate,
+          environmentInfo,
+          humanMaterials: humanMaterial,
+          feedback: feedbackLines.length > 0 ? feedbackLines.join("\n\n") : null,
+          systemMessages: systemLines.length > 0 ? systemLines.join("\n\n") : null,
+        },
         pixelFiles,
       });
 
@@ -151,11 +189,12 @@ export class AgentStepRunner {
             promptHash,
             rawResponse: null,
             normalizedResponse: null,
-            promptTokens: 0,
-            completionTokens: 0,
-            cachedTokens: 0,
-            actualTokens: 0,
-            costCny: 0,
+            roundNum: round,
+            promptTokens: null,
+            completionTokens: null,
+            cachedTokens: null,
+            actualTokens: null,
+            costCny: null,
             outcome: "CALL_OUTCOME_UNKNOWN",
             createdAt: Date.now() / 1000,
           });
@@ -169,16 +208,9 @@ export class AgentStepRunner {
       }
 
       // 6. 核算实际用量并结算扣款（支持零 token 真实值）
-      const rawUsage = rawResponse.usage || {};
-      const promptTokens = rawUsage.promptTokens ?? estimatedTokens;
-      const completionTokens = rawUsage.completionTokens ?? 0;
-      const cachedTokens = rawUsage.cachedTokens ?? 0;
-
       usage = this.usageMeter.calculateUsage({
+        ...rawResponse.usage,
         model: request.model,
-        promptTokens,
-        completionTokens,
-        cachedTokens,
       });
 
       // 7. 单一 SQLite 原子事务：扣除结算预算、记录 ModelCall、标记 RESPONSE_STORED
@@ -230,6 +262,7 @@ export class AgentStepRunner {
       round,
       runId: trace.runId,
       signal,
+      modelCallId: callId,
     });
     await effectRuntime.applyEffects(effects);
 

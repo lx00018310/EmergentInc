@@ -58,13 +58,13 @@ export class CoreStore {
     rawResponse: string;
     normalizedResponse?: string | null;
     roundNum?: number;
-    toolCost?: number;
+    toolCost?: number | null;
     usage: {
-      promptTokens: number;
-      completionTokens: number;
-      cachedTokens?: number;
-      actualTokens: number;
-      costCny: number;
+      promptTokens: number | null;
+      completionTokens: number | null;
+      cachedTokens?: number | null;
+      actualTokens: number | null;
+      costCny: number | null;
     };
   }): void {
     this.db.transaction(() => {
@@ -86,10 +86,10 @@ export class CoreStore {
         normalizedResponse: params.normalizedResponse || null,
         promptTokens: params.usage.promptTokens,
         completionTokens: params.usage.completionTokens,
-        cachedTokens: params.usage.cachedTokens || 0,
+        cachedTokens: params.usage.cachedTokens ?? null,
         actualTokens: params.usage.actualTokens,
         costCny: params.usage.costCny,
-        toolCost: params.toolCost ?? 0.0,
+        toolCost: params.toolCost ?? null,
         outcome: "SUCCESS",
         createdAt: Date.now() / 1000,
       });
@@ -158,7 +158,14 @@ export class CoreStore {
   } {
     return this.db.transaction(() => {
       // 1. 获取所有未决预留并安全退款
-      const openRes = this.db.prepare("SELECT call_id FROM reservations WHERE status = 'OPEN'").all() as any[];
+      // A received response without usage may already be billed; never auto-refund it.
+      const openRes = this.db.prepare(`
+        SELECT call_id FROM reservations WHERE status = 'OPEN'
+        AND NOT EXISTS (
+          SELECT 1 FROM model_calls m WHERE m.call_id = reservations.call_id
+          AND m.actual_tokens IS NULL AND m.outcome IN ('SUCCESS', 'MODEL_RESPONSE_INVALID')
+        )
+      `).all() as any[];
       for (const res of openRes) {
         this.budgets.refund(res.call_id);
       }

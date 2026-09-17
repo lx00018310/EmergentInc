@@ -14,8 +14,8 @@ export const RunStatus: React.FC<RunStatusProps> = ({ world, runStatus, audit })
   const totalPixels = pixels.length;
 
   const totalEnergy = world?.metrics?.total_energy ?? (pixels.reduce((acc, p) => acc + (p.energy || 0), 0));
-  const totalSpentTokens = world?.metrics?.total_spent_tokens ?? 0;
-  const totalSpentCny = world?.metrics?.total_spent_cny ?? (Number(totalSpentTokens) / 1000000 * 15);
+  // V11: 成本必须来自真实台账；未计量显示"未知"，绝不推算或当作 0
+  const totalSpentCny = world?.metrics?.total_spent_cny;
 
   let systemHealth = 'READY';
   let systemHealthColor = '#48bb78';
@@ -37,7 +37,7 @@ export const RunStatus: React.FC<RunStatusProps> = ({ world, runStatus, audit })
     <header className="app-header">
       <div className="logo-title">
         <span className="logo-icon">▣</span>
-        <h1>EmergentInc V9 商业元胞自动机</h1>
+        <h1>EmergentInc V11 商业元胞自动机</h1>
         <span className="badge" id="run-badge">
           run: {runId}
         </span>
@@ -58,7 +58,7 @@ export const RunStatus: React.FC<RunStatusProps> = ({ world, runStatus, audit })
         </div>
         <div className="metric-item">
           <span className="m-label">支出折算:</span>{' '}
-          <span className="m-val">¥{Number(totalSpentCny).toFixed(2)}</span>
+          <span className="m-val">{totalSpentCny == null ? '未知' : `¥${Number(totalSpentCny).toFixed(2)}`}</span>
         </div>
         <div className="metric-item">
           <span className="m-label">系统状态:</span>{' '}

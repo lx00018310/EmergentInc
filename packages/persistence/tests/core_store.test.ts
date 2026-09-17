@@ -3,6 +3,7 @@ import {
   CoreStore,
   BudgetExceededError,
   SpendBlockedError,
+  initSchema,
 } from "../src/index.js";
 
 describe("Persistence: CoreStore & Repositories", () => {
@@ -14,6 +15,42 @@ describe("Persistence: CoreStore & Repositories", () => {
 
   afterEach(() => {
     store.close();
+  });
+
+  it("retains unknown-usage reservations across reconciliation without inventing token spend", () => {
+    store.pixels.upsertPixelAccount({ pixelId: "p", energy: 1000, active: true, refundDeficitTokens: 0, spendBlockedReason: null });
+    const message = store.messages.enqueueMessage({ sender: "system", recipient: "p", content: "test", roundNum: 1 });
+    store.budgets.reserve({ callId: "unknown", runId: "r", pixelId: "p", estimatedTokens: 100 });
+    store.settleAndStoreModelResponse({
+      callId: "unknown", runId: "r", pixelId: "p", messageId: message.messageId,
+      model: "m", promptHash: "h", rawResponse: "{}",
+      usage: { promptTokens: null, completionTokens: null, cachedTokens: null, actualTokens: null, costCny: null },
+    });
+    expect(store.pixels.getPixelAccount("p")?.energy).toBe(1000);
+    expect(store.budgets.getGlobalBudget()?.totalSpent).toBe(0);
+    expect(store.budgets.getGlobalBudget()?.totalReserved).toBe(100);
+    store.reconcileUnfinalizedOperations();
+    expect(store.budgets.getGlobalBudget()?.totalReserved).toBe(100);
+    expect(store.getUnfinalizedOperations().unsettledReservations).toHaveLength(1);
+  });
+
+  it("migrates legacy non-null cost columns idempotently without losing historical costs", () => {
+    store.db.exec(`DROP TABLE model_calls;
+      CREATE TABLE model_calls (
+        call_id TEXT PRIMARY KEY, run_id TEXT NOT NULL, pixel_id TEXT NOT NULL,
+        message_id TEXT, model TEXT NOT NULL, pricing_revision TEXT, prompt_hash TEXT,
+        raw_response TEXT, normalized_response TEXT,
+        prompt_tokens INTEGER NOT NULL DEFAULT 0, completion_tokens INTEGER NOT NULL DEFAULT 0,
+        cached_tokens INTEGER NOT NULL DEFAULT 0, actual_tokens INTEGER NOT NULL DEFAULT 0,
+        cost_cny REAL NOT NULL DEFAULT 0, outcome TEXT NOT NULL, created_at REAL NOT NULL);
+      INSERT INTO model_calls (call_id,run_id,pixel_id,model,cost_cny,outcome,created_at)
+        VALUES ('old','r','p','m',0.25,'MODEL_RESPONSE_INVALID',1);`);
+    initSchema(store.db);
+    initSchema(store.db);
+    expect(store.modelCalls.getModelCall("old")?.costCny).toBe(0.25);
+    store.db.exec("UPDATE model_calls SET cost_cny = NULL, actual_tokens = NULL WHERE call_id = 'old'");
+    expect(store.modelCalls.getModelCall("old")?.costCny).toBeNull();
+    expect(store.modelCalls.getPixelStepCosts("p")[0].modelCost).toBeNull();
   });
 
   it("should initialize schema and global budget correctly", () => {

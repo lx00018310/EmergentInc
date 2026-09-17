@@ -558,6 +558,123 @@ body {
   line-height: 1.5;
 }
 
+/* V11 Pixel Operations modal */
+.pixel-operations {
+  width: 720px;
+  max-width: 92vw;
+}
+
+.operation-tabs {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+
+.operation-section p {
+  font-size: 12px;
+  color: var(--text-dim);
+  line-height: 1.5;
+  margin-bottom: 8px;
+}
+
+.operation-section h4 {
+  font-size: 12px;
+  color: var(--text-bright);
+  margin: 14px 0 6px;
+}
+
+.operation-section label {
+  display: block;
+  font-size: 12px;
+  color: var(--text-dim);
+  margin: 8px 0 4px;
+}
+
+.operation-section input[type='number'],
+.operation-section input[type='text'],
+.operation-section input:not([type]) {
+  width: 100%;
+  background: #0d1117;
+  color: var(--text-bright);
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  padding: 6px 8px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.operation-section form button[type='submit'] {
+  margin-top: 10px;
+}
+
+.operation-error {
+  color: var(--accent-red);
+  font-size: 12px;
+  margin-bottom: 8px;
+}
+
+.operation-notice {
+  color: var(--accent-green);
+  font-size: 12px;
+  margin-bottom: 8px;
+}
+
+.operation-table {
+  max-height: 260px;
+  overflow-y: auto;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+}
+
+.operation-table table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+  font-family: var(--font-mono);
+}
+
+.operation-table th,
+.operation-table td {
+  text-align: left;
+  padding: 5px 8px;
+  border-bottom: 1px solid var(--border-color);
+  white-space: nowrap;
+}
+
+.operation-table th {
+  color: var(--text-dim);
+  position: sticky;
+  top: 0;
+  background: var(--bg-card);
+}
+
+/* V11 five-layer context guide */
+.context-guide summary {
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-bright);
+}
+
+.context-guide ol {
+  margin: 10px 0 4px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.context-guide li {
+  font-size: 12px;
+  color: var(--text-dim);
+  line-height: 1.5;
+}
+
+.context-guide li strong {
+  color: var(--accent-blue);
+  font-family: var(--font-mono);
+}
+
 .doc-view-box {
   background: #0d1117;
   border: 1px solid var(--border-color);

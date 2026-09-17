@@ -11,6 +11,8 @@ export interface ToolExecutionRecord {
   args_hash: string;
   status: ToolExecutionStatus;
   result?: string | null;
+  cost_cny?: number | null;
+  model_call_id?: string | null;
   started_at: number;
   finished_at?: number | null;
 }
@@ -21,8 +23,8 @@ export class ToolExecutionRepository {
   public recordStarted(record: Omit<ToolExecutionRecord, "status" | "finished_at">): void {
     const stmt = this.db.prepare(`
       INSERT INTO tool_executions (
-        operation_id, run_id, message_id, pixel_id, op_index, tool, args_hash, status, started_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, 'STARTED', ?)
+        operation_id, run_id, message_id, pixel_id, op_index, tool, args_hash, status, started_at, model_call_id
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, 'STARTED', ?, ?)
       ON CONFLICT(operation_id) DO NOTHING
     `);
 
@@ -34,7 +36,8 @@ export class ToolExecutionRepository {
       record.op_index,
       record.tool,
       record.args_hash,
-      record.started_at
+      record.started_at,
+      record.model_call_id ?? null
     );
   }
 
@@ -43,13 +46,17 @@ export class ToolExecutionRepository {
     status: ToolExecutionStatus;
     result: string;
     finishedAt: number;
+    costCny?: number | null;
   }): void {
     const stmt = this.db.prepare(`
       UPDATE tool_executions
-      SET status = ?, result = ?, finished_at = ?
+      SET status = ?, result = ?, finished_at = ?, cost_cny = ?
       WHERE operation_id = ?
     `);
-    stmt.run(params.status, params.result, params.finishedAt, params.operationId);
+    const cost = params.costCny;
+    stmt.run(params.status, params.result, params.finishedAt,
+      typeof cost === "number" && Number.isFinite(cost) && cost >= 0 ? cost : null,
+      params.operationId);
   }
 
   public getExecution(operationId: string): ToolExecutionRecord | null {

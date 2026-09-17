@@ -14,8 +14,12 @@ export class MessageRepository {
     const isFeedback = params.isFeedback ? 1 : 0;
     let sourceType = params.sourceType;
     if (!sourceType) {
-      if (params.sender === "system") {
+      if (params.sender === "human") {
+        sourceType = "human";
+      } else if (params.sender === "system") {
         sourceType = "system";
+      } else if (params.isFeedback) {
+        sourceType = "feedback";
       } else if (params.sender === "environment") {
         sourceType = "environment";
       } else {

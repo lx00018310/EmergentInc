@@ -23,6 +23,8 @@ export interface ExternalInputs {
   environmentInfo?: string | null;
   humanMaterials?: string | null;
   humanMandate?: string | null;
+  feedback?: string | null;
+  systemMessages?: string | null;
 }
 
 export interface PromptInputs {
@@ -45,7 +47,7 @@ export class PromptBuilder {
   constructor(options: PromptBuilderOptions = {}) {
     this.baseSystemPrompt =
       options.baseSystemPrompt ||
-      "你是一个Pixel。你只能依据当前 state.json、pixel.md 和 message.md 做决定。";
+      "你是一个Pixel。依据 Constitution、External、Pixel Self、Your Files 和 Local Messages 五层上下文做决定，保持外部输入与自身历史的来源分离。";
     this.toolsCatalog = options.toolsCatalog;
     this.genesisPrompt = options.genesisPrompt;
     this.temporaryPrompt = options.temporaryPrompt;
@@ -94,6 +96,8 @@ export class PromptBuilder {
     if (external.humanInstructions) externalLines.push(`Human Instructions:\n${external.humanInstructions.trim()}`);
     if (external.humanMandate) externalLines.push(`Human Mandate:\n${external.humanMandate.trim()}`);
     if (external.humanMaterials) externalLines.push(`Human Provided Materials:\n${external.humanMaterials.trim()}`);
+    if (external.feedback) externalLines.push(`Feedback:\n${external.feedback.trim()}`);
+    if (external.systemMessages) externalLines.push(`System Events:\n${external.systemMessages.trim()}`);
     const externalSection = externalLines.length > 0 ? externalLines.join("\n\n") : "(none)";
 
     const pixelFiles = Array.isArray(inputs.pixelFiles) && inputs.pixelFiles.length > 0

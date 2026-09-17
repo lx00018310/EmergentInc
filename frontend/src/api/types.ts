@@ -37,12 +37,41 @@ export interface MessageFlowDto {
   round?: number;
 }
 
+export interface MandateDto {
+  pixel_id: string;
+  mandate: string | null;
+}
+
+export interface ExternalRewardDto {
+  event_id: string;
+  pixel_id: string;
+  round: number;
+  amount: number;
+  source: string;
+  reason: string;
+  created_at: number;
+}
+
+export interface StepCostDto {
+  pixelId: string;
+  round: number;
+  inputTokens: number | null;
+  cachedInputTokens: number | null;
+  outputTokens: number | null;
+  actualTokens?: number | null;
+  modelCost: number | null;
+  toolCost: number | null;
+  callId?: string;
+  runId?: string;
+  outcome?: string;
+}
+
 export interface WorldMetricsDto {
   alive_pixels?: number;
   total_pixels?: number;
   total_energy?: number;
-  total_spent_tokens?: number;
-  total_spent_cny?: number;
+  total_spent_tokens?: number | null;
+  total_spent_cny?: number | null;
   system_status?: string;
   [key: string]: unknown;
 }

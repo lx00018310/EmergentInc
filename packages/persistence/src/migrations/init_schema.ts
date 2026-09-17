@@ -71,12 +71,12 @@ export function initSchema(db: SqliteDatabase): void {
           prompt_hash TEXT,
           raw_response TEXT,
           normalized_response TEXT,
-          prompt_tokens INTEGER NOT NULL DEFAULT 0,
-          completion_tokens INTEGER NOT NULL DEFAULT 0,
-          cached_tokens INTEGER NOT NULL DEFAULT 0,
-          actual_tokens INTEGER NOT NULL DEFAULT 0,
-          cost_cny REAL NOT NULL DEFAULT 0.0,
-          tool_cost REAL NOT NULL DEFAULT 0.0,
+          prompt_tokens INTEGER,
+          completion_tokens INTEGER,
+          cached_tokens INTEGER,
+          actual_tokens INTEGER,
+          cost_cny REAL,
+          tool_cost REAL,
           round_num INTEGER NOT NULL DEFAULT 0,
           outcome TEXT NOT NULL DEFAULT 'SUCCESS',
           created_at REAL NOT NULL
@@ -165,12 +165,34 @@ export function initSchema(db: SqliteDatabase): void {
       ON reservations(pixel_id, status);
     `);
 
-    // 平滑升级已有数据库列 (V11 Cost Ledger)
-    try {
-      db.exec("ALTER TABLE model_calls ADD COLUMN round_num INTEGER NOT NULL DEFAULT 0;");
-    } catch {}
-    try {
-      db.exec("ALTER TABLE model_calls ADD COLUMN tool_cost REAL NOT NULL DEFAULT 0.0;");
-    } catch {}
+    // SQLite needs a table rebuild to remove legacy NOT NULL/default-zero constraints.
+    const columns = db.prepare("PRAGMA table_info(model_calls)").all() as any[];
+    if (!columns.some(c => c.name === "round_num")) {
+      db.exec("ALTER TABLE model_calls ADD COLUMN round_num INTEGER NOT NULL DEFAULT 0");
+    }
+    if (!columns.some(c => c.name === "tool_cost")) {
+      db.exec("ALTER TABLE model_calls ADD COLUMN tool_cost REAL");
+    }
+    if (columns.some(c => c.name === "cost_cny" && c.notnull)) {
+      db.exec(`
+        CREATE TABLE model_calls_nullable (
+          call_id TEXT PRIMARY KEY, run_id TEXT NOT NULL, pixel_id TEXT NOT NULL,
+          message_id TEXT, model TEXT NOT NULL, pricing_revision TEXT, prompt_hash TEXT,
+          raw_response TEXT, normalized_response TEXT, prompt_tokens INTEGER,
+          completion_tokens INTEGER, cached_tokens INTEGER, actual_tokens INTEGER,
+          cost_cny REAL, tool_cost REAL, round_num INTEGER NOT NULL DEFAULT 0,
+          outcome TEXT NOT NULL DEFAULT 'SUCCESS', created_at REAL NOT NULL
+        );
+        INSERT INTO model_calls_nullable SELECT call_id, run_id, pixel_id, message_id,
+          model, pricing_revision, prompt_hash, raw_response, normalized_response,
+          prompt_tokens, completion_tokens, cached_tokens, actual_tokens, cost_cny,
+          NULLIF(tool_cost, 0), round_num, outcome, created_at FROM model_calls;
+        DROP TABLE model_calls;
+        ALTER TABLE model_calls_nullable RENAME TO model_calls;
+      `);
+    }
+    const toolColumns = db.prepare("PRAGMA table_info(tool_executions)").all() as any[];
+    if (!toolColumns.some(c => c.name === "cost_cny")) db.exec("ALTER TABLE tool_executions ADD COLUMN cost_cny REAL");
+    if (!toolColumns.some(c => c.name === "model_call_id")) db.exec("ALTER TABLE tool_executions ADD COLUMN model_call_id TEXT");
   });
 }

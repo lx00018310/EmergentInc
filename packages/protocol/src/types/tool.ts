@@ -18,6 +18,8 @@ export interface ToolResult {
   output?: any;
   error_code?: string | null;
   error_message?: string | null;
+  /** Actual reported CNY cost; omitted/null means unknown, never an estimate. */
+  costCny?: number | null;
   duration_ms: number;
   truncated: boolean;
   details?: Record<string, any>;
