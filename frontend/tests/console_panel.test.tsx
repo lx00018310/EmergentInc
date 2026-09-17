@@ -45,4 +45,37 @@ describe('ConsolePanel Component', () => {
 
     expect(onReconcile).toHaveBeenCalledTimes(1);
   });
+
+  it('当处于 RUNNING 状态时，即使存在在途事务，也不显示恢复告警', () => {
+    render(
+      <ConsolePanel
+        messages={[]}
+        audit={null}
+        runStatus={{
+          running: true,
+          requested_rounds: 10,
+          completed_rounds: 0,
+          messages_processed: 0,
+          model_calls_completed: 0,
+          idle_rounds: 0,
+          current_round: 26,
+          stop_requested: false,
+          stop_reason: null,
+          run_id: 'run_test',
+          last_error: null,
+          result_status: 'RUNNING',
+          unfinalized_operations: {
+            unsettledReservations: [{ callId: 'c1', runId: 'r1', pixelId: '0_0_0', amount: 100, createdAt: 1 }],
+            unknownCalls: [],
+            callingMessages: [{ messageId: 'm1', status: 'CALLING', updatedAt: 1 }],
+          },
+        }}
+        onReconcile={vi.fn()}
+      />
+    );
+
+    expect(screen.queryByText(/需安全对账介入/i)).toBeNull();
+    expect(screen.queryByText(/一键安全对账自愈/i)).toBeNull();
+  });
 });
+

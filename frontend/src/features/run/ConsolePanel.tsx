@@ -31,10 +31,11 @@ export const ConsolePanel: React.FC<ConsolePanelProps> = ({
 
   const hasUnfinalizedOps = Boolean(runStatus?.unfinalized_operations);
   const isRecoveryRequired =
-    Boolean(audit?.recovery_required) ||
-    runStatus?.result_status === 'RECOVERY_REQUIRED' ||
-    runStatus?.result_status === 'PAUSED_RECOVERY_REQUIRED' ||
-    hasUnfinalizedOps;
+    !runStatus?.running &&
+    (Boolean(audit?.recovery_required) ||
+      runStatus?.result_status === 'RECOVERY_REQUIRED' ||
+      runStatus?.result_status === 'PAUSED_RECOVERY_REQUIRED' ||
+      hasUnfinalizedOps);
 
   const blockReasons: string[] = [...(audit?.block_reasons ?? [])];
   if (blockReasons.length === 0 && runStatus?.unfinalized_operations) {
