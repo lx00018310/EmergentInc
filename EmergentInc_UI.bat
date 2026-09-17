@@ -17,7 +17,7 @@ if %errorlevel% neq 0 (
 
 start "" http://127.0.0.1:8765
 
-node apps/server/dist/main.js
+node apps/server/dist/main.js %*
 if %errorlevel% neq 0 (
     echo.
     echo [SERVER STOPPED OR ERRORED]

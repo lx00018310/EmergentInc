@@ -37,6 +37,8 @@ export class EffectRuntime {
 
   public async applyEffects(effects: Effect[]): Promise<void> {
     let priorToolFailed = false;
+    const toolExecutions: Array<{ tool: string; status: string; outputOrError: any }> = [];
+    let toolTargetPixelId: string | null = null;
 
     for (const effect of effects) {
       // 1. Exactly-Once 幂等检查
@@ -74,8 +76,10 @@ export class EffectRuntime {
             break;
           }
 
-          const toolOk = await this.applyToolCall(effect);
-          if (!toolOk) {
+          toolTargetPixelId = effect.pixelId;
+          const toolResult = await this.applyToolCall(effect);
+          toolExecutions.push(toolResult.execution);
+          if (!toolResult.success) {
             priorToolFailed = true;
           }
           break;
@@ -92,6 +96,17 @@ export class EffectRuntime {
           await this.applyRouteMessage(effect);
           break;
       }
+    }
+
+    // 聚合入队：将同一 Step 内的所有工具执行回执合并为单条结构化反馈消息，防止队列刷屏与饥饿
+    if (toolExecutions.length > 0 && toolTargetPixelId) {
+      const feedback = FeedbackFactory.createBatchToolExecutionFeedback(
+        toolTargetPixelId,
+        this.ctx.round,
+        this.ctx.runId,
+        toolExecutions
+      );
+      this.ctx.store.messages.enqueueMessage(feedback);
     }
   }
 
@@ -189,7 +204,10 @@ export class EffectRuntime {
     });
   }
 
-  private async applyToolCall(effect: ToolCallEffect): Promise<boolean> {
+  private async applyToolCall(effect: ToolCallEffect): Promise<{
+    success: boolean;
+    execution: { tool: string; status: string; outputOrError: any };
+  }> {
     const toolCtx: ToolContext = {
       workspaceRoot: this.ctx.workspaceRoot,
       pixelId: effect.pixelId,
@@ -225,17 +243,6 @@ export class EffectRuntime {
       finishedAt: Date.now() / 1000,
     });
 
-    // 生成工具反馈消息
-    const feedback = FeedbackFactory.createToolExecutionFeedback(
-      effect.pixelId,
-      this.ctx.round,
-      this.ctx.runId,
-      result.tool,
-      result.status,
-      result.status === "SUCCESS" ? result.output : result.error_message
-    );
-    this.ctx.store.messages.enqueueMessage(feedback);
-
     this.ctx.store.effects.recordEffect({
       effect_id: effect.effectId,
       message_id: effect.messageId,
@@ -247,7 +254,14 @@ export class EffectRuntime {
       created_at: Date.now() / 1000,
     });
 
-    return result.status === "SUCCESS";
+    return {
+      success: result.status === "SUCCESS",
+      execution: {
+        tool: result.tool,
+        status: result.status,
+        outputOrError: result.status === "SUCCESS" ? result.output : result.error_message,
+      },
+    };
   }
 
   private async applyTransferEnergy(effect: TransferEnergyEffect): Promise<void> {

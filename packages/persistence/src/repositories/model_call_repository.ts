@@ -37,6 +37,22 @@ export class ModelCallRepository {
     const stmt = this.db.prepare("SELECT * FROM model_calls WHERE call_id = ?");
     const row = stmt.get(callId) as any;
     if (!row) return null;
+    return this.mapRow(row);
+  }
+
+  public getLatestByMessageId(messageId: string): ModelCallRecord | null {
+    const stmt = this.db.prepare(`
+      SELECT * FROM model_calls
+      WHERE message_id = ?
+      ORDER BY created_at DESC
+      LIMIT 1
+    `);
+    const row = stmt.get(messageId) as any;
+    if (!row) return null;
+    return this.mapRow(row);
+  }
+
+  private mapRow(row: any): ModelCallRecord {
     return {
       callId: row.call_id,
       runId: row.run_id,

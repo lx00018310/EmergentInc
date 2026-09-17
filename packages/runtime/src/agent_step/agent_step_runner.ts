@@ -8,7 +8,13 @@ import {
   ModelCallRecord,
 } from "@emergentinc/protocol";
 import { CoreStore, BudgetExceededError, SpendBlockedError } from "@emergentinc/persistence";
-import { PromptBuilder, ModelProvider, parseAndNormalizeResponse, UsageMeter } from "@emergentinc/model";
+import {
+  PromptBuilder,
+  ModelProvider,
+  parseAndNormalizeResponse,
+  UsageMeter,
+  OutcomeUnknownError,
+} from "@emergentinc/model";
 import { ToolRuntime } from "@emergentinc/tools";
 import { DecisionCompiler } from "../compiler/decision_compiler.js";
 import { EffectRuntime } from "../effects/effect_runtime.js";
@@ -43,12 +49,12 @@ export class AgentStepRunner {
     const { trace, pixelState, pixelMind, message, round } = input;
     const callId = `call_${message.messageId}_${Date.now()}`;
 
-    // 1. 检查当前消息是否已有 RESPONSE_STORED (如崩溃后重启继续执行)
-    const existingModelCall = this.store.modelCalls.getModelCall(callId);
+    // 1. 检查当前消息是否已有成功的 ModelCall (响应复用：支持安全重试与崩溃恢复)
+    const existingModelCall = this.store.modelCalls.getLatestByMessageId(message.messageId);
     let rawText: string | null = null;
     let usage: ModelUsage | undefined;
 
-    if (existingModelCall && existingModelCall.rawResponse) {
+    if (existingModelCall && existingModelCall.outcome === "SUCCESS" && existingModelCall.rawResponse) {
       rawText = existingModelCall.rawResponse;
       usage = {
         promptTokens: existingModelCall.promptTokens,
@@ -57,6 +63,7 @@ export class AgentStepRunner {
         actualTokens: existingModelCall.actualTokens,
         costCny: existingModelCall.costCny,
       };
+      this.store.messages.updateStatus(message.messageId, "RESPONSE_STORED");
     } else {
       // 2. 组装 PreparedPrompt
       const { request, promptHash, estimatedTokens } = this.promptBuilder.prepare({
@@ -95,7 +102,7 @@ export class AgentStepRunner {
 
       // 4. 调用模型前检查 Stop 信号
       if (signal?.aborted) {
-        // 调用前中止：退还预留，消息重置回 QUEUED，放回队首
+        // 调用前中止：安全退还预留，消息重置回 QUEUED
         this.store.budgets.refund(callId);
         this.store.messages.updateStatus(message.messageId, "QUEUED");
         throw new Error("USER_STOPPED_BEFORE_CALL");
@@ -103,23 +110,47 @@ export class AgentStepRunner {
 
       this.store.messages.updateStatus(message.messageId, "CALLING");
 
-      // 5. 调用模型
+      // 5. 调用模型与精准异常分类
       let rawResponse: any;
       try {
         rawResponse = await this.provider.call(request, signal);
         rawText = rawResponse.rawText;
       } catch (callErr: any) {
-        // 基础设施失败：退还预留，放回队列
+        if (callErr instanceof OutcomeUnknownError) {
+          // 远端调用发出后超时或中断：严禁退款！保留预留并标记 CALL_OUTCOME_UNKNOWN，记录审计日志
+          this.store.messages.updateStatus(message.messageId, "CALL_OUTCOME_UNKNOWN");
+          this.store.modelCalls.recordModelCall({
+            callId,
+            runId: trace.runId,
+            pixelId: pixelState.pixelId,
+            messageId: message.messageId,
+            model: request.model,
+            pricingRevision: request.pricingRevision,
+            promptHash,
+            rawResponse: null,
+            normalizedResponse: null,
+            promptTokens: 0,
+            completionTokens: 0,
+            cachedTokens: 0,
+            actualTokens: 0,
+            costCny: 0,
+            outcome: "CALL_OUTCOME_UNKNOWN",
+            createdAt: Date.now() / 1000,
+          });
+          throw callErr;
+        }
+
+        // 基础设施连接前失败（如 DNS 解析失败、握手前断开、调用前取消）：退还预留，消息放回队列
         this.store.budgets.refund(callId);
         this.store.messages.updateStatus(message.messageId, "QUEUED");
         throw callErr;
       }
 
-      // 6. 核算实际用量并结算扣款
+      // 6. 核算实际用量并结算扣款（支持零 token 真实值）
       const rawUsage = rawResponse.usage || {};
-      const promptTokens = rawUsage.promptTokens || estimatedTokens;
-      const completionTokens = rawUsage.completionTokens || 200;
-      const cachedTokens = rawUsage.cachedTokens || 0;
+      const promptTokens = rawUsage.promptTokens ?? estimatedTokens;
+      const completionTokens = rawUsage.completionTokens ?? 0;
+      const cachedTokens = rawUsage.cachedTokens ?? 0;
 
       usage = this.usageMeter.calculateUsage({
         model: request.model,
@@ -128,14 +159,8 @@ export class AgentStepRunner {
         cachedTokens,
       });
 
-      this.store.budgets.settle({
-        callId,
-        actualTokens: usage.actualTokens,
-        costCny: usage.costCny,
-      });
-
-      // 7. 保存原始响应并更新状态为 RESPONSE_STORED
-      const callRecord: ModelCallRecord = {
+      // 7. 单一 SQLite 原子事务：扣除结算预算、记录 ModelCall、标记 RESPONSE_STORED
+      this.store.settleAndStoreModelResponse({
         callId,
         runId: trace.runId,
         pixelId: pixelState.pixelId,
@@ -143,18 +168,10 @@ export class AgentStepRunner {
         model: request.model,
         pricingRevision: request.pricingRevision,
         promptHash,
-        rawResponse: rawText,
+        rawResponse: rawText || "",
         normalizedResponse: null,
-        promptTokens: usage.promptTokens,
-        completionTokens: usage.completionTokens,
-        cachedTokens: usage.cachedTokens,
-        actualTokens: usage.actualTokens,
-        costCny: usage.costCny,
-        outcome: "SUCCESS",
-        createdAt: Date.now() / 1000,
-      };
-      this.store.modelCalls.recordModelCall(callRecord);
-      this.store.messages.updateStatus(message.messageId, "RESPONSE_STORED");
+        usage,
+      });
     }
 
     // 8. 解析归一化决策

@@ -41,18 +41,34 @@ export class SqliteDatabase {
     return this.db.prepare(sql);
   }
 
+  private transactionDepth = 0;
+
   /**
-   * 显式 BEGIN IMMEDIATE 事务封装，确保写入排他性
+   * 显式 BEGIN IMMEDIATE 事务封装，支持嵌套事务与写入排他性
    */
   public transaction<T>(fn: () => T): T {
+    if (this.transactionDepth > 0) {
+      this.transactionDepth++;
+      try {
+        return fn();
+      } finally {
+        this.transactionDepth--;
+      }
+    }
+
     this.db.exec("BEGIN IMMEDIATE;");
+    this.transactionDepth = 1;
     try {
       const result = fn();
       this.db.exec("COMMIT;");
       return result;
     } catch (err) {
-      this.db.exec("ROLLBACK;");
+      try {
+        this.db.exec("ROLLBACK;");
+      } catch {}
       throw err;
+    } finally {
+      this.transactionDepth = 0;
     }
   }
 

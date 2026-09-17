@@ -225,4 +225,39 @@ describe("Tools: VPS Execution & Prompt Catalog", () => {
     expect(updatedCatalog).not.toContain("- **`vps_exec`**");
     expect(updatedCatalog).toContain("- **`save_artifact`**");
   });
+
+  it("should validate path and prevent injection attacks on vps_list_files", async () => {
+    // 1. 空路径校验
+    const emptyRes = await runtime.execute("vps_list_files", { path: "" }, ctx);
+    expect(emptyRes.status).toBe("FAILED");
+    expect(emptyRes.error_code).toBe("INVALID_PATH");
+
+    // 2. 注入字符拦截
+    const injectionRes = await runtime.execute(
+      "vps_list_files",
+      { path: "/var/log; rm -rf /" },
+      ctx
+    );
+    expect(injectionRes.status).toBe("FAILED");
+    expect(injectionRes.error_code).toBe("INVALID_PATH");
+    expect(injectionRes.error_message).toContain("prohibited");
+
+    // 3. 管道符拦截
+    const pipeRes = await runtime.execute(
+      "vps_list_files",
+      { path: "/var/log | cat" },
+      ctx
+    );
+    expect(pipeRes.status).toBe("FAILED");
+    expect(pipeRes.error_code).toBe("INVALID_PATH");
+
+    // 4. Mock 适配器正常工作
+    const mockCtx: ToolContext = {
+      ...ctx,
+      mockVpsHandler: (tool, args) => `total 4\n-rw-r--r-- 1 root root 123 test.txt`,
+    };
+    const okRes = await runtime.execute("vps_list_files", { path: "/var/log" }, mockCtx);
+    expect(okRes.status).toBe("SUCCESS");
+    expect(okRes.output).toContain("test.txt");
+  });
 });

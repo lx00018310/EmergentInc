@@ -58,7 +58,10 @@ export async function registerApiRoutes(
       });
       return reply.send(res);
     } catch (err: any) {
-      return reply.status(400).send({ detail: err.message });
+      const isConflict =
+        err.message?.startsWith("WORKSPACE_LOCKED") ||
+        err.message?.startsWith("RUN_BLOCKED_UNFINALIZED_OPERATIONS");
+      return reply.status(isConflict ? 409 : 400).send({ detail: err.message });
     }
   });
 

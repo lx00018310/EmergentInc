@@ -23,6 +23,26 @@ async function bootstrap() {
   const privateDir = path.resolve(workspaceRoot, "private");
   const frontendDistDir = path.resolve(projectRoot, "frontend", "dist");
 
+  // 自动安全加载根目录 .env 环境变量配置 (如果存在)
+  const envPath = path.resolve(projectRoot, ".env");
+  if (fs.existsSync(envPath)) {
+    try {
+      const lines = fs.readFileSync(envPath, "utf-8").split("\n");
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed || trimmed.startsWith("#")) continue;
+        const eqIdx = trimmed.indexOf("=");
+        if (eqIdx > 0) {
+          const key = trimmed.substring(0, eqIdx).trim();
+          const val = trimmed.substring(eqIdx + 1).trim().replace(/^["'](.*)["']$/, "$1");
+          if (!process.env[key]) {
+            process.env[key] = val;
+          }
+        }
+      }
+    } catch {}
+  }
+
   // 确保工作区目录存在
   [liveDir, runtimeDir, ledgerDir, privateDir].forEach((d) => {
     if (!fs.existsSync(d)) fs.mkdirSync(d, { recursive: true });
@@ -62,6 +82,8 @@ async function bootstrap() {
 
   let provider: ModelProvider;
   if (isModelConfigured) {
+    const maskedKey = apiKey.length > 8 ? `${apiKey.substring(0, 6)}...${apiKey.slice(-4)}` : "***";
+    console.log(`[EmergentInc V10 Server] Model provider configured: model=${modelName}, baseUrl=${baseUrl}, apiKey=${maskedKey}`);
     provider = new OpenAICompatibleProvider({ baseUrl, apiKey });
   } else if (isMockMode) {
     console.warn("[EmergentInc V10 Server] RUNNING IN EXPLICIT --mock SANDBOX MODE");
@@ -77,7 +99,7 @@ async function bootstrap() {
       },
     };
   } else {
-    // 未配置且未指定 --mock：阻断调用，防止伪造成功
+    console.warn("[EmergentInc V10 Server] No valid MCL_API_KEY found in .env or environment. Engine runs in guarded mode (Run requests will be blocked).");
     provider = {
       async call(req) {
         throw new Error(

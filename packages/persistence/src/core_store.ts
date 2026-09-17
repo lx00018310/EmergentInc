@@ -44,6 +44,104 @@ export class CoreStore {
     return this.db.transaction(action);
   }
 
+  /**
+   * 在单一 SQLite 事务内原子完成：预算结算、模型调用记录写入、消息推进为 RESPONSE_STORED
+   */
+  public settleAndStoreModelResponse(params: {
+    callId: string;
+    runId: string;
+    pixelId: string;
+    messageId: string;
+    model: string;
+    pricingRevision?: string;
+    promptHash: string;
+    rawResponse: string;
+    normalizedResponse?: string | null;
+    usage: {
+      promptTokens: number;
+      completionTokens: number;
+      cachedTokens?: number;
+      actualTokens: number;
+      costCny: number;
+    };
+  }): void {
+    this.db.transaction(() => {
+      this.budgets.settle({
+        callId: params.callId,
+        actualTokens: params.usage.actualTokens,
+        costCny: params.usage.costCny,
+      });
+      this.modelCalls.recordModelCall({
+        callId: params.callId,
+        runId: params.runId,
+        pixelId: params.pixelId,
+        messageId: params.messageId,
+        model: params.model,
+        pricingRevision: params.pricingRevision,
+        promptHash: params.promptHash,
+        rawResponse: params.rawResponse,
+        normalizedResponse: params.normalizedResponse || null,
+        promptTokens: params.usage.promptTokens,
+        completionTokens: params.usage.completionTokens,
+        cachedTokens: params.usage.cachedTokens || 0,
+        actualTokens: params.usage.actualTokens,
+        costCny: params.usage.costCny,
+        outcome: "SUCCESS",
+        createdAt: Date.now() / 1000,
+      });
+      this.messages.updateStatus(params.messageId, "RESPONSE_STORED");
+    });
+  }
+
+  /**
+   * 检查工作区数据库是否存在未决状态 (旧 RUNNING Run、OPEN 预留、CALLING/UNKNOWN 消息、STARTED 工具)
+   */
+  public getUnfinalizedOperations(): {
+    hasUnfinalized: boolean;
+    unsettledReservations: Array<{ callId: string; runId: string; pixelId: string; amount: number; createdAt: number }>;
+    unknownCalls: Array<{ callId: string; messageId: string; outcome: string; createdAt: number }>;
+    callingMessages: Array<{ messageId: string; status: string; updatedAt: number }>;
+    pendingRuns: string[];
+    startedToolExecutions: string[];
+  } {
+    const runningRuns = (this.db.prepare("SELECT run_id FROM runs WHERE status = 'RUNNING'").all() as any[]).map(r => r.run_id);
+    const openRes = (this.db.prepare("SELECT call_id, run_id, pixel_id, amount, created_at FROM reservations WHERE status = 'OPEN'").all() as any[]).map(r => ({
+      callId: r.call_id,
+      runId: r.run_id,
+      pixelId: r.pixel_id,
+      amount: Number(r.amount),
+      createdAt: Number(r.created_at),
+    }));
+    const callingMsgs = (this.db.prepare("SELECT message_id, status, updated_at FROM messages WHERE status IN ('CALLING', 'CALL_OUTCOME_UNKNOWN', 'RESERVED')").all() as any[]).map(m => ({
+      messageId: m.message_id,
+      status: m.status,
+      updatedAt: Number(m.updated_at),
+    }));
+    const unknownCalls = (this.db.prepare("SELECT call_id, message_id, outcome, created_at FROM model_calls WHERE outcome = 'CALL_OUTCOME_UNKNOWN'").all() as any[]).map(c => ({
+      callId: c.call_id,
+      messageId: c.message_id,
+      outcome: c.outcome,
+      createdAt: Number(c.created_at),
+    }));
+    const startedTools = (this.db.prepare("SELECT operation_id FROM tool_executions WHERE status = 'STARTED'").all() as any[]).map(t => t.operation_id);
+
+    const hasUnfinalized =
+      runningRuns.length > 0 ||
+      openRes.length > 0 ||
+      callingMsgs.length > 0 ||
+      unknownCalls.length > 0 ||
+      startedTools.length > 0;
+
+    return {
+      hasUnfinalized,
+      unsettledReservations: openRes,
+      unknownCalls,
+      callingMessages: callingMsgs,
+      pendingRuns: runningRuns,
+      startedToolExecutions: startedTools,
+    };
+  }
+
   public close(): void {
     this.db.close();
   }

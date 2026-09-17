@@ -60,6 +60,73 @@ export class RunService {
     }
   }
 
+  private exitHandler?: () => void;
+
+  private getLockFilePath(): string | null {
+    if (!this.workspaceRoot) return null;
+    return path.resolve(this.workspaceRoot, ".engine.lock");
+  }
+
+  private isPidRunning(pid: number): boolean {
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch (e: any) {
+      return e.code === "EPERM";
+    }
+  }
+
+  public acquireWorkspaceLock(runId?: string): void {
+    const lockFile = this.getLockFilePath();
+    if (!lockFile) return;
+
+    if (!this.exitHandler) {
+      this.exitHandler = () => this.releaseWorkspaceLock();
+      process.once("exit", this.exitHandler);
+    }
+
+    if (fs.existsSync(lockFile)) {
+      try {
+        const content = JSON.parse(fs.readFileSync(lockFile, "utf-8"));
+        const existingPid = Number(content.pid);
+        if (existingPid && existingPid !== process.pid && this.isPidRunning(existingPid)) {
+          throw new Error(
+            `WORKSPACE_LOCKED: Workspace is locked by active process ${existingPid} (runId: ${content.runId || "unknown"})`
+          );
+        }
+      } catch (err: any) {
+        if (err.message?.startsWith("WORKSPACE_LOCKED")) {
+          throw err;
+        }
+        // 废弃无主锁，安全接管
+      }
+    }
+
+    const lockData = {
+      pid: process.pid,
+      createdAt: Date.now(),
+      runId: runId || this.currentRunId,
+    };
+    fs.writeFileSync(lockFile, JSON.stringify(lockData, null, 2), "utf-8");
+  }
+
+  public releaseWorkspaceLock(): void {
+    if (this.exitHandler) {
+      process.removeListener("exit", this.exitHandler);
+      this.exitHandler = undefined;
+    }
+    const lockFile = this.getLockFilePath();
+    if (!lockFile) return;
+    try {
+      if (fs.existsSync(lockFile)) {
+        const content = JSON.parse(fs.readFileSync(lockFile, "utf-8"));
+        if (content.pid === process.pid) {
+          fs.unlinkSync(lockFile);
+        }
+      }
+    } catch {}
+  }
+
   public getWorldRound(): number {
     if (!this.workspaceRoot) return 0;
     const worldFile = path.resolve(this.workspaceRoot, "live", "world_state.json");
@@ -92,21 +159,45 @@ export class RunService {
       ? this.store.modelCalls.countByRunId(this.currentRunId)
       : 0;
 
+    const unfinalized = this.store.getUnfinalizedOperations();
+    const hasUnfinalized =
+      unfinalized.unsettledReservations.length > 0 ||
+      unfinalized.unknownCalls.length > 0 ||
+      unfinalized.callingMessages.length > 0;
+
     let resultStatus = "READY";
     if (this.isRunning) {
       resultStatus = "RUNNING";
-    } else if (this.lastError) {
+    } else if (hasUnfinalized || this.lastStopReason === "PAUSED_RECOVERY_REQUIRED") {
+      resultStatus = "PAUSED_RECOVERY_REQUIRED";
+    } else if (this.lastError || this.lastStopReason === "INFRASTRUCTURE_FAILURE") {
       resultStatus = "FAILED";
+    } else if (
+      this.lastStopReason === "USER_STOPPED" ||
+      this.lastStopReason === "RUN_BUDGET_EXHAUSTED" ||
+      this.lastStopReason === "GLOBAL_BUDGET_EXHAUSTED" ||
+      this.lastStopReason === "READ_LOOP_THRESHOLD_REACHED"
+    ) {
+      resultStatus = "STOPPED";
+    } else if (
+      this.lastStopReason === "ROUND_LIMIT_REACHED" ||
+      this.lastStopReason === "MESSAGE_LIMIT_REACHED"
+    ) {
+      resultStatus = "COMPLETED";
     } else if (this.lastStopReason) {
-      resultStatus = this.lastStopReason === "ROUND_LIMIT_REACHED" ? "COMPLETED" : "STOPPED";
+      resultStatus = this.lastStopReason;
     }
+
+    const lastCompletedRound = this.getWorldRound();
 
     return {
       running: this.isRunning,
       run_id: this.currentRunId,
       current_loop: this.currentRunId,
       current_run: this.currentRunId,
-      current_round: this.currentRound || this.getWorldRound(),
+      current_round: lastCompletedRound,
+      last_completed_round: lastCompletedRound,
+      executing_round: this.isRunning ? this.currentRound : null,
       requested_rounds: this.requestedRounds,
       completed_rounds: this.completedRounds,
       messages_processed: this.messagesProcessed,
@@ -117,6 +208,7 @@ export class RunService {
       last_error: this.lastError,
       result_status: resultStatus,
       is_mock_mode: this.isMockMode,
+      unfinalized_operations: hasUnfinalized ? unfinalized : null,
     };
   }
 
@@ -141,7 +233,24 @@ export class RunService {
       throw new Error("global_budget_tokens must be positive.");
     }
 
+    // 1. 检查是否存在未决操作（悬挂调用、未知结果调用、未决预留）
+    const unfinalized = this.store.getUnfinalizedOperations();
+    if (
+      unfinalized.unsettledReservations.length > 0 ||
+      unfinalized.unknownCalls.length > 0 ||
+      unfinalized.callingMessages.length > 0
+    ) {
+      this.lastStopReason = "PAUSED_RECOVERY_REQUIRED";
+      throw new Error(
+        `RUN_BLOCKED_UNFINALIZED_OPERATIONS: Detected unfinalized operations in store. Manual confirmation or safe reconciliation required. ` +
+        `Summary: reservations=${unfinalized.unsettledReservations.length}, unknownCalls=${unfinalized.unknownCalls.length}, callingMessages=${unfinalized.callingMessages.length}`
+      );
+    }
+
     const runId = `run_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+
+    // 2. 工作区排他锁检查与获取
+    this.acquireWorkspaceLock(runId);
     const currentWorldRound = this.getWorldRound();
     const startRound = currentWorldRound + 1;
     const endRound = currentWorldRound + options.rounds;
@@ -217,13 +326,20 @@ export class RunService {
 
         this.currentRound = r;
         const summary: RoundSummary = await this.scheduler.executeRound(r, runId, signal);
+
+        // 如果本轮遭遇基础设施失败或被主动中断，不可计入完成轮次，不可推进世界轮次
+        if (summary.stopReason === "INFRASTRUCTURE_FAILURE" || signal.aborted) {
+          this.lastStopReason = signal.aborted ? "USER_STOPPED" : "INFRASTRUCTURE_FAILURE";
+          break;
+        }
+
         this.completedRounds++;
         this.messagesProcessed += summary.messagesProcessed;
         if (summary.messagesProcessed === 0) {
           this.idleRounds++;
         }
 
-        // 同步推进绝对世界轮次
+        // 仅在整轮完整成功执行后，才推进持久化的绝对世界轮次
         this.updateWorldRound(r);
 
         if (summary.stopReason) {
@@ -232,7 +348,12 @@ export class RunService {
         }
       }
 
-      const isStopped = signal.aborted || this.lastStopReason === "USER_STOPPED" || this.lastStopReason === "RUN_BUDGET_EXHAUSTED";
+      const isStopped =
+        signal.aborted ||
+        this.lastStopReason === "USER_STOPPED" ||
+        this.lastStopReason === "RUN_BUDGET_EXHAUSTED" ||
+        this.lastStopReason === "GLOBAL_BUDGET_EXHAUSTED" ||
+        this.lastStopReason === "READ_LOOP_THRESHOLD_REACHED";
       const isFailed = this.lastStopReason === "INFRASTRUCTURE_FAILURE";
       const finalStatus = isFailed ? "FAILED" : isStopped ? "STOPPED" : "COMPLETED";
       const finalReason = this.lastStopReason || (signal.aborted ? "USER_STOPPED" : "ROUND_LIMIT_REACHED");
@@ -245,6 +366,7 @@ export class RunService {
     } finally {
       this.isRunning = false;
       this.abortController = null;
+      this.releaseWorkspaceLock();
     }
   }
 }

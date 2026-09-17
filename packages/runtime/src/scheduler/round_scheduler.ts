@@ -158,8 +158,24 @@ export class RoundScheduler {
       };
 
       try {
-        await this.stepRunner.execute(stepInput, signal);
+        const stepResult = await this.stepRunner.execute(stepInput, signal);
         messagesProcessed++;
+
+        // 纯只读循环检测器 (计划 B4：连续 3 次相同只读且无外部输入时有界停机)
+        if (this.detectReadOnlyLoop(message, stepResult.decision)) {
+          stopReason = "READ_LOOP_THRESHOLD_REACHED";
+          this.store.messages.enqueueMessage({
+            runId,
+            roundNum: currentRound,
+            sender: "system",
+            recipient: message.recipient,
+            content:
+              "[ENGINE_HALT] READ_LOOP_THRESHOLD_REACHED: Consecutive identical read-only cycles detected without state progress. Execution halted to conserve budget.",
+            isFeedback: true,
+            sourceType: "feedback",
+          });
+          break;
+        }
       } catch (err: any) {
         if (signal?.aborted) {
           stopReason = "USER_STOPPED";
@@ -195,5 +211,71 @@ export class RoundScheduler {
       activePixelsCount: this.store.pixels.listActivePixels().length,
       stopReason,
     };
+  }
+
+  private static readonly READ_ONLY_TOOLS = new Set([
+    "list_artifacts",
+    "read_artifact",
+    "list_private_files",
+    "read_private_file",
+    "vps_list_files",
+    "vps_read_file",
+  ]);
+
+  private readOnlyStreaks: Map<string, { count: number; lastOpHash: string }> = new Map();
+
+  private detectReadOnlyLoop(message: any, decision: any): boolean {
+    const pixelId = message.recipient;
+
+    // 1. 检查是否有实质写入副作用或向其他邻居发消息
+    const hasEnergyTransfer = Array.isArray(decision.energy_transfer) && decision.energy_transfer.length > 0;
+    const hasReproduction = decision.reproduce !== null && decision.reproduce !== undefined;
+    const hasExternalRouting =
+      Array.isArray(decision.send_to) &&
+      decision.send_to.some((t: string) => t !== "SELF" && t !== "STOP" && t !== pixelId);
+    const operations = Array.isArray(decision.operations) ? decision.operations : [];
+    const hasWriteTools = operations.some((op: any) => !RoundScheduler.READ_ONLY_TOOLS.has(op.tool));
+
+    const isPureReadOnly =
+      !hasEnergyTransfer &&
+      !hasReproduction &&
+      !hasExternalRouting &&
+      !hasWriteTools &&
+      (operations.length > 0 || decision.environment_read);
+
+    if (!isPureReadOnly) {
+      this.readOnlyStreaks.delete(pixelId);
+      return false;
+    }
+
+    // 2. 如果收到来自外部邻居的输入刺激，重置计数器
+    const isExternalStimulus =
+      message.sender !== "system" &&
+      message.sender !== pixelId &&
+      message.sender !== "environment";
+
+    if (isExternalStimulus) {
+      this.readOnlyStreaks.delete(pixelId);
+      return false;
+    }
+
+    // 3. 计算本次操作签名
+    const opSignature = JSON.stringify({
+      ops: operations.map((o: any) => ({ tool: o.tool, args: o.args })),
+      env: Boolean(decision.environment_read),
+    });
+
+    const streak = this.readOnlyStreaks.get(pixelId);
+    if (streak && streak.lastOpHash === opSignature) {
+      streak.count++;
+      if (streak.count >= 3) {
+        this.readOnlyStreaks.delete(pixelId);
+        return true;
+      }
+    } else {
+      this.readOnlyStreaks.set(pixelId, { count: 1, lastOpHash: opSignature });
+    }
+
+    return false;
   }
 }

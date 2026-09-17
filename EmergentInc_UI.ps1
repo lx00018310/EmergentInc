@@ -14,4 +14,4 @@ if (-not $nodeCmd) {
 }
 
 Start-Process "http://127.0.0.1:8765"
-node apps/server/dist/main.js
+node apps/server/dist/main.js $args

@@ -31,10 +31,17 @@ export class ToolRegistry {
    * 将当前所有已启用的工具渲染为 Prompt 上下文目录
    */
   public renderCatalogForPrompt(): string {
-    const lines = ["[TOOLS_CATALOG]", "当前环境已启用的可用工具规范如下："];
+    const lines = ["## Available Tools", "当前环境已启用的可用工具列表及参数格式如下："];
     for (const { definition } of this.tools.values()) {
       if (definition.enabled) {
-        lines.push(`- **\`${definition.name}\`** (${definition.effect}): ${definition.description}`);
+        let paramsDesc = "{}";
+        if (definition.input_schema && definition.input_schema.properties) {
+          const props = Object.entries(definition.input_schema.properties)
+            .map(([k, v]: [string, any]) => `${k}${definition.input_schema.required?.includes(k) ? " (必填)" : ""}: ${v.description || v.type}`)
+            .join(", ");
+          paramsDesc = props ? `{ ${props} }` : "{}";
+        }
+        lines.push(`- **\`${definition.name}\`** (${definition.effect}): ${definition.description} -> 示例参数: \`${paramsDesc}\``);
       }
     }
     return lines.join("\n");

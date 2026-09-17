@@ -55,16 +55,63 @@ export class OpenAICompatibleProvider implements ModelProvider {
         }),
         signal: controller.signal,
       });
-    } catch (err: any) {
-      clearTimeout(timeoutId);
-      if (err?.name === "AbortError") {
-        // 超时属于结果不明（CALL_OUTCOME_UNKNOWN），不能确知远程是否已计费
+
+      // 处理 HTTP 状态码
+      if (!response.ok) {
+        const errorText = await response.text().catch(() => "");
+        if (response.status === 401 || response.status === 403) {
+          throw new InfrastructureFailureError(
+            `Authentication failed (${response.status}): ${errorText}`
+          );
+        }
+        if (response.status >= 500) {
+          // 5xx 网关超时等场景，请求已被网关接收，结果无法确知是否计费
+          throw new OutcomeUnknownError(
+            `Remote server error / gateway timeout (${response.status}): ${errorText}`
+          );
+        }
+        throw new InfrastructureFailureError(
+          `Model API request rejected (${response.status}): ${errorText}`
+        );
+      }
+
+      const data: any = await response.json().catch((err) => {
         throw new OutcomeUnknownError(
-          `Model call timed out after ${this.timeoutMs}ms: ${err.message}`,
+          `Failed to parse JSON response from model endpoint: ${err.message}`,
+          err
+        );
+      });
+
+      const choice = data.choices?.[0];
+      const rawText = choice?.message?.content || "";
+      const usage = data.usage;
+
+      return {
+        rawText,
+        usage: usage
+          ? {
+              promptTokens: typeof usage.prompt_tokens === "number" ? usage.prompt_tokens : 0,
+              completionTokens: typeof usage.completion_tokens === "number" ? usage.completion_tokens : 0,
+              cachedTokens:
+                typeof usage.prompt_tokens_details?.cached_tokens === "number"
+                  ? usage.prompt_tokens_details.cached_tokens
+                  : (typeof usage.cached_tokens === "number" ? usage.cached_tokens : 0),
+            }
+          : undefined,
+      };
+    } catch (err: any) {
+      if (err instanceof OutcomeUnknownError || err instanceof InfrastructureFailureError) {
+        throw err;
+      }
+      const isAbort = controller.signal.aborted || err?.name === "AbortError" || String(err?.message || "").includes("aborted");
+      const reasonMsg = controller.signal.reason?.message || err?.message || "";
+      if (isAbort) {
+        throw new OutcomeUnknownError(
+          `Model call aborted or timed out during request/stream (${this.timeoutMs}ms): ${reasonMsg}`,
           err
         );
       }
-      // 网络拒绝连接、DNS 解析失败等属于基础设施硬失败
+      // 连接拒绝、DNS 未能解析等明确未发出/未连接错误
       throw new InfrastructureFailureError(
         `Infrastructure failure connecting to model endpoint: ${err.message}`,
         err
@@ -72,48 +119,5 @@ export class OpenAICompatibleProvider implements ModelProvider {
     } finally {
       clearTimeout(timeoutId);
     }
-
-    // 处理 HTTP 状态码
-    if (!response.ok) {
-      const errorText = await response.text().catch(() => "");
-      if (response.status === 401 || response.status === 403) {
-        throw new InfrastructureFailureError(
-          `Authentication failed (${response.status}): ${errorText}`
-        );
-      }
-      if (response.status >= 500) {
-        throw new InfrastructureFailureError(
-          `Remote server error (${response.status}): ${errorText}`
-        );
-      }
-      throw new InfrastructureFailureError(
-        `Model API request rejected (${response.status}): ${errorText}`
-      );
-    }
-
-    const data: any = await response.json().catch((err) => {
-      throw new OutcomeUnknownError(
-        `Failed to parse JSON response from model endpoint: ${err.message}`,
-        err
-      );
-    });
-
-    const choice = data.choices?.[0];
-    const rawText = choice?.message?.content || "";
-    const usage = data.usage;
-
-    return {
-      rawText,
-      usage: usage
-        ? {
-            promptTokens: usage.prompt_tokens || 0,
-            completionTokens: usage.completion_tokens || 0,
-            cachedTokens:
-              usage.prompt_tokens_details?.cached_tokens ||
-              usage.cached_tokens ||
-              0,
-          }
-        : undefined,
-    };
   }
 }

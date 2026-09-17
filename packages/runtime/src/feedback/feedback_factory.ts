@@ -58,6 +58,42 @@ export class FeedbackFactory {
     };
   }
 
+  public static createBatchToolExecutionFeedback(
+    pixelId: string,
+    round: number,
+    runId: string | null,
+    executions: Array<{ tool: string; status: string; outputOrError: any }>
+  ): EnqueueMessageParams {
+    if (executions.length === 1) {
+      return this.createToolExecutionFeedback(
+        pixelId,
+        round,
+        runId,
+        executions[0].tool,
+        executions[0].status,
+        executions[0].outputOrError
+      );
+    }
+    const lines = [`[ENGINE_FEEDBACK] BATCH_TOOL_EXECUTIONS (Total: ${executions.length}):`];
+    for (let i = 0; i < executions.length; i++) {
+      const e = executions[i];
+      const formatted =
+        typeof e.outputOrError === "object"
+          ? JSON.stringify(e.outputOrError)
+          : String(e.outputOrError);
+      lines.push(`${i + 1}. ${e.tool} -> ${e.status}: ${formatted}`);
+    }
+    return {
+      runId,
+      roundNum: round,
+      sender: "system",
+      recipient: pixelId,
+      content: lines.join("\n"),
+      isFeedback: true,
+      sourceType: "feedback",
+    };
+  }
+
   public static createTransferFailureFeedback(
     pixelId: string,
     round: number,

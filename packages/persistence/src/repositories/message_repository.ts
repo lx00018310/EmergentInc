@@ -12,7 +12,32 @@ export class MessageRepository {
     const hop = params.hop ?? 1;
     const status: MessageStatus = params.status ?? "QUEUED";
     const isFeedback = params.isFeedback ? 1 : 0;
-    const sourceType = params.sourceType ?? "pixel";
+    let sourceType = params.sourceType;
+    if (!sourceType) {
+      if (params.sender === "system") {
+        sourceType = "system";
+      } else if (params.sender === "environment") {
+        sourceType = "environment";
+      } else {
+        sourceType = "pixel";
+      }
+    }
+
+    // 幂等去重：同元胞同内容的未消费 environment 消息或未消费 SELF 消息直接复用，防止队列堆积
+    if (
+      (sourceType === "environment" || (params.sender === params.recipient && sourceType === "pixel")) &&
+      status === "QUEUED"
+    ) {
+      const existing = this.db.prepare(`
+        SELECT * FROM messages
+        WHERE recipient = ? AND sender = ? AND content = ? AND status = 'QUEUED'
+        LIMIT 1
+      `).get(params.recipient, params.sender, params.content) as any;
+
+      if (existing) {
+        return this.mapRowToEnvelope(existing);
+      }
+    }
 
     const stmt = this.db.prepare(`
       INSERT INTO messages (
@@ -75,7 +100,7 @@ export class MessageRepository {
    * 调度原则：
    * 1. 只领取当前轮 (round_num <= round)
    * 2. 状态为 QUEUED 或 RESPONSE_STORED (待继续完成副作用)
-   * 3. 排序：is_feedback DESC (控制反馈优先插入队首批次), created_at ASC (严格 FIFO)
+   * 3. 排序：未决恢复的 RESPONSE_STORED 最优先(0)，关键系统控制消息次之(1)，工具/环境反馈与普通消息按 FIFO(2) 排序，防止普通消息饥饿
    * 4. 领取后原子更新为 PROCESSING
    */
   public claimNext(currentRound: number): MessageEnvelope | null {
@@ -84,7 +109,13 @@ export class MessageRepository {
       const selectStmt = this.db.prepare(`
         SELECT * FROM messages
         WHERE round_num <= ? AND status IN ('QUEUED', 'RESPONSE_STORED')
-        ORDER BY is_feedback DESC, created_at ASC
+        ORDER BY 
+          (CASE 
+            WHEN status = 'RESPONSE_STORED' THEN 0 
+            WHEN source_type = 'system' THEN 1 
+            ELSE 2 
+          END) ASC, 
+          created_at ASC
         LIMIT 1
       `);
 
