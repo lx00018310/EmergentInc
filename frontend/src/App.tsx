@@ -21,6 +21,7 @@ import {
   updateTemporaryPrompt,
 } from './api/prompts';
 import { fetchPixelDocument, fetchPixelArtifact, getArtifactDownloadUrl } from './api/files';
+import { reconcileRun } from './api/run';
 import type { PromptDto } from './api/types';
 
 export const App: React.FC = () => {
@@ -173,6 +174,21 @@ export const App: React.FC = () => {
 
   const handleHoverPixel = useCallback((_id: string | null) => {}, []);
 
+  const handleReconcile = async () => {
+    addLogMessage('warn', '[RECONCILE] 正在执行系统安全对账自愈...');
+    try {
+      const res = await reconcileRun();
+      addLogMessage(
+        'success',
+        `[RECONCILE SUCCESS] 对账成功：恢复预留 ${res.reconciled.reconciledReservations} 笔，重入队消息 ${res.reconciled.reconciledMessages} 条，归档调用 ${res.reconciled.reconciledCalls} 笔。`
+      );
+      await refreshImmediately();
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      addLogMessage('error', `[RECONCILE FAILED] 对账失败: ${msg}`);
+    }
+  };
+
   return (
     <>
       <RunStatus world={world} runStatus={runStatus} audit={audit} />
@@ -188,6 +204,7 @@ export const App: React.FC = () => {
             onOpenToolExecutions={() => setIsToolExecutionsModalOpen(true)}
             onLogMessage={addLogMessage}
             onRefresh={refreshImmediately}
+            onReconcile={handleReconcile}
           />
 
           <details className="panel-card context-guide">
@@ -201,7 +218,12 @@ export const App: React.FC = () => {
             </ol>
           </details>
 
-          <ConsolePanel messages={messages} audit={audit} runStatus={runStatus} />
+          <ConsolePanel
+            messages={messages}
+            audit={audit}
+            runStatus={runStatus}
+            onReconcile={handleReconcile}
+          />
 
           <PromptEditor
             cardId="genesis-card"

@@ -501,12 +501,35 @@ export async function registerApiRoutes(
   });
 
   server.get("/audit/workspace", async (_req, reply) => {
-    if (runService.getStatus().running) {
+    const status = runService.getStatus();
+    if (status.running) {
       return reply.send({
         audit_status: "DEFERRED_RUNNING",
         allowed_to_start: false,
         recovery_required: false,
         block_reasons: ["RUN_IN_PROGRESS"],
+      });
+    }
+    if (status.unfinalized_operations || status.result_status === "PAUSED_RECOVERY_REQUIRED") {
+      const ops = status.unfinalized_operations;
+      const reasons: string[] = [];
+      if (ops?.unsettledReservations?.length) {
+        reasons.push(`UNSETTLED_RESERVATIONS: ${ops.unsettledReservations.length} 笔未决预留`);
+      }
+      if (ops?.unknownCalls?.length) {
+        reasons.push(`UNKNOWN_CALLS: ${ops.unknownCalls.length} 笔未知结果调用`);
+      }
+      if (ops?.callingMessages?.length) {
+        reasons.push(`CALLING_MESSAGES: ${ops.callingMessages.length} 条未决消息`);
+      }
+      if (reasons.length === 0) {
+        reasons.push("PAUSED_RECOVERY_REQUIRED: 存在未决操作需要安全对账自愈");
+      }
+      return reply.send({
+        audit_status: "RECOVERY_REQUIRED",
+        allowed_to_start: false,
+        recovery_required: true,
+        block_reasons: reasons,
       });
     }
     return reply.send({

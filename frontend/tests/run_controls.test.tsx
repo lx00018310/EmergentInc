@@ -159,4 +159,28 @@ describe('RunControls Component', () => {
     expect(runApi.startRun).not.toHaveBeenCalled();
     expect(onLogMessage).toHaveBeenCalledWith('warn', expect.stringContaining('未识别指令'));
   });
+
+  it('点击“安全对账”按钮，触发 onReconcile 回调', async () => {
+    const onReconcile = vi.fn().mockResolvedValue(undefined);
+    render(
+      <RunControls
+        runStatus={null}
+        onOpenEnvironment={vi.fn()}
+        onOpenTools={vi.fn()}
+        onOpenPrivateFiles={vi.fn()}
+        onOpenToolExecutions={vi.fn()}
+        onLogMessage={onLogMessage}
+        onRefresh={onRefresh}
+        onReconcile={onReconcile}
+      />
+    );
+
+    const reconcileBtn = screen.getByText('安全对账');
+    await act(async () => {
+      fireEvent.click(reconcileBtn);
+    });
+
+    expect(onReconcile).toHaveBeenCalledTimes(1);
+  });
 });
+

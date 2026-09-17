@@ -100,6 +100,14 @@ export interface RunStatusDto {
   current_run?: string | null;
   last_error: string | null;
   result_status: string | null;
+  unfinalized_operations?: {
+    hasUnfinalized?: boolean;
+    unsettledReservations?: Array<{ callId: string; runId: string; pixelId: string; amount: number; createdAt: number }>;
+    unknownCalls?: Array<{ callId: string; messageId: string; outcome: string; createdAt: number }>;
+    callingMessages?: Array<{ messageId: string; status: string; updatedAt: number }>;
+    pendingRuns?: string[];
+    startedToolExecutions?: string[];
+  } | null;
 }
 
 export interface RunStartRequest {

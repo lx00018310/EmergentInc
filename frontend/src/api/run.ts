@@ -17,3 +17,21 @@ export async function stopRun(): Promise<Record<string, unknown>> {
     method: 'POST',
   });
 }
+
+export interface ReconcileResultDto {
+  status: string;
+  reconciled: {
+    reconciledRuns: number;
+    reconciledReservations: number;
+    reconciledMessages: number;
+    reconciledCalls: number;
+    reconciledTools: number;
+  };
+}
+
+export async function reconcileRun(): Promise<ReconcileResultDto> {
+  return apiRequest<ReconcileResultDto>('/api/run/reconcile', {
+    method: 'POST',
+  });
+}
+

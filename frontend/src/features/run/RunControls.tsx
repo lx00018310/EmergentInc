@@ -12,6 +12,7 @@ export interface RunControlsProps {
   onOpenToolExecutions: () => void;
   onLogMessage: (type: 'info' | 'success' | 'warn' | 'error', text: string) => void;
   onRefresh: () => Promise<void>;
+  onReconcile?: () => Promise<void>;
 }
 
 export const RunControls: React.FC<RunControlsProps> = ({
@@ -22,6 +23,7 @@ export const RunControls: React.FC<RunControlsProps> = ({
   onOpenToolExecutions,
   onLogMessage,
   onRefresh,
+  onReconcile,
 }) => {
   const [command, setCommand] = useState<string>('');
   const [runBudget, setRunBudget] = useState<number>(100000);
@@ -227,6 +229,20 @@ export const RunControls: React.FC<RunControlsProps> = ({
         <button className="btn btn-sm" onClick={onOpenToolExecutions}>
           执行记录
         </button>
+        {onReconcile && (
+          <button
+            type="button"
+            className="btn btn-sm"
+            style={{
+              borderColor: '#fc8181',
+              color: '#fc8181',
+            }}
+            disabled={isRunning || isSubmitting}
+            onClick={() => onReconcile()}
+          >
+            安全对账
+          </button>
+        )}
       </div>
     </div>
   );

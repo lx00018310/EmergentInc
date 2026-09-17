@@ -23,7 +23,11 @@ export const RunStatus: React.FC<RunStatusProps> = ({ world, runStatus, audit })
   if (runStatus?.running) {
     systemHealth = 'RUNNING';
     systemHealthColor = 'var(--accent-blue)';
-  } else if (audit?.recovery_required || runStatus?.result_status === 'RECOVERY_REQUIRED') {
+  } else if (
+    audit?.recovery_required ||
+    runStatus?.result_status === 'RECOVERY_REQUIRED' ||
+    runStatus?.result_status === 'PAUSED_RECOVERY_REQUIRED'
+  ) {
     systemHealth = 'RECOVERY REQUIRED';
     systemHealthColor = 'var(--accent-red)';
   } else if (runStatus?.last_error) {
