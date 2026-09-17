@@ -1,13 +1,17 @@
-# EmergentInc V5 Visual Control Deck PowerShell Launcher
+# EmergentInc V10 Visual Control Deck PowerShell Launcher
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+Set-Location $PSScriptRoot
+
 Write-Host "========================================================" -ForegroundColor Cyan
-Write-Host " Starting EmergentInc V5 Visual Control Deck..." -ForegroundColor Cyan
+Write-Host " Starting EmergentInc V10 Visual Control Deck..." -ForegroundColor Cyan
 Write-Host "========================================================" -ForegroundColor Cyan
 
-$pythonCmd = Get-Command python -ErrorAction SilentlyContinue
-if (-not $pythonCmd) {
-    Write-Host "[ERROR] Python not found in PATH!" -ForegroundColor Red
+$nodeCmd = Get-Command node -ErrorAction SilentlyContinue
+if (-not $nodeCmd) {
+    Write-Host "[ERROR] Node.js not found in PATH!" -ForegroundColor Red
     pause
     exit 1
 }
 
-python -m emergentinc.ui.app
+Start-Process "http://127.0.0.1:8765"
+node apps/server/dist/main.js

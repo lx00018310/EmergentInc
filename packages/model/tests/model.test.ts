@@ -1,0 +1,142 @@
+import { describe, it, expect } from "vitest";
+import {
+  PromptBuilder,
+  CognitiveIsolationViolation,
+  repairMissingJsonClosers,
+  parseAndNormalizeResponse,
+  UsageMeter,
+} from "../src/index.js";
+import * as fs from "node:fs";
+import * as path from "node:path";
+import * as crypto from "node:crypto";
+
+describe("Model: Prompt Assembly & Hashing", () => {
+  const hashFixturePath = path.resolve(
+    __dirname,
+    "../../../tests/fixtures/golden/prompt_hash_vector.json"
+  );
+  const hashFixture = JSON.parse(fs.readFileSync(hashFixturePath, "utf-8"));
+
+  it("should match SHA-256 hash vector from Python baseline", () => {
+    const text = hashFixture.genesis_initial_content;
+    const computedHash = crypto.createHash("sha256").update(text, "utf8").digest("hex");
+    expect(computedHash).toBe(hashFixture.genesis_initial_sha256);
+  });
+
+  it("should enforce strict 3-input cognitive isolation", () => {
+    const builder = new PromptBuilder();
+    const validInputs = {
+      state: { energy: 100 },
+      pixelMd: "mind",
+      messageMd: "msg",
+    };
+
+    const { request, promptHash, estimatedTokens } = builder.prepare(validInputs);
+    expect(request.promptHash).toBe(promptHash);
+    expect(estimatedTokens).toBeGreaterThan(0);
+
+    // 违规传入第 4 项
+    const invalidInputs: any = {
+      ...validInputs,
+      worldState: { global: "leak" },
+    };
+    expect(() => builder.prepare(invalidInputs)).toThrow(CognitiveIsolationViolation);
+  });
+});
+
+describe("Model: JSON Repair & Response Parser", () => {
+  it("should deterministically repair missing closing braces and brackets", () => {
+    const broken = '{"pixel_md": "mind", "operations": [{"tool": "read_artifact", "args": {}';
+    const repaired = repairMissingJsonClosers(broken);
+    expect(repaired).not.toBeNull();
+    const parsed = JSON.parse(repaired!);
+    expect(parsed.pixel_md).toBe("mind");
+    expect(parsed.operations[0].tool).toBe("read_artifact");
+  });
+
+  it("should parse markdown block formatted json", () => {
+    const raw = `
+Here is my decision:
+\`\`\`json
+{
+  "pixel_md": "Updated mind",
+  "environment_read": true,
+  "operations": [
+    { "tool": "save_artifact", "args": { "filename": "test.txt", "content": "hi" } }
+  ],
+  "energy_transfer": [
+    { "target": "1_0_0", "amount": 50 }
+  ],
+  "reproduce": { "direction": "UP", "initial_energy": 200 },
+  "send_to": ["1_0_0"],
+  "message_md": "Hello neighbor"
+}
+\`\`\`
+Have a great day!
+    `;
+
+    const decision = parseAndNormalizeResponse(raw, "fallback");
+    expect(decision.pixel_md).toBe("Updated mind");
+    expect(decision.environment_read).toBe(true);
+    expect(decision.operations).toHaveLength(1);
+    expect(decision.operations![0].tool).toBe("save_artifact");
+    expect(decision.energy_transfer).toHaveLength(1);
+    expect(decision.energy_transfer![0]).toEqual({ target: "1_0_0", amount: 50 });
+    expect(decision.reproduce).toEqual({ direction: "UP", initial_energy: 200 });
+    expect(decision.send_to).toBe("1_0_0");
+    expect(decision.message_md).toBe("Hello neighbor");
+  });
+
+  it("should truncate operations to maximum 3", () => {
+    const raw = JSON.stringify({
+      operations: [
+        { tool: "tool_1" },
+        { tool: "tool_2" },
+        { tool: "tool_3" },
+        { tool: "tool_4" },
+      ],
+    });
+
+    const decision = parseAndNormalizeResponse(raw, "fallback");
+    expect(decision.operations).toHaveLength(3);
+    expect(decision.operations!.map((o) => o.tool)).toEqual(["tool_1", "tool_2", "tool_3"]);
+  });
+
+  it("should fallback to default pixel_md when missing or empty", () => {
+    const raw = JSON.stringify({ message_md: "ping" });
+    const decision = parseAndNormalizeResponse(raw, "fallback_content");
+    expect(decision.pixel_md).toBe("fallback_content");
+    expect(decision.send_to).toBe("SELF");
+  });
+});
+
+describe("Model: Usage Meter & Pricing", () => {
+  it("should accurately compute token cost in CNY", () => {
+    const meter = new UsageMeter({
+      models: {
+        "gpt-4o-mini": {
+          input_cost_per_million: 1.5,
+          output_cost_per_million: 6.0,
+          cached_cost_per_million: 0.75,
+        },
+      },
+    });
+
+    const usage = meter.calculateUsage({
+      model: "gpt-4o-mini",
+      promptTokens: 1000,
+      cachedTokens: 200,
+      completionTokens: 500,
+    });
+
+    // nonCached = 800 -> 800 * 1.5 / 1e6 = 0.0012
+    // cached = 200 -> 200 * 0.75 / 1e6 = 0.00015
+    // output = 500 -> 500 * 6.0 / 1e6 = 0.003
+    // total = 0.00435
+    expect(usage.promptTokens).toBe(1000);
+    expect(usage.completionTokens).toBe(500);
+    expect(usage.cachedTokens).toBe(200);
+    expect(usage.actualTokens).toBe(1500);
+    expect(usage.costCny).toBe(0.00435);
+  });
+});

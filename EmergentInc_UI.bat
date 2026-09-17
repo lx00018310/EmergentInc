@@ -1,18 +1,23 @@
 @echo off
 chcp 65001 > nul
-title EmergentInc V5 Visual Control Deck
+setlocal enabledelayedexpansion
+title EmergentInc V10 Small Runtime Console
 echo ========================================================
-echo  Starting EmergentInc V5 Visual Control Deck...
+echo  Starting EmergentInc V10 Visual Control Deck...
 echo ========================================================
 
-where python >nul 2>nul
+cd /d "%~dp0"
+
+where node >nul 2>nul
 if %errorlevel% neq 0 (
-    echo [ERROR] Python not found in PATH! Please install Python 3.10+.
+    echo [ERROR] Node.js not found in PATH! Please install Node.js 22+.
     pause
     exit /b 1
 )
 
-python -m emergentinc.ui.app
+start "" http://127.0.0.1:8765
+
+node apps/server/dist/main.js
 if %errorlevel% neq 0 (
     echo.
     echo [SERVER STOPPED OR ERRORED]

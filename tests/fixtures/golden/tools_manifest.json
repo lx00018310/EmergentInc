@@ -1,0 +1,366 @@
+[
+  {
+    "name": "save_artifact",
+    "description": "在当前元胞的隔离交付物空间中保存一个文本文件 (覆盖或创建)。",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "filename": {
+          "type": "string",
+          "description": "交付物文件名，禁止路径分隔符或 .."
+        },
+        "content": {
+          "type": "string",
+          "description": "要保存的文本内容"
+        }
+      },
+      "required": [
+        "filename",
+        "content"
+      ],
+      "additionalProperties": false
+    },
+    "effect": "write",
+    "timeout_seconds": 30.0,
+    "enabled": true
+  },
+  {
+    "name": "read_artifact",
+    "description": "读取当前元胞隔离空间中的交付物文件。文本文件返回文本片段，二进制文件返回类型与大小信息。",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "filename": {
+          "type": "string",
+          "description": "文件名"
+        },
+        "pixel_id": {
+          "type": "string",
+          "description": "当前元胞标识 (跨元胞读取将被严格拒绝)"
+        },
+        "offset": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "读取起始字符偏移"
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 8000,
+          "description": "读取字符上限"
+        }
+      },
+      "required": [
+        "filename"
+      ],
+      "additionalProperties": false
+    },
+    "effect": "read",
+    "timeout_seconds": 30.0,
+    "enabled": true
+  },
+  {
+    "name": "list_artifacts",
+    "description": "列出当前元胞隔离交付物空间中的所有文件列表。",
+    "input_schema": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    },
+    "effect": "read",
+    "timeout_seconds": 30.0,
+    "enabled": true
+  },
+  {
+    "name": "list_private_files",
+    "description": "安全列出 workspace/private 私有目录中的文件及目录列表 (不包含文件内容)。",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string",
+          "description": "私有目录内的相对子路径，默认根目录"
+        },
+        "offset": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "分页偏移"
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100,
+          "description": "返回数量上限"
+        }
+      },
+      "additionalProperties": false
+    },
+    "effect": "read",
+    "timeout_seconds": 30.0,
+    "enabled": true
+  },
+  {
+    "name": "read_private_file",
+    "description": "安全读取 workspace/private 私有目录中的文本文件。对已知 VPS 凭据配置文件会自动脱敏投影，绝不回显密码或私钥。",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string",
+          "description": "私有文件路径"
+        },
+        "offset": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "字符起始偏移"
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 8000,
+          "description": "读取字符上限"
+        }
+      },
+      "required": [
+        "path"
+      ],
+      "additionalProperties": false
+    },
+    "effect": "read",
+    "timeout_seconds": 30.0,
+    "enabled": true
+  },
+  {
+    "name": "inspect_private_image",
+    "description": "调用视觉多模态模型观察并理解 workspace/private 目录中的图片文件，返回实际分析文本。",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string",
+          "description": "私有图片文件路径 (jpg, png, webp 等)"
+        },
+        "question": {
+          "type": "string",
+          "description": "针对该图片的问题或观察要求"
+        }
+      },
+      "required": [
+        "path"
+      ],
+      "additionalProperties": false
+    },
+    "effect": "read",
+    "timeout_seconds": 30.0,
+    "enabled": true
+  },
+  {
+    "name": "vps_exec",
+    "description": "在已配置的 VPS 服务器上非交互执行 Linux Shell 命令，捕获 stdout/stderr/exit_code。可用于安装环境、部署和启停服务等。",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "profile_id": {
+          "type": "string",
+          "description": "VPS 配置标识，默认 'owner_vps'"
+        },
+        "command": {
+          "type": "string",
+          "description": "要执行的 Shell 命令行"
+        },
+        "cwd": {
+          "type": "string",
+          "description": "远程工作目录"
+        },
+        "timeout_seconds": {
+          "type": "number",
+          "minimum": 1,
+          "maximum": 600,
+          "description": "执行超时时间 (秒)"
+        }
+      },
+      "required": [
+        "command"
+      ],
+      "additionalProperties": false
+    },
+    "effect": "write",
+    "timeout_seconds": 60.0,
+    "enabled": true
+  },
+  {
+    "name": "vps_list_files",
+    "description": "通过 SFTP 查看已配置 VPS 服务器上的远程目录文件列表。",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "profile_id": {
+          "type": "string",
+          "description": "VPS 配置标识，默认 'owner_vps'"
+        },
+        "path": {
+          "type": "string",
+          "description": "远程目录路径，默认为当前登录目录"
+        },
+        "offset": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "分页偏移"
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 200,
+          "description": "返回条目上限"
+        }
+      },
+      "additionalProperties": false
+    },
+    "effect": "read",
+    "timeout_seconds": 30.0,
+    "enabled": true
+  },
+  {
+    "name": "vps_read_file",
+    "description": "通过 SFTP 读取已配置 VPS 服务器上的远程文件内容。",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "profile_id": {
+          "type": "string",
+          "description": "VPS 配置标识，默认 'owner_vps'"
+        },
+        "path": {
+          "type": "string",
+          "description": "远程文件绝对或相对路径"
+        },
+        "offset": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "字符起始偏移"
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 8000,
+          "description": "读取字符上限"
+        }
+      },
+      "required": [
+        "path"
+      ],
+      "additionalProperties": false
+    },
+    "effect": "read",
+    "timeout_seconds": 30.0,
+    "enabled": true
+  },
+  {
+    "name": "vps_write_file",
+    "description": "通过 SFTP 写入远程文本文件到已配置的 VPS 服务器。默认不覆盖现有文件。",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "profile_id": {
+          "type": "string",
+          "description": "VPS 配置标识，默认 'owner_vps'"
+        },
+        "path": {
+          "type": "string",
+          "description": "远程文件路径"
+        },
+        "content": {
+          "type": "string",
+          "description": "要写入的文本内容"
+        },
+        "overwrite": {
+          "type": "boolean",
+          "description": "若文件已存在是否覆盖，默认 false"
+        }
+      },
+      "required": [
+        "path",
+        "content"
+      ],
+      "additionalProperties": false
+    },
+    "effect": "write",
+    "timeout_seconds": 30.0,
+    "enabled": true
+  },
+  {
+    "name": "vps_upload_file",
+    "description": "通过 SFTP 将本地交付物或 private 私有文件直接上传至 VPS 服务器 (支持文本与二进制图片等)。",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "profile_id": {
+          "type": "string",
+          "description": "VPS 配置标识，默认 'owner_vps'"
+        },
+        "source_kind": {
+          "type": "string",
+          "enum": [
+            "artifact",
+            "private"
+          ],
+          "description": "源文件来源空间"
+        },
+        "source_path": {
+          "type": "string",
+          "description": "本地源相对路径"
+        },
+        "remote_path": {
+          "type": "string",
+          "description": "远程目标路径"
+        },
+        "overwrite": {
+          "type": "boolean",
+          "description": "若远程文件已存在是否覆盖，默认 false"
+        }
+      },
+      "required": [
+        "source_kind",
+        "source_path",
+        "remote_path"
+      ],
+      "additionalProperties": false
+    },
+    "effect": "write",
+    "timeout_seconds": 30.0,
+    "enabled": true
+  },
+  {
+    "name": "vps_download_file",
+    "description": "通过 SFTP 从 VPS 服务器下载文件并保存到当前元胞隔离交付物空间中。",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "profile_id": {
+          "type": "string",
+          "description": "VPS 配置标识，默认 'owner_vps'"
+        },
+        "remote_path": {
+          "type": "string",
+          "description": "远程源文件路径"
+        },
+        "artifact_filename": {
+          "type": "string",
+          "description": "保存到本地交付物空间的文件名 (禁止路径分隔符)"
+        },
+        "overwrite": {
+          "type": "boolean",
+          "description": "若本地交付物已存在是否覆盖，默认 false"
+        }
+      },
+      "required": [
+        "remote_path",
+        "artifact_filename"
+      ],
+      "additionalProperties": false
+    },
+    "effect": "write",
+    "timeout_seconds": 30.0,
+    "enabled": true
+  }
+]

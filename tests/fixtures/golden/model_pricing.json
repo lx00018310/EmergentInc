@@ -1,0 +1,70 @@
+{
+  "currency": "CNY",
+  "base_ratio_cny_per_million_tokens": 1.0,
+  "default_pricing": {
+    "input_cost_per_million": 1.5,
+    "cached_input_cost_per_million": 0.75,
+    "output_cost_per_million": 6.0,
+    "effective_from": "2026-09-01T00:00:00Z"
+  },
+  "models": {
+    "default": {
+      "input_cost_per_million": 1.5,
+      "cached_input_cost_per_million": 0.75,
+      "output_cost_per_million": 6.0,
+      "effective_from": "2026-09-01T00:00:00Z"
+    },
+    "mock": {
+      "input_cost_per_million": 1.0,
+      "cached_input_cost_per_million": 0.5,
+      "output_cost_per_million": 1.0,
+      "effective_from": "2026-09-01T00:00:00Z"
+    },
+    "gpt-4o-mini": {
+      "input_cost_per_million": 1.1,
+      "cached_input_cost_per_million": 0.55,
+      "output_cost_per_million": 4.4,
+      "effective_from": "2026-09-01T00:00:00Z"
+    },
+    "gpt-4o": {
+      "input_cost_per_million": 18.0,
+      "cached_input_cost_per_million": 9.0,
+      "output_cost_per_million": 72.0,
+      "effective_from": "2026-09-01T00:00:00Z"
+    },
+    "glm-5.3-flash": {
+      "billing_mode": "subscription_quota_amortized",
+      "plan_price_cny": 50.0,
+      "plan_quota_tokens": 2000000000,
+      "input_cost_per_million": 0.025,
+      "cached_input_cost_per_million": 0.025,
+      "output_cost_per_million": 0.025,
+      "effective_from": "2026-09-16T00:00:00+08:00",
+      "pricing_note": "50 CNY Coding Plan / 2,000M tokens; uniformly amortized because no token-type weighting was provided."
+    },
+    "gemini-3.8-flash-high": {
+      "input_cost_per_million": 0.5,
+      "cached_input_cost_per_million": 0.25,
+      "output_cost_per_million": 2.0,
+      "effective_from": "2026-09-01T00:00:00Z"
+    },
+    "gemini-1.5-flash": {
+      "input_cost_per_million": 0.5,
+      "cached_input_cost_per_million": 0.25,
+      "output_cost_per_million": 2.0,
+      "effective_from": "2026-09-01T00:00:00Z"
+    },
+    "gemini-1.5-pro": {
+      "input_cost_per_million": 2.5,
+      "cached_input_cost_per_million": 1.25,
+      "output_cost_per_million": 10.0,
+      "effective_from": "2026-09-01T00:00:00Z"
+    },
+    "gemini-2.0-flash": {
+      "input_cost_per_million": 0.5,
+      "cached_input_cost_per_million": 0.25,
+      "output_cost_per_million": 2.0,
+      "effective_from": "2026-09-01T00:00:00Z"
+    }
+  }
+}
