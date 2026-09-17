@@ -10,7 +10,7 @@ from typing import Optional, Union
 
 import uvicorn
 from fastapi import FastAPI
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
 from emergentinc.paths import ProjectPaths, get_paths
@@ -24,20 +24,35 @@ def create_app(base_dir: Optional[Union[str, Path, ProjectPaths]] = None) -> Fas
     else:
         paths = get_paths(base_dir)
 
-    static_dir = Path(__file__).parent / "static"
-    static_dir.mkdir(parents=True, exist_ok=True)
+    app = FastAPI(title="EmergentInc V9 Visual Control Deck")
 
-    app = FastAPI(title="EmergentInc V5 Visual Control Deck")
-
-    # Include API router
+    # 1. 优先注册 API 路由，确保 /api/* 优先响应且 404 不被前端单页拦截
     app.include_router(init_api(paths))
 
-    # Mount static files
-    app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
+    # 2. 挂载 React 生产构建资源 (frontend/dist/assets)
+    dist_dir = paths.frontend_dist
+    assets_dir = dist_dir / "assets"
+    if assets_dir.exists() and assets_dir.is_dir():
+        app.mount("/assets", StaticFiles(directory=str(assets_dir)), name="assets")
 
+    # 3. 根路径与页面入口
     @app.get("/")
     def index():
-        return FileResponse(str(static_dir / "index.html"))
+        index_file = dist_dir / "index.html"
+        if index_file.exists() and index_file.is_file():
+            return FileResponse(str(index_file))
+        return HTMLResponse(
+            status_code=503,
+            content=(
+                "<html><body style='background:#0e1117;color:#f0f6fc;font-family:sans-serif;padding:40px;'>"
+                "<h2>前端构建产物未就绪 (503 Service Unavailable)</h2>"
+                "<p>未在 <code>frontend/dist</code> 找到构建文件。请在终端执行构建命令：</p>"
+                "<pre style='background:#161b22;padding:12px;border:1px solid #30363d;border-radius:4px;'>"
+                "cd frontend\nnpm run build"
+                "</pre>"
+                "</body></html>"
+            ),
+        )
 
     return app
 

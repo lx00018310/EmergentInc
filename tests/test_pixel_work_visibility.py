@@ -87,6 +87,12 @@ def test_world_dto_exposes_latest_pixel_activity():
 
 def test_pixel_card_uses_nested_tendencies_and_auto_selects():
     paths = get_paths()
+    new_app = paths.project_root / "frontend" / "src" / "App.tsx"
+    if new_app.exists():
+        source = new_app.read_text(encoding="utf-8")
+        assert "world.pixels.find((p) => p.active) || world.pixels[0]" in source
+        return
+
     source = (paths.project_root / "emergentinc" / "ui" / "static" / "pixel_map.js").read_text(
         encoding="utf-8"
     )

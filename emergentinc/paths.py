@@ -62,6 +62,10 @@ class ProjectPaths:
     def docs_root(self) -> Path:
         return self.project_root / "docs"
 
+    @property
+    def frontend_dist(self) -> Path:
+        return self.project_root / "frontend" / "dist"
+
     def with_workspace(self, workspace: PathLike) -> "ProjectPaths":
         """派生指向不同工作区的 ProjectPaths 实例."""
         ws = Path(workspace).resolve()

@@ -16,3 +16,8 @@ id_ed25519
 runtime/
 runtime_v4_legacy/
 cache
+
+# 前端依赖与构建产物 (Frontend)
+node_modules/
+frontend/dist/
+dist/
