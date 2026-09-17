@@ -2,6 +2,7 @@ import { apiRequest } from './client';
 import type {
   PixelDocumentResponseDto,
   PixelArtifactsResponseDto,
+  PixelArtifactResponseDto,
   PrivateFilesResponseDto,
 } from './types';
 
@@ -21,6 +22,16 @@ export async function fetchPixelArtifacts(
 ): Promise<PixelArtifactsResponseDto> {
   const encId = encodeURIComponent(pixelId);
   return apiRequest<PixelArtifactsResponseDto>(`/api/pixels/${encId}/artifacts`, { signal });
+}
+
+export async function fetchPixelArtifact(
+  pixelId: string,
+  filename: string,
+  signal?: AbortSignal
+): Promise<PixelArtifactResponseDto> {
+  const encId = encodeURIComponent(pixelId);
+  const encFilename = encodeURIComponent(filename);
+  return apiRequest<PixelArtifactResponseDto>(`/api/pixels/${encId}/artifacts/${encFilename}`, { signal });
 }
 
 export async function fetchPrivateFiles(

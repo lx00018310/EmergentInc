@@ -141,6 +141,12 @@ export interface PixelArtifactsResponseDto {
   artifacts: (string | { filename: string; size_bytes: number })[];
 }
 
+export interface PixelArtifactResponseDto {
+  pixel_id: string;
+  filename: string;
+  content: string;
+}
+
 export interface PixelDocumentResponseDto {
   pixel_id: string;
   document: string;

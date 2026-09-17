@@ -19,7 +19,7 @@ import {
   fetchTemporaryPrompt,
   updateTemporaryPrompt,
 } from './api/prompts';
-import { fetchPixelDocument } from './api/files';
+import { fetchPixelDocument, fetchPixelArtifact, getArtifactDownloadUrl } from './api/files';
 import type { PromptDto } from './api/types';
 
 export const App: React.FC = () => {
@@ -96,41 +96,72 @@ export const App: React.FC = () => {
   const [isToolExecutionsModalOpen, setIsToolExecutionsModalOpen] = useState<boolean>(false);
   const [isArtifactsModalOpen, setIsArtifactsModalOpen] = useState<boolean>(false);
 
-  // 文档预览弹窗
-  const [previewDocTitle, setPreviewDocTitle] = useState<string>('');
-  const [previewDocContent, setPreviewDocContent] = useState<string>('');
-  const [isPreviewDocLoading, setIsPreviewDocLoading] = useState<boolean>(false);
-  const [isPreviewDocOpen, setIsPreviewDocOpen] = useState<boolean>(false);
+  // 统一预览弹窗 (支持文本、图片、二进制多模态)
+  const [previewTitle, setPreviewTitle] = useState<string>('');
+  const [previewContent, setPreviewContent] = useState<string>('');
+  const [isPreviewLoading, setIsPreviewLoading] = useState<boolean>(false);
+  const [isPreviewOpen, setIsPreviewOpen] = useState<boolean>(false);
+  const [previewType, setPreviewType] = useState<'text' | 'image' | 'binary'>('text');
+  const [previewDownloadUrl, setPreviewDownloadUrl] = useState<string | undefined>(undefined);
+  const [previewFilename, setPreviewFilename] = useState<string | undefined>(undefined);
 
   const handleOpenDoc = async (docName: string) => {
     if (!selectedPixelId) return;
-    setIsPreviewDocLoading(true);
-    setPreviewDocTitle(`元胞 ${selectedPixelId} - ${docName}`);
-    setIsPreviewDocOpen(true);
+    setIsPreviewLoading(true);
+    setPreviewTitle(`元胞 ${selectedPixelId} - ${docName}`);
+    setPreviewType('text');
+    setPreviewDownloadUrl(undefined);
+    setPreviewFilename(undefined);
+    setIsPreviewOpen(true);
     try {
       const res = await fetchPixelDocument(selectedPixelId, docName);
-      setPreviewDocContent(res.content || '');
+      setPreviewContent(res.content || '');
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
-      setPreviewDocContent(`[FAILED TO LOAD DOCUMENT] ${msg}`);
+      setPreviewContent(`[FAILED TO LOAD DOCUMENT] ${msg}`);
     } finally {
-      setIsPreviewDocLoading(false);
+      setIsPreviewLoading(false);
     }
   };
 
   const handlePreviewArtifact = async (title: string, filename: string) => {
     if (!selectedPixelId) return;
-    setIsPreviewDocLoading(true);
-    setPreviewDocTitle(title);
-    setIsPreviewDocOpen(true);
+    const downloadUrl = getArtifactDownloadUrl(selectedPixelId, filename);
+    setPreviewTitle(title);
+    setPreviewFilename(filename);
+    setPreviewDownloadUrl(downloadUrl);
+    setIsPreviewOpen(true);
+
+    const isImage = /\.(jpe?g|png|webp|gif|bmp|svg)$/i.test(filename);
+    const isBinary = /\.(zip|tar|gz|7z|rar|pdf|exe|bin|iso|wasm|pyc)$/i.test(filename);
+
+    if (isImage) {
+      setPreviewType('image');
+      setIsPreviewLoading(false);
+      setPreviewContent('');
+      return;
+    }
+
+    if (isBinary) {
+      setPreviewType('binary');
+      setIsPreviewLoading(false);
+      setPreviewContent('');
+      return;
+    }
+
+    // 默认作为文本文件，通过独立交付物接口获取
+    setPreviewType('text');
+    setIsPreviewLoading(true);
     try {
-      const res = await fetchPixelDocument(selectedPixelId, `artifacts/${filename}`);
-      setPreviewDocContent(res.content || '');
+      const res = await fetchPixelArtifact(selectedPixelId, filename);
+      setPreviewContent(res.content || '');
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
-      setPreviewDocContent(`[FAILED TO LOAD ARTIFACT] ${msg}`);
+      setPreviewContent(
+        `[FAILED TO LOAD ARTIFACT] ${msg}\n\n该交付物可能包含非 UTF-8 编码或为二进制文件，请点击右下角按钮直接下载原始文件查看。`
+      );
     } finally {
-      setIsPreviewDocLoading(false);
+      setIsPreviewLoading(false);
     }
   };
 
@@ -246,11 +277,14 @@ export const App: React.FC = () => {
       />
 
       <FilePreview
-        isOpen={isPreviewDocOpen}
-        title={previewDocTitle}
-        content={previewDocContent}
-        isLoading={isPreviewDocLoading}
-        onClose={() => setIsPreviewDocOpen(false)}
+        isOpen={isPreviewOpen}
+        title={previewTitle}
+        content={previewContent}
+        isLoading={isPreviewLoading}
+        previewType={previewType}
+        downloadUrl={previewDownloadUrl}
+        filename={previewFilename}
+        onClose={() => setIsPreviewOpen(false)}
       />
     </>
   );

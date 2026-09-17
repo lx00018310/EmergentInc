@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { startRun, stopRun } from '../../api/run';
 import { ApiError } from '../../api/client';
 import type { RunStatusDto } from '../../api/types';
+import { parseCommand } from './commandParser';
 
 export interface RunControlsProps {
   runStatus: RunStatusDto | null;
@@ -30,25 +31,48 @@ export const RunControls: React.FC<RunControlsProps> = ({
   const isRunning = Boolean(runStatus?.running);
 
   const handleStart = async (cmdText?: string) => {
-    if (isSubmitting || isRunning) return;
+    if (isSubmitting) return;
 
     const actualCommand = (cmdText !== undefined ? cmdText : command).trim();
+    const parsed = parseCommand(actualCommand);
+
+    if (parsed.action === 'STOP') {
+      setCommand('');
+      if (isRunning) {
+        await handleStop();
+      } else {
+        onLogMessage('warn', '[STOP] 当前演化处于空闲状态，无需停止。');
+      }
+      return;
+    }
+
+    if (parsed.action === 'UNKNOWN') {
+      onLogMessage(
+        'warn',
+        `[CMD WARN] 未识别指令: "${actualCommand}"。支持格式：跑10轮 / run 5 / 5轮 / 停止`
+      );
+      return;
+    }
+
+    if (isRunning) return;
+
     if (runBudget <= 0 || globalBudget <= 0) {
       onLogMessage('error', '[ERROR] 预算上限必须为大于 0 的整数 Token。');
       return;
     }
 
     setIsSubmitting(true);
-    onLogMessage('info', `[DISPATCH] 发送推进请求：command="${actualCommand || '默认推进'}"...`);
+    onLogMessage('info', `[DISPATCH] 发送推进请求：rounds=${parsed.rounds}, command="${actualCommand || '默认推进'}"...`);
 
     try {
       await startRun({
-        rounds: 1, // 后端由 command_text 语法自动解析或默认
+        rounds: parsed.rounds,
         command: actualCommand,
         run_budget_tokens: Number(runBudget),
         global_budget_tokens: Number(globalBudget),
       });
-      onLogMessage('success', '[SUCCESS] 推进任务已成功启动。');
+      onLogMessage('success', `[SUCCESS] 推进任务已成功启动 (${parsed.rounds} 轮)。`);
+      setCommand('');
       await onRefresh();
     } catch (err: unknown) {
       if (err instanceof ApiError) {
