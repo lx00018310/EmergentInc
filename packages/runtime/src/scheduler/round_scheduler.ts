@@ -8,6 +8,7 @@ import {
 } from "@emergentinc/protocol";
 import { CoreStore, MAX_MESSAGES_PER_ROUND, BudgetExceededError } from "@emergentinc/persistence";
 import { shouldNaturalWake, idToCoord } from "@emergentinc/domain";
+import { InvalidModelResponseError } from "@emergentinc/model";
 import { AgentStepRunner } from "../agent_step/agent_step_runner.js";
 
 export interface RoundSchedulerOptions {
@@ -195,6 +196,12 @@ export class RoundScheduler {
             break;
           }
         }
+        if (err instanceof InvalidModelResponseError) {
+          console.error(`[RoundScheduler] Invalid model response in round ${currentRound}:`, err.message);
+          stopReason = "MODEL_RESPONSE_INVALID";
+          break;
+        }
+        console.error(`[RoundScheduler] Unexpected error during step execution in round ${currentRound}:`, err);
         // 遇到严重异常，停止本轮
         stopReason = "INFRASTRUCTURE_FAILURE";
         break;

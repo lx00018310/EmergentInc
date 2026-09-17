@@ -298,8 +298,22 @@ describe("Server: API Contract Integration Tests", () => {
     expect(startRes.statusCode).toBe(409);
     expect(startRes.json().detail).toContain("RUN_BLOCKED_UNFINALIZED_OPERATIONS");
 
-    // 清理该预留以便后续测试
-    store.budgets.refund("call_hanging_test");
+    // 调用安全对账端点自愈
+    const reconcileRes = await app.inject({
+      method: "POST",
+      url: "/api/run/reconcile",
+    });
+    expect(reconcileRes.statusCode).toBe(200);
+    expect(reconcileRes.json().status).toBe("RECONCILED");
+
+    // 再次查询状态，确认已完全自愈回到 READY
+    const healedStatus = await app.inject({
+      method: "GET",
+      url: "/api/run/status",
+    });
+    expect(healedStatus.statusCode).toBe(200);
+    expect(healedStatus.json().result_status).toBe("READY");
+    expect(healedStatus.json().unfinalized_operations).toBeNull();
   });
 
   it("should block concurrent run start on same workspace with WORKSPACE_LOCKED (409)", async () => {

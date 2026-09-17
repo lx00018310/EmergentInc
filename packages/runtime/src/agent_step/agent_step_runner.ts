@@ -14,6 +14,7 @@ import {
   parseAndNormalizeResponse,
   UsageMeter,
   OutcomeUnknownError,
+  InvalidModelResponseError,
 } from "@emergentinc/model";
 import { ToolRuntime } from "@emergentinc/tools";
 import { DecisionCompiler } from "../compiler/decision_compiler.js";
@@ -175,7 +176,21 @@ export class AgentStepRunner {
     }
 
     // 8. 解析归一化决策
-    const decision: AgentDecision = parseAndNormalizeResponse(rawText || "", pixelMind);
+    let decision: AgentDecision;
+    try {
+      decision = parseAndNormalizeResponse(rawText || "", pixelMind);
+    } catch (parseErr: any) {
+      if (parseErr instanceof InvalidModelResponseError) {
+        // 供应商已经计费，但是响应不可使用：
+        // 1. 在 model_calls 中更新 outcome 为 MODEL_RESPONSE_INVALID
+        this.store.db.prepare(
+          "UPDATE model_calls SET outcome = 'MODEL_RESPONSE_INVALID' WHERE call_id = ?"
+        ).run(callId);
+        // 2. 消息放回 QUEUED，以便下次调度安全重试
+        this.store.messages.updateStatus(message.messageId, "QUEUED");
+      }
+      throw parseErr;
+    }
 
     // 9. 编译为副作用列表
     const effects = DecisionCompiler.compile({

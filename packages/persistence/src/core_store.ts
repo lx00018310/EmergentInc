@@ -142,6 +142,69 @@ export class CoreStore {
     };
   }
 
+  /**
+   * 安全对账并自愈未决悬挂状态
+   */
+  public reconcileUnfinalizedOperations(): {
+    reconciledRuns: number;
+    reconciledReservations: number;
+    reconciledMessages: number;
+    reconciledCalls: number;
+    reconciledTools: number;
+  } {
+    return this.db.transaction(() => {
+      // 1. 获取所有未决预留并安全退款
+      const openRes = this.db.prepare("SELECT call_id FROM reservations WHERE status = 'OPEN'").all() as any[];
+      for (const res of openRes) {
+        this.budgets.refund(res.call_id);
+      }
+
+      // 2. 将所有处于 CALLING 或 CALL_OUTCOME_UNKNOWN 或 RESERVED 的消息重置回 QUEUED
+      const callingMsgs = this.db.prepare(
+        "SELECT message_id FROM messages WHERE status IN ('CALLING', 'CALL_OUTCOME_UNKNOWN', 'RESERVED')"
+      ).all() as any[];
+      for (const m of callingMsgs) {
+        this.messages.updateStatus(m.message_id, "QUEUED");
+      }
+
+      // 3. 将悬挂 RUNNING 的 Run 归档为 STOPPED
+      const runningRuns = this.db.prepare(
+        "SELECT run_id FROM runs WHERE status = 'RUNNING'"
+      ).all() as any[];
+      for (const r of runningRuns) {
+        this.runs.updateRunStatus(r.run_id, "STOPPED", "USER_STOPPED");
+      }
+
+      // 4. 将未决的 CALL_OUTCOME_UNKNOWN 标记为 CALL_OUTCOME_RECONCILED
+      const unknownCalls = this.db.prepare(
+        "SELECT call_id FROM model_calls WHERE outcome = 'CALL_OUTCOME_UNKNOWN'"
+      ).all() as any[];
+      if (unknownCalls.length > 0) {
+        this.db.prepare(
+          "UPDATE model_calls SET outcome = 'CALL_OUTCOME_RECONCILED' WHERE outcome = 'CALL_OUTCOME_UNKNOWN'"
+        ).run();
+      }
+
+      // 5. 将悬挂 STARTED 的工具执行标记为 FAILED
+      const startedTools = this.db.prepare(
+        "SELECT operation_id FROM tool_executions WHERE status = 'STARTED'"
+      ).all() as any[];
+      if (startedTools.length > 0) {
+        this.db.prepare(
+          "UPDATE tool_executions SET status = 'FAILED', error_text = 'RECONCILED_TERMINATED' WHERE status = 'STARTED'"
+        ).run();
+      }
+
+      return {
+        reconciledRuns: runningRuns.length,
+        reconciledReservations: openRes.length,
+        reconciledMessages: callingMsgs.length,
+        reconciledCalls: unknownCalls.length,
+        reconciledTools: startedTools.length,
+      };
+    });
+  }
+
   public close(): void {
     this.db.close();
   }

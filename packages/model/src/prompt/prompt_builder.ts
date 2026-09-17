@@ -97,8 +97,11 @@ export class PromptBuilder {
     const estimatedTokens = Math.max(Math.floor(charCount / 2), Math.floor(charCount * 0.7)) + 64;
 
     let maxTokens = this.maxOutputTokens;
-    if (this.modelName.toLowerCase() === "glm-5.3-flash") {
-      maxTokens = Math.max(maxTokens, 8192);
+    const envMaxTokens = process.env.MCL_MAX_TOKENS ? Number(process.env.MCL_MAX_TOKENS) : undefined;
+    if (envMaxTokens && !isNaN(envMaxTokens)) {
+      maxTokens = envMaxTokens;
+    } else if (this.modelName.toLowerCase().includes("glm")) {
+      maxTokens = Math.max(maxTokens, 16384);
     }
 
     const request: PreparedModelRequest = {

@@ -69,6 +69,14 @@ export async function registerApiRoutes(
     return reply.send(runService.requestStop());
   });
 
+  server.post("/run/reconcile", async (_req, reply) => {
+    try {
+      return reply.send(runService.reconcile());
+    } catch (err: any) {
+      return reply.status(400).send({ detail: err.message });
+    }
+  });
+
   // 3. Environment
   server.get("/environment", async (_req, reply) => {
     return reply.send(worldService.getEnvironment());

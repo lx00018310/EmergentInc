@@ -176,7 +176,8 @@ export class RunService {
       this.lastStopReason === "USER_STOPPED" ||
       this.lastStopReason === "RUN_BUDGET_EXHAUSTED" ||
       this.lastStopReason === "GLOBAL_BUDGET_EXHAUSTED" ||
-      this.lastStopReason === "READ_LOOP_THRESHOLD_REACHED"
+      this.lastStopReason === "READ_LOOP_THRESHOLD_REACHED" ||
+      this.lastStopReason === "MODEL_RESPONSE_INVALID"
     ) {
       resultStatus = "STOPPED";
     } else if (
@@ -311,6 +312,19 @@ export class RunService {
     return { status: "STOPPING", message: "Stop request signaled to active run." };
   }
 
+  public reconcile(): { status: string; reconciled: any } {
+    if (this.isRunning) {
+      throw new Error("Cannot reconcile while run is in progress.");
+    }
+    const res = this.store.reconcileUnfinalizedOperations();
+    this.lastStopReason = null;
+    this.lastError = null;
+    return {
+      status: "RECONCILED",
+      reconciled: res,
+    };
+  }
+
   private async runLoop(
     runId: string,
     startRound: number,
@@ -353,7 +367,8 @@ export class RunService {
         this.lastStopReason === "USER_STOPPED" ||
         this.lastStopReason === "RUN_BUDGET_EXHAUSTED" ||
         this.lastStopReason === "GLOBAL_BUDGET_EXHAUSTED" ||
-        this.lastStopReason === "READ_LOOP_THRESHOLD_REACHED";
+        this.lastStopReason === "READ_LOOP_THRESHOLD_REACHED" ||
+        this.lastStopReason === "MODEL_RESPONSE_INVALID";
       const isFailed = this.lastStopReason === "INFRASTRUCTURE_FAILURE";
       const finalStatus = isFailed ? "FAILED" : isStopped ? "STOPPED" : "COMPLETED";
       const finalReason = this.lastStopReason || (signal.aborted ? "USER_STOPPED" : "ROUND_LIMIT_REACHED");

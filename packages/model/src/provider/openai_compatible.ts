@@ -19,7 +19,8 @@ export class OpenAICompatibleProvider implements ModelProvider {
   constructor(config: OpenAICompatibleProviderConfig) {
     this.baseUrl = config.baseUrl.replace(/\/+$/, "");
     this.apiKey = config.apiKey;
-    this.timeoutMs = config.timeoutMs || 45000;
+    const envTimeout = process.env.MCL_TIMEOUT_MS ? Number(process.env.MCL_TIMEOUT_MS) : undefined;
+    this.timeoutMs = config.timeoutMs || (envTimeout && !isNaN(envTimeout) ? envTimeout : 120000);
   }
 
   public async call(

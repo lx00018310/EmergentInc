@@ -47,6 +47,7 @@ export type RunStatus =
 export type ModelCallOutcome =
   | "SUCCESS"
   | "CALL_OUTCOME_UNKNOWN"
+  | "CALL_OUTCOME_RECONCILED"
   | "INFRASTRUCTURE_FAILURE"
   | "MODEL_RESPONSE_INVALID";
 
