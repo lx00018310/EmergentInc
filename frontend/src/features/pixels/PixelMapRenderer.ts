@@ -1,3 +1,5 @@
+import * as THREE from 'three';
+import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import type { PixelSummaryDto, MessageFlowDto } from '../../api/types';
 
 export interface PixelMapRendererOptions {
@@ -6,11 +8,35 @@ export interface PixelMapRendererOptions {
   onHoverPixel: (pixelId: string | null) => void;
 }
 
+const SPACING = 2.5;
+const ACTIVE_COLOR = 0x3b82f6;
+const DEAD_COLOR = 0xb8bec7;
+const TIPS_COLOR = 0xf2b01e;
+const EDGE_COLOR = 0xcbd1d8;
+const FLOW_COLOR = 0x22a447;
+const DRAG_THRESHOLD_PX = 5;
+
+/**
+ * True 3D Crystal Lattice renderer (Three.js + OrbitControls).
+ * World (x, y, z) → Three (x, z, y): World Z is the vertical axis.
+ * Public API mirrors the previous Canvas 2.5D renderer so PixelMapCanvas
+ * keeps calling it unchanged.
+ */
 export class PixelMapRenderer {
   private canvas: HTMLCanvasElement;
-  private ctx: CanvasRenderingContext2D;
-  private onSelectPixel: (pixelId: string) => void;
-  private onHoverPixel: (pixelId: string | null) => void;
+  private renderer: THREE.WebGLRenderer;
+  private scene: THREE.Scene;
+  private camera: THREE.PerspectiveCamera;
+  private controls: OrbitControls;
+  private raycaster: THREE.Raycaster;
+
+  private pixelGroup: THREE.Group;
+  private edgeGroup: THREE.Group;
+  private messageGroup: THREE.Group;
+
+  private sphereGeometry: THREE.SphereGeometry;
+  private edgeMaterial: THREE.LineBasicMaterial;
+  private flowMaterial: THREE.LineBasicMaterial;
 
   private pixels: PixelSummaryDto[] = [];
   private messageFlow: MessageFlowDto[] = [];
@@ -18,44 +44,86 @@ export class PixelMapRenderer {
   private hoveredPixelId: string | null = null;
   private unreadTipsPixelIds: Set<string> = new Set();
 
-  public zoom = 1.0;
-  public offsetX = 0;
-  public offsetY = 0;
+  private onSelectPixel: (pixelId: string) => void;
+  private onHoverPixel: (pixelId: string | null) => void;
 
-  private isDragging = false;
-  private lastMouseX = 0;
-  private lastMouseY = 0;
   private animationFrameId: number | null = null;
-  private animOffset = 0;
+  private resizeObserver: ResizeObserver | null = null;
+  private pointerDownPos: { x: number; y: number } | null = null;
 
-  // 保存绑定的监听器用于 dispose
+  private handlePointerDownBound: (e: PointerEvent) => void;
+  private handlePointerMoveBound: (e: PointerEvent) => void;
+  private handlePointerUpBound: (e: PointerEvent) => void;
   private handleResizeBound: () => void;
-  private handleMouseDownBound: (e: MouseEvent) => void;
-  private handleMouseMoveBound: (e: MouseEvent) => void;
-  private handleMouseUpBound: () => void;
-  private handleWheelBound: (e: WheelEvent) => void;
-  private handleClickBound: (e: MouseEvent) => void;
 
   constructor(options: PixelMapRendererOptions) {
     this.canvas = options.canvas;
-    const context = this.canvas.getContext('2d');
-    if (!context) {
-      throw new Error('Canvas 2D context not supported');
-    }
-    this.ctx = context;
     this.onSelectPixel = options.onSelectPixel;
     this.onHoverPixel = options.onHoverPixel;
 
-    this.handleResizeBound = () => this.resize();
-    this.handleMouseDownBound = (e) => this.onMouseDown(e);
-    this.handleMouseMoveBound = (e) => this.onMouseMove(e);
-    this.handleMouseUpBound = () => this.onMouseUp();
-    this.handleWheelBound = (e) => this.onWheel(e);
-    this.handleClickBound = (e) => this.onClick(e);
+    this.renderer = new THREE.WebGLRenderer({ canvas: this.canvas, antialias: true });
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 
-    this.initEvents();
+    this.scene = new THREE.Scene();
+    this.scene.background = new THREE.Color(0xf7f8fa);
+
+    this.camera = new THREE.PerspectiveCamera(45, 1, 0.1, 1000);
+    this.camera.position.set(8, 8, 8);
+
+    this.controls = new OrbitControls(this.camera, this.renderer.domElement);
+    this.controls.enableDamping = true;
+    this.controls.dampingFactor = 0.08;
+    this.controls.enableRotate = true;
+    this.controls.enableZoom = true;
+    this.controls.enablePan = true;
+    this.controls.target.set(0, 0, 0);
+
+    // 光照：环境光 + 单方向光，产生亮面/暗面/高光
+    this.scene.add(new THREE.AmbientLight(0xffffff, 1.5));
+    const dirLight = new THREE.DirectionalLight(0xffffff, 2.0);
+    dirLight.position.set(8, 12, 10);
+    this.scene.add(dirLight);
+
+    // 地面网格：世界 z=0 → Three Y=0
+    const grid = new THREE.GridHelper(30, 20, 0xd0d7de, 0xe7ebef);
+    grid.position.y = 0;
+    this.scene.add(grid);
+
+    // 坐标轴：Three Y = World Z
+    this.scene.add(new THREE.AxesHelper(3));
+
+    this.pixelGroup = new THREE.Group();
+    this.edgeGroup = new THREE.Group();
+    this.messageGroup = new THREE.Group();
+    this.scene.add(this.edgeGroup, this.pixelGroup, this.messageGroup);
+
+    this.sphereGeometry = new THREE.SphereGeometry(0.32, 24, 16);
+    this.edgeMaterial = new THREE.LineBasicMaterial({ color: EDGE_COLOR, transparent: true, opacity: 0.6 });
+    this.flowMaterial = new THREE.LineBasicMaterial({ color: FLOW_COLOR, transparent: true, opacity: 0.85 });
+
+    this.raycaster = new THREE.Raycaster();
+
+    this.handlePointerDownBound = (e) => this.onPointerDown(e);
+    this.handlePointerMoveBound = (e) => this.onPointerMove(e);
+    this.handlePointerUpBound = (e) => this.onPointerUp(e);
+    this.handleResizeBound = () => this.resize();
+
+    this.canvas.addEventListener('pointerdown', this.handlePointerDownBound);
+    this.canvas.addEventListener('pointermove', this.handlePointerMoveBound);
+    this.canvas.addEventListener('pointerup', this.handlePointerUpBound);
+    window.addEventListener('resize', this.handleResizeBound);
+    if (typeof ResizeObserver !== 'undefined') {
+      this.resizeObserver = new ResizeObserver(() => this.resize());
+      if (this.canvas.parentElement) this.resizeObserver.observe(this.canvas.parentElement);
+    }
+
     this.resize();
     this.startAnimationLoop();
+  }
+
+  /** World (x, y, z) → Three (x, z, y)：World Z 竖直向上 */
+  private worldToScene([x, y, z]: [number, number, number]): THREE.Vector3 {
+    return new THREE.Vector3(x * SPACING, z * SPACING, y * SPACING);
   }
 
   public setData(pixels: PixelSummaryDto[], messageFlow: MessageFlowDto[], selectedId: string | null, unreadTipsPixelIds?: Set<string>): void {
@@ -63,62 +131,186 @@ export class PixelMapRenderer {
     this.messageFlow = messageFlow || [];
     this.selectedPixelId = selectedId;
     if (unreadTipsPixelIds) this.unreadTipsPixelIds = unreadTipsPixelIds;
-    this.render();
+    this.rebuildSceneObjects();
   }
 
   public setSelectedPixel(pixelId: string | null): void {
     this.selectedPixelId = pixelId;
-    this.render();
+    this.rebuildSceneObjects();
   }
 
   public resize(): void {
     const parent = this.canvas.parentElement;
     if (!parent) return;
     const rect = parent.getBoundingClientRect();
-    this.canvas.width = rect.width;
-    this.canvas.height = rect.height;
-
-    if (this.offsetX === 0 && this.offsetY === 0) {
-      this.resetView();
-    } else {
-      this.render();
-    }
+    const width = Math.max(1, Math.floor(rect.width));
+    const height = Math.max(1, Math.floor(rect.height));
+    this.renderer.setSize(width, height, false);
+    this.camera.aspect = width / height;
+    this.camera.updateProjectionMatrix();
   }
 
   public resetView(): void {
-    this.zoom = 1.0;
-    this.offsetX = this.canvas.width / 2;
-    this.offsetY = this.canvas.height / 2 + 40;
-    this.render();
+    this.fitCameraToPixels();
   }
 
   public zoomIn(): void {
-    this.zoom = Math.min(2.5, this.zoom * 1.2);
-    this.render();
+    this.dollyBy(0.8);
   }
 
   public zoomOut(): void {
-    this.zoom = Math.max(0.4, this.zoom / 1.2);
-    this.render();
+    this.dollyBy(1.25);
   }
 
-  private project(x: number, y: number, z: number): { x: number; y: number } {
-    const CELL_X = 56 * this.zoom;
-    const CELL_Y = 28 * this.zoom;
-    const CELL_Z = 38 * this.zoom;
-
-    const screenX = (x - y) * CELL_X + this.offsetX;
-    const screenY = (x + y) * CELL_Y - z * CELL_Z + this.offsetY;
-    return { x: screenX, y: screenY };
+  /** 以 controls.target 为中心拉近/拉远相机（不使用 OrbitControls 私有 API） */
+  private dollyBy(factor: number): void {
+    const offset = this.camera.position.clone().sub(this.controls.target).multiplyScalar(factor);
+    this.camera.position.copy(this.controls.target).add(offset);
+    this.controls.update();
   }
 
-  private initEvents(): void {
-    window.addEventListener('resize', this.handleResizeBound);
-    this.canvas.addEventListener('mousedown', this.handleMouseDownBound);
-    window.addEventListener('mousemove', this.handleMouseMoveBound);
-    window.addEventListener('mouseup', this.handleMouseUpBound);
-    this.canvas.addEventListener('wheel', this.handleWheelBound, { passive: false });
-    this.canvas.addEventListener('click', this.handleClickBound);
+  /** 简单 helper：根据 Pixel 包围盒把相机摆到能同时看到 X/Y/Z 的斜上方视角 */
+  private fitCameraToPixels(): void {
+    let maxDim = 4;
+    if (this.pixels.length > 0) {
+      const box = new THREE.Box3();
+      for (const p of this.pixels) {
+        box.expandByPoint(this.worldToScene(p.position));
+      }
+      const size = box.getSize(new THREE.Vector3());
+      maxDim = Math.max(size.x, size.y, size.z, 4);
+      const center = box.getCenter(new THREE.Vector3());
+      this.controls.target.copy(center);
+    } else {
+      this.controls.target.set(0, 0, 0);
+    }
+    const distance = Math.max(10, maxDim * 1.8);
+    const direction = new THREE.Vector3(1, 0.85, 1).normalize();
+    this.camera.position.copy(this.controls.target).add(direction.multiplyScalar(distance));
+    this.controls.update();
+  }
+
+  private disposeGroup(group: THREE.Group, disposeMaterial: boolean): void {
+    for (const child of [...group.children]) {
+      group.remove(child);
+      const mesh = child as THREE.Mesh;
+      if (mesh.geometry && mesh.geometry !== this.sphereGeometry) mesh.geometry.dispose();
+      const material = (mesh as THREE.Mesh).material as THREE.Material | THREE.Material[] | undefined;
+      // 共享材质（edge/flow/sphere 材质）统一在 dispose() 释放
+      if (disposeMaterial && material && material !== this.edgeMaterial && material !== this.flowMaterial) {
+        if (Array.isArray(material)) material.forEach((m) => m.dispose());
+        else material.dispose();
+      }
+    }
+  }
+
+  /** 每次 world polling 更新时全量重建（当前 Pixel 数量级下足够） */
+  private rebuildSceneObjects(): void {
+    this.disposeGroup(this.pixelGroup, true);
+    this.disposeGroup(this.edgeGroup, false);
+    this.disposeGroup(this.messageGroup, false);
+
+    const idSet = new Set(this.pixels.map((p) => p.id));
+    const positions = new Map<string, THREE.Vector3>();
+    for (const p of this.pixels) {
+      positions.set(p.id, this.worldToScene(p.position));
+    }
+
+    // 六邻域晶格连线：每条边只画一次
+    for (const pixel of this.pixels) {
+      for (const neighborId of pixel.neighbors || []) {
+        if (!idSet.has(neighborId) || pixel.id >= neighborId) continue;
+        const a = positions.get(pixel.id);
+        const b = positions.get(neighborId);
+        if (!a || !b) continue;
+        const geometry = new THREE.BufferGeometry().setFromPoints([a, b]);
+        this.edgeGroup.add(new THREE.Line(geometry, this.edgeMaterial));
+      }
+    }
+
+    // Message Flow：静态绿色连线
+    for (const flow of this.messageFlow) {
+      const srcId = flow.source || flow.from;
+      const tgtId = flow.target || flow.to;
+      if (!srcId || !tgtId || srcId === tgtId) continue;
+      const a = positions.get(srcId);
+      const b = positions.get(tgtId);
+      if (!a || !b) continue;
+      const geometry = new THREE.BufferGeometry().setFromPoints([a, b]);
+      this.messageGroup.add(new THREE.Line(geometry, this.flowMaterial));
+    }
+
+    // 球体：黄色 = 未读 Tips 优先，其次蓝色 = Active，浅灰 = Dead
+    for (const pixel of this.pixels) {
+      const color = this.unreadTipsPixelIds.has(pixel.id)
+        ? TIPS_COLOR
+        : pixel.active
+          ? ACTIVE_COLOR
+          : DEAD_COLOR;
+      const isSelected = pixel.id === this.selectedPixelId;
+      const isHovered = pixel.id === this.hoveredPixelId;
+      const material = new THREE.MeshStandardMaterial({
+        color,
+        emissive: isSelected ? new THREE.Color(color).multiplyScalar(0.35) : new THREE.Color(0x000000),
+        roughness: 0.35,
+        metalness: 0.05,
+      });
+      const mesh = new THREE.Mesh(this.sphereGeometry, material);
+      mesh.position.copy(positions.get(pixel.id)!);
+      const scale = isSelected ? 1.25 : isHovered ? 1.1 : 1.0;
+      mesh.scale.setScalar(scale);
+      mesh.userData.pixelId = pixel.id;
+      this.pixelGroup.add(mesh);
+    }
+  }
+
+  private pickPixel(e: PointerEvent): string | null {
+    const rect = this.canvas.getBoundingClientRect();
+    const pointer = new THREE.Vector2(
+      ((e.clientX - rect.left) / rect.width) * 2 - 1,
+      -((e.clientY - rect.top) / rect.height) * 2 + 1,
+    );
+    this.raycaster.setFromCamera(pointer, this.camera);
+    const hits = this.raycaster.intersectObjects(this.pixelGroup.children, false);
+    const first = hits.find((h) => h.object.userData.pixelId);
+    return first ? String(first.object.userData.pixelId) : null;
+  }
+
+  private onPointerDown(e: PointerEvent): void {
+    this.pointerDownPos = { x: e.clientX, y: e.clientY };
+  }
+
+  private onPointerMove(e: PointerEvent): void {
+    if (this.pointerDownPos) return; // 拖动旋转中不做 hover 检测
+    const hovered = this.pickPixel(e);
+    if (hovered !== this.hoveredPixelId) {
+      this.hoveredPixelId = hovered;
+      this.onHoverPixel(hovered);
+      this.rebuildSceneObjects();
+    }
+  }
+
+  private onPointerUp(e: PointerEvent): void {
+    const down = this.pointerDownPos;
+    this.pointerDownPos = null;
+    if (!down) return;
+    // 拖动阈值：位移 > 5px 视为旋转/平移，不触发选择
+    if (Math.hypot(e.clientX - down.x, e.clientY - down.y) > DRAG_THRESHOLD_PX) return;
+    const clicked = this.pickPixel(e);
+    if (clicked) {
+      this.selectedPixelId = clicked;
+      this.onSelectPixel(clicked);
+      this.rebuildSceneObjects();
+    }
+  }
+
+  private startAnimationLoop(): void {
+    const loop = () => {
+      this.controls.update();
+      this.renderer.render(this.scene, this.camera);
+      this.animationFrameId = requestAnimationFrame(loop);
+    };
+    this.animationFrameId = requestAnimationFrame(loop);
   }
 
   public dispose(): void {
@@ -126,299 +318,19 @@ export class PixelMapRenderer {
       cancelAnimationFrame(this.animationFrameId);
       this.animationFrameId = null;
     }
+    this.canvas.removeEventListener('pointerdown', this.handlePointerDownBound);
+    this.canvas.removeEventListener('pointermove', this.handlePointerMoveBound);
+    this.canvas.removeEventListener('pointerup', this.handlePointerUpBound);
     window.removeEventListener('resize', this.handleResizeBound);
-    this.canvas.removeEventListener('mousedown', this.handleMouseDownBound);
-    window.removeEventListener('mousemove', this.handleMouseMoveBound);
-    window.removeEventListener('mouseup', this.handleMouseUpBound);
-    this.canvas.removeEventListener('wheel', this.handleWheelBound);
-    this.canvas.removeEventListener('click', this.handleClickBound);
-  }
-
-  private onMouseDown(e: MouseEvent): void {
-    this.isDragging = true;
-    this.lastMouseX = e.clientX;
-    this.lastMouseY = e.clientY;
-  }
-
-  private onMouseMove(e: MouseEvent): void {
-    if (this.isDragging) {
-      const dx = e.clientX - this.lastMouseX;
-      const dy = e.clientY - this.lastMouseY;
-      this.offsetX += dx;
-      this.offsetY += dy;
-      this.lastMouseX = e.clientX;
-      this.lastMouseY = e.clientY;
-      this.render();
-    } else {
-      const rect = this.canvas.getBoundingClientRect();
-      const mouseX = e.clientX - rect.left;
-      const mouseY = e.clientY - rect.top;
-
-      let found: PixelSummaryDto | null = null;
-      for (const p of this.pixels) {
-        const [x, y, z] = p.position;
-        const pt = this.project(x, y, z);
-        const dist = Math.hypot(mouseX - pt.x, mouseY - pt.y);
-        if (dist <= 24 * this.zoom) {
-          found = p;
-          break;
-        }
-      }
-
-      if (found?.id !== this.hoveredPixelId) {
-        this.hoveredPixelId = found ? found.id : null;
-        this.onHoverPixel(this.hoveredPixelId);
-        this.render();
-      }
-    }
-  }
-
-  private onMouseUp(): void {
-    this.isDragging = false;
-  }
-
-  private onWheel(e: WheelEvent): void {
-    e.preventDefault();
-    const factor = e.deltaY < 0 ? 1.1 : 0.9;
-    this.zoom = Math.max(0.4, Math.min(2.5, this.zoom * factor));
-    this.render();
-  }
-
-  private onClick(e: MouseEvent): void {
-    const rect = this.canvas.getBoundingClientRect();
-    const mouseX = e.clientX - rect.left;
-    const mouseY = e.clientY - rect.top;
-
-    let clicked: PixelSummaryDto | null = null;
-    for (const p of this.pixels) {
-      const [x, y, z] = p.position;
-      const pt = this.project(x, y, z);
-      const dist = Math.hypot(mouseX - pt.x, mouseY - pt.y);
-      if (dist <= 24 * this.zoom) {
-        clicked = p;
-        break;
-      }
-    }
-
-    if (clicked) {
-      this.selectedPixelId = clicked.id;
-      this.onSelectPixel(clicked.id);
-      this.render();
-    }
-  }
-
-  private startAnimationLoop(): void {
-    const loop = () => {
-      this.animOffset = (this.animOffset + 0.5) % 20;
-      if (this.messageFlow.length > 0) {
-        this.render();
-      }
-      this.animationFrameId = requestAnimationFrame(loop);
-    };
-    this.animationFrameId = requestAnimationFrame(loop);
-  }
-
-  public render(): void {
-    const { ctx, canvas } = this;
-    if (!canvas.width || !canvas.height) return;
-
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-    // 1. 绘制 Z=0 平面网格
-    this.drawGrid();
-
-    // 2. 绘制消息流连线
-    this.drawMessageFlow();
-
-    // 3. 排序元胞：先画 Z 投影辅助线，再画圆点
-    const sorted = [...this.pixels].sort((a, b) => {
-      const [ax, ay, az] = a.position;
-      const [bx, by, bz] = b.position;
-      return (ax + ay + az) - (bx + by + bz);
-    });
-
-    for (const pixel of sorted) {
-      this.drawZDropLine(pixel);
-    }
-    for (const pixel of sorted) {
-      this.drawPixelNode(pixel);
-    }
-
-    // 4. XYZ 方向指示
-    this.drawAxisHint();
-  }
-
-  private drawGrid(): void {
-    const { ctx } = this;
-    ctx.save();
-    ctx.strokeStyle = '#161b22';
-    ctx.lineWidth = 1;
-
-    const range = 5;
-    for (let x = -range; x <= range; x++) {
-      const p1 = this.project(x, -range, 0);
-      const p2 = this.project(x, range, 0);
-      ctx.beginPath();
-      ctx.moveTo(p1.x, p1.y);
-      ctx.lineTo(p2.x, p2.y);
-      ctx.stroke();
-    }
-
-    for (let y = -range; y <= range; y++) {
-      const p1 = this.project(-range, y, 0);
-      const p2 = this.project(range, y, 0);
-      ctx.beginPath();
-      ctx.moveTo(p1.x, p1.y);
-      ctx.lineTo(p2.x, p2.y);
-      ctx.stroke();
-    }
-
-    // 标注该网格为 Z=0 平面
-    ctx.fillStyle = '#3d444d';
-    ctx.font = `${Math.max(9, Math.floor(9 * this.zoom))}px monospace`;
-    ctx.textAlign = 'left';
-    const origin = this.project(-range, -range, 0);
-    ctx.fillText('Z=0 Plane', origin.x - 10 * this.zoom, origin.y - 6 * this.zoom);
-
-    ctx.restore();
-  }
-
-  /** z != 0 的元胞从实际位置到 (x, y, 0) 画淡色虚线，解决 Z 高度难辨识 */
-  private drawZDropLine(pixel: PixelSummaryDto): void {
-    const [x, y, z] = pixel.position;
-    if (!z) return;
-    const { ctx } = this;
-    const center = this.project(x, y, z);
-    const ground = this.project(x, y, 0);
-    ctx.save();
-    ctx.strokeStyle = 'rgba(139, 148, 158, 0.35)';
-    ctx.lineWidth = 1;
-    ctx.setLineDash([3 * this.zoom, 3 * this.zoom]);
-    ctx.beginPath();
-    ctx.moveTo(center.x, center.y);
-    ctx.lineTo(ground.x, ground.y);
-    ctx.stroke();
-    // 投影位置画极小空心圆
-    ctx.beginPath();
-    ctx.arc(ground.x, ground.y, 2.5 * this.zoom, 0, Math.PI * 2);
-    ctx.stroke();
-    ctx.restore();
-  }
-
-  /** 固定位置的三条短轴方向提示（与 project() 的等轴方向一致） */
-  private drawAxisHint(): void {
-    const { ctx, canvas } = this;
-    const ox = 46;
-    const oy = canvas.height - 46;
-    const len = 26;
-    // X: project(+1,0,0) 方向 → 屏幕右下
-    const xAxis = { x: (1 - 0) * 56, y: (1 + 0) * 28 };
-    // Y: project(0,+1,0) 方向 → 屏幕左下
-    const yAxis = { x: (0 - 1) * 56, y: (0 + 1) * 28 };
-    // Z: project(0,0,+1) 方向 → 屏幕正上
-    const zAxis = { x: 0, y: -38 };
-    const norm = (v: { x: number; y: number }) => {
-      const m = Math.hypot(v.x, v.y);
-      return { x: (v.x / m) * len, y: (v.y / m) * len };
-    };
-    const axes: Array<{ v: { x: number; y: number }; label: string; color: string }> = [
-      { v: norm(xAxis), label: 'X', color: '#58a6ff' },
-      { v: norm(yAxis), label: 'Y', color: '#3fb950' },
-      { v: norm(zAxis), label: 'Z', color: '#d29922' },
-    ];
-    ctx.save();
-    ctx.fillStyle = 'rgba(22, 27, 34, 0.85)';
-    ctx.beginPath();
-    ctx.arc(ox, oy, 34, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.lineWidth = 1.5;
-    ctx.font = 'bold 11px monospace';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    for (const { v, label, color } of axes) {
-      const ex = ox + v.x;
-      const ey = oy + v.y;
-      ctx.strokeStyle = color;
-      ctx.beginPath();
-      ctx.moveTo(ox, oy);
-      ctx.lineTo(ex, ey);
-      ctx.stroke();
-      ctx.fillStyle = color;
-      ctx.fillText(label, ox + v.x * 1.35, oy + v.y * 1.35);
-    }
-    ctx.restore();
-  }
-
-  private drawMessageFlow(): void {
-    const { ctx } = this;
-    if (!this.messageFlow.length) return;
-
-    ctx.save();
-    ctx.strokeStyle = '#3fb950';
-    ctx.lineWidth = 2 * this.zoom;
-    ctx.setLineDash([4 * this.zoom, 4 * this.zoom]);
-    ctx.lineDashOffset = -this.animOffset * this.zoom;
-
-    for (const flow of this.messageFlow) {
-      const srcId = flow.source || flow.from;
-      const tgtId = flow.target || flow.to;
-      const src = this.pixels.find((p) => p.id === srcId);
-      const tgt = this.pixels.find((p) => p.id === tgtId);
-
-      if (src && tgt) {
-        const p1 = this.project(...src.position);
-        const p2 = this.project(...tgt.position);
-
-        ctx.beginPath();
-        ctx.moveTo(p1.x, p1.y);
-        // 略带曲线弧度
-        const midX = (p1.x + p2.x) / 2;
-        const midY = (p1.y + p2.y) / 2 - 20 * this.zoom;
-        ctx.quadraticCurveTo(midX, midY, p2.x, p2.y);
-        ctx.stroke();
-      }
-    }
-
-    ctx.restore();
-  }
-
-  private drawPixelNode(pixel: PixelSummaryDto): void {
-    const { ctx } = this;
-    const [x, y, z] = pixel.position;
-    const center = this.project(x, y, z);
-    const radius = 10 * this.zoom;
-
-    const isSelected = pixel.id === this.selectedPixelId;
-    const isHovered = pixel.id === this.hoveredPixelId;
-    const isActive = pixel.active;
-    const hasUnreadTips = this.unreadTipsPixelIds.has(pixel.id);
-
-    ctx.save();
-
-    // 悬停/选中光晕（描边在主体之上，不覆盖黄色主体）
-    if (isSelected || isHovered) {
-      ctx.beginPath();
-      ctx.arc(center.x, center.y, radius + (isSelected ? 8 : 5) * this.zoom, 0, Math.PI * 2);
-      ctx.strokeStyle = isSelected ? 'rgba(88, 166, 255, 0.7)' : 'rgba(255, 255, 255, 0.35)';
-      ctx.lineWidth = isSelected ? 2 : 1;
-      ctx.stroke();
-    }
-
-    // 圆点主体：黄色 = 未读 Tips 优先，其次蓝色 = Active，灰色 = Dead
-    ctx.beginPath();
-    ctx.arc(center.x, center.y, radius, 0, Math.PI * 2);
-    ctx.fillStyle = hasUnreadTips ? '#e3b341' : isActive ? '#58a6ff' : '#484f58';
-    ctx.fill();
-    ctx.strokeStyle = '#0e1117';
-    ctx.lineWidth = 1;
-    ctx.stroke();
-
-    // ID 标签
-    ctx.fillStyle = isSelected ? '#f0f6fc' : '#8b949e';
-    ctx.font = `${Math.max(10, Math.floor(10 * this.zoom))}px monospace`;
-    ctx.textAlign = 'center';
-    ctx.fillText(pixel.id, center.x, center.y + radius + 14 * this.zoom);
-
-    ctx.restore();
+    this.resizeObserver?.disconnect();
+    this.resizeObserver = null;
+    this.controls.dispose();
+    this.disposeGroup(this.pixelGroup, true);
+    this.disposeGroup(this.edgeGroup, true);
+    this.disposeGroup(this.messageGroup, true);
+    this.sphereGeometry.dispose();
+    this.edgeMaterial.dispose();
+    this.flowMaterial.dispose();
+    this.renderer.dispose();
   }
 }

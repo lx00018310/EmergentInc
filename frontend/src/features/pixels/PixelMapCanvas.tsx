@@ -59,7 +59,7 @@ export const PixelMapCanvas: React.FC<PixelMapCanvasProps> = ({
     <div className="right-panel">
       <div className="canvas-toolbar">
         <div style={{ display: 'flex', alignItems: 'center' }}>
-          <span className="toolbar-title">3D 六邻域空间投影地图 (Isometric 2.5D)</span>
+          <span className="toolbar-title">3D Crystal Lattice / 六邻域空间 (Vertical = World Z)</span>
           <span className="canvas-legend">
             <span className="legend-item">
               <span className="dot active-dot" /> 存活活跃 (Active)
