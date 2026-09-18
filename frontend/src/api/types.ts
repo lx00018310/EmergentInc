@@ -54,7 +54,7 @@ export interface ExternalRewardDto {
 
 export interface StepCostDto {
   pixelId: string;
-  round: number;
+  round: number | null;
   inputTokens: number | null;
   cachedInputTokens: number | null;
   outputTokens: number | null;
@@ -99,6 +99,9 @@ export interface RunStatusDto {
   run_id: string | null;
   current_run?: string | null;
   last_error: string | null;
+  error_code?: string | null;
+  error_summary?: string | null;
+  error_phase?: string | null;
   result_status: string | null;
   unfinalized_operations?: {
     hasUnfinalized?: boolean;
@@ -112,7 +115,7 @@ export interface RunStatusDto {
 
 export interface RunStartRequest {
   rounds: number;
-  command: string;
+  command?: string; // Deprecated; controls do not dispatch messages.
   run_budget_tokens: number;
   global_budget_tokens: number;
 }
@@ -143,7 +146,7 @@ export interface ToolExecutionDto {
   tool: string;
   args_hash: string;
   status: 'STARTED' | 'SUCCESS' | 'FAILED' | 'UNKNOWN' | string;
-  created_at: number;
+  started_at: number;
   finished_at?: number | null;
   result?: {
     status?: string;

@@ -34,6 +34,39 @@ describe("Persistence: CoreStore & Repositories", () => {
     expect(store.getUnfinalizedOperations().unsettledReservations).toHaveLength(1);
   });
 
+  it("requires an audited decision before refunding an unknown call and rolls back invalid decisions", () => {
+    store.pixels.upsertPixelAccount({ pixelId: "p", energy: 1000, active: true, refundDeficitTokens: 0, spendBlockedReason: null });
+    const message = store.messages.enqueueMessage({ sender: "system", recipient: "p", content: "test", roundNum: 1 });
+    store.budgets.reserve({ callId: "unknown", runId: "r", pixelId: "p", estimatedTokens: 100 });
+    store.messages.updateStatus(message.messageId, "CALL_OUTCOME_UNKNOWN");
+    store.modelCalls.recordModelCall({ callId: "unknown", runId: "r", pixelId: "p", messageId: message.messageId,
+      model: "m", promptHash: "h", rawResponse: null, normalizedResponse: null, promptTokens: null,
+      completionTokens: null, cachedTokens: null, actualTokens: null, costCny: null, outcome: "CALL_OUTCOME_UNKNOWN", createdAt: 1 });
+    store.reconcileUnfinalizedOperations();
+    expect(store.budgets.getGlobalBudget()?.totalReserved).toBe(100);
+    expect(store.messages.getMessage(message.messageId)?.status).toBe("CALL_OUTCOME_UNKNOWN");
+    expect(() => store.resolveRecoveryOperation({ kind: "model", id: "unknown", decision: "confirm_not_billed", reason: "" })).toThrow();
+    expect(store.budgets.getGlobalBudget()?.totalReserved).toBe(100);
+    store.resolveRecoveryOperation({ kind: "model", id: "unknown", decision: "confirm_not_billed", reason: "Provider confirmed no charge" });
+    expect(store.budgets.getGlobalBudget()?.totalReserved).toBe(0);
+    expect(store.messages.getMessage(message.messageId)?.status).toBe("QUEUED");
+    expect(store.db.prepare("SELECT count(*) AS n FROM recovery_decisions").get()).toEqual({ n: 1 });
+    store.budgets.refund("unknown");
+    expect(store.budgets.getGlobalBudget()?.totalReserved).toBe(0);
+    expect(store.pixels.getPixelAccount("p")?.energy).toBe(1000);
+  });
+
+  it("applies an external reward exactly once per idempotency key and rejects key reuse with different payload", () => {
+    store.pixels.upsertPixelAccount({ pixelId: "p", energy: 0, active: true, refundDeficitTokens: 0, spendBlockedReason: null });
+    const first = store.applyExternalReward({ pixelId: "p", amount: 50, idempotencyKey: "key-1", reason: "bonus" });
+    const replay = store.applyExternalReward({ pixelId: "p", amount: 50, idempotencyKey: "key-1", reason: "bonus" });
+    expect(replay).toEqual(first);
+    expect(store.pixels.getPixelAccount("p")?.energy).toBe(50);
+    expect(store.db.prepare("SELECT count(*) AS n FROM ledger_entries WHERE entry_type = 'external_reward'").get()).toEqual({ n: 1 });
+    expect(() => store.applyExternalReward({ pixelId: "p", amount: 99, idempotencyKey: "key-1" })).toThrow();
+    expect(() => store.applyExternalReward({ pixelId: "p", amount: 10, idempotencyKey: "" })).toThrow();
+  });
+
   it("migrates legacy non-null cost columns idempotently without losing historical costs", () => {
     store.db.exec(`DROP TABLE model_calls;
       CREATE TABLE model_calls (

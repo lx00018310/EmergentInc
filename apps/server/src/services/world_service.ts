@@ -1,5 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { containedPath, validatePathSegment } from "./safe_path.js";
 import { CoreStore } from "@emergentinc/persistence";
 import { idToCoord, getNeighbors6 } from "@emergentinc/domain";
 import { getUnicodeLength } from "@emergentinc/protocol";
@@ -119,7 +120,7 @@ export class WorldService {
       total_pixels: pixelItems.length,
       total_energy: totalEnergy,
       total_spent_tokens: globalBudget?.totalSpent || 0,
-      total_spent_cny: 0.0,
+      total_spent_cny: this.store.modelCalls.getCostSummary().totalCostCny,
       system_status: "READY",
     };
 
@@ -156,7 +157,8 @@ export class WorldService {
   }
 
   public getPixel(pixelId: string): any {
-    const pixelDir = path.resolve(this.workspaceRoot, "live", "pixels", pixelId);
+    validatePathSegment(pixelId);
+    const pixelDir = containedPath(this.workspaceRoot, "live", "pixels", pixelId);
     if (!fs.existsSync(pixelDir)) {
       return null;
     }
@@ -167,7 +169,7 @@ export class WorldService {
       coord = idToCoord(pixelId);
     } catch {}
 
-    const pixelFile = path.resolve(pixelDir, "pixel.md");
+    const pixelFile = containedPath(pixelDir, "pixel.md");
     let pixelMd = "";
     if (fs.existsSync(pixelFile)) {
       pixelMd = fs.readFileSync(pixelFile, "utf-8");
@@ -188,14 +190,9 @@ export class WorldService {
   }
 
   public getPixelArtifactPath(pixelId: string, filename: string): string {
-    if (filename.includes("..") || filename.includes("/") || filename.includes("\\")) {
-      throw new Error("Invalid artifact filename: directory traversal forbidden");
-    }
-    const artifactsDir = path.resolve(this.workspaceRoot, "live", "artifacts", pixelId);
-    const target = path.resolve(artifactsDir, filename);
-    if (!target.startsWith(artifactsDir) || !fs.existsSync(target)) {
-      throw new Error(`Artifact '${filename}' not found`);
-    }
+    if (!this.getPixel(pixelId)) throw new Error("Pixel not found");
+    const target = containedPath(this.workspaceRoot, "live", "artifacts", pixelId, filename);
+    if (!fs.existsSync(target) || !fs.statSync(target).isFile()) throw new Error("Artifact not found");
     return target;
   }
 

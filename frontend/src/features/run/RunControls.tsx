@@ -31,6 +31,7 @@ export const RunControls: React.FC<RunControlsProps> = ({
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
 
   const isRunning = Boolean(runStatus?.running);
+  const recoveryRequired = Boolean(runStatus?.unfinalized_operations?.hasUnfinalized) || ['PAUSED_RECOVERY_REQUIRED', 'RECOVERY_REQUIRED'].includes(runStatus?.result_status ?? '');
 
   const handleStart = async (cmdText?: string) => {
     if (isSubmitting) return;
@@ -69,7 +70,6 @@ export const RunControls: React.FC<RunControlsProps> = ({
     try {
       await startRun({
         rounds: parsed.rounds,
-        command: actualCommand,
         run_budget_tokens: Number(runBudget),
         global_budget_tokens: Number(globalBudget),
       });
@@ -171,7 +171,7 @@ export const RunControls: React.FC<RunControlsProps> = ({
           type="text"
           value={command}
           placeholder="输入命令，例如：跑10轮 / run 5 / 停止"
-          disabled={isRunning || isSubmitting}
+          disabled={isRunning || isSubmitting || recoveryRequired}
           onChange={(e) => setCommand(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === 'Enter') {
@@ -181,7 +181,7 @@ export const RunControls: React.FC<RunControlsProps> = ({
         />
         <button
           className="btn btn-primary"
-          disabled={isRunning || isSubmitting}
+          disabled={isRunning || isSubmitting || recoveryRequired}
           onClick={() => handleStart()}
         >
           演化推进
@@ -198,21 +198,21 @@ export const RunControls: React.FC<RunControlsProps> = ({
       <div className="quick-action-bar">
         <button
           className="btn btn-sm run-quick-btn"
-          disabled={isRunning || isSubmitting}
+          disabled={isRunning || isSubmitting || recoveryRequired}
           onClick={() => handleStart('跑1轮')}
         >
           跑 1 轮
         </button>
         <button
           className="btn btn-sm run-quick-btn"
-          disabled={isRunning || isSubmitting}
+          disabled={isRunning || isSubmitting || recoveryRequired}
           onClick={() => handleStart('跑5轮')}
         >
           跑 5 轮
         </button>
         <button
           className="btn btn-sm run-quick-btn"
-          disabled={isRunning || isSubmitting}
+          disabled={isRunning || isSubmitting || recoveryRequired}
           onClick={() => handleStart('跑10轮')}
         >
           跑 10 轮
@@ -229,7 +229,7 @@ export const RunControls: React.FC<RunControlsProps> = ({
         <button className="btn btn-sm" onClick={onOpenToolExecutions}>
           执行记录
         </button>
-        {onReconcile && (
+        {onReconcile && recoveryRequired && (
           <button
             type="button"
             className="btn btn-sm"

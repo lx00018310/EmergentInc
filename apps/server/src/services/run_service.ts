@@ -6,7 +6,7 @@ import { PromptService } from "./prompt_service.js";
 
 export interface RunStartOptions {
   rounds: number;
-  commandText?: string;
+  commandText?: string; // Deprecated: never dispatched to agents.
   runBudgetTokens: number;
   globalBudgetTokens: number;
 }
@@ -38,6 +38,8 @@ export class RunService {
   private abortController: AbortController | null = null;
   private lastStopReason: string | null = null;
   private lastError: string | null = null;
+  private errorCode: string | null = null;
+  private errorPhase: string | null = null;
 
   constructor(
     optionsOrStore: RunServiceOptions | CoreStore,
@@ -160,42 +162,49 @@ export class RunService {
       : 0;
 
     const unfinalized = this.store.getUnfinalizedOperations();
-    const hasUnfinalized =
-      unfinalized.unsettledReservations.length > 0 ||
-      unfinalized.unknownCalls.length > 0 ||
-      unfinalized.callingMessages.length > 0;
+    const hasUnfinalized = unfinalized.hasUnfinalized;
+
+    // 内存态为空时回退到最近一次持久化 Run，进程重启后状态仍可见
+    const latestRun = this.currentRunId ? null : this.store.runs.getLatestRun();
+    const persistedStatus = latestRun?.status;
+    const stopReason = this.lastStopReason ?? latestRun?.stop_reason ?? null;
+    const lastError = this.lastError ?? latestRun?.error_summary ?? null;
+    const errorCode = this.errorCode ?? latestRun?.error_code ?? null;
+    const errorPhase = this.errorPhase;
 
     let resultStatus = "READY";
     if (this.isRunning) {
       resultStatus = "RUNNING";
-    } else if (hasUnfinalized || this.lastStopReason === "PAUSED_RECOVERY_REQUIRED") {
+    } else if (hasUnfinalized || stopReason === "PAUSED_RECOVERY_REQUIRED") {
       resultStatus = "PAUSED_RECOVERY_REQUIRED";
-    } else if (this.lastError || this.lastStopReason === "INFRASTRUCTURE_FAILURE") {
+    } else if (lastError || stopReason === "INFRASTRUCTURE_FAILURE" || persistedStatus === "FAILED") {
       resultStatus = "FAILED";
     } else if (
-      this.lastStopReason === "USER_STOPPED" ||
-      this.lastStopReason === "RUN_BUDGET_EXHAUSTED" ||
-      this.lastStopReason === "GLOBAL_BUDGET_EXHAUSTED" ||
-      this.lastStopReason === "READ_LOOP_THRESHOLD_REACHED" ||
-      this.lastStopReason === "MODEL_RESPONSE_INVALID"
+      stopReason === "USER_STOPPED" ||
+      stopReason === "RUN_BUDGET_EXHAUSTED" ||
+      stopReason === "GLOBAL_BUDGET_EXHAUSTED" ||
+      stopReason === "READ_LOOP_THRESHOLD_REACHED" ||
+      stopReason === "MODEL_RESPONSE_INVALID" ||
+      persistedStatus === "STOPPED"
     ) {
       resultStatus = "STOPPED";
     } else if (
-      this.lastStopReason === "ROUND_LIMIT_REACHED" ||
-      this.lastStopReason === "MESSAGE_LIMIT_REACHED"
+      stopReason === "ROUND_LIMIT_REACHED" ||
+      stopReason === "MESSAGE_LIMIT_REACHED" ||
+      persistedStatus === "COMPLETED"
     ) {
       resultStatus = "COMPLETED";
-    } else if (this.lastStopReason) {
-      resultStatus = this.lastStopReason;
+    } else if (stopReason) {
+      resultStatus = stopReason;
     }
 
     const lastCompletedRound = this.getWorldRound();
 
     return {
       running: this.isRunning,
-      run_id: this.currentRunId,
-      current_loop: this.currentRunId,
-      current_run: this.currentRunId,
+      run_id: this.currentRunId ?? latestRun?.run_id ?? null,
+      current_loop: this.currentRunId ?? latestRun?.run_id ?? null,
+      current_run: this.currentRunId ?? latestRun?.run_id ?? null,
       current_round: lastCompletedRound,
       last_completed_round: lastCompletedRound,
       executing_round: this.isRunning ? this.currentRound : null,
@@ -205,8 +214,11 @@ export class RunService {
       model_calls_completed: modelCallsCount,
       idle_rounds: this.idleRounds,
       stop_requested: Boolean(this.abortController?.signal?.aborted),
-      stop_reason: this.lastStopReason,
-      last_error: this.lastError,
+      stop_reason: stopReason,
+      last_error: lastError,
+      error_code: errorCode,
+      error_summary: lastError,
+      error_phase: errorPhase,
       result_status: resultStatus,
       is_mock_mode: this.isMockMode,
       unfinalized_operations: hasUnfinalized ? unfinalized : null,
@@ -224,23 +236,19 @@ export class RunService {
       );
     }
 
-    if (options.rounds <= 0) {
+    if (!Number.isSafeInteger(options.rounds) || options.rounds <= 0) {
       throw new Error("rounds must be a positive integer.");
     }
-    if (options.runBudgetTokens <= 0) {
+    if (!Number.isSafeInteger(options.runBudgetTokens) || options.runBudgetTokens <= 0) {
       throw new Error("run_budget_tokens must be positive.");
     }
-    if (options.globalBudgetTokens <= 0) {
+    if (!Number.isSafeInteger(options.globalBudgetTokens) || options.globalBudgetTokens <= 0) {
       throw new Error("global_budget_tokens must be positive.");
     }
 
     // 1. 检查是否存在未决操作（悬挂调用、未知结果调用、未决预留）
     const unfinalized = this.store.getUnfinalizedOperations();
-    if (
-      unfinalized.unsettledReservations.length > 0 ||
-      unfinalized.unknownCalls.length > 0 ||
-      unfinalized.callingMessages.length > 0
-    ) {
+    if (unfinalized.hasUnfinalized) {
       this.lastStopReason = "PAUSED_RECOVERY_REQUIRED";
       throw new Error(
         `RUN_BLOCKED_UNFINALIZED_OPERATIONS: Detected unfinalized operations in store. Manual confirmation or safe reconciliation required. ` +
@@ -265,6 +273,8 @@ export class RunService {
     this.currentRound = currentWorldRound;
     this.lastStopReason = null;
     this.lastError = null;
+    this.errorCode = null;
+    this.errorPhase = null;
     this.abortController = new AbortController();
 
     // 读取创世提示词真实版本
@@ -290,21 +300,7 @@ export class RunService {
     // 尝试激活上一轮因 Run 预算等待的消息
     this.store.messages.resetWaitingRunBudgetMessages();
 
-    // 接通 Human Command：/run/start 的 commandText 作为 human 来源消息广播给活跃元胞
-    if (options.commandText && options.commandText.trim()) {
-      const activePixels = this.store.pixels.listActivePixels();
-      for (const pixel of activePixels) {
-        this.store.messages.enqueueMessage({
-          runId,
-          roundNum: startRound,
-          sender: "human",
-          recipient: pixel.pixelId,
-          content: options.commandText.trim(),
-          isFeedback: false,
-          sourceType: "human",
-        });
-      }
-    }
+    // Control-plane rounds never enqueue agent messages; use per-Pixel Mandate.
 
     // 异步执行轮次调度，不阻塞 HTTP 响应
     this.runLoop(runId, startRound, endRound, this.abortController.signal).catch((err) => {
@@ -333,10 +329,8 @@ export class RunService {
       throw new Error("Cannot reconcile while run is in progress.");
     }
     const res = this.store.reconcileUnfinalizedOperations();
-    this.lastStopReason = null;
-    this.lastError = null;
     return {
-      status: "RECONCILED",
+      status: "REVIEW_REQUIRED",
       reconciled: res,
     };
   }
@@ -357,9 +351,14 @@ export class RunService {
         this.currentRound = r;
         const summary: RoundSummary = await this.scheduler.executeRound(r, runId, signal);
 
+        const diagnostic = summary as RoundSummary & { errorCode?: string; errorSummary?: string; errorPhase?: string };
+        if (diagnostic.errorCode) this.errorCode = diagnostic.errorCode;
+        if (diagnostic.errorSummary) this.lastError = diagnostic.errorSummary;
+        if (diagnostic.errorPhase) this.errorPhase = diagnostic.errorPhase;
+
         // 如果本轮遭遇基础设施失败或被主动中断，不可计入完成轮次，不可推进世界轮次
-        if (summary.stopReason === "INFRASTRUCTURE_FAILURE" || signal.aborted) {
-          this.lastStopReason = signal.aborted ? "USER_STOPPED" : "INFRASTRUCTURE_FAILURE";
+        if (summary.stopReason === "INFRASTRUCTURE_FAILURE" || summary.stopReason === "PAUSED_RECOVERY_REQUIRED" || signal.aborted) {
+          this.lastStopReason = signal.aborted ? "USER_STOPPED" : summary.stopReason!;
           break;
         }
 
@@ -386,14 +385,17 @@ export class RunService {
         this.lastStopReason === "READ_LOOP_THRESHOLD_REACHED" ||
         this.lastStopReason === "MODEL_RESPONSE_INVALID";
       const isFailed = this.lastStopReason === "INFRASTRUCTURE_FAILURE";
-      const finalStatus = isFailed ? "FAILED" : isStopped ? "STOPPED" : "COMPLETED";
+      const finalStatus = isFailed ? "FAILED" : (isStopped || this.lastStopReason === "PAUSED_RECOVERY_REQUIRED") ? "STOPPED" : "COMPLETED";
       const finalReason = this.lastStopReason || (signal.aborted ? "USER_STOPPED" : "ROUND_LIMIT_REACHED");
 
-      this.store.runs.updateRunStatus(runId, finalStatus, finalReason as any);
+      this.lastStopReason = finalReason;
+      this.store.runs.updateRunStatus(runId, finalStatus, finalReason as any, this.errorCode, this.lastError);
     } catch (err: any) {
-      this.lastError = err.message || String(err);
+      this.lastError = err.summary || err.message || String(err);
+      this.errorCode = err.code || "INFRASTRUCTURE_FAILURE";
+      this.errorPhase = err.phase || null;
       this.lastStopReason = "INFRASTRUCTURE_FAILURE";
-      this.store.runs.updateRunStatus(runId, "FAILED", "INFRASTRUCTURE_FAILURE");
+      this.store.runs.updateRunStatus(runId, "FAILED", "INFRASTRUCTURE_FAILURE", this.errorCode, this.lastError);
     } finally {
       this.isRunning = false;
       this.abortController = null;

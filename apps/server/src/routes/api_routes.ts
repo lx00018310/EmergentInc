@@ -4,6 +4,7 @@ import * as path from "node:path";
 import { WorldService } from "../services/world_service.js";
 import { RunService } from "../services/run_service.js";
 import { PromptService } from "../services/prompt_service.js";
+import { containedPath, validatePathSegment } from "../services/safe_path.js";
 import { ToolRegistry } from "@emergentinc/tools";
 import { CoreStore } from "@emergentinc/persistence";
 
@@ -29,6 +30,16 @@ export async function registerApiRoutes(
     workspaceRoot,
   } = options;
 
+  server.addHook("preHandler", async (req, reply) => {
+    const pixelId = (req.params as any)?.pixel_id;
+    if (pixelId !== undefined) {
+      validatePathSegment(String(pixelId));
+      if (!worldService.getPixel(String(pixelId))) {
+        return reply.status(404).send({ detail: "Pixel not found" });
+      }
+    }
+  });
+
   // 1. World
   server.get("/world", async (_req, reply) => {
     return reply.send(worldService.getWorldDto());
@@ -52,7 +63,6 @@ export async function registerApiRoutes(
     try {
       const res = await runService.start({
         rounds,
-        commandText: body.command,
         runBudgetTokens,
         globalBudgetTokens,
       });
@@ -72,6 +82,21 @@ export async function registerApiRoutes(
   server.post("/run/reconcile", async (_req, reply) => {
     try {
       return reply.send(runService.reconcile());
+    } catch (err: any) {
+      return reply.status(400).send({ detail: err.message });
+    }
+  });
+
+  server.post("/run/recovery/resolve", async (req, reply) => {
+    if (runService.getStatus().running) return reply.status(409).send({ detail: "Run in progress" });
+    const body: any = req.body || {};
+    if (!["model", "tool", "run"].includes(body.kind) || typeof body.id !== "string" || !body.id ||
+        !["confirm_not_billed", "settle_billed", "settle_reserved", "abandon", "acknowledge"].includes(body.decision) ||
+        typeof body.reason !== "string" || !body.reason.trim()) {
+      return reply.status(400).send({ detail: "Operation, explicit decision and reason are required" });
+    }
+    try {
+      return reply.send((coreStore as any).resolveRecoveryOperation(body));
     } catch (err: any) {
       return reply.status(400).send({ detail: err.message });
     }
@@ -103,22 +128,20 @@ export async function registerApiRoutes(
     const pixelId = String(params.pixel_id || "");
     const docName = String(params.doc_name || "");
 
-    // 防御路径穿越与特殊字符
-    if (pixelId.includes("..") || pixelId.includes("/") || pixelId.includes("\\")) {
-      return reply.status(400).send({ detail: "Invalid pixel_id" });
+    let pixelDir: string;
+    try {
+      pixelDir = containedPath(workspaceRoot, "live", "pixels", pixelId);
+    } catch (err: any) {
+      return reply.status(err.statusCode || 400).send({ detail: "Invalid pixel_id" });
     }
-    if (docName.includes("..") || docName.includes("/") || docName.includes("\\")) {
-      return reply.status(400).send({ detail: "Invalid doc_name" });
-    }
-
-    const pixelDir = path.resolve(workspaceRoot, "live", "pixels", pixelId);
+    validatePathSegment(docName);
     if (!fs.existsSync(pixelDir)) {
       return reply.status(404).send({ detail: `Pixel '${pixelId}' not found` });
     }
 
     // 1. pixel.md 别名与全名支持
     if (docName === "pixel" || docName === "pixel.md") {
-      const docPath = path.resolve(pixelDir, "pixel.md");
+      const docPath = containedPath(pixelDir, "pixel.md");
       if (!fs.existsSync(docPath)) {
         return reply.status(404).send({ detail: "Document not found" });
       }
@@ -135,7 +158,7 @@ export async function registerApiRoutes(
       if (!pixel) {
         return reply.status(404).send({ detail: "Document not found" });
       }
-      const stateFile = path.resolve(pixelDir, "state.json");
+      const stateFile = containedPath(pixelDir, "state.json");
       let diskState: any = {};
       if (fs.existsSync(stateFile)) {
         try {
@@ -165,7 +188,7 @@ export async function registerApiRoutes(
 
     // 4. mandate.md 别名与全名支持 (Human Mandate 独立外部输入)
     if (docName === "mandate" || docName === "mandate.md") {
-      const mandatePath = path.resolve(pixelDir, "mandate.md");
+      const mandatePath = containedPath(pixelDir, "mandate.md");
       return reply.send({
         pixel_id: pixelId,
         document: "mandate.md",
@@ -180,10 +203,12 @@ export async function registerApiRoutes(
   server.get("/pixels/:pixel_id/mandate", async (req, reply) => {
     const params: any = req.params;
     const pixelId = String(params.pixel_id || "");
-    if (pixelId.includes("..") || pixelId.includes("/") || pixelId.includes("\\")) {
-      return reply.status(400).send({ detail: "Invalid pixel_id" });
+    let mandatePath: string;
+    try {
+      mandatePath = containedPath(workspaceRoot, "live", "pixels", pixelId, "mandate.md");
+    } catch (err: any) {
+      return reply.status(err.statusCode || 400).send({ detail: "Invalid pixel_id" });
     }
-    const mandatePath = path.resolve(workspaceRoot, "live", "pixels", pixelId, "mandate.md");
     if (!fs.existsSync(mandatePath)) {
       return reply.send({ pixel_id: pixelId, mandate: null });
     }
@@ -196,16 +221,18 @@ export async function registerApiRoutes(
   server.put("/pixels/:pixel_id/mandate", async (req, reply) => {
     const params: any = req.params;
     const pixelId = String(params.pixel_id || "");
-    if (pixelId.includes("..") || pixelId.includes("/") || pixelId.includes("\\")) {
-      return reply.status(400).send({ detail: "Invalid pixel_id" });
+    let pixelDir: string;
+    try {
+      pixelDir = containedPath(workspaceRoot, "live", "pixels", pixelId);
+    } catch (err: any) {
+      return reply.status(err.statusCode || 400).send({ detail: "Invalid pixel_id" });
     }
-    const pixelDir = path.resolve(workspaceRoot, "live", "pixels", pixelId);
     if (!fs.existsSync(pixelDir)) {
       return reply.status(404).send({ detail: `Pixel '${pixelId}' not found` });
     }
     const body: any = req.body || {};
     const content = String(body.mandate ?? body.content ?? "");
-    const mandatePath = path.resolve(pixelDir, "mandate.md");
+    const mandatePath = containedPath(pixelDir, "mandate.md");
     // 独立 External Input：绝对禁止修改 pixel.md，仅写入 mandate.md
     fs.writeFileSync(mandatePath, content, "utf-8");
     return reply.send({
@@ -220,7 +247,7 @@ export async function registerApiRoutes(
     if (pixelId.includes("..") || pixelId.includes("/") || pixelId.includes("\\")) {
       return reply.status(400).send({ detail: "Invalid pixel_id" });
     }
-    const mandatePath = path.resolve(workspaceRoot, "live", "pixels", pixelId, "mandate.md");
+    const mandatePath = containedPath(workspaceRoot, "live", "pixels", pixelId, "mandate.md");
     if (fs.existsSync(mandatePath)) {
       fs.unlinkSync(mandatePath);
     }
@@ -242,19 +269,23 @@ export async function registerApiRoutes(
     }
     const body: any = req.body || {};
     const amount = Number(body.amount);
-    if (!amount || amount <= 0 || !Number.isInteger(amount)) {
+    if (!amount || amount <= 0 || !Number.isSafeInteger(amount)) {
       return reply.status(400).send({ detail: "Amount must be a positive integer" });
+    }
+    if (typeof body.idempotency_key !== "string" || !body.idempotency_key.trim() || body.idempotency_key.length > 200) {
+      return reply.status(400).send({ detail: "idempotency_key is required (1-200 characters)" });
     }
     const currentRound = runService.getWorldRound();
     const result = coreStore.applyExternalReward({
       pixelId,
+      idempotencyKey: body.idempotency_key,
       amount,
       round: currentRound,
       source: String(body.source || "human"),
       reason: String(body.reason || "External Reward"),
     });
 
-    const statePath = path.resolve(workspaceRoot, "live", "pixels", pixelId, "state.json");
+    const statePath = containedPath(workspaceRoot, "live", "pixels", pixelId, "state.json");
     if (fs.existsSync(statePath)) {
       try {
         const stateObj = JSON.parse(fs.readFileSync(statePath, "utf-8"));
@@ -303,13 +334,13 @@ export async function registerApiRoutes(
   // 5. Artifacts
   server.get("/pixels/:pixel_id/artifacts", async (req, reply) => {
     const params: any = req.params;
-    const dir = path.resolve(workspaceRoot, "live", "artifacts", params.pixel_id);
+    const dir = containedPath(workspaceRoot, "live", "artifacts", params.pixel_id);
     if (!fs.existsSync(dir)) {
       return reply.send({ pixel_id: params.pixel_id, artifacts: [] });
     }
     const files = fs.readdirSync(dir);
     const items = files.map((file) => {
-      const stat = fs.statSync(path.resolve(dir, file));
+      const stat = fs.statSync(containedPath(dir, file));
       return {
         filename: file,
         size_bytes: stat.size,
@@ -432,18 +463,16 @@ export async function registerApiRoutes(
     const query: any = req.query || {};
     const subPath = String(query.path || "").trim();
     const privDir = path.resolve(workspaceRoot, "private");
-    const targetDir = subPath ? path.resolve(privDir, subPath) : privDir;
+    const targetDir = containedPath(privDir, ...(subPath ? subPath.split("/") : []));
 
-    if (!targetDir.startsWith(privDir)) {
-      return reply.status(403).send({ detail: "PATH_TRAVERSAL_FORBIDDEN" });
-    }
+    
     if (!fs.existsSync(targetDir)) {
       return reply.status(404).send({ detail: "Directory not found" });
     }
 
     const entries = fs.readdirSync(targetDir, { withFileTypes: true });
     const items = entries.map((ent) => {
-      const full = path.resolve(targetDir, ent.name);
+      const full = containedPath(targetDir, ent.name);
       const isDir = ent.isDirectory();
       const stat = fs.statSync(full);
       return {
@@ -462,11 +491,9 @@ export async function registerApiRoutes(
     const query: any = req.query || {};
     const subPath = String(query.path || "").trim();
     const privDir = path.resolve(workspaceRoot, "private");
-    const target = path.resolve(privDir, subPath);
+    const target = containedPath(privDir, ...subPath.split("/"));
 
-    if (!target.startsWith(privDir)) {
-      return reply.status(403).send({ detail: "PATH_TRAVERSAL_FORBIDDEN" });
-    }
+    
     if (!fs.existsSync(target) || !fs.statSync(target).isFile()) {
       return reply.status(404).send({ detail: "File not found" });
     }
@@ -522,6 +549,8 @@ export async function registerApiRoutes(
       if (ops?.callingMessages?.length) {
         reasons.push(`CALLING_MESSAGES: ${ops.callingMessages.length} 条未决消息`);
       }
+      if (ops?.pendingRuns?.length) reasons.push(`PENDING_RUNS: ${ops.pendingRuns.length}`);
+      if (ops?.startedToolExecutions?.length) reasons.push(`STARTED_TOOLS: ${ops.startedToolExecutions.length}`);
       if (reasons.length === 0) {
         reasons.push("PAUSED_RECOVERY_REQUIRED: 存在未决操作需要安全对账自愈");
       }

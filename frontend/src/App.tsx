@@ -21,7 +21,7 @@ import {
   updateTemporaryPrompt,
 } from './api/prompts';
 import { fetchPixelDocument, fetchPixelArtifact, getArtifactDownloadUrl } from './api/files';
-import { reconcileRun } from './api/run';
+import { RecoveryOperations } from './features/run/RecoveryOperations';
 import type { PromptDto } from './api/types';
 
 export const App: React.FC = () => {
@@ -55,6 +55,13 @@ export const App: React.FC = () => {
       addLogMessage('error', `[POLL ERROR] ${pollingError}`);
     }
   }, [pollingError, addLogMessage]);
+
+  useEffect(() => {
+    if (!runStatus?.running && runStatus?.run_id && runStatus?.result_status && runStatus.result_status !== 'READY') {
+      addLogMessage(runStatus.result_status === 'FAILED' ? 'error' : 'warn',
+        `[RUN ${runStatus.result_status}] ${runStatus.stop_reason ?? ''} ${runStatus.error_code ?? ''} ${runStatus.error_summary ?? runStatus.last_error ?? ''}`);
+    }
+  }, [runStatus?.run_id, runStatus?.result_status, runStatus?.stop_reason, runStatus?.error_summary, runStatus?.last_error, addLogMessage]);
 
   // 元胞选择状态
   const [selectedPixelId, setSelectedPixelId] = useState<string | null>(null);
@@ -174,21 +181,6 @@ export const App: React.FC = () => {
 
   const handleHoverPixel = useCallback((_id: string | null) => {}, []);
 
-  const handleReconcile = async () => {
-    addLogMessage('warn', '[RECONCILE] 正在执行系统安全对账自愈...');
-    try {
-      const res = await reconcileRun();
-      addLogMessage(
-        'success',
-        `[RECONCILE SUCCESS] 对账成功：恢复预留 ${res.reconciled.reconciledReservations} 笔，重入队消息 ${res.reconciled.reconciledMessages} 条，归档调用 ${res.reconciled.reconciledCalls} 笔。`
-      );
-      await refreshImmediately();
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      addLogMessage('error', `[RECONCILE FAILED] 对账失败: ${msg}`);
-    }
-  };
-
   return (
     <>
       <RunStatus world={world} runStatus={runStatus} audit={audit} />
@@ -204,7 +196,6 @@ export const App: React.FC = () => {
             onOpenToolExecutions={() => setIsToolExecutionsModalOpen(true)}
             onLogMessage={addLogMessage}
             onRefresh={refreshImmediately}
-            onReconcile={handleReconcile}
           />
 
           <details className="panel-card context-guide">
@@ -222,8 +213,9 @@ export const App: React.FC = () => {
             messages={messages}
             audit={audit}
             runStatus={runStatus}
-            onReconcile={handleReconcile}
           />
+
+          {!isRunning && runStatus?.unfinalized_operations && <RecoveryOperations status={runStatus} onRefresh={refreshImmediately} />}
 
           <PromptEditor
             cardId="genesis-card"

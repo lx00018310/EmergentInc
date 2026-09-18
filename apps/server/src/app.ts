@@ -7,6 +7,8 @@ import { registerApiRoutes, ApiRoutesOptions } from "./routes/api_routes.js";
 
 export interface CreateServerOptions extends ApiRoutesOptions {
   frontendDistDir?: string;
+  development?: boolean;
+  allowedOrigins?: string[];
 }
 
 export async function createServer(options: CreateServerOptions): Promise<FastifyInstance> {
@@ -14,9 +16,18 @@ export async function createServer(options: CreateServerOptions): Promise<Fastif
     logger: false,
   });
 
-  // 1. 跨域支持
+  // Reject cross-origin requests before handlers, including simple mutation requests.
+  const allowedOrigins = new Set(options.development ? options.allowedOrigins ?? [] : []);
+  app.addHook("onRequest", async (req, reply) => {
+    const origin = req.headers.origin;
+    const sameOrigin = `${req.protocol}://${req.headers.host}`;
+    if ((origin && origin !== sameOrigin && !allowedOrigins.has(origin)) ||
+        (!origin && req.headers["sec-fetch-site"] === "cross-site")) {
+      return reply.status(403).send({ detail: "ORIGIN_FORBIDDEN" });
+    }
+  });
   await app.register(cors, {
-    origin: true,
+    origin: (origin, cb) => cb(null, Boolean(origin && allowedOrigins.has(origin))),
     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
   });
 

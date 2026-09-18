@@ -35,3 +35,27 @@ export async function reconcileRun(): Promise<ReconcileResultDto> {
   });
 }
 
+export type RecoveryKind = 'model' | 'tool' | 'run';
+export type RecoveryDecision =
+  | 'confirm_not_billed'
+  | 'settle_billed'
+  | 'settle_reserved'
+  | 'abandon'
+  | 'acknowledge';
+
+export interface RecoveryResolveRequest {
+  kind: RecoveryKind;
+  id: string;
+  decision: RecoveryDecision;
+  reason: string;
+  actualTokens?: number;
+  costCny?: number;
+}
+
+export async function resolveRecovery(req: RecoveryResolveRequest): Promise<Record<string, unknown>> {
+  return apiRequest<Record<string, unknown>>('/api/run/recovery/resolve', {
+    method: 'POST',
+    body: JSON.stringify(req),
+  });
+}
+

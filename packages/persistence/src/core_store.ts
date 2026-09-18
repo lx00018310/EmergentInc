@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { SqliteDatabase } from "./sqlite/db.js";
 import { initSchema } from "./migrations/init_schema.js";
 import { RunRepository } from "./repositories/run_repository.js";
@@ -57,7 +58,7 @@ export class CoreStore {
     promptHash: string;
     rawResponse: string;
     normalizedResponse?: string | null;
-    roundNum?: number;
+    roundNum?: number | null;
     toolCost?: number | null;
     usage: {
       promptTokens: number | null;
@@ -78,7 +79,7 @@ export class CoreStore {
         runId: params.runId,
         pixelId: params.pixelId,
         messageId: params.messageId,
-        roundNum: params.roundNum ?? 0,
+        roundNum: params.roundNum ?? null,
         model: params.model,
         pricingRevision: params.pricingRevision,
         promptHash: params.promptHash,
@@ -93,7 +94,7 @@ export class CoreStore {
         outcome: "SUCCESS",
         createdAt: Date.now() / 1000,
       });
-      this.messages.updateStatus(params.messageId, "RESPONSE_STORED");
+      this.messages.updateStatus(params.messageId, params.usage.actualTokens === null ? "AWAITING_SETTLEMENT" : "RESPONSE_STORED");
     });
   }
 
@@ -156,63 +157,73 @@ export class CoreStore {
     reconciledCalls: number;
     reconciledTools: number;
   } {
+    // Uncertain billing and side effects require an explicit, audited operator decision.
+    return {
+      reconciledRuns: 0,
+      reconciledReservations: 0,
+      reconciledMessages: 0,
+      reconciledCalls: 0,
+      reconciledTools: 0,
+    };
+  }
+
+  public resolveRecoveryOperation(params: {
+    kind: "model" | "tool" | "run";
+    id: string;
+    decision: "confirm_not_billed" | "settle_billed" | "settle_reserved" | "abandon" | "acknowledge";
+    reason: string;
+    actualTokens?: number;
+    costCny?: number | null;
+  }): { decisionId: string } {
+    if (!params.id || !params.reason?.trim()) throw new Error("Recovery requires an operation ID and reason");
+    if (params.costCny != null && (!Number.isFinite(params.costCny) || params.costCny < 0)) throw new Error("Invalid billed cost");
     return this.db.transaction(() => {
-      // 1. 获取所有未决预留并安全退款
-      // A received response without usage may already be billed; never auto-refund it.
-      const openRes = this.db.prepare(`
-        SELECT call_id FROM reservations WHERE status = 'OPEN'
-        AND NOT EXISTS (
-          SELECT 1 FROM model_calls m WHERE m.call_id = reservations.call_id
-          AND m.actual_tokens IS NULL AND m.outcome IN ('SUCCESS', 'MODEL_RESPONSE_INVALID')
-        )
-      `).all() as any[];
-      for (const res of openRes) {
-        this.budgets.refund(res.call_id);
+      const now = Date.now() / 1000;
+      if (params.kind === "model") {
+        const reservation = this.db.prepare("SELECT * FROM reservations WHERE call_id = ? AND status = 'OPEN'").get(params.id) as any;
+        const call = this.modelCalls.getModelCall(params.id);
+        if (!reservation && call?.outcome !== "CALL_OUTCOME_UNKNOWN") throw new Error("Model operation is not unresolved");
+        const messageId = call?.messageId;
+        if (params.decision === "confirm_not_billed") {
+          if (call && ["SUCCESS", "MODEL_RESPONSE_INVALID"].includes(call.outcome)) throw new Error("Received responses must be settled or abandoned, not retried as unsent");
+          this.budgets.refund(params.id);
+          if (messageId) this.messages.updateStatus(messageId, "QUEUED");
+        } else if (["settle_billed", "settle_reserved", "abandon"].includes(params.decision)) {
+          const tokens = params.decision === "settle_billed" ? params.actualTokens : reservation?.amount;
+          if (!reservation || !Number.isSafeInteger(tokens) || tokens < 0) throw new Error("Settlement requires a valid token amount and open reservation");
+          this.budgets.settle({ callId: params.id, actualTokens: tokens, costCny: params.costCny ?? null });
+          // A reserved-cap settlement is an operator budget decision, not measured usage.
+          if (params.decision === "settle_billed" && call) {
+            this.db.prepare("UPDATE model_calls SET actual_tokens = ?, cost_cny = ? WHERE call_id = ?")
+              .run(tokens, params.costCny ?? null, params.id);
+          }
+          if (messageId) this.messages.updateStatus(messageId,
+            params.decision !== "abandon" && call?.outcome === "SUCCESS" ? "RESPONSE_STORED" : "ABANDONED");
+        } else {
+          throw new Error("Invalid model recovery decision");
+        }
+        if (call?.outcome === "CALL_OUTCOME_UNKNOWN") {
+          this.db.prepare("UPDATE model_calls SET outcome = 'CALL_OUTCOME_RECONCILED' WHERE call_id = ?").run(params.id);
+        }
+      } else if (params.kind === "tool") {
+        if (params.decision !== "abandon" && params.decision !== "acknowledge") throw new Error("Tool recovery cannot refund or retry uncertain side effects");
+        const tool = this.toolExecutions.getExecution(params.id);
+        if (!tool || !["STARTED", "UNKNOWN"].includes(tool.status)) throw new Error("Tool operation is not unresolved");
+        this.db.prepare("UPDATE tool_executions SET status = 'SKIPPED', result = ?, finished_at = ? WHERE operation_id = ?")
+          .run(JSON.stringify({ outcome: "UNKNOWN", recovery: params.decision, reason: params.reason, previousResult: tool.result ?? null }), now, params.id);
+        this.messages.updateStatus(tool.message_id, "ABANDONED");
+      } else if (params.kind === "run") {
+        if (params.decision !== "acknowledge") throw new Error("Run recovery requires acknowledgement");
+        const run = this.runs.getRun(params.id);
+        if (!run || run.status !== "RUNNING") throw new Error("Run is not unresolved");
+        this.runs.updateRunStatus(params.id, "STOPPED", "USER_STOPPED");
+      } else {
+        throw new Error("Invalid recovery kind");
       }
-
-      // 2. 将所有处于 CALLING 或 CALL_OUTCOME_UNKNOWN 或 RESERVED 的消息重置回 QUEUED
-      const callingMsgs = this.db.prepare(
-        "SELECT message_id FROM messages WHERE status IN ('CALLING', 'CALL_OUTCOME_UNKNOWN', 'RESERVED')"
-      ).all() as any[];
-      for (const m of callingMsgs) {
-        this.messages.updateStatus(m.message_id, "QUEUED");
-      }
-
-      // 3. 将悬挂 RUNNING 的 Run 归档为 STOPPED
-      const runningRuns = this.db.prepare(
-        "SELECT run_id FROM runs WHERE status = 'RUNNING'"
-      ).all() as any[];
-      for (const r of runningRuns) {
-        this.runs.updateRunStatus(r.run_id, "STOPPED", "USER_STOPPED");
-      }
-
-      // 4. 将未决的 CALL_OUTCOME_UNKNOWN 标记为 CALL_OUTCOME_RECONCILED
-      const unknownCalls = this.db.prepare(
-        "SELECT call_id FROM model_calls WHERE outcome = 'CALL_OUTCOME_UNKNOWN'"
-      ).all() as any[];
-      if (unknownCalls.length > 0) {
-        this.db.prepare(
-          "UPDATE model_calls SET outcome = 'CALL_OUTCOME_RECONCILED' WHERE outcome = 'CALL_OUTCOME_UNKNOWN'"
-        ).run();
-      }
-
-      // 5. 将悬挂 STARTED 的工具执行标记为 FAILED
-      const startedTools = this.db.prepare(
-        "SELECT operation_id FROM tool_executions WHERE status = 'STARTED'"
-      ).all() as any[];
-      if (startedTools.length > 0) {
-        this.db.prepare(
-          "UPDATE tool_executions SET status = 'FAILED', error_text = 'RECONCILED_TERMINATED' WHERE status = 'STARTED'"
-        ).run();
-      }
-
-      return {
-        reconciledRuns: runningRuns.length,
-        reconciledReservations: openRes.length,
-        reconciledMessages: callingMsgs.length,
-        reconciledCalls: unknownCalls.length,
-        reconciledTools: startedTools.length,
-      };
+      const decisionId = randomUUID();
+      this.db.prepare("INSERT INTO recovery_decisions (decision_id, kind, id, decision, reason, details, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
+        .run(decisionId, params.kind, params.id, params.decision, params.reason.trim(), JSON.stringify(params), now);
+      return { decisionId };
     });
   }
 
@@ -222,15 +233,23 @@ export class CoreStore {
   public applyExternalReward(params: {
     pixelId: string;
     amount: number;
+    idempotencyKey: string;
     round?: number;
     source?: string;
     reason?: string;
-  }): { pixelId: string; newBalance: number; amount: number } {
-    if (params.amount <= 0 || !Number.isInteger(params.amount)) {
+  }): { pixelId: string; newBalance: number; amount: number; eventId: string } {
+    if (!params.idempotencyKey?.trim() || params.idempotencyKey.length > 200) throw new Error("Reward requires an idempotency key");
+    if (params.amount <= 0 || !Number.isSafeInteger(params.amount)) {
       throw new Error(`Reward amount must be a positive integer, got ${params.amount}`);
     }
 
     return this.db.transaction(() => {
+      const requestJson = JSON.stringify({ pixelId: params.pixelId, amount: params.amount, source: params.source || "human", reason: params.reason || "External Reward" });
+      const previous = this.db.prepare("SELECT request_json, result_json FROM external_reward_requests WHERE idempotency_key = ?").get(params.idempotencyKey) as any;
+      if (previous) {
+        if (previous.request_json !== requestJson) throw new Error("Idempotency key already used for a different reward");
+        return JSON.parse(previous.result_json);
+      }
       let account = this.pixels.getPixelAccount(params.pixelId);
       if (!account) {
         this.pixels.upsertPixelAccount({
@@ -244,7 +263,7 @@ export class CoreStore {
 
       const newBalance = this.pixels.updateEnergy(params.pixelId, params.amount);
       const now = Date.now() / 1000;
-      const entryId = `reward_${params.pixelId}_${Date.now()}`;
+      const entryId = `reward_${randomUUID()}`;
 
       this.ledger.appendEntry({
         entry_id: entryId,
@@ -260,11 +279,10 @@ export class CoreStore {
         }),
       });
 
-      return {
-        pixelId: params.pixelId,
-        newBalance,
-        amount: params.amount,
-      };
+      const result = { pixelId: params.pixelId, newBalance, amount: params.amount, eventId: entryId };
+      this.db.prepare("INSERT INTO external_reward_requests (idempotency_key, request_json, result_json, created_at) VALUES (?, ?, ?, ?)")
+        .run(params.idempotencyKey, requestJson, JSON.stringify(result), now);
+      return result;
     });
   }
 

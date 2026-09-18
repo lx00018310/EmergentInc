@@ -39,14 +39,27 @@ export interface RawModelResponse {
  * Pixel 单步成本台账 (V11 Cost Ledger)
  */
 export interface PixelStepCost {
+  callId: string;
+  runId: string;
+  outcome: ModelCallOutcome;
   pixelId: string;
-  round: number;
+  round: number | null;
   inputTokens: number | null;
   cachedInputTokens: number | null;
   outputTokens: number | null;
   actualTokens?: number | null;
   modelCost: number | null;
   toolCost: number | null;
+}
+
+/** Aggregate known subtotals are not a substitute for nullable complete totals. */
+export interface CostSummary {
+  totalCostCny: number | null;
+  knownCostCny: number;
+  modelCostCny: number | null;
+  toolCostCny: number | null;
+  unknownModelCount: number;
+  unknownToolCount: number;
 }
 
 /**
@@ -57,7 +70,7 @@ export interface ModelCallRecord {
   runId: string;
   pixelId: string;
   messageId?: string | null;
-  roundNum?: number;
+  roundNum?: number | null;
   model: string;
   pricingRevision?: string | null;
   promptHash?: string | null;

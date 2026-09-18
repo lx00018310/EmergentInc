@@ -18,6 +18,8 @@ export interface RunRecord {
   pricing_revision?: string | null;
   status: RunStatus;
   stop_reason?: StopReason | null;
+  error_code?: string | null;
+  error_summary?: string | null;
   created_at: number;
   finished_at?: number | null;
 }
@@ -70,14 +72,20 @@ export class RunRepository {
     return (stmt.get() as unknown as RunRecord) ?? null;
   }
 
-  public updateRunStatus(runId: string, status: RunStatus, stopReason?: StopReason | null): void {
+  public getLatestRun(): RunRecord | null {
+    const stmt = this.db.prepare("SELECT * FROM runs ORDER BY created_at DESC LIMIT 1");
+    return (stmt.get() as unknown as RunRecord) ?? null;
+  }
+
+  public updateRunStatus(runId: string, status: RunStatus, stopReason?: StopReason | null, errorCode?: string | null, errorSummary?: string | null): void {
     const now = Date.now() / 1000;
     const stmt = this.db.prepare(`
-      UPDATE runs 
-      SET status = ?, stop_reason = COALESCE(?, stop_reason), finished_at = ?
+      UPDATE runs
+      SET status = ?, stop_reason = COALESCE(?, stop_reason), error_code = COALESCE(?, error_code),
+          error_summary = COALESCE(?, error_summary), finished_at = ?
       WHERE run_id = ?
     `);
-    stmt.run(status, stopReason ?? null, now, runId);
+    stmt.run(status, stopReason ?? null, errorCode ?? null, errorSummary ?? null, now, runId);
   }
 
   public updateRunBudget(runId: string, spentDelta: number, reservedDelta: number): void {

@@ -275,6 +275,7 @@ describe("EmergentInc V11 — Minimal Historical Economy & Ten Test Criteria", (
       round: 10,
       source: "human",
       reason: "Great Analysis",
+      idempotencyKey: "historical-economy-reward",
     });
     expect(rewardRes.newBalance).toBe(before + 300);
 

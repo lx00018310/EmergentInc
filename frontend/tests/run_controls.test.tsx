@@ -44,7 +44,6 @@ describe('RunControls Component', () => {
 
     expect(runApi.startRun).toHaveBeenCalledWith({
       rounds: 5,
-      command: '跑5轮',
       run_budget_tokens: 100000,
       global_budget_tokens: 1000000,
     });
@@ -73,7 +72,6 @@ describe('RunControls Component', () => {
 
     expect(runApi.startRun).toHaveBeenCalledWith({
       rounds: 10,
-      command: '跑10轮',
       run_budget_tokens: 100000,
       global_budget_tokens: 1000000,
     });
@@ -160,11 +158,11 @@ describe('RunControls Component', () => {
     expect(onLogMessage).toHaveBeenCalledWith('warn', expect.stringContaining('未识别指令'));
   });
 
-  it('点击“安全对账”按钮，触发 onReconcile 回调', async () => {
+  it('正常状态不显示对账按钮，恢复状态才显示', async () => {
     const onReconcile = vi.fn().mockResolvedValue(undefined);
     render(
       <RunControls
-        runStatus={null}
+        runStatus={{ unfinalized_operations: { hasUnfinalized: true, unsettledReservations: [{ callId: 'c1', runId: 'r1', pixelId: 'p', amount: 1, createdAt: 1 }] } } as any}
         onOpenEnvironment={vi.fn()}
         onOpenTools={vi.fn()}
         onOpenPrivateFiles={vi.fn()}

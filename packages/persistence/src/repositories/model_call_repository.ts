@@ -1,5 +1,5 @@
 import { SqliteDatabase } from "../sqlite/db.js";
-import { ModelCallRecord, PixelStepCost } from "@emergentinc/protocol";
+import { ModelCallRecord, PixelStepCost, CostSummary } from "@emergentinc/protocol";
 
 export class ModelCallRepository {
   constructor(private db: SqliteDatabase) {}
@@ -18,7 +18,7 @@ export class ModelCallRepository {
       record.runId,
       record.pixelId,
       record.messageId ?? null,
-      record.roundNum ?? 0,
+      record.roundNum ?? null,
       record.model,
       record.pricingRevision ?? null,
       record.promptHash ?? null,
@@ -60,7 +60,7 @@ export class ModelCallRepository {
       runId: row.run_id,
       pixelId: row.pixel_id,
       messageId: row.message_id,
-      roundNum: Number(row.round_num || 0),
+      roundNum: row.round_num == null ? null : Number(row.round_num),
       model: row.model,
       pricingRevision: row.pricing_revision,
       promptHash: row.prompt_hash,
@@ -83,6 +83,41 @@ export class ModelCallRepository {
     return Number(row?.count ?? 0);
   }
 
+  public countInvalidResponses(messageId: string): number {
+    const row = this.db.prepare(
+      "SELECT COUNT(*) AS count FROM model_calls WHERE message_id = ? AND outcome = 'MODEL_RESPONSE_INVALID'"
+    ).get(messageId) as any;
+    return Number(row?.count ?? 0);
+  }
+
+  /**
+   * 真实台账成本汇总。任何组成未知（NULL）时整体未知，不补估算、不当作 0。
+   * 注意：SQLite SUM 会忽略 NULL，因此必须用 unknown 计数判定未知，不能依赖 SUM 结果。
+   */
+  public getCostSummary(): CostSummary {
+    const row = this.db.prepare(`
+      SELECT
+        SUM(cost_cny) AS model_cost,
+        COUNT(*) AS model_count,
+        SUM(CASE WHEN cost_cny IS NULL THEN 1 ELSE 0 END) AS unknown_model_count
+      FROM model_calls
+    `).get() as any;
+    const tool = this.db.prepare(`
+      SELECT
+        (SELECT SUM(cost_cny) FROM tool_executions) AS tool_cost,
+        (SELECT COUNT(*) FROM tool_executions WHERE cost_cny IS NULL) AS unknown_tool_count
+    `).get() as any;
+    const unknownModelCount = Number(row?.unknown_model_count ?? 0);
+    const unknownToolCount = Number(tool?.unknown_tool_count ?? 0);
+    // SUM ignores NULL rows, so a partial-sum result must still be treated as unknown.
+    const modelCostCny = unknownModelCount > 0 ? null : (row?.model_cost == null ? 0 : Number(row.model_cost));
+    const toolCostCny = unknownToolCount > 0 ? null : (tool?.tool_cost == null ? 0 : Number(tool.tool_cost));
+    const totalCostCny = modelCostCny === null || toolCostCny === null ? null : modelCostCny + toolCostCny;
+    const knownCostCny = (row?.model_cost == null ? 0 : Number(row.model_cost))
+      + (tool?.tool_cost == null ? 0 : Number(tool.tool_cost));
+    return { totalCostCny, knownCostCny, modelCostCny, toolCostCny, unknownModelCount, unknownToolCount };
+  }
+
   public getPixelStepCosts(pixelId: string): PixelStepCost[] {
     const stmt = this.db.prepare(`
       SELECT m.*,
@@ -96,7 +131,10 @@ export class ModelCallRepository {
     const rows = stmt.all(pixelId) as any[];
     return rows.map((r) => ({
       pixelId: r.pixel_id,
-      round: Number(r.round_num || 0),
+      callId: r.call_id,
+      runId: r.run_id,
+      outcome: r.outcome,
+      round: r.round_num == null ? null : Number(r.round_num),
       inputTokens: r.prompt_tokens == null ? null : Number(r.prompt_tokens),
       cachedInputTokens: r.cached_tokens == null ? null : Number(r.cached_tokens),
       outputTokens: r.completion_tokens == null ? null : Number(r.completion_tokens),

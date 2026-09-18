@@ -34,11 +34,11 @@ describe('ConsolePanel Component', () => {
       />
     );
 
-    expect(screen.getByText(/需安全对账介入/i)).toBeDefined();
+    expect(screen.getByText(/需逐项审计决策/i)).toBeDefined();
     expect(screen.getByText(/未决预留：1 笔/i)).toBeDefined();
     expect(screen.getByText(/结果未知调用：1 笔/i)).toBeDefined();
 
-    const btn = screen.getByText(/一键安全对账自愈/i);
+    const btn = screen.getByText(/查看未决项/i);
     await act(async () => {
       fireEvent.click(btn);
     });
@@ -74,8 +74,8 @@ describe('ConsolePanel Component', () => {
       />
     );
 
-    expect(screen.queryByText(/需安全对账介入/i)).toBeNull();
-    expect(screen.queryByText(/一键安全对账自愈/i)).toBeNull();
+    expect(screen.queryByText(/需逐项审计决策/i)).toBeNull();
+    expect(screen.queryByText(/查看未决项/i)).toBeNull();
   });
 });
 

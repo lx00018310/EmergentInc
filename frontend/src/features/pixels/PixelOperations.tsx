@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { Modal } from '../../components/Modal';
 import { fetchMandate, updateMandate, deleteMandate, postExternalReward, fetchExternalRewards, fetchStepCosts } from '../../api/pixels';
 import type { MandateDto, ExternalRewardDto, StepCostDto } from '../../api/types';
@@ -35,6 +35,7 @@ export const PixelOperations: React.FC<PixelOperationsProps> = ({ pixelId, initi
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState('');
+  const rewardRequest = useRef<import('../../api/pixels').RewardRequest | null>(null);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -87,14 +88,25 @@ export const PixelOperations: React.FC<PixelOperationsProps> = ({ pixelId, initi
         setDraft('');
         setNotice('Human Mandate 已删除；Pixel Self 与既有历史保持不变。');
       } else {
-        const result = await postExternalReward(pixelId, { amount: Number(amount), reason: reason.trim() || 'External Reward', source: source.trim() || 'human' });
+        const storageKey = `reward-pending:${pixelId}`;
+        if (!rewardRequest.current) {
+          const saved = sessionStorage.getItem(storageKey);
+          rewardRequest.current = saved ? JSON.parse(saved) : {
+            idempotency_key: crypto.randomUUID(), amount: Number(amount),
+            reason: reason.trim() || 'External Reward', source: source.trim() || 'human',
+          };
+          sessionStorage.setItem(storageKey, JSON.stringify(rewardRequest.current));
+        }
+        const result = await postExternalReward(pixelId, rewardRequest.current!);
+        sessionStorage.removeItem(storageKey);
+        rewardRequest.current = null;
         setAmount('');
         setNotice(`奖励已入账。新余额：${knownNumber(result.newBalance)} Energy。`);
         setRevision((n) => n + 1);
       }
       await onRefresh();
     } catch (err) {
-      setError(`${err instanceof Error ? err.message : String(err)}${action === 'reward' ? '。若连接中断，结果可能已入账；请先刷新奖励记录核对，不要直接重复提交。' : ''}`);
+      setError(`${err instanceof Error ? err.message : String(err)}${action === 'reward' ? '。结果未确认时，下次提交将用原幂等键及原金额重试，不会重复入账。' : ''}`);
     } finally {
       setBusy(false);
     }
@@ -122,7 +134,7 @@ export const PixelOperations: React.FC<PixelOperationsProps> = ({ pixelId, initi
         </div>
       </section>}
       {tab === 'reward' && <section className="operation-section">
-        <p>External → Pixel 的 Energy 注入，不是工资或元胞间转账。每次提交都会新增一笔奖励，不能撤销。</p>
+        <p>External → Pixel 的 Energy 注入，不是工资或元胞间转账。每笔新奖励不能撤销；未确认请求重试会复用原幂等键。</p>
         <form onSubmit={(e) => { e.preventDefault(); void mutate('reward'); }}>
           <label htmlFor="reward-amount">奖励金额（Energy，正整数）</label>
           <input id="reward-amount" type="number" min="1" step="1" required value={amount} disabled={busy} onChange={(e) => setAmount(e.target.value)} />
@@ -142,7 +154,7 @@ export const PixelOperations: React.FC<PixelOperationsProps> = ({ pixelId, initi
         <p>单步模型调用成本（人民币）。未知或未计量值显示“未知”，不当作 0；缓存输入为输入中的缓存部分，不重复相加。真实 0 保留为 0。</p>
         {costs?.length === 0 && <p>暂无 Step Cost 记录；不代表成本为 0。</p>}
         {costs && costs.length > 0 && <div className="operation-table"><table><thead><tr><th>Round</th><th>输入 Tokens</th><th>缓存输入 Tokens</th><th>输出 Tokens</th><th>实际 Tokens</th><th>模型成本</th><th>工具成本</th><th>调用 / 状态</th></tr></thead><tbody>
-          {costs.map((cost, i) => <tr key={cost.callId ?? `${cost.round}-${i}`}><td>{cost.round}</td><td>{knownNumber(cost.inputTokens)}</td><td>{knownNumber(cost.cachedInputTokens)}</td><td>{knownNumber(cost.outputTokens)}</td><td>{knownNumber(cost.actualTokens)}</td><td>{knownNumber(cost.modelCost, true)}</td><td>{knownNumber(cost.toolCost, true)}</td><td>{cost.callId ?? '未知'}<br />{cost.outcome ?? '未知'}{cost.runId && <><br />run: {cost.runId}</>}</td></tr>)}
+          {costs.map((cost, i) => <tr key={cost.callId ?? `${cost.round}-${i}`}><td>{knownNumber(cost.round)}</td><td>{knownNumber(cost.inputTokens)}</td><td>{knownNumber(cost.cachedInputTokens)}</td><td>{knownNumber(cost.outputTokens)}</td><td>{knownNumber(cost.actualTokens)}</td><td>{knownNumber(cost.modelCost, true)}</td><td>{knownNumber(cost.toolCost, true)}</td><td>{cost.callId ?? '未知'}<br />{cost.outcome ?? '未知'}{cost.runId && <><br />run: {cost.runId}</>}</td></tr>)}
         </tbody></table></div>}
       </section>}
     </Modal>

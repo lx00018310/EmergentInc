@@ -1,5 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { randomUUID } from "node:crypto";
 import {
   AgentStepInput,
   AgentStepResult,
@@ -14,6 +15,7 @@ import {
   parseAndNormalizeResponse,
   UsageMeter,
   OutcomeUnknownError,
+  InfrastructureFailureError,
   InvalidModelResponseError,
 } from "@emergentinc/model";
 import { ToolRuntime } from "@emergentinc/tools";
@@ -48,7 +50,17 @@ export class AgentStepRunner {
 
   public async execute(input: AgentStepInput, signal?: AbortSignal): Promise<AgentStepResult> {
     const { trace, pixelState, pixelMind, message, round } = input;
-    let callId = `call_${message.messageId}_${Date.now()}`;
+    let callId = `call_${message.messageId}_${randomUUID()}`;
+    const persistedStatus = this.store.messages.getMessage(message.messageId)?.status;
+    if (["AWAITING_SETTLEMENT", "CALL_OUTCOME_UNKNOWN", "ABANDONED"].includes(persistedStatus || "")) {
+      throw Object.assign(new Error(`Message requires operator resolution: ${persistedStatus}`), {
+        code: "PAUSED_RECOVERY_REQUIRED", phase: "settlement",
+      });
+    }
+    if (this.store.modelCalls.countInvalidResponses(message.messageId) >= 2) {
+      this.store.messages.updateStatus(message.messageId, "MODEL_RESPONSE_INVALID");
+      throw new InvalidModelResponseError("Invalid response retry limit reached", "");
+    }
 
     // 1. 检查当前消息是否已有成功的 ModelCall (响应复用：支持安全重试与崩溃恢复)
     const existingModelCall = this.store.modelCalls.getLatestByMessageId(message.messageId);
@@ -86,18 +98,11 @@ export class AgentStepRunner {
         } catch {}
       }
 
-      // 读取全局环境 (External: environment info)
+      // Environment is visible only through the next-hop READ_ENVIRONMENT message.
       let environmentInfo: string | null = null;
-      const envFile = path.resolve(this.workspaceRoot, "live", "environment.md");
-      if (fs.existsSync(envFile)) {
-        try {
-          const raw = fs.readFileSync(envFile, "utf-8").trim();
-          if (raw) environmentInfo = raw;
-        } catch {}
-      }
-
-      // 按来源分层：pixel→human/material 间消息进 Local Messages；feedback/environment/system 进 External
-      let messageMd = message.content;
+      let humanInstructions: string | null = null;
+      // Only Pixel-originated messages belong to LOCAL MESSAGES.
+      let messageMd = message.sourceType === "pixel" ? message.content : "";
       const feedbackLines: string[] = [];
       const systemLines: string[] = [];
       let humanMaterial: string | null = null;
@@ -113,8 +118,11 @@ export class AgentStepRunner {
       } else if (message.sourceType === "material") {
         humanMaterial = message.content;
         messageMd = "";
-      } else if (message.sourceType === "human" && message.sender !== message.recipient) {
-        messageMd = message.content;
+      } else if (message.sourceType === "human") {
+        humanInstructions = message.content;
+      } else if (message.sourceType !== "pixel") {
+        // Fail closed for legacy/unknown sources rather than mislabeling them as peers.
+        systemLines.push(message.content);
       }
 
       // 2. 组装 PreparedPrompt (V11 严格五层分离)
@@ -130,6 +138,7 @@ export class AgentStepRunner {
         messageMd: messageMd || "(no local messages)",
         external: {
           humanMandate,
+          humanInstructions,
           environmentInfo,
           humanMaterials: humanMaterial,
           feedback: feedbackLines.length > 0 ? feedbackLines.join("\n\n") : null,
@@ -176,7 +185,10 @@ export class AgentStepRunner {
         rawResponse = await this.provider.call(request, signal);
         rawText = rawResponse.rawText;
       } catch (callErr: any) {
-        if (callErr instanceof OutcomeUnknownError) {
+        if (!(callErr instanceof InfrastructureFailureError)) {
+          const unknownError = callErr instanceof OutcomeUnknownError ? callErr : new OutcomeUnknownError(
+            "Unclassified model error after dispatch; outcome requires review", callErr
+          );
           // 远端调用发出后超时或中断：严禁退款！保留预留并标记 CALL_OUTCOME_UNKNOWN，记录审计日志
           this.store.messages.updateStatus(message.messageId, "CALL_OUTCOME_UNKNOWN");
           this.store.modelCalls.recordModelCall({
@@ -198,7 +210,7 @@ export class AgentStepRunner {
             outcome: "CALL_OUTCOME_UNKNOWN",
             createdAt: Date.now() / 1000,
           });
-          throw callErr;
+          throw unknownError;
         }
 
         // 基础设施连接前失败（如 DNS 解析失败、握手前断开、调用前取消）：退还预留，消息放回队列
@@ -229,6 +241,12 @@ export class AgentStepRunner {
       });
     }
 
+    if (this.store.messages.getMessage(message.messageId)?.status === "AWAITING_SETTLEMENT") {
+      throw Object.assign(new Error("Model usage missing; operator settlement required before effects"), {
+        code: "PAUSED_RECOVERY_REQUIRED", phase: "settlement",
+      });
+    }
+
     // 8. 解析归一化决策
     let decision: AgentDecision;
     try {
@@ -240,8 +258,9 @@ export class AgentStepRunner {
         this.store.db.prepare(
           "UPDATE model_calls SET outcome = 'MODEL_RESPONSE_INVALID' WHERE call_id = ?"
         ).run(callId);
-        // 2. 消息放回 QUEUED，以便下次调度安全重试
-        this.store.messages.updateStatus(message.messageId, "QUEUED");
+        // At most one paid retry across runs and process restarts.
+        const exhausted = this.store.modelCalls.countInvalidResponses(message.messageId) >= 2;
+        this.store.messages.updateStatus(message.messageId, exhausted ? "MODEL_RESPONSE_INVALID" : "QUEUED");
       }
       throw parseErr;
     }

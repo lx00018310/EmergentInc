@@ -15,9 +15,12 @@ export const RunStatus: React.FC<RunStatusProps> = ({ world, runStatus, audit })
 
   const totalEnergy = world?.metrics?.total_energy ?? (pixels.reduce((acc, p) => acc + (p.energy || 0), 0));
   // V11: 成本必须来自真实台账；未计量显示"未知"，绝不推算或当作 0
-  const totalSpentCny = world?.metrics?.total_spent_cny;
+  const metrics = world?.metrics ?? {};
+  const rawSpentCny = metrics.total_spent_cny;
+  const hasExplicitCny = Object.prototype.hasOwnProperty.call(metrics, 'total_spent_cny') && rawSpentCny != null;
+  const totalSpentCny = hasExplicitCny ? rawSpentCny : null;
 
-  let systemHealth = 'READY';
+  let systemHealth = runStatus ? 'READY' : 'UNKNOWN';
   let systemHealthColor = '#48bb78';
 
   if (runStatus?.running) {
@@ -30,9 +33,14 @@ export const RunStatus: React.FC<RunStatusProps> = ({ world, runStatus, audit })
   ) {
     systemHealth = 'RECOVERY REQUIRED';
     systemHealthColor = 'var(--accent-red)';
-  } else if (runStatus?.last_error) {
-    systemHealth = 'ERROR';
+  } else if (runStatus?.result_status === 'FAILED' || runStatus?.last_error) {
+    systemHealth = 'FAILED';
     systemHealthColor = 'var(--accent-red)';
+  } else if (runStatus?.result_status === 'STOPPED') {
+    systemHealth = 'STOPPED';
+    systemHealthColor = 'var(--accent-yellow)';
+  } else if (runStatus?.result_status === 'COMPLETED') {
+    systemHealth = 'COMPLETED';
   }
 
   const runId = runStatus?.run_id || runStatus?.current_run || '-';

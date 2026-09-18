@@ -38,6 +38,8 @@ export function initSchema(db: SqliteDatabase): void {
           pricing_revision TEXT,
           status TEXT NOT NULL DEFAULT 'RUNNING',
           stop_reason TEXT,
+          error_code TEXT,
+          error_summary TEXT,
           created_at REAL NOT NULL,
           finished_at REAL
       );
@@ -77,7 +79,7 @@ export function initSchema(db: SqliteDatabase): void {
           actual_tokens INTEGER,
           cost_cny REAL,
           tool_cost REAL,
-          round_num INTEGER NOT NULL DEFAULT 0,
+          round_num INTEGER,
           outcome TEXT NOT NULL DEFAULT 'SUCCESS',
           created_at REAL NOT NULL
       );
@@ -138,6 +140,23 @@ export function initSchema(db: SqliteDatabase): void {
           timestamp REAL NOT NULL
       );
 
+      CREATE TABLE IF NOT EXISTS recovery_decisions (
+          decision_id TEXT PRIMARY KEY,
+          kind TEXT NOT NULL,
+          id TEXT NOT NULL,
+          decision TEXT NOT NULL,
+          reason TEXT NOT NULL,
+          details TEXT,
+          created_at REAL NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS external_reward_requests (
+          idempotency_key TEXT PRIMARY KEY,
+          request_json TEXT NOT NULL,
+          result_json TEXT NOT NULL,
+          created_at REAL NOT NULL
+      );
+
       CREATE TABLE IF NOT EXISTS tool_executions (
           operation_id TEXT PRIMARY KEY,
           run_id TEXT,
@@ -167,26 +186,31 @@ export function initSchema(db: SqliteDatabase): void {
 
     // SQLite needs a table rebuild to remove legacy NOT NULL/default-zero constraints.
     const columns = db.prepare("PRAGMA table_info(model_calls)").all() as any[];
-    if (!columns.some(c => c.name === "round_num")) {
-      db.exec("ALTER TABLE model_calls ADD COLUMN round_num INTEGER NOT NULL DEFAULT 0");
-    }
     if (!columns.some(c => c.name === "tool_cost")) {
       db.exec("ALTER TABLE model_calls ADD COLUMN tool_cost REAL");
     }
-    if (columns.some(c => c.name === "cost_cny" && c.notnull)) {
+    if (!columns.some(c => c.name === "round_num")) {
+      db.exec("ALTER TABLE model_calls ADD COLUMN round_num INTEGER");
+    }
+    if (columns.some(c => ["cost_cny", "round_num"].includes(c.name) && c.notnull)) {
+      // Legacy NOT NULL constraints conflated unknown values with real zeros and
+      // unknown rounds with real round 0: rebuild nullable, mapping the legacy
+      // default round 0 to NULL ("round unknown"). New writes keep real round 0.
       db.exec(`
         CREATE TABLE model_calls_nullable (
           call_id TEXT PRIMARY KEY, run_id TEXT NOT NULL, pixel_id TEXT NOT NULL,
           message_id TEXT, model TEXT NOT NULL, pricing_revision TEXT, prompt_hash TEXT,
           raw_response TEXT, normalized_response TEXT, prompt_tokens INTEGER,
           completion_tokens INTEGER, cached_tokens INTEGER, actual_tokens INTEGER,
-          cost_cny REAL, tool_cost REAL, round_num INTEGER NOT NULL DEFAULT 0,
+          cost_cny REAL, tool_cost REAL, round_num INTEGER,
           outcome TEXT NOT NULL DEFAULT 'SUCCESS', created_at REAL NOT NULL
         );
         INSERT INTO model_calls_nullable SELECT call_id, run_id, pixel_id, message_id,
           model, pricing_revision, prompt_hash, raw_response, normalized_response,
           prompt_tokens, completion_tokens, cached_tokens, actual_tokens, cost_cny,
-          NULLIF(tool_cost, 0), round_num, outcome, created_at FROM model_calls;
+          NULLIF(tool_cost, 0),
+          CASE WHEN round_num = 0 THEN NULL ELSE round_num END,
+          outcome, created_at FROM model_calls;
         DROP TABLE model_calls;
         ALTER TABLE model_calls_nullable RENAME TO model_calls;
       `);
@@ -194,5 +218,23 @@ export function initSchema(db: SqliteDatabase): void {
     const toolColumns = db.prepare("PRAGMA table_info(tool_executions)").all() as any[];
     if (!toolColumns.some(c => c.name === "cost_cny")) db.exec("ALTER TABLE tool_executions ADD COLUMN cost_cny REAL");
     if (!toolColumns.some(c => c.name === "model_call_id")) db.exec("ALTER TABLE tool_executions ADD COLUMN model_call_id TEXT");
+
+    const runColumns = db.prepare("PRAGMA table_info(runs)").all() as any[];
+    if (!runColumns.some(c => c.name === "error_code")) db.exec("ALTER TABLE runs ADD COLUMN error_code TEXT");
+    if (!runColumns.some(c => c.name === "error_summary")) db.exec("ALTER TABLE runs ADD COLUMN error_summary TEXT");
+
+    // Legacy messages used source_type 'engine_feedback'; the protocol enum no longer has it.
+    // Normalize historical rows to 'feedback' once and record the migration marker.
+    const legacyFeedback = db.prepare(`
+      SELECT COUNT(*) as count FROM messages WHERE source_type = 'engine_feedback'
+    `).get() as any;
+    if (Number(legacyFeedback?.count ?? 0) > 0) {
+      db.prepare("UPDATE messages SET source_type = 'feedback' WHERE source_type = 'engine_feedback'").run();
+      db.prepare(`
+        INSERT INTO schema_meta (key, value, updated_at)
+        VALUES ('legacy_engine_feedback_normalized', ?, ?)
+        ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
+      `).run(String(legacyFeedback.count), Date.now() / 1000);
+    }
   });
 }

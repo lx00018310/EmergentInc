@@ -16,15 +16,15 @@ describe("Tools: Registry & Manifest Baseline", () => {
   );
   const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf-8"));
 
-  it("should register all 12 builtin tools matching the V9 manifest", () => {
+  it("should register only available native builtin tools", () => {
     const registry = new ToolRegistry();
     registerAllBuiltinTools(registry);
 
     const registered = registry.listDefinitions();
-    expect(registered).toHaveLength(13);
+    expect(registered).toHaveLength(7);
 
     const registeredNames = registered.map((r) => r.name);
-    for (const item of manifest) {
+    for (const item of manifest.filter((item: any) => !item.name.startsWith("vps_"))) {
       expect(registeredNames).toContain(item.name);
       const def = registry.get(item.name)?.definition;
       expect(def?.effect).toBe(item.effect);
@@ -245,17 +245,16 @@ describe("Tools: VPS Execution & Prompt Catalog", () => {
   it("should fail gracefully when VPS profile/credentials are missing, without forging SUCCESS", async () => {
     const res = await runtime.execute("vps_exec", { command: "ls -la" }, ctx);
     expect(res.status).toBe("FAILED");
-    expect(res.error_code).toBe("CAPABILITY_UNAVAILABLE");
-    expect(res.error_message).toContain("unavailable");
+    expect(res.error_code).toBe("TOOL_NOT_FOUND");
   });
 
   it("should reject vps_exec when command is empty", async () => {
     const res = await runtime.execute("vps_exec", { command: "" }, ctx);
     expect(res.status).toBe("FAILED");
-    expect(res.error_code).toBe("INVALID_COMMAND");
+    expect(res.error_code).toBe("TOOL_NOT_FOUND");
   });
 
-  it("should successfully execute VPS operation when mock handler is injected in test context", async () => {
+  it("should not expose unimplemented VPS tools even with a mock context", async () => {
     const mockCtx: ToolContext = {
       ...ctx,
       mockVpsHandler: (tool, args) => ({
@@ -264,19 +263,24 @@ describe("Tools: VPS Execution & Prompt Catalog", () => {
       }),
     };
     const res = await runtime.execute("vps_exec", { command: "uname -a" }, mockCtx);
-    expect(res.status).toBe("SUCCESS");
-    expect(res.output.stdout).toContain("Linux mock-vps");
+    expect(res.status).toBe("FAILED");
+    expect(res.error_code).toBe("TOOL_NOT_FOUND");
   });
 
   it("should correctly render prompt catalog and respect tools.json config overrides", () => {
     const initialCatalog = registry.renderCatalogForPrompt();
     expect(initialCatalog).toContain("- **`save_artifact`** (write):");
-    expect(initialCatalog).toContain("- **`vps_exec`** (write):");
+    expect(initialCatalog).not.toContain("vps_");
 
     // 禁用 vps_exec
     registry.applyConfigOverrides({
       tools: {
-        vps_exec: { enabled: false },
+        vps_exec: { enabled: true },
+        vps_read_file: { enabled: true },
+        vps_write_file: { enabled: true },
+        vps_upload_file: { enabled: true },
+        vps_download_file: { enabled: true },
+        vps_list_files: { enabled: true },
       },
     });
 
@@ -285,7 +289,8 @@ describe("Tools: VPS Execution & Prompt Catalog", () => {
     expect(updatedCatalog).toContain("- **`save_artifact`**");
   });
 
-  it("should validate path and prevent injection attacks on vps_list_files", async () => {
+  it("should validate configured vps_list_files without contacting a remote host", async () => {
+    registerAllBuiltinTools(registry, undefined, { vpsListFilesAvailable: true });
     // 1. 空路径校验
     const emptyRes = await runtime.execute("vps_list_files", { path: "" }, ctx);
     expect(emptyRes.status).toBe("FAILED");

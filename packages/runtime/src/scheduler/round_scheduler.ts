@@ -8,7 +8,7 @@ import {
 } from "@emergentinc/protocol";
 import { CoreStore, MAX_MESSAGES_PER_ROUND, BudgetExceededError } from "@emergentinc/persistence";
 import { shouldNaturalWake, idToCoord } from "@emergentinc/domain";
-import { InvalidModelResponseError } from "@emergentinc/model";
+import { InvalidModelResponseError, OutcomeUnknownError } from "@emergentinc/model";
 import { AgentStepRunner } from "../agent_step/agent_step_runner.js";
 
 export interface RoundSchedulerOptions {
@@ -23,6 +23,9 @@ export interface RoundSummary {
   messagesProcessed: number;
   activePixelsCount: number;
   stopReason?: StopReason | null;
+  errorCode?: string | null;
+  errorSummary?: string | null;
+  errorPhase?: string | null;
 }
 
 export class RoundScheduler {
@@ -80,7 +83,7 @@ export class RoundScheduler {
           recipient: pixel.pixelId,
           content: "[NATURAL_WAKE] You have been naturally awakened by the environment cycle.",
           isFeedback: false,
-          sourceType: "pixel",
+          sourceType: "system",
         });
       }
     }
@@ -98,6 +101,9 @@ export class RoundScheduler {
 
     let messagesProcessed = 0;
     let stopReason: StopReason | null = null;
+    let errorCode: string | null = null;
+    let errorSummary: string | null = null;
+    let errorPhase: string | null = null;
 
     while (messagesProcessed < MAX_MESSAGES_PER_ROUND) {
       // 检查 Stop 信号 (在领取下一条消息之前)
@@ -178,6 +184,17 @@ export class RoundScheduler {
           break;
         }
       } catch (err: any) {
+        errorCode = err.code || (err instanceof InvalidModelResponseError ? "MODEL_RESPONSE_INVALID" : "INFRASTRUCTURE_FAILURE");
+        errorSummary = err.summary || err.message || "Agent step failed";
+        errorPhase = err.phase || (err instanceof InvalidModelResponseError ? "parse" : "agent_step");
+        if (err instanceof OutcomeUnknownError) {
+          stopReason = "CALL_OUTCOME_UNKNOWN";
+          break;
+        }
+        if (err.code === "PAUSED_RECOVERY_REQUIRED") {
+          stopReason = "PAUSED_RECOVERY_REQUIRED";
+          break;
+        }
         if (signal?.aborted) {
           stopReason = "USER_STOPPED";
           break;
@@ -185,6 +202,7 @@ export class RoundScheduler {
         if (err instanceof BudgetExceededError) {
           if (err.kind === "PIXEL") {
             // 当前元胞单体能量不足，消息已处于 WAITING_PIXEL_BUDGET，跳过当前消息，让其他有能量元胞继续运行
+            errorCode = errorSummary = errorPhase = null;
             continue;
           }
           if (err.kind === "RUN") {
@@ -217,6 +235,9 @@ export class RoundScheduler {
       messagesProcessed,
       activePixelsCount: this.store.pixels.listActivePixels().length,
       stopReason,
+      errorCode,
+      errorSummary,
+      errorPhase,
     };
   }
 

@@ -166,17 +166,18 @@ describe("Server: API Contract Integration Tests", () => {
     expect(postRes.json().status).toBe("UPDATED");
   });
 
-  it("should return all 12 tools via /api/tools", async () => {
+  it("should only list actually executable tools via /api/tools", async () => {
     const res = await app.inject({
       method: "GET",
       url: "/api/tools",
     });
     expect(res.statusCode).toBe(200);
     const tools = res.json().tools;
-    expect(tools).toHaveLength(13);
+    expect(tools).toHaveLength(7);
     expect(tools.map((t: any) => t.name)).toContain("save_artifact");
     expect(tools.map((t: any) => t.name)).toContain("transfer_artifact");
-    expect(tools.map((t: any) => t.name)).toContain("vps_exec");
+    // Unimplemented VPS tools must not be advertised as available capability (T1-4).
+    expect(tools.map((t: any) => t.name)).not.toContain("vps_exec");
   });
 
   it("should support Human Mandate and External Reward APIs", async () => {
@@ -222,15 +223,28 @@ describe("Server: API Contract Integration Tests", () => {
     });
     expect(getMandateAfter.json().mandate).toBeNull();
 
-    // 4. 外部激励注入 (External Reward)
+    // 4. 外部激励注入 (External Reward) — requires idempotency key; replay returns first result
     const rewardRes = await app.inject({
       method: "POST",
       url: "/api/pixels/0_0_0/reward",
-      payload: { amount: 500, reason: "Excellent performance" },
+      payload: { amount: 500, reason: "Excellent performance", idempotency_key: "test-key-1" },
     });
     expect(rewardRes.statusCode).toBe(200);
     expect(rewardRes.json().amount).toBe(500);
     expect(rewardRes.json().newBalance).toBeGreaterThanOrEqual(500);
+    const rewardReplay = await app.inject({
+      method: "POST",
+      url: "/api/pixels/0_0_0/reward",
+      payload: { amount: 500, reason: "Excellent performance", idempotency_key: "test-key-1" },
+    });
+    expect(rewardReplay.statusCode).toBe(200);
+    expect(rewardReplay.json().eventId).toBe(rewardRes.json().eventId);
+    const rewardNoKey = await app.inject({
+      method: "POST",
+      url: "/api/pixels/0_0_0/reward",
+      payload: { amount: 100, reason: "missing key" },
+    });
+    expect(rewardNoKey.statusCode).toBe(400);
 
     // 5. Rewards 观察端点
     const rewardsRes = await app.inject({
@@ -380,22 +394,23 @@ describe("Server: API Contract Integration Tests", () => {
     expect(startRes.statusCode).toBe(409);
     expect(startRes.json().detail).toContain("RUN_BLOCKED_UNFINALIZED_OPERATIONS");
 
-    // 调用安全对账端点自愈
+    // 调用安全对账端点：uncertain billing requires explicit operator decisions, so
+    // reconcile no longer auto-clears anything — it reports items needing review.
     const reconcileRes = await app.inject({
       method: "POST",
       url: "/api/run/reconcile",
     });
     expect(reconcileRes.statusCode).toBe(200);
-    expect(reconcileRes.json().status).toBe("RECONCILED");
+    expect(reconcileRes.json().status).toBe("REVIEW_REQUIRED");
 
-    // 再次查询状态，确认已完全自愈回到 READY
+    // 再次查询状态，未决项仍在，READY 不应自动恢复
     const healedStatus = await app.inject({
       method: "GET",
       url: "/api/run/status",
     });
     expect(healedStatus.statusCode).toBe(200);
-    expect(healedStatus.json().result_status).toBe("READY");
-    expect(healedStatus.json().unfinalized_operations).toBeNull();
+    expect(healedStatus.json().result_status).toBe("PAUSED_RECOVERY_REQUIRED");
+    expect(healedStatus.json().unfinalized_operations).toBeDefined();
   });
 
   it("should block concurrent run start on same workspace with WORKSPACE_LOCKED (409)", async () => {

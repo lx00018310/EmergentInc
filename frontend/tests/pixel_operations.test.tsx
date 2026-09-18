@@ -69,7 +69,7 @@ describe('V11 Pixel operations', () => {
     fireEvent.click(button);
     fireEvent.click(button);
     expect(api.postExternalReward).toHaveBeenCalledTimes(1);
-    expect(api.postExternalReward).toHaveBeenCalledWith('p1', { amount: 20, source: 'human', reason: '有效成果' });
+    expect(api.postExternalReward).toHaveBeenCalledWith('p1', { amount: 20, source: 'human', reason: '有效成果', idempotency_key: expect.any(String) });
     await act(async () => finish({ newBalance: 120 }));
     await screen.findByText('奖励已入账。新余额：120 Energy。');
     expect(api.fetchExternalRewards).toHaveBeenCalledTimes(2);
@@ -82,7 +82,7 @@ describe('V11 Pixel operations', () => {
     await screen.findByText('暂无奖励记录。');
     fireEvent.change(screen.getByLabelText(/奖励金额/), { target: { value: '20' } });
     fireEvent.click(screen.getByText('发放 External Reward'));
-    expect((await screen.findByRole('alert')).textContent).toContain('请先刷新奖励记录核对');
+    expect((await screen.findByRole('alert')).textContent).toContain('下次提交将用原幂等键及原金额重试，不会重复入账');
   });
 
   it('renders stored rewards with provenance', async () => {

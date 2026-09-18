@@ -158,6 +158,11 @@ async function bootstrap() {
     coreStore: store,
     workspaceRoot,
     frontendDistDir,
+    development: process.env.EMERGENT_DEV === "1",
+    allowedOrigins: (process.env.EMERGENT_ALLOWED_ORIGINS || "")
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean),
   });
 
   const port = Number(process.env.PORT || 8765);

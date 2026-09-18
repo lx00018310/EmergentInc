@@ -27,23 +27,26 @@ export class OpenAICompatibleProvider implements ModelProvider {
     request: PreparedModelRequest,
     signal?: AbortSignal
   ): Promise<RawModelResponse> {
+    if (signal?.aborted) {
+      throw new InfrastructureFailureError("Model call cancelled before dispatch", undefined, "ABORTED_BEFORE_DISPATCH");
+    }
     const url = `${this.baseUrl}/chat/completions`;
     const controller = new AbortController();
+    let phase: "dispatch" | "response_headers" | "response_body" = "dispatch";
+    const onAbort = () => controller.abort(signal?.reason);
 
     const timeoutId = setTimeout(() => {
       controller.abort(new Error("REQUEST_TIMEOUT"));
     }, this.timeoutMs);
 
-    if (signal) {
-      signal.addEventListener("abort", () => {
-        controller.abort(signal.reason);
-      });
-    }
+    signal?.addEventListener("abort", onAbort, { once: true });
 
     let response: Response;
     try {
       response = await fetch(url, {
         method: "POST",
+        // Do not confuse a redirected connection failure with initial non-dispatch.
+        redirect: "error",
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${this.apiKey}`,
@@ -57,31 +60,18 @@ export class OpenAICompatibleProvider implements ModelProvider {
         signal: controller.signal,
       });
 
-      // 处理 HTTP 状态码
+      phase = "response_headers";
       if (!response.ok) {
-        const errorText = await response.text().catch(() => "");
-        if (response.status === 401 || response.status === 403) {
-          throw new InfrastructureFailureError(
-            `Authentication failed (${response.status}): ${errorText}`
-          );
-        }
-        if (response.status >= 500) {
-          // 5xx 网关超时等场景，请求已被网关接收，结果无法确知是否计费
-          throw new OutcomeUnknownError(
-            `Remote server error / gateway timeout (${response.status}): ${errorText}`
-          );
-        }
-        throw new InfrastructureFailureError(
-          `Model API request rejected (${response.status}): ${errorText}`
+        // A dispatched request is not evidence of non-billing, even for a rejection.
+        // Do not expose arbitrary endpoint response bodies in UI diagnostics.
+        throw new OutcomeUnknownError(
+          `Model endpoint returned HTTP ${response.status}; billing outcome requires review`,
+          undefined, `HTTP_${response.status}`, phase
         );
       }
 
-      const data: any = await response.json().catch((err) => {
-        throw new OutcomeUnknownError(
-          `Failed to parse JSON response from model endpoint: ${err.message}`,
-          err
-        );
-      });
+      phase = "response_body";
+      const data: any = await response.json();
 
       const choice = data?.choices?.[0];
       const rawText = typeof choice?.message?.content === "string" ? choice.message.content : "";
@@ -104,21 +94,21 @@ export class OpenAICompatibleProvider implements ModelProvider {
       if (err instanceof OutcomeUnknownError || err instanceof InfrastructureFailureError) {
         throw err;
       }
-      const isAbort = controller.signal.aborted || err?.name === "AbortError" || String(err?.message || "").includes("aborted");
-      const reasonMsg = controller.signal.reason?.message || err?.message || "";
-      if (isAbort) {
-        throw new OutcomeUnknownError(
-          `Model call aborted or timed out during request/stream (${this.timeoutMs}ms): ${reasonMsg}`,
-          err
-        );
+      const isAbort = controller.signal.aborted || err?.name === "AbortError";
+      const underlyingCode = err?.cause?.code ?? err?.code;
+      const code = isAbort
+        ? (controller.signal.reason?.message === "REQUEST_TIMEOUT" ? "REQUEST_TIMEOUT" : "ABORTED_AFTER_DISPATCH")
+        : (typeof underlyingCode === "string" ? underlyingCode : "MODEL_TRANSPORT_ERROR");
+      // Only these connection-establishment failures prove no request was sent.
+      if (!isAbort && phase === "dispatch" && ["ENOTFOUND", "EAI_AGAIN", "ECONNREFUSED"].includes(code)) {
+        throw new InfrastructureFailureError(`Model connection failed before dispatch (${code})`, err, code, "before_dispatch");
       }
-      // 连接拒绝、DNS 未能解析等明确未发出/未连接错误
-      throw new InfrastructureFailureError(
-        `Infrastructure failure connecting to model endpoint: ${err.message}`,
-        err
+      throw new OutcomeUnknownError(
+        `Model request outcome unknown (${code}, ${phase})`, err, code, phase
       );
     } finally {
       clearTimeout(timeoutId);
+      signal?.removeEventListener("abort", onAbort);
     }
   }
 }

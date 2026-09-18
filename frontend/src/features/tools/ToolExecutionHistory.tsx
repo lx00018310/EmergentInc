@@ -3,6 +3,10 @@ import { Modal } from '../../components/Modal';
 import { fetchToolExecutions } from '../../api/tools';
 import type { ToolExecutionDto } from '../../api/types';
 
+function formatTime(value: number | null | undefined): string {
+  return typeof value === 'number' && Number.isFinite(value) ? new Date(value * 1000).toLocaleString() : '未知';
+}
+
 export interface ToolExecutionHistoryProps {
   isOpen: boolean;
   onClose: () => void;
@@ -104,8 +108,8 @@ export const ToolExecutionHistory: React.FC<ToolExecutionHistoryProps> = ({
                 pixel_id: selectedExec.pixel_id,
                 tool: selectedExec.tool,
                 status: selectedExec.status,
-                created_at: new Date(selectedExec.created_at * 1000).toLocaleString(),
-                finished_at: selectedExec.finished_at ? new Date(selectedExec.finished_at * 1000).toLocaleString() : null,
+                started_at: formatTime(selectedExec.started_at),
+                finished_at: formatTime(selectedExec.finished_at),
                 result: selectedExec.result,
               },
               null,
@@ -129,7 +133,7 @@ export const ToolExecutionHistory: React.FC<ToolExecutionHistoryProps> = ({
               <th>工具</th>
               <th>元胞</th>
               <th>状态</th>
-              <th>发生时间</th>
+              <th>开始 / 完成时间</th>
               <th style={{ textAlign: 'right' }}>操作</th>
             </tr>
           </thead>
@@ -141,7 +145,7 @@ export const ToolExecutionHistory: React.FC<ToolExecutionHistoryProps> = ({
                 <td style={{ fontFamily: 'var(--font-mono)' }}>{e.pixel_id}</td>
                 <td>{getStatusBadge(e.status)}</td>
                 <td style={{ color: 'var(--text-dim)', fontSize: '11px' }}>
-                  {new Date(e.created_at * 1000).toLocaleTimeString()}
+                  {formatTime(e.started_at)}<br />{formatTime(e.finished_at)}
                 </td>
                 <td style={{ textAlign: 'right' }}>
                   <button className="btn btn-xs" onClick={() => setSelectedExec(e)}>

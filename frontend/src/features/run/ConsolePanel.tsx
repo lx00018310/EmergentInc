@@ -70,7 +70,7 @@ export const ConsolePanel: React.FC<ConsolePanelProps> = ({
               className="alert-title"
               style={{ color: '#fc8181', fontWeight: 'bold', marginBottom: '4px' }}
             >
-              🚨 启动受阻：需安全对账介入 (PAUSED_RECOVERY_REQUIRED)
+              启动受阻：需逐项审计决策 (PAUSED_RECOVERY_REQUIRED)
             </div>
             <div style={{ fontSize: '12px', color: '#e2e8f0', lineHeight: 1.4 }}>
               系统检测到未决 Reservation 或中断调用事务，已保护性拦截启动：
@@ -90,7 +90,7 @@ export const ConsolePanel: React.FC<ConsolePanelProps> = ({
                   style={{ fontWeight: 'bold', cursor: 'pointer' }}
                   onClick={() => onReconcile()}
                 >
-                  🛡️ 一键安全对账自愈 (Reconcile)
+                  查看未决项 (Review)
                 </button>
               </div>
             )}
@@ -98,6 +98,9 @@ export const ConsolePanel: React.FC<ConsolePanelProps> = ({
         </div>
       )}
 
+      {!runStatus?.running && (runStatus?.result_status === 'FAILED' || runStatus?.last_error) && <p role="alert">
+        {runStatus.result_status}: {runStatus.stop_reason} {runStatus.error_code} {runStatus.error_summary ?? runStatus.last_error}
+      </p>}
       <div className="console-box" ref={boxRef}>
         {messages.map((m) => (
           <div key={m.id} className={`console-line ${m.type}-line`}>

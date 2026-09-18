@@ -42,6 +42,7 @@ export async function deleteMandate(
 // ---------- External Reward ----------
 
 export interface RewardRequest {
+  idempotency_key: string;
   amount: number;
   reason?: string;
   source?: string;
