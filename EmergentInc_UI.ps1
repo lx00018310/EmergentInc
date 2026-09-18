@@ -13,6 +13,15 @@ if (-not $nodeCmd) {
     exit 1
 }
 
+# Guard: refuse to start a second server on the same port (EADDRINUSE protection).
+$portBusy = Get-NetTCPConnection -LocalPort 8765 -State Listen -ErrorAction SilentlyContinue
+if ($portBusy) {
+    Write-Host "[ERROR] Port 8765 is already in use - EmergentInc server is probably already running." -ForegroundColor Red
+    Write-Host "        Close the existing server window first (PID: $($portBusy.OwningProcess))."
+    pause
+    exit 1
+}
+
 # Build the frontend so the UI always matches current source code.
 Write-Host "Building frontend UI..." -ForegroundColor Cyan
 Push-Location frontend

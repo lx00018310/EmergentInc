@@ -58,8 +58,15 @@ export const App: React.FC = () => {
 
   useEffect(() => {
     if (!runStatus?.running && runStatus?.run_id && runStatus?.result_status && runStatus.result_status !== 'READY') {
-      addLogMessage(runStatus.result_status === 'FAILED' ? 'error' : 'warn',
-        `[RUN ${runStatus.result_status}] ${runStatus.stop_reason ?? ''} ${runStatus.error_code ?? ''} ${runStatus.error_summary ?? runStatus.last_error ?? ''}`);
+      // RECOVERY_RESOLVED = historical failure whose unknown items were resolved;
+      // surface once as info, not as a recurring error on every page load.
+      if (runStatus.result_status === 'RECOVERY_RESOLVED') {
+        addLogMessage('info',
+          `[RUN RESOLVED] ${runStatus.stop_reason ?? ''} ${runStatus.error_code ?? ''} — 未决项已逐项审计处理，可正常启动。历史错误: ${runStatus.error_summary ?? runStatus.last_error ?? ''}`);
+      } else {
+        addLogMessage(runStatus.result_status === 'FAILED' ? 'error' : 'warn',
+          `[RUN ${runStatus.result_status}] ${runStatus.stop_reason ?? ''} ${runStatus.error_code ?? ''} ${runStatus.error_summary ?? runStatus.last_error ?? ''}`);
+      }
     }
   }, [runStatus?.run_id, runStatus?.result_status, runStatus?.stop_reason, runStatus?.error_summary, runStatus?.last_error, addLogMessage]);
 

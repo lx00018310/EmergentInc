@@ -39,6 +39,7 @@ export class RunService {
   private lastStopReason: string | null = null;
   private lastError: string | null = null;
   private errorCode: string | null = null;
+  private hasExecutedRunInProcess: boolean = false;
   private errorPhase: string | null = null;
 
   constructor(
@@ -177,8 +178,14 @@ export class RunService {
       resultStatus = "RUNNING";
     } else if (hasUnfinalized || stopReason === "PAUSED_RECOVERY_REQUIRED") {
       resultStatus = "PAUSED_RECOVERY_REQUIRED";
-    } else if (lastError || stopReason === "INFRASTRUCTURE_FAILURE" || persistedStatus === "FAILED") {
+    } else if (this.hasExecutedRunInProcess && (lastError || stopReason === "INFRASTRUCTURE_FAILURE" || persistedStatus === "FAILED")) {
+      // A fresh in-process failure: surface loudly as FAILED until resolved.
       resultStatus = "FAILED";
+    } else if (lastError || stopReason === "INFRASTRUCTURE_FAILURE" || persistedStatus === "FAILED") {
+      // A historical failure from a previous process must not keep re-painting the
+      // UI as FAILED on every page load once its unknown items were resolved by
+      // audited operator decisions; it becomes an acknowledged historical event.
+      resultStatus = "RECOVERY_RESOLVED";
     } else if (
       stopReason === "USER_STOPPED" ||
       stopReason === "RUN_BUDGET_EXHAUSTED" ||
@@ -399,6 +406,9 @@ export class RunService {
     } finally {
       this.isRunning = false;
       this.abortController = null;
+      // Marks that this process has executed a run loop, so status reporting can
+      // tell a fresh in-process failure apart from a restarted historical record.
+      this.hasExecutedRunInProcess = true;
       this.releaseWorkspaceLock();
     }
   }

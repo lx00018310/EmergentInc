@@ -15,6 +15,15 @@ if %errorlevel% neq 0 (
     exit /b 1
 )
 
+rem Guard: refuse to start a second server on the same port (EADDRINUSE protection).
+netstat -ano | findstr /R /C:":8765 .*LISTENING" >nul 2>nul
+if %errorlevel% equ 0 (
+    echo [ERROR] Port 8765 is already in use - EmergentInc server is probably already running.
+    echo         Close the existing server window first, or check: netstat -ano ^| findstr 8765
+    pause
+    exit /b 1
+)
+
 rem Build the frontend so the UI always matches current source code.
 rem (Stale bundles previously showed outdated controls - e.g. the removed one-click reconcile.)
 echo Building frontend UI...

@@ -138,8 +138,34 @@ describe("Server rectification: containment, CORS, control plane, reward idempot
   });
 
   it("recovery resolve requires kind, decision and reason", async () => {
-    const res = await app.inject({ method: "POST", url: "/api/run/recovery/resolve", payload: { kind: "model", id: "x", decision: "abandon" } });
+    const res = await app.inject({ method: "POST", url: "/api/run/recovery/resolve", payload: { kind: "model" } });
     expect(res.statusCode).toBe(400);
+  });
+
+  it("a resolved historical failure reports RECOVERY_RESOLVED instead of FAILED forever", async () => {
+    // Seed a stopped run carrying a historical unknown-outcome error, like after an
+    // operator-resolved ECONNRESET: unfinalized set is empty but error fields persist
+    // (persisted via updateRunStatus, as the real runLoop does).
+    store.runs.createRun({
+      run_id: "run_resolved", start_round: 1, run_limit: 1000, run_spent: 0, run_reserved: 0,
+      global_limit: 100000, global_spent: 0, global_reserved: 0, genesis_revision: 1,
+      status: "RUNNING", created_at: Date.now() / 1000,
+    });
+    store.runs.updateRunStatus("run_resolved", "STOPPED", "CALL_OUTCOME_UNKNOWN", "ECONNRESET",
+      "Model request outcome unknown (ECONNRESET, dispatch)");
+    const before = await app.inject({ method: "GET", url: "/api/run/status" });
+    expect(before.json().result_status).toBe("RECOVERY_RESOLVED");
+    expect(before.json().error_code).toBe("ECONNRESET");
+
+    // Simulate the operator clearing the failure window: a fresh completed run is the
+    // latest record, so the old error no longer describes current system state.
+    store.runs.createRun({
+      run_id: "run_after", start_round: 2, run_limit: 1000, run_spent: 10, run_reserved: 0,
+      global_limit: 100000, global_spent: 10, global_reserved: 0, genesis_revision: 1,
+      status: "COMPLETED", stop_reason: "ROUND_LIMIT_REACHED", created_at: Date.now() / 1000 + 10,
+    });
+    const after = await app.inject({ method: "GET", url: "/api/run/status" });
+    expect(after.json().result_status).toBe("COMPLETED");
   });
 
   it("world total cost is unknown until a real ledger summary exists", async () => {
