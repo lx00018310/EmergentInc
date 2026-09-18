@@ -1,12 +1,10 @@
-__pycache__/
-*.py[cod]
 .env
 .vscode/
 .idea/
-.pytest_cache/
 
 # 运行时工作区与私有数据 (Runtime Workspace & Private Data)
 workspace/
+/live/
 owner_private/
 owner_*_profile.json
 *.pem
