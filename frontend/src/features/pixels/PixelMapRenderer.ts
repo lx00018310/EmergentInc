@@ -16,6 +16,7 @@ export class PixelMapRenderer {
   private messageFlow: MessageFlowDto[] = [];
   private selectedPixelId: string | null = null;
   private hoveredPixelId: string | null = null;
+  private unreadTipsPixelIds: Set<string> = new Set();
 
   public zoom = 1.0;
   public offsetX = 0;
@@ -57,10 +58,11 @@ export class PixelMapRenderer {
     this.startAnimationLoop();
   }
 
-  public setData(pixels: PixelSummaryDto[], messageFlow: MessageFlowDto[], selectedId: string | null): void {
+  public setData(pixels: PixelSummaryDto[], messageFlow: MessageFlowDto[], selectedId: string | null, unreadTipsPixelIds?: Set<string>): void {
     this.pixels = pixels || [];
     this.messageFlow = messageFlow || [];
     this.selectedPixelId = selectedId;
+    if (unreadTipsPixelIds) this.unreadTipsPixelIds = unreadTipsPixelIds;
     this.render();
   }
 
@@ -222,13 +224,13 @@ export class PixelMapRenderer {
 
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-    // 1. 绘制背景暗格
+    // 1. 绘制 Z=0 平面网格
     this.drawGrid();
 
     // 2. 绘制消息流连线
     this.drawMessageFlow();
 
-    // 3. 排序元胞并绘制 3D 等轴立方体
+    // 3. 排序元胞：先画 Z 投影辅助线，再画圆点
     const sorted = [...this.pixels].sort((a, b) => {
       const [ax, ay, az] = a.position;
       const [bx, by, bz] = b.position;
@@ -236,8 +238,14 @@ export class PixelMapRenderer {
     });
 
     for (const pixel of sorted) {
-      this.drawPixelCube(pixel);
+      this.drawZDropLine(pixel);
     }
+    for (const pixel of sorted) {
+      this.drawPixelNode(pixel);
+    }
+
+    // 4. XYZ 方向指示
+    this.drawAxisHint();
   }
 
   private drawGrid(): void {
@@ -265,6 +273,79 @@ export class PixelMapRenderer {
       ctx.stroke();
     }
 
+    // 标注该网格为 Z=0 平面
+    ctx.fillStyle = '#3d444d';
+    ctx.font = `${Math.max(9, Math.floor(9 * this.zoom))}px monospace`;
+    ctx.textAlign = 'left';
+    const origin = this.project(-range, -range, 0);
+    ctx.fillText('Z=0 Plane', origin.x - 10 * this.zoom, origin.y - 6 * this.zoom);
+
+    ctx.restore();
+  }
+
+  /** z != 0 的元胞从实际位置到 (x, y, 0) 画淡色虚线，解决 Z 高度难辨识 */
+  private drawZDropLine(pixel: PixelSummaryDto): void {
+    const [x, y, z] = pixel.position;
+    if (!z) return;
+    const { ctx } = this;
+    const center = this.project(x, y, z);
+    const ground = this.project(x, y, 0);
+    ctx.save();
+    ctx.strokeStyle = 'rgba(139, 148, 158, 0.35)';
+    ctx.lineWidth = 1;
+    ctx.setLineDash([3 * this.zoom, 3 * this.zoom]);
+    ctx.beginPath();
+    ctx.moveTo(center.x, center.y);
+    ctx.lineTo(ground.x, ground.y);
+    ctx.stroke();
+    // 投影位置画极小空心圆
+    ctx.beginPath();
+    ctx.arc(ground.x, ground.y, 2.5 * this.zoom, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  /** 固定位置的三条短轴方向提示（与 project() 的等轴方向一致） */
+  private drawAxisHint(): void {
+    const { ctx, canvas } = this;
+    const ox = 46;
+    const oy = canvas.height - 46;
+    const len = 26;
+    // X: project(+1,0,0) 方向 → 屏幕右下
+    const xAxis = { x: (1 - 0) * 56, y: (1 + 0) * 28 };
+    // Y: project(0,+1,0) 方向 → 屏幕左下
+    const yAxis = { x: (0 - 1) * 56, y: (0 + 1) * 28 };
+    // Z: project(0,0,+1) 方向 → 屏幕正上
+    const zAxis = { x: 0, y: -38 };
+    const norm = (v: { x: number; y: number }) => {
+      const m = Math.hypot(v.x, v.y);
+      return { x: (v.x / m) * len, y: (v.y / m) * len };
+    };
+    const axes: Array<{ v: { x: number; y: number }; label: string; color: string }> = [
+      { v: norm(xAxis), label: 'X', color: '#58a6ff' },
+      { v: norm(yAxis), label: 'Y', color: '#3fb950' },
+      { v: norm(zAxis), label: 'Z', color: '#d29922' },
+    ];
+    ctx.save();
+    ctx.fillStyle = 'rgba(22, 27, 34, 0.85)';
+    ctx.beginPath();
+    ctx.arc(ox, oy, 34, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.lineWidth = 1.5;
+    ctx.font = 'bold 11px monospace';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    for (const { v, label, color } of axes) {
+      const ex = ox + v.x;
+      const ey = oy + v.y;
+      ctx.strokeStyle = color;
+      ctx.beginPath();
+      ctx.moveTo(ox, oy);
+      ctx.lineTo(ex, ey);
+      ctx.stroke();
+      ctx.fillStyle = color;
+      ctx.fillText(label, ox + v.x * 1.35, oy + v.y * 1.35);
+    }
     ctx.restore();
   }
 
@@ -301,82 +382,42 @@ export class PixelMapRenderer {
     ctx.restore();
   }
 
-  private drawPixelCube(pixel: PixelSummaryDto): void {
+  private drawPixelNode(pixel: PixelSummaryDto): void {
     const { ctx } = this;
     const [x, y, z] = pixel.position;
     const center = this.project(x, y, z);
-    const size = 18 * this.zoom;
+    const radius = 10 * this.zoom;
 
     const isSelected = pixel.id === this.selectedPixelId;
     const isHovered = pixel.id === this.hoveredPixelId;
     const isActive = pixel.active;
+    const hasUnreadTips = this.unreadTipsPixelIds.has(pixel.id);
 
     ctx.save();
 
-    // 选中或悬停光晕
+    // 悬停/选中光晕（描边在主体之上，不覆盖黄色主体）
     if (isSelected || isHovered) {
       ctx.beginPath();
-      ctx.arc(center.x, center.y, size * 2.2, 0, Math.PI * 2);
-      ctx.fillStyle = isSelected ? 'rgba(88, 166, 255, 0.25)' : 'rgba(255, 255, 255, 0.15)';
-      ctx.fill();
+      ctx.arc(center.x, center.y, radius + (isSelected ? 8 : 5) * this.zoom, 0, Math.PI * 2);
+      ctx.strokeStyle = isSelected ? 'rgba(88, 166, 255, 0.7)' : 'rgba(255, 255, 255, 0.35)';
+      ctx.lineWidth = isSelected ? 2 : 1;
+      ctx.stroke();
     }
 
-    // 立方体顶点计算
-    const topCenter = { x: center.x, y: center.y - size * 0.7 };
-    const bottomCenter = { x: center.x, y: center.y + size * 0.7 };
-    const left = { x: center.x - size, y: center.y - size * 0.2 };
-    const right = { x: center.x + size, y: center.y - size * 0.2 };
-
-    let colTop = '#1f2937';
-    let colLeft = '#111827';
-    let colRight = '#374151';
-
-    if (isActive) {
-      colTop = '#60a5fa';
-      colLeft = '#2563eb';
-      colRight = '#3b82f6';
-    }
-
-    // 顶面
+    // 圆点主体：黄色 = 未读 Tips 优先，其次蓝色 = Active，灰色 = Dead
     ctx.beginPath();
-    ctx.moveTo(topCenter.x, topCenter.y);
-    ctx.lineTo(right.x, right.y);
-    ctx.lineTo(center.x, center.y);
-    ctx.lineTo(left.x, left.y);
-    ctx.closePath();
-    ctx.fillStyle = colTop;
+    ctx.arc(center.x, center.y, radius, 0, Math.PI * 2);
+    ctx.fillStyle = hasUnreadTips ? '#e3b341' : isActive ? '#58a6ff' : '#484f58';
     ctx.fill();
-    ctx.strokeStyle = isSelected ? '#58a6ff' : '#0e1117';
+    ctx.strokeStyle = '#0e1117';
     ctx.lineWidth = 1;
-    ctx.stroke();
-
-    // 左面
-    ctx.beginPath();
-    ctx.moveTo(left.x, left.y);
-    ctx.lineTo(center.x, center.y);
-    ctx.lineTo(bottomCenter.x, bottomCenter.y);
-    ctx.lineTo(left.x, bottomCenter.y - (center.y - left.y));
-    ctx.closePath();
-    ctx.fillStyle = colLeft;
-    ctx.fill();
-    ctx.stroke();
-
-    // 右面
-    ctx.beginPath();
-    ctx.moveTo(center.x, center.y);
-    ctx.lineTo(right.x, right.y);
-    ctx.lineTo(right.x, bottomCenter.y - (center.y - right.y));
-    ctx.lineTo(bottomCenter.x, bottomCenter.y);
-    ctx.closePath();
-    ctx.fillStyle = colRight;
-    ctx.fill();
     ctx.stroke();
 
     // ID 标签
     ctx.fillStyle = isSelected ? '#f0f6fc' : '#8b949e';
     ctx.font = `${Math.max(10, Math.floor(10 * this.zoom))}px monospace`;
     ctx.textAlign = 'center';
-    ctx.fillText(pixel.id, center.x, bottomCenter.y + 14 * this.zoom);
+    ctx.fillText(pixel.id, center.x, center.y + radius + 14 * this.zoom);
 
     ctx.restore();
   }

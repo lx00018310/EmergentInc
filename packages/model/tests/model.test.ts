@@ -109,6 +109,20 @@ Have a great day!
     expect(decision.pixel_md).toBe("fallback_content");
     expect(decision.send_to).toBe("SELF");
   });
+
+  it("tips_md: explicit string wins (empty means clear), missing keeps fallback", () => {
+    // 缺失 tips_md → 保留原 tips
+    const missing = parseAndNormalizeResponse(JSON.stringify({ pixel_md: "m1" }), "old_mind", "old_tips");
+    expect(missing.tips_md).toBe("old_tips");
+
+    // 显式空字符串 = 清空 tips（不能当作缺失）
+    const cleared = parseAndNormalizeResponse(JSON.stringify({ pixel_md: "m2", tips_md: "" }), "old_mind", "old_tips");
+    expect(cleared.tips_md).toBe("");
+
+    // 显式新内容 = 覆盖
+    const updated = parseAndNormalizeResponse(JSON.stringify({ pixel_md: "m3", tips_md: "new tip" }), "old_mind", "old_tips");
+    expect(updated.tips_md).toBe("new tip");
+  });
 });
 
 describe("Model: Usage Meter & Pricing", () => {

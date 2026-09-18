@@ -14,6 +14,7 @@ describe("Runtime: Decision Compiler", () => {
   it("should compile AgentDecision in strictly fixed sequential order", () => {
     const decision: AgentDecision = {
       pixel_md: "new mind",
+      tips_md: "owner hint",
       owner_request: { type: "need_vps" },
       environment_read: true,
       operations: [
@@ -49,6 +50,88 @@ describe("Runtime: Decision Compiler", () => {
     effects.forEach((eff, idx) => {
       expect(eff.effectIndex).toBe(idx);
     });
+
+    // tips_md 随 UPDATE_MIND 携带
+    const mindEffect = effects.find((e) => e.effectType === "UPDATE_MIND") as any;
+    expect(mindEffect.tipsContent).toBe("owner hint");
+  });
+});
+
+describe("Runtime: tips.md write semantics", () => {
+  let tmpDir: string;
+  let store: CoreStore;
+  let registry: ToolRegistry;
+  let toolRuntime: ToolRuntime;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "tips_runtime_test_"));
+    fs.mkdirSync(path.join(tmpDir, "live", "artifacts"), { recursive: true });
+    fs.mkdirSync(path.join(tmpDir, "live", "pixels"), { recursive: true });
+    fs.mkdirSync(path.join(tmpDir, "private"), { recursive: true });
+
+    store = new CoreStore(":memory:");
+    registry = new ToolRegistry();
+    registerAllBuiltinTools(registry);
+    toolRuntime = new ToolRuntime(registry);
+
+    store.pixels.upsertPixelAccount({
+      pixelId: "0_0_0",
+      energy: 5000,
+      active: true,
+      refundDeficitTokens: 0,
+      spendBlockedReason: null,
+    });
+  });
+
+  afterEach(() => {
+    store.close();
+  });
+
+  function tipsFile(): string {
+    return path.join(tmpDir, "live", "pixels", "0_0_0", "tips.md");
+  }
+
+  function compileAndApply(tipsMd: string | undefined): Promise<void> {
+    const effectRuntime = new EffectRuntime({
+      workspaceRoot: tmpDir,
+      store,
+      toolRuntime,
+      round: 1,
+      runId: "run_tips",
+    });
+    const decision: AgentDecision = { pixel_md: "mind", ...(tipsMd !== undefined ? { tips_md: tipsMd } : {}) };
+    const effects = DecisionCompiler.compile({
+      decision: decision as AgentDecision,
+      pixelId: "0_0_0",
+      messageId: `msg_tips_${Math.random()}`,
+      currentHop: 1,
+    });
+    return effectRuntime.applyEffects(effects).then(() => undefined);
+  }
+
+  it("writes tips.md when new content provided, clears on empty, skips write when unchanged", async () => {
+    // B. 写入
+    await compileAndApply("需要 Owner 检查数据源。");
+    expect(fs.readFileSync(tipsFile(), "utf-8")).toBe("需要 Owner 检查数据源。");
+    const mtime1 = fs.statSync(tipsFile()).mtimeMs;
+
+    // 相同内容 → 不重写（mtime 不变）
+    await new Promise((r) => setTimeout(r, 5));
+    await compileAndApply("需要 Owner 检查数据源。");
+    expect(fs.statSync(tipsFile()).mtimeMs).toBe(mtime1);
+
+    // D. 再次修改
+    await compileAndApply("数据源问题已确认，还需要检查 API。");
+    expect(fs.readFileSync(tipsFile(), "utf-8")).toBe("数据源问题已确认，还需要检查 API。");
+
+    // E. 清空
+    await compileAndApply("");
+    expect(fs.readFileSync(tipsFile(), "utf-8")).toBe("");
+
+    // tips_md 缺失 → 不触碰文件
+    await compileAndApply("again");
+    await compileAndApply(undefined);
+    expect(fs.readFileSync(tipsFile(), "utf-8")).toBe("again");
   });
 });
 

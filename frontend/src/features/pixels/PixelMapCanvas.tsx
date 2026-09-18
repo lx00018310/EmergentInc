@@ -6,6 +6,7 @@ export interface PixelMapCanvasProps {
   pixels: PixelSummaryDto[];
   messageFlow: MessageFlowDto[];
   selectedPixelId: string | null;
+  unreadTipsPixelIds?: Set<string>;
   onSelectPixel: (pixelId: string) => void;
   onHoverPixel: (pixelId: string | null) => void;
 }
@@ -14,6 +15,7 @@ export const PixelMapCanvas: React.FC<PixelMapCanvasProps> = ({
   pixels,
   messageFlow,
   selectedPixelId,
+  unreadTipsPixelIds,
   onSelectPixel,
   onHoverPixel,
 }) => {
@@ -45,9 +47,9 @@ export const PixelMapCanvas: React.FC<PixelMapCanvasProps> = ({
 
   useEffect(() => {
     if (rendererRef.current) {
-      rendererRef.current.setData(pixels, messageFlow, selectedPixelId);
+      rendererRef.current.setData(pixels, messageFlow, selectedPixelId, unreadTipsPixelIds);
     }
-  }, [pixels, messageFlow, selectedPixelId]);
+  }, [pixels, messageFlow, selectedPixelId, unreadTipsPixelIds]);
 
   const handleZoomIn = () => rendererRef.current?.zoomIn();
   const handleZoomOut = () => rendererRef.current?.zoomOut();
@@ -64,6 +66,9 @@ export const PixelMapCanvas: React.FC<PixelMapCanvasProps> = ({
             </span>
             <span className="legend-item">
               <span className="dot inactive-dot" /> 零能量失活 (Dead)
+            </span>
+            <span className="legend-item">
+              <span className="dot" style={{ background: '#e3b341' }} /> 未读提醒 (Unread Tips)
             </span>
             <span className="legend-item">
               <span className="flow-line-legend" /> 消息流跃迁 (Message Flow)

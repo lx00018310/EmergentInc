@@ -59,6 +59,17 @@ export class WorldService {
           }
           const pixelMdLength = getUnicodeLength(pixelMd);
 
+          // 2.2 读取 tips.md 内容与版本（mtime 即版本；文件缺失则为空）
+          const tipsFile = path.resolve(pixelsDir, pid, "tips.md");
+          let tipsMd = "";
+          let tipsVersion = "";
+          if (fs.existsSync(tipsFile)) {
+            try {
+              tipsMd = fs.readFileSync(tipsFile, "utf-8");
+              tipsVersion = String(fs.statSync(tipsFile).mtimeMs);
+            } catch {}
+          }
+
           // 3. 统计交付物数量
           let artifactsCount = 0;
           const artifactsDir = path.resolve(liveDir, "artifacts", pid);
@@ -95,6 +106,8 @@ export class WorldService {
             last_active_round: typeof diskState?.last_active_round === "number" ? diskState.last_active_round : 0,
             pixel_md: pixelMd,
             pixel_md_length: pixelMdLength,
+            tips_md: tipsMd,
+            tips_version: tipsVersion,
             artifacts_count: artifactsCount,
             neighbors,
           });

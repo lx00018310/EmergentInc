@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useWorldPolling } from './hooks/useWorldPolling';
 import { RunStatus } from './features/run/RunStatus';
 import { RunControls } from './features/run/RunControls';
@@ -84,6 +84,27 @@ export const App: React.FC = () => {
   }, [world, selectedPixelId]);
 
   const selectedPixel = world?.pixels.find((p) => p.id === selectedPixelId) || null;
+
+  // Tips 已读状态：仅存 localStorage（Owner UI 显示状态，不属于世界真值）
+  const [tipsReadRevision, setTipsReadRevision] = useState(0);
+  const tipsReadKey = (pixelId: string) => `emergentinc.tips.read.${pixelId}`;
+  const isTipsUnread = useCallback((pixel: { id: string; tips_md?: string; tips_version?: string }) => {
+    return Boolean(
+      (pixel.tips_md ?? '').trim() &&
+      localStorage.getItem(tipsReadKey(pixel.id)) !== String(pixel.tips_version ?? '')
+    );
+  }, []);
+  const markTipsRead = useCallback((pixel: { id: string; tips_version?: string }) => {
+    localStorage.setItem(tipsReadKey(pixel.id), String(pixel.tips_version ?? ''));
+    setTipsReadRevision((v) => v + 1);
+  }, []);
+  const unreadTipsPixelIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const p of world?.pixels || []) {
+      if (isTipsUnread(p)) ids.add(p.id);
+    }
+    return ids;
+  }, [world, isTipsUnread, tipsReadRevision]);
 
   // 提示词状态 (独立实例)
   const [genesisPrompt, setGenesisPrompt] = useState<PromptDto | null>(null);
@@ -271,12 +292,15 @@ export const App: React.FC = () => {
             pixels={world?.pixels || []}
             messageFlow={world?.latest_message_flow || []}
             selectedPixelId={selectedPixelId}
+            unreadTipsPixelIds={unreadTipsPixelIds}
             onSelectPixel={handleSelectPixel}
             onHoverPixel={handleHoverPixel}
           />
 
           <PixelDetails
             pixel={selectedPixel}
+            isTipsUnread={isTipsUnread}
+            onMarkTipsRead={markTipsRead}
             onOpenDoc={handleOpenDoc}
             onOpenArtifacts={() => setIsArtifactsModalOpen(true)}
             onOpenOperation={(tab) => { if (selectedPixelId) setPixelOperation({ pixelId: selectedPixelId, tab }); }}

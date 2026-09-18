@@ -63,6 +63,16 @@ export class PromptBuilder {
       parts.push(this.toolsCatalog.trim());
     }
 
+    parts.push(
+      [
+        "=== OUTPUT PROTOCOL (tips_md) ===",
+        "tips_md 是你的公开提醒，Owner 会直接看到它。",
+        "只有当存在值得外界注意的信息时才写入 tips_md。",
+        "没有需要提醒的内容时返回空字符串 \"\"。",
+        "普通思考、普通日志不要写入 tips_md。",
+      ].join("\n")
+    );
+
     if (this.genesisPrompt && this.genesisPrompt.trim()) {
       parts.push(`[GENESIS_CONTEXT]\n${this.genesisPrompt.trim()}`);
     }

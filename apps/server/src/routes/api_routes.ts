@@ -196,6 +196,16 @@ export async function registerApiRoutes(
       });
     }
 
+    // 5. tips.md 别名与全名支持 (Pixel 公开提醒)
+    if (docName === "tips" || docName === "tips.md") {
+      const tipsPath = containedPath(pixelDir, "tips.md");
+      return reply.send({
+        pixel_id: pixelId,
+        document: "tips.md",
+        content: fs.existsSync(tipsPath) ? fs.readFileSync(tipsPath, "utf-8") : "",
+      });
+    }
+
     // 非法/未授权文档拒绝
     return reply.status(403).send({ detail: `Document '${docName}' is not in the allowlist` });
   });

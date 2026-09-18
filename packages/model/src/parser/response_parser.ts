@@ -30,7 +30,8 @@ export function extractJsonString(raw: string): string {
 
 export function parseAndNormalizeResponse(
   rawText: string,
-  fallbackPixelMd: string
+  fallbackPixelMd: string,
+  fallbackTipsMd: string = ""
 ): AgentDecision {
   if (!rawText || !rawText.trim()) {
     throw new InvalidModelResponseError("Empty model response text", rawText);
@@ -60,6 +61,10 @@ export function parseAndNormalizeResponse(
   } else {
     pixelMd = fallbackPixelMd;
   }
+
+  // 1.1 tips_md 归一化：显式返回字符串才采用（"" 表示清空）；缺失则保留原 tips
+  const tipsMd =
+    typeof rawData.tips_md === "string" ? rawData.tips_md : fallbackTipsMd;
 
   // 2. environment_read 归一化
   let environmentRead = false;
@@ -158,6 +163,7 @@ export function parseAndNormalizeResponse(
 
   return {
     pixel_md: pixelMd,
+    tips_md: tipsMd,
     environment_read: environmentRead,
     operations: cleanOps,
     energy_transfer: cleanTransfers,

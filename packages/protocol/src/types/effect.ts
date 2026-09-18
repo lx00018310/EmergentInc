@@ -20,6 +20,8 @@ export interface UpdateMindEffect extends BaseEffect {
   effectType: "UPDATE_MIND";
   pixelId: string;
   content: string;
+  /** New tips.md content when the model supplied tips_md; undefined keeps existing tips. */
+  tipsContent?: string;
 }
 
 export interface CapabilityUnavailableEffect extends BaseEffect {

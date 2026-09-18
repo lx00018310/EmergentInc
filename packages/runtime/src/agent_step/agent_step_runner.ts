@@ -65,6 +65,7 @@ export class AgentStepRunner {
     // 1. 检查当前消息是否已有成功的 ModelCall (响应复用：支持安全重试与崩溃恢复)
     const existingModelCall = this.store.modelCalls.getLatestByMessageId(message.messageId);
     let rawText: string | null = null;
+    let currentTipsMd = "";
     let usage: ModelUsage | undefined;
 
     if (existingModelCall && existingModelCall.outcome === "SUCCESS" && existingModelCall.rawResponse) {
@@ -95,6 +96,14 @@ export class AgentStepRunner {
       if (fs.existsSync(mandateFile)) {
         try {
           humanMandate = fs.readFileSync(mandateFile, "utf-8").trim();
+        } catch {}
+      }
+
+      // 读取当前 tips.md（模型缺失 tips_md 输出时保留原值）
+      const tipsFile = path.resolve(pixelDir, "tips.md");
+      if (fs.existsSync(tipsFile)) {
+        try {
+          currentTipsMd = fs.readFileSync(tipsFile, "utf-8");
         } catch {}
       }
 
@@ -250,7 +259,7 @@ export class AgentStepRunner {
     // 8. 解析归一化决策
     let decision: AgentDecision;
     try {
-      decision = parseAndNormalizeResponse(rawText || "", pixelMind);
+      decision = parseAndNormalizeResponse(rawText || "", pixelMind, currentTipsMd);
     } catch (parseErr: any) {
       if (parseErr instanceof InvalidModelResponseError) {
         // 供应商已经计费，但是响应不可使用：

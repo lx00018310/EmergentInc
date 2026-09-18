@@ -31,7 +31,8 @@ export class DecisionCompiler {
 
     // 1. UpdateMindEffect
     if (decision.pixel_md !== undefined && decision.pixel_md !== null) {
-      const payloadHash = sha256(decision.pixel_md);
+      // Tips travel with the mind update so Exactly-Once covers the whole write.
+      const payloadHash = sha256({ pixel_md: decision.pixel_md, tips_md: decision.tips_md ?? null });
       const effect: UpdateMindEffect = {
         effectId: `eff_${messageId}_${effectIndex}_${payloadHash.substring(0, 8)}`,
         messageId,
@@ -41,6 +42,7 @@ export class DecisionCompiler {
         status: "PENDING",
         pixelId,
         content: decision.pixel_md,
+        ...(decision.tips_md != null ? { tipsContent: decision.tips_md } : {}),
       };
       effects.push(effect);
     }

@@ -145,6 +145,20 @@ export class EffectRuntime {
     }
     fs.writeFileSync(pixelFile, effect.content, "utf-8");
 
+    // tips.md：仅在模型显式提供 tips_md 且内容真变化时写入（mtime 可作为版本信号）
+    if (effect.tipsContent !== undefined) {
+      const tipsFile = path.resolve(pixelDir, "tips.md");
+      let oldTips: string | null = null;
+      if (fs.existsSync(tipsFile)) {
+        try {
+          oldTips = fs.readFileSync(tipsFile, "utf-8");
+        } catch {}
+      }
+      if (oldTips !== effect.tipsContent) {
+        fs.writeFileSync(tipsFile, effect.tipsContent, "utf-8");
+      }
+    }
+
     this.ctx.store.effects.recordEffect({
       effect_id: effect.effectId,
       message_id: effect.messageId,
@@ -430,6 +444,7 @@ export class EffectRuntime {
       fs.mkdirSync(childDir, { recursive: true });
     }
     fs.writeFileSync(path.resolve(childDir, "pixel.md"), "", "utf-8");
+    fs.writeFileSync(path.resolve(childDir, "tips.md"), "", "utf-8");
 
     this.ctx.store.effects.recordEffect({
       effect_id: effect.effectId,

@@ -3,6 +3,8 @@ import type { PixelSummaryDto } from '../../api/types';
 
 export interface PixelDetailsProps {
   pixel: PixelSummaryDto | null;
+  isTipsUnread?: (pixel: PixelSummaryDto) => boolean;
+  onMarkTipsRead?: (pixel: PixelSummaryDto) => void;
   onOpenDoc: (docName: string) => void;
   onOpenArtifacts: () => void;
   onOpenOperation: (tab: 'mandate' | 'reward' | 'cost') => void;
@@ -10,6 +12,8 @@ export interface PixelDetailsProps {
 
 export const PixelDetails: React.FC<PixelDetailsProps> = ({
   pixel,
+  isTipsUnread,
+  onMarkTipsRead,
   onOpenDoc,
   onOpenArtifacts,
   onOpenOperation,
@@ -18,6 +22,8 @@ export const PixelDetails: React.FC<PixelDetailsProps> = ({
 
   const [x, y, z] = pixel.position;
   const activeNeighborsCount = pixel.neighbors?.length || 0;
+  const tipsContent = (pixel.tips_md ?? '').trim();
+  const tipsUnread = Boolean(isTipsUnread?.(pixel));
 
   return (
     <div className="pixel-hover-card">
@@ -67,6 +73,31 @@ export const PixelDetails: React.FC<PixelDetailsProps> = ({
           <span className="h-k">心智字数:</span>{' '}
           <span className="h-v">{pixel.pixel_md_length} 字</span>
         </div>
+      </div>
+
+      <div style={{ marginTop: '8px' }}>
+        <div className="h-section-title">Tips (公开提醒):</div>
+        <div
+          className="pixel-md-preview"
+          style={tipsUnread ? { borderLeft: '3px solid #e3b341' } : undefined}
+        >
+          {tipsUnread && <div style={{ color: '#e3b341', marginBottom: '4px' }}>● 新提醒</div>}
+          {tipsContent ? tipsContent : <span style={{ color: '#8b949e' }}>暂无提醒</span>}
+        </div>
+        {tipsContent && (
+          <div style={{ marginTop: '4px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+            {tipsUnread ? (
+              <button className="btn btn-xs" onClick={() => onMarkTipsRead?.(pixel)}>
+                标记已读
+              </button>
+            ) : (
+              <span style={{ color: '#8b949e', fontSize: '11px' }}>已读</span>
+            )}
+            <button className="btn btn-xs" onClick={() => onOpenDoc('tips')}>
+              完整 tips.md
+            </button>
+          </div>
+        )}
       </div>
 
       <div style={{ marginTop: '8px' }}>

@@ -21,6 +21,7 @@ export interface ReproduceRequest {
  */
 export interface AgentDecision {
   pixel_md?: string | null;
+  tips_md?: string | null;
   environment_read?: boolean;
   operations?: ToolCall[];
   energy_transfer?: EnergyTransferRequest[];

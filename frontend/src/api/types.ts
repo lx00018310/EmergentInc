@@ -24,6 +24,8 @@ export interface PixelSummaryDto {
   capabilities?: string[];
   pixel_md: string;
   pixel_md_length: number;
+  tips_md: string;
+  tips_version: string;
   artifacts_count: number;
   latest_activity?: PixelActivityDto | null;
 }
