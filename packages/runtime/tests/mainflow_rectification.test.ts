@@ -88,4 +88,24 @@ describe("Mainflow rectification: real runner requests and lifecycle", () => {
     const scheduler = new RoundScheduler({ workspaceRoot: root, store, stepRunner: runner });
     expect(await scheduler.executeRound(1, "run_fixture")).toMatchObject({ stopReason: "CALL_OUTCOME_UNKNOWN", errorCode: "UND_ERR_SOCKET", errorSummary: "Socket closed; billing unknown", errorPhase: "dispatch" });
   });
+
+  it("run budget exhaustion is a clean guard stop without misleading infrastructure diagnostics", async () => {
+    input();
+    // Seed a run row with a small budget, pre-spent so the next reserve must exceed it.
+    store.runs.createRun({
+      run_id: "run_fixture", start_round: 1, run_limit: 1000, run_spent: 990, run_reserved: 0,
+      global_limit: 1000000, global_spent: 0, global_reserved: 0, genesis_revision: 1,
+      status: "RUNNING", created_at: Date.now() / 1000,
+    });
+    const scheduler = new RoundScheduler({ workspaceRoot: root, store, stepRunner: runner });
+    const summary = await scheduler.executeRound(1, "run_fixture");
+    expect(summary.stopReason).toBe("RUN_BUDGET_EXHAUSTED");
+    // Budget guard is a normal stop: it must NOT carry INFRASTRUCTURE_FAILURE diagnostics
+    // (which previously mislabeled runs as FAILED in the UI).
+    expect(summary.errorCode).toBeNull();
+    expect(summary.errorSummary).toBeNull();
+    expect(summary.errorPhase).toBeNull();
+    // The message waits on run budget, not destroyed or retried into spend.
+    expect(store.messages.getMessage("message_pixel")?.status).toBe("WAITING_RUN_BUDGET");
+  });
 });

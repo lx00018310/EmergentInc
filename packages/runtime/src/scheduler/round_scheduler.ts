@@ -206,10 +206,13 @@ export class RoundScheduler {
             continue;
           }
           if (err.kind === "RUN") {
+            // 预算护栏是正常停机，不是基础设施故障；不得携带误导性诊断
+            errorCode = errorSummary = errorPhase = null;
             stopReason = "RUN_BUDGET_EXHAUSTED";
             break;
           }
           if (err.kind === "GLOBAL") {
+            errorCode = errorSummary = errorPhase = null;
             stopReason = "GLOBAL_BUDGET_EXHAUSTED";
             break;
           }
