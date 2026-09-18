@@ -82,7 +82,20 @@ curl http://127.0.0.1:8765/api/tools             # 当前真正注册的工具
 ## 7. 凭据与私有资料
 
 * 凭据只能放在 `workspace/private/`（不进 Git）。`GET /api/private-files`、`/api/private-files/preview` 供 Pixel 侧受控读取，但 `*_profile.json`、`*credential*`、`*secret*`、`id_*`、`*.pem|*.key|*.ppk` 被硬性拒绝。
-* **当前 VPS 能力不可用**：`packages/tools/src/builtin/index.ts` 显式跳过所有 `vps_*` 工具定义，配置无法启用没有原生实现的工具。`private/tools.json` 里 6 个 `vps_*` 的 `enabled=true` 不产生任何能力，需要 Owner 先补齐实现或明确放弃部署路径。
+* **VPS 通道已落地但默认不启用**：`vps_list_files` / `vps_read_file` / `vps_write_file` / `vps_upload_file` / `vps_download_file` / `vps_exec` 均已用系统 OpenSSH 客户端原生实现，是否注册由启动时的**纯本地**探测决定（不联网探测）。`private/tools.json` 里 `enabled=true` 只会收窄、不会启用未被准入的工具。
+* 启用只需改 `workspace/private/owner_vps_profile.json`（**不要**填密码：`BatchMode=yes` 的适配器不支持密码认证，会直接返回 `AUTH_METHOD_UNSUPPORTED`）：
+
+  ```json
+  {
+    "host": "<ip>", "port": 22, "username": "root",
+    "key_path": "C:/path/to/id_ed25519",
+    "allowed_operations": ["ssh_list_files", "ssh_read_file"],
+    "remote_root": "/var/www/mysite"
+  }
+  ```
+
+  `allowed_operations` 为空表示不额外收窄；`remote_root` 一旦设置，所有远端路径越界即 `PATH_OUT_OF_SCOPE`。`ssh_exec`（任意远端 shell）必须由你显式授予才会注册，授予后上述路径收敛对 `vps_exec` 无效——那是完整 shell 控制权。
+* 验证方式：重启服务端看日志 `VPS adapters available: ...` / `VPS adapters disabled: <原因>`，再 `curl http://127.0.0.1:8765/api/tools` 核对真正注册的工具列表。
 
 ## 8. 不要做的事
 

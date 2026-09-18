@@ -51,7 +51,7 @@ export const BUILTIN_DEFINITIONS = [
 export function registerAllBuiltinTools(
   registry: ToolRegistry,
   configOverrides?: Record<string, { enabled?: boolean; timeout_seconds?: number }>,
-  availability: { vpsListFilesAvailable?: boolean } = {}
+  availability: { vpsListFilesAvailable?: boolean; vpsAvailableTools?: string[] } = {}
 ): void {
   const tools = [
     { def: saveArtifactDefinition, handler: handleSaveArtifact },
@@ -69,11 +69,14 @@ export function registerAllBuiltinTools(
     { def: vpsDownloadFileDefinition, handler: handleVpsDownloadFile },
   ];
 
+  const availableVpsTools = new Set(
+    availability.vpsAvailableTools ?? (availability.vpsListFilesAvailable ? ["vps_list_files"] : [])
+  );
+
   for (const { def, handler } of tools) {
-    // Config cannot enable absent native implementations. A caller must verify the
-    // list adapter's SSH/config prerequisites before advertising it.
-    if (def.name.startsWith("vps_") &&
-        (def.name !== "vps_list_files" || !availability.vpsListFilesAvailable)) continue;
+    // Config cannot enable an adapter whose prerequisites the caller has not verified.
+    // Availability comes from probeVpsAvailability(), which is a purely local static check.
+    if (def.name.startsWith("vps_") && !availableVpsTools.has(def.name)) continue;
     const overridden = { ...def };
     if (configOverrides && configOverrides[def.name]) {
       const cfg = configOverrides[def.name];

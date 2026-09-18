@@ -6,8 +6,8 @@
 
 1. 模型每次调用只拿到三类输入：自身 `pixel.md`、自身可见的邻居消息、`environment.md`。没有宿主 shell、没有全局世界状态、没有非邻居 Pixel 数据、没有聊天历史记忆。
 2. 模型不能直接改世界。它的输出必须经 `DecisionCompiler` 编译成受校验的 `Effects[]`，未知动作与越界参数被拒绝并回喂 `[ENGINE_FEEDBACK]`。
-3. 工具调用没有网络与进程能力：当前注册的内置工具只有 artifact 读写/列举/转移与私有文件读取（`packages/tools/src/builtin/index.ts`）。
-4. `vps_*` 工具**不注册**。注册函数显式跳过所有 `vps_` 前缀定义：配置无法启用没有原生实现的工具。因此 `private/tools.json` 中 `vps_*` 的 `enabled=true` 不产生任何能力。
+3. 内置工具默认只有 artifact 读写/列举/转移与私有文件读取（`packages/tools/src/builtin/index.ts`）。唯一的进程/网络出口是 `vps_*` 适配器，且必须显式准入才注册。
+4. `vps_*` 已原生实现（`vps_list_files` / `vps_read_file` / `vps_write_file` / `vps_upload_file` / `vps_download_file` / `vps_exec`，走系统 OpenSSH 客户端），注册由启动时的**纯本地**探测 `probeVpsAvailability(workspaceRoot)` 决定，探测不发起任何网络连接。`private/tools.json` 的 `enabled=true` 只能收窄、不能启用未被准入的工具。执行期还有三道独立门：`owner_vps_profile.json` 的 `allowed_operations` 白名单、`remote_root` 路径收敛、以及只支持**密钥认证**（`BatchMode=yes`，密码认证直接返回 `AUTH_METHOD_UNSUPPORTED`）。远端命令只经 argv 传递，路径参数拒绝 Shell 控制字符，写入/上传内容走 stdin，绝不拼进命令行；`vps_exec` 需要 Owner 在 `allowed_operations` 中显式授予 `ssh_exec`。
 5. 写入被限制在自身目录，文件名白名单为 `pixel.md` / `tips.md`；`mandate.md` 只能由 Owner 经 API 写，模型侧只读，且严禁把 mandate 内容回写进 `pixel.md`。
 6. 所有路径参数经 `containedPath()` / `validatePathSegment()` 校验，拒绝 `..`、`/`、`\`；私有工具另有 `PATH_TRAVERSAL_FORBIDDEN` 前缀检查。
 

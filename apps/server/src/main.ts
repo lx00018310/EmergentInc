@@ -2,7 +2,12 @@ import * as path from "node:path";
 import * as fs from "node:fs";
 import { createServer } from "./app.js";
 import { CoreStore } from "@emergentinc/persistence";
-import { ToolRegistry, registerAllBuiltinTools, ToolRuntime } from "@emergentinc/tools";
+import {
+  ToolRegistry,
+  registerAllBuiltinTools,
+  ToolRuntime,
+  probeVpsAvailability,
+} from "@emergentinc/tools";
 import {
   PromptBuilder,
   UsageMeter,
@@ -54,7 +59,13 @@ async function bootstrap() {
 
   // 2. 初始化工具并同步 tools.json 配置
   const toolRegistry = new ToolRegistry();
-  registerAllBuiltinTools(toolRegistry);
+  const vpsAvailability = probeVpsAvailability(workspaceRoot);
+  registerAllBuiltinTools(toolRegistry, undefined, { vpsAvailableTools: vpsAvailability.tools });
+  if (vpsAvailability.tools.length > 0) {
+    console.log(`[EmergentInc V10 Server] VPS adapters available: ${vpsAvailability.tools.join(", ")}`);
+  } else {
+    console.log(`[EmergentInc V10 Server] VPS adapters disabled: ${vpsAvailability.reason}`);
+  }
 
   const toolsConfigFile = path.resolve(privateDir, "tools.json");
   if (fs.existsSync(toolsConfigFile)) {

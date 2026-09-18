@@ -77,7 +77,7 @@ EmergentInc元胞会社/
 └─ package.json                 # pnpm workspace 根
 ```
 
-`vps_*` 工具当前**不注册**：`packages/tools/src/builtin/index.ts` 会跳过它们，配置无法启用没有原生实现的工具。
+`vps_*` 工具已原生实现（系统 OpenSSH 客户端），但只有启动时的离线探测 `probeVpsAvailability()` 判定 `workspace/private/owner_vps_profile.json` 可用（密钥认证 + `allowed_operations` 命中）才注册；当前该配置只有密码，因此实际不注册，服务端启动日志会打印确切原因。
 
 ---
 

@@ -3,6 +3,7 @@ import {
   ToolRegistry,
   ToolRuntime,
   registerAllBuiltinTools,
+  probeVpsAvailability,
   ToolContext,
 } from "../src/index.js";
 import * as fs from "node:fs";
@@ -323,5 +324,177 @@ describe("Tools: VPS Execution & Prompt Catalog", () => {
     const okRes = await runtime.execute("vps_list_files", { path: "/var/log" }, mockCtx);
     expect(okRes.status).toBe("SUCCESS");
     expect(okRes.output).toContain("test.txt");
+  });
+});
+
+describe("Tools: VPS Native Adapters (offline gates, no socket is opened)", () => {
+  let tmpDir: string;
+  let keyPath: string;
+
+  const writeProfile = (profile: Record<string, any>) => {
+    fs.mkdirSync(path.join(tmpDir, "private"), { recursive: true });
+    fs.writeFileSync(
+      path.join(tmpDir, "private", "owner_vps_profile.json"),
+      JSON.stringify(profile),
+      "utf-8"
+    );
+  };
+
+  const baseCtx = (): ToolContext => ({
+    workspaceRoot: tmpDir,
+    pixelId: "0_0_0",
+    runId: "run_test",
+    messageId: "msg_1",
+    operationId: "op_vps_gate",
+  });
+
+  const runtimeWith = (tools: string[]) => {
+    const registry = new ToolRegistry();
+    registerAllBuiltinTools(registry, undefined, { vpsAvailableTools: tools });
+    return new ToolRuntime(registry);
+  };
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "vps_gate_"));
+    fs.mkdirSync(path.join(tmpDir, "live", "artifacts", "0_0_0"), { recursive: true });
+    keyPath = path.join(tmpDir, "private", "test_id_ed25519");
+    fs.mkdirSync(path.join(tmpDir, "private"), { recursive: true });
+    fs.writeFileSync(keyPath, "dummy-private-key-material", "utf-8");
+  });
+
+  it("reports an unusable probe when no profile exists", () => {
+    const probe = probeVpsAvailability(tmpDir);
+    expect(probe.tools).toEqual([]);
+    expect(probe.reason).toContain("owner_vps_profile.json");
+  });
+
+  it("rejects password-only credentials with an actionable reason instead of pretending to work", async () => {
+    writeProfile({ host: "203.0.113.9", username: "root", password: "unused-in-test", allowed_operations: ["ssh_exec"] });
+    const probe = probeVpsAvailability(tmpDir);
+    expect(probe.tools).toEqual([]);
+    expect(probe.reason).toContain("password auth");
+
+    const res = await runtimeWith(["vps_exec"]).execute(
+      "vps_exec",
+      { command: "uname -a" },
+      baseCtx()
+    );
+    expect(res.status).toBe("FAILED");
+    expect(res.error_code).toBe("AUTH_METHOD_UNSUPPORTED");
+    expect(res.error_message).toContain("key_path");
+  });
+
+  it("narrows advertised tools to the profile's allowed_operations", () => {
+    writeProfile({
+      host: "203.0.113.9",
+      username: "root",
+      key_path: keyPath,
+      allowed_operations: ["ssh_list_files", "ssh_read_file"],
+    });
+    const probe = probeVpsAvailability(tmpDir);
+    expect(probe.tools).toEqual(["vps_list_files", "vps_read_file"]);
+    expect(probe.reason).toBeNull();
+
+    const registry = new ToolRegistry();
+    registerAllBuiltinTools(registry, undefined, { vpsAvailableTools: probe.tools });
+    const catalog = registry.renderCatalogForPrompt();
+    expect(catalog).toContain("- **`vps_list_files`**");
+    expect(catalog).toContain("- **`vps_read_file`**");
+    expect(catalog).not.toContain("- **`vps_exec`**");
+    expect(registry.listDefinitions()).toHaveLength(9);
+  });
+
+  it("reports AUTH_KEY_NOT_FOUND before touching the transport", async () => {
+    writeProfile({
+      host: "203.0.113.9",
+      username: "root",
+      key_path: path.join(tmpDir, "private", "absent_key"),
+    });
+    const res = await runtimeWith(["vps_list_files"]).execute(
+      "vps_list_files",
+      { path: "/var/log" },
+      baseCtx()
+    );
+    expect(res.error_code).toBe("AUTH_KEY_NOT_FOUND");
+  });
+
+  it("denies operations the owner did not allow and paths outside remote_root", async () => {
+    writeProfile({
+      host: "203.0.113.9",
+      username: "root",
+      key_path: keyPath,
+      allowed_operations: ["ssh_list_files", "ssh_read_file", "ssh_write_file"],
+      remote_root: "/srv/www",
+    });
+    const runtime = runtimeWith([
+      "vps_list_files",
+      "vps_read_file",
+      "vps_write_file",
+      "vps_exec",
+    ]);
+
+    const notAllowed = await runtime.execute("vps_exec", { command: "id" }, baseCtx());
+    expect(notAllowed.status).toBe("FAILED");
+    expect(notAllowed.error_code).toBe("OPERATION_NOT_ALLOWED");
+    expect(notAllowed.error_message).toContain("ssh_exec");
+
+    const outOfScope = await runtime.execute(
+      "vps_read_file",
+      { path: "/etc/passwd" },
+      baseCtx()
+    );
+    expect(outOfScope.error_code).toBe("PATH_OUT_OF_SCOPE");
+
+    const injected = await runtime.execute(
+      "vps_read_file",
+      { path: "/srv/www/app.log; rm -rf /" },
+      baseCtx()
+    );
+    expect(injected.error_code).toBe("INVALID_PATH");
+  });
+
+  it("fails with CAPABILITY_UNAVAILABLE instead of a forged SUCCESS when the profile disappears", async () => {
+    const res = await runtimeWith(["vps_write_file"]).execute(
+      "vps_write_file",
+      { path: "/srv/www/a.txt", content: "hello" },
+      baseCtx()
+    );
+    expect(res.status).toBe("FAILED");
+    expect(res.error_code).toBe("CAPABILITY_UNAVAILABLE");
+  });
+
+  it("keeps every write-side adapter mock-testable", async () => {
+    const runtime = runtimeWith(["vps_write_file", "vps_upload_file", "vps_download_file"]);
+    const mockCtx: ToolContext = {
+      ...baseCtx(),
+      mockVpsHandler: (tool) => ({ ok: true, tool }),
+    };
+    for (const [tool, args] of [
+      ["vps_write_file", { path: "/srv/www/a.txt", content: "x" }],
+      ["vps_upload_file", { artifact_filename: "a.txt", remote_path: "/srv/www/a.txt" }],
+      ["vps_download_file", { remote_path: "/srv/www/a.txt", artifact_filename: "a.txt" }],
+    ] as [string, Record<string, any>][]) {
+      const res = await runtime.execute(tool, args, mockCtx);
+      expect(res.status).toBe("SUCCESS");
+      expect(res.output.tool).toBe(tool);
+    }
+  });
+
+  it("refuses artifact filenames that escape the pixel directory", async () => {
+    writeProfile({ host: "203.0.113.9", key_path: keyPath });
+    const runtime = runtimeWith(["vps_upload_file", "vps_download_file"]);
+    const escape = await runtime.execute(
+      "vps_download_file",
+      { remote_path: "/srv/www/a.txt", artifact_filename: "../outside.txt" },
+      baseCtx()
+    );
+    expect(escape.error_code).toBe("INVALID_ARGS");
+
+    const missing = await runtime.execute(
+      "vps_upload_file",
+      { artifact_filename: "absent.txt", remote_path: "/srv/www/absent.txt" },
+      baseCtx()
+    );
+    expect(missing.error_code).toBe("ARTIFACT_NOT_FOUND");
   });
 });

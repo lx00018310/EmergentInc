@@ -2,7 +2,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import * as childProcess from "node:child_process";
 import { ToolDefinition, ToolResult } from "@emergentinc/protocol";
-import { ToolContext } from "../context.js";
+import { ToolContext, getArtifactsRoot } from "../context.js";
 
 export interface VpsProfile {
   host: string;
@@ -10,7 +10,29 @@ export interface VpsProfile {
   username: string;
   keyPath?: string;
   password?: string;
+  /** 为空表示不额外收窄；非空时工具必须命中对应操作名才可执行 */
+  allowedOperations: string[];
+  /** 设置后所有远端路径必须落在该目录内 */
+  remoteRoot?: string;
 }
+
+/** 工具名 -> owner_vps_profile.json 中 allowed_operations 使用的操作标识 */
+export const VPS_TOOL_OPERATIONS: Record<string, string> = {
+  vps_exec: "ssh_exec",
+  vps_list_files: "ssh_list_files",
+  vps_read_file: "ssh_read_file",
+  vps_write_file: "ssh_write_file",
+  vps_upload_file: "ssh_upload_file",
+  vps_download_file: "ssh_download_file",
+};
+
+export const IMPLEMENTED_VPS_TOOLS = Object.keys(VPS_TOOL_OPERATIONS);
+
+const MAX_LIST_LINES = 100;
+const MAX_TEXT_BYTES = 16384;
+const MAX_READ_LINES = 400;
+const MAX_WRITE_BYTES = 262144;
+const MAX_TRANSFER_BYTES = 2097152;
 
 export function loadVpsProfile(ctx: ToolContext): VpsProfile | null {
   // 1. 优先读取工作区 private/owner_vps_profile.json
@@ -20,7 +42,7 @@ export function loadVpsProfile(ctx: ToolContext): VpsProfile | null {
       try {
         const raw = JSON.parse(fs.readFileSync(vpsProfilePath, "utf-8"));
         if (raw.host) {
-          let keyPath: string | undefined = raw.key_path;
+          let keyPath: string | undefined = raw.key_path || raw.private_key_path;
           if (!keyPath && raw.key_path_env && process.env[raw.key_path_env]) {
             keyPath = process.env[raw.key_path_env];
           }
@@ -30,6 +52,10 @@ export function loadVpsProfile(ctx: ToolContext): VpsProfile | null {
             username: String(raw.username || "root"),
             keyPath,
             password: raw.password ? String(raw.password) : undefined,
+            allowedOperations: Array.isArray(raw.allowed_operations)
+              ? raw.allowed_operations.map((op: any) => String(op))
+              : [],
+            remoteRoot: raw.remote_root ? String(raw.remote_root) : undefined,
           };
         }
       } catch {}
@@ -44,6 +70,11 @@ export function loadVpsProfile(ctx: ToolContext): VpsProfile | null {
       username: process.env.VPS_USER || "root",
       keyPath: process.env.VPS_KEY_PATH || process.env.VPS_KEY,
       password: process.env.VPS_PASSWORD,
+      allowedOperations: (process.env.VPS_ALLOWED_OPERATIONS || "")
+        .split(",")
+        .map((op) => op.trim())
+        .filter(Boolean),
+      remoteRoot: process.env.VPS_REMOTE_ROOT || undefined,
     };
   }
 
@@ -60,47 +91,378 @@ function getSshExecutable(): string {
   return "ssh";
 }
 
-function resolveVpsExecution(
-  tool: string,
-  args: Record<string, any>,
-  ctx: ToolContext
-): ToolResult {
-  // 1. 优先使用显式注入的测试 Mock Handler
-  if (ctx.mockVpsHandler) {
-    const mockOutput = ctx.mockVpsHandler(tool, args);
-    return {
-      operation_id: ctx.operationId,
-      tool,
-      status: "SUCCESS",
-      output: mockOutput,
-      duration_ms: 0,
-      truncated: false,
-    };
-  }
+interface AccessFailure {
+  code: string;
+  message: string;
+}
 
-  // 2. 检查是否存在有效 VPS 配置
-  const profile = loadVpsProfile(ctx);
+/**
+ * 纯本地静态准入判定：不产生任何网络连接。
+ * 顺序：配置存在 -> allowed_operations 收窄 -> 认证方式可用 -> 私钥文件存在。
+ */
+function checkVpsAccess(
+  profile: VpsProfile | null,
+  tool: string,
+  subject: string = tool
+): AccessFailure | null {
   if (!profile) {
     return {
-      operation_id: ctx.operationId,
-      tool,
-      status: "FAILED",
-      error_code: "CAPABILITY_UNAVAILABLE",
-      error_message: `VPS operation '${tool}' unavailable: missing owner_vps_profile.json or remote credentials`,
-      duration_ms: 0,
-      truncated: false,
+      code: "CAPABILITY_UNAVAILABLE",
+      message: `VPS operation '${subject}' unavailable: missing owner_vps_profile.json or remote credentials`,
     };
   }
 
-  // 3. 具备配置但其余操作暂未生产原生落地，明确报告 CAPABILITY_UNAVAILABLE，坚决不静默假装成功
+  const operation = VPS_TOOL_OPERATIONS[tool];
+  if (profile.allowedOperations.length > 0 && !profile.allowedOperations.includes(operation)) {
+    return {
+      code: "OPERATION_NOT_ALLOWED",
+      message: `VPS operation '${subject}' is not permitted: owner_vps_profile.json allowed_operations does not include '${operation}'`,
+    };
+  }
+
+  if (!profile.keyPath) {
+    if (profile.password) {
+      return {
+        code: "AUTH_METHOD_UNSUPPORTED",
+        message:
+          `VPS operation '${subject}' cannot authenticate: the non-interactive OpenSSH adapter does not support password auth. ` +
+          "Replace the 'password' field with 'key_path' (or set VPS_KEY_PATH) pointing to a private key authorized on the host.",
+      };
+    }
+    return {
+      code: "AUTH_METHOD_MISSING",
+      message: `VPS operation '${subject}' cannot authenticate: owner_vps_profile.json has no key_path and no credential environment variable is set`,
+    };
+  }
+
+  if (!fs.existsSync(profile.keyPath)) {
+    return {
+      code: "AUTH_KEY_NOT_FOUND",
+      message: `VPS operation '${subject}' cannot authenticate: private key '${profile.keyPath}' does not exist`,
+    };
+  }
+
+  return null;
+}
+
+/** 离线探测当前可原生执行的 vps 工具集，供装配层决定是否注册 */
+export function probeVpsAvailability(
+  workspaceRoot: string
+): { tools: string[]; reason: string | null } {
+  const profile = loadVpsProfile({ workspaceRoot } as ToolContext);
+  const tools = IMPLEMENTED_VPS_TOOLS.filter(
+    (tool) => checkVpsAccess(profile, tool) === null
+  );
+  if (tools.length > 0) {
+    return { tools, reason: null };
+  }
+  const firstFailure = checkVpsAccess(profile, IMPLEMENTED_VPS_TOOLS[0], "the VPS channel");
+  return {
+    tools: [],
+    reason: firstFailure ? firstFailure.message : "no VPS operation is available",
+  };
+}
+
+function quoteRemote(value: string): string {
+  return `'${value.replace(/'/g, "'\\''")}'`;
+}
+
+const SHELL_CONTROL_CHARS = /[\x00-\x1f;`|&$><\n\r]/;
+
+/** 不依赖配置的入参形态校验：必须在凭据门之前执行，保证参数错误优先于能力错误 */
+function validateRemotePathShape(rawPath: string): { valid: boolean; code?: string; error?: string } {
+  if (!rawPath) {
+    return { valid: false, code: "INVALID_PATH", error: "Path must not be empty" };
+  }
+  if (SHELL_CONTROL_CHARS.test(rawPath)) {
+    return {
+      valid: false,
+      code: "INVALID_PATH",
+      error: "Path contains prohibited shell control characters",
+    };
+  }
+  return { valid: true };
+}
+
+function validateRemotePathScope(
+  profile: VpsProfile,
+  rawPath: string
+): { valid: boolean; error?: string; code?: string } {
+  if (profile.remoteRoot) {
+    const root = path.posix.normalize(profile.remoteRoot).replace(/\/+$/, "");
+    const target = path.posix.normalize(rawPath);
+    if (target !== root && !target.startsWith(`${root}/`)) {
+      return {
+        valid: false,
+        code: "PATH_OUT_OF_SCOPE",
+        error: `Path is outside the configured remote_root '${root}'`,
+      };
+    }
+  }
+  return { valid: true };
+}
+
+const ARTIFACT_NAME_FORBIDDEN = /[<>"\/\\|?*:\0]/;
+
+function validateArtifactName(filename: string): string | null {
+  if (!filename || filename.includes("..") || ARTIFACT_NAME_FORBIDDEN.test(filename)) {
+    return "Invalid artifact filename: directory traversal, separators or forbidden characters";
+  }
+  return null;
+}
+
+interface ProcessOutcome {
+  code: number | null;
+  stdout: Buffer;
+  stderr: Buffer;
+  timedOut: boolean;
+  aborted: boolean;
+  abortReason?: string;
+  timeoutMs: number;
+  spawnError?: string;
+}
+
+function runSsh(
+  profile: VpsProfile,
+  remoteCommand: string,
+  timeoutMs: number,
+  signal?: AbortSignal,
+  stdinData?: Buffer
+): Promise<ProcessOutcome> {
+  return new Promise((resolve) => {
+    const args = [
+      "-p", String(profile.port),
+      "-o", "BatchMode=yes",
+      "-o", "StrictHostKeyChecking=accept-new",
+      "-o", "ConnectTimeout=5",
+      "-o", "IdentitiesOnly=yes",
+      "-i", String(profile.keyPath),
+      `${profile.username}@${profile.host}`,
+      remoteCommand,
+    ];
+
+    let proc: childProcess.ChildProcess;
+    try {
+      proc = childProcess.spawn(getSshExecutable(), args, { windowsHide: true });
+    } catch (spawnErr: any) {
+      resolve({
+        code: null,
+        stdout: Buffer.alloc(0),
+        stderr: Buffer.alloc(0),
+        timedOut: false,
+        aborted: false,
+        abortReason: "",
+        timeoutMs,
+        spawnError: spawnErr?.message || String(spawnErr),
+      });
+      return;
+    }
+
+    const chunks: Buffer[] = [];
+    const errChunks: Buffer[] = [];
+    let timedOut = false;
+    let aborted = false;
+    let abortReason = "";
+    let settled = false;
+
+    const settle = (outcome: ProcessOutcome) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", onAbort);
+      resolve(outcome);
+    };
+
+    const finish = (code: number | null) => {
+      settle({
+        code,
+        stdout: Buffer.concat(chunks),
+        stderr: Buffer.concat(errChunks),
+        timedOut,
+        aborted,
+        abortReason,
+        timeoutMs,
+      });
+    };
+
+    const kill = () => {
+      try {
+        proc.kill();
+      } catch {}
+    };
+
+    const timer = setTimeout(() => {
+      timedOut = true;
+      kill();
+    }, timeoutMs);
+
+    const onAbort = () => {
+      aborted = true;
+      const reason = (signal as (AbortSignal & { reason?: unknown }) | undefined)?.reason;
+      abortReason = reason instanceof Error ? reason.message : reason ? String(reason) : "";
+      kill();
+    };
+
+    if (signal) {
+      if (signal.aborted) {
+        onAbort();
+      } else {
+        signal.addEventListener("abort", onAbort, { once: true });
+      }
+    }
+
+    proc.stdout?.on("data", (chunk: Buffer) => {
+      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+    });
+    proc.stderr?.on("data", (chunk: Buffer) => {
+      errChunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+    });
+    proc.on("error", (err) => {
+      settle({
+        code: null,
+        stdout: Buffer.concat(chunks),
+        stderr: Buffer.concat(errChunks),
+        timedOut: false,
+        aborted: false,
+        abortReason,
+        timeoutMs,
+        spawnError: err.message,
+      });
+    });
+    proc.on("close", finish);
+
+    if (stdinData && proc.stdin) {
+      proc.stdin.on("error", () => {
+        /* remote may reject early; exit code carries the real verdict */
+      });
+      proc.stdin.end(stdinData);
+    }
+  });
+}
+
+function failureResult(
+  ctx: ToolContext,
+  tool: string,
+  startTime: number,
+  code: string,
+  message: string
+): ToolResult {
   return {
     operation_id: ctx.operationId,
     tool,
     status: "FAILED",
-    error_code: "CAPABILITY_UNAVAILABLE",
-    error_message: `VPS operation '${tool}' is currently unavailable: native implementation pending (only 'vps_list_files' is natively supported)`,
-    duration_ms: 0,
+    error_code: code,
+    error_message: message,
+    duration_ms: Date.now() - startTime,
     truncated: false,
+  };
+}
+
+function transportFailure(ctx: ToolContext, tool: string, startTime: number, outcome: ProcessOutcome): ToolResult | null {
+  if (outcome.spawnError) {
+    return failureResult(
+      ctx,
+      tool,
+      startTime,
+      "SSH_SPAWN_ERROR",
+      `Failed to spawn SSH process: ${outcome.spawnError}`
+    );
+  }
+  if (outcome.aborted) {
+    if (outcome.timedOut || outcome.abortReason?.includes("TOOL_EXECUTION_TIMEOUT")) {
+      return failureResult(
+        ctx,
+        tool,
+        startTime,
+        "TIMEOUT",
+        `SSH execution timed out after ${outcome.timeoutMs}ms`
+      );
+    }
+    return failureResult(ctx, tool, startTime, "USER_STOPPED", "SSH execution was stopped by user request");
+  }
+  if (outcome.timedOut) {
+    return failureResult(
+      ctx,
+      tool,
+      startTime,
+      "TIMEOUT",
+      `SSH execution timed out after ${outcome.timeoutMs}ms`
+    );
+  }
+  return null;
+}
+
+function mockResult(
+  ctx: ToolContext,
+  tool: string,
+  args: Record<string, any>,
+  startTime: number
+): ToolResult {
+  return {
+    operation_id: ctx.operationId,
+    tool,
+    status: "SUCCESS",
+    output: ctx.mockVpsHandler!(tool, args),
+    duration_ms: Date.now() - startTime,
+    truncated: false,
+  };
+}
+
+function truncateText(text: string, maxLines: number, maxBytes: number): { text: string; truncated: boolean } {
+  const lines = text.split("\n");
+  if (lines.length > maxLines) {
+    return {
+      text: lines.slice(0, maxLines).join("\n") + `\n... [truncated ${lines.length - maxLines} lines]`,
+      truncated: true,
+    };
+  }
+  if (text.length > maxBytes) {
+    return { text: text.substring(0, maxBytes) + "\n... [truncated bytes]", truncated: true };
+  }
+  return { text, truncated: false };
+}
+
+/** 通用读取型远端命令执行：静态准入 -> 传输 -> 文本截断 */
+async function runRemoteRead(
+  tool: string,
+  remoteCommand: string,
+  ctx: ToolContext,
+  timeoutMs: number,
+  maxLines: number
+): Promise<ToolResult> {
+  const startTime = Date.now();
+  const profile = loadVpsProfile(ctx);
+  const accessDenied = checkVpsAccess(profile, tool);
+  if (accessDenied || !profile) {
+    return failureResult(ctx, tool, startTime, accessDenied?.code || "CAPABILITY_UNAVAILABLE", accessDenied?.message || "");
+  }
+
+  const outcome = await runSsh(profile, remoteCommand, timeoutMs, ctx.signal);
+  const transportError = transportFailure(ctx, tool, startTime, outcome);
+  if (transportError) return transportError;
+
+  if (outcome.code !== 0) {
+    return failureResult(
+      ctx,
+      tool,
+      startTime,
+      "SSH_EXECUTION_FAILED",
+      outcome.stderr.toString("utf-8").trim() || `SSH exited with code ${outcome.code}`
+    );
+  }
+
+  const { text, truncated } = truncateText(
+    outcome.stdout.toString("utf-8").trim(),
+    maxLines,
+    MAX_TEXT_BYTES
+  );
+  return {
+    operation_id: ctx.operationId,
+    tool,
+    status: "SUCCESS",
+    output: text,
+    duration_ms: Date.now() - startTime,
+    truncated,
   };
 }
 
@@ -123,19 +485,47 @@ export async function handleVpsExec(
   args: Record<string, any>,
   ctx: ToolContext
 ): Promise<ToolResult> {
+  const startTime = Date.now();
   const command = String(args.command || "").trim();
   if (!command) {
-    return {
-      operation_id: ctx.operationId,
-      tool: "vps_exec",
-      status: "FAILED",
-      error_code: "INVALID_COMMAND",
-      error_message: "Command must not be empty",
-      duration_ms: 0,
-      truncated: false,
-    };
+    return failureResult(ctx, "vps_exec", startTime, "INVALID_COMMAND", "Command must not be empty");
   }
-  return resolveVpsExecution("vps_exec", args, ctx);
+  if (ctx.mockVpsHandler) {
+    return mockResult(ctx, "vps_exec", args, startTime);
+  }
+
+  const profile = loadVpsProfile(ctx);
+  const accessDenied = checkVpsAccess(profile, "vps_exec");
+  if (accessDenied || !profile) {
+    return failureResult(
+      ctx,
+      "vps_exec",
+      startTime,
+      accessDenied?.code || "CAPABILITY_UNAVAILABLE",
+      accessDenied?.message || ""
+    );
+  }
+
+  const timeoutMs = (vpsExecDefinition.timeout_seconds || 60) * 1000;
+  const outcome = await runSsh(profile, command, timeoutMs, ctx.signal);
+  const transportError = transportFailure(ctx, "vps_exec", startTime, outcome);
+  if (transportError) return transportError;
+
+  const stdout = truncateText(outcome.stdout.toString("utf-8"), MAX_LIST_LINES, MAX_TEXT_BYTES);
+  const stderr = truncateText(outcome.stderr.toString("utf-8"), MAX_LIST_LINES, MAX_TEXT_BYTES);
+  return {
+    operation_id: ctx.operationId,
+    tool: "vps_exec",
+    // 非零退出码是命令自身的结果，不是工具失败：如实回执 exit_code 交由模型判断
+    status: "SUCCESS",
+    output: {
+      exit_code: outcome.code,
+      stdout: stdout.text,
+      stderr: stderr.text,
+    },
+    duration_ms: Date.now() - startTime,
+    truncated: stdout.truncated || stderr.truncated,
+  };
 }
 
 export const vpsListFilesDefinition: ToolDefinition = {
@@ -159,181 +549,39 @@ export async function handleVpsListFiles(
 ): Promise<ToolResult> {
   const startTime = Date.now();
   const rawPath = String(args.path || "").trim();
-  if (!rawPath) {
-    return {
-      operation_id: ctx.operationId,
-      tool: "vps_list_files",
-      status: "FAILED",
-      error_code: "INVALID_PATH",
-      error_message: "Path must not be empty",
-      duration_ms: Date.now() - startTime,
-      truncated: false,
-    };
+  const shapeCheck = validateRemotePathShape(rawPath);
+  if (!shapeCheck.valid) {
+    return failureResult(ctx, "vps_list_files", startTime, shapeCheck.code!, shapeCheck.error!);
   }
-
-  // 严格安全防御：禁止 Shell 控制字符，防御注入
-  if (/[\x00-\x1f;`|&$><\n\r]/.test(rawPath)) {
-    return {
-      operation_id: ctx.operationId,
-      tool: "vps_list_files",
-      status: "FAILED",
-      error_code: "INVALID_PATH",
-      error_message: "Path contains prohibited shell control characters",
-      duration_ms: Date.now() - startTime,
-      truncated: false,
-    };
-  }
-
-  // 1. 优先使用显式注入的测试 Mock Handler
   if (ctx.mockVpsHandler) {
-    const mockOutput = ctx.mockVpsHandler("vps_list_files", args);
-    return {
-      operation_id: ctx.operationId,
-      tool: "vps_list_files",
-      status: "SUCCESS",
-      output: mockOutput,
-      duration_ms: Date.now() - startTime,
-      truncated: false,
-    };
+    return mockResult(ctx, "vps_list_files", args, startTime);
   }
 
-  // 2. 加载 VPS 凭据
   const profile = loadVpsProfile(ctx);
-  if (!profile) {
-    return {
-      operation_id: ctx.operationId,
-      tool: "vps_list_files",
-      status: "FAILED",
-      error_code: "CAPABILITY_UNAVAILABLE",
-      error_message: "VPS operation 'vps_list_files' unavailable: missing owner_vps_profile.json or remote credentials",
-      duration_ms: Date.now() - startTime,
-      truncated: false,
-    };
+  const accessDenied = checkVpsAccess(profile, "vps_list_files");
+  if (accessDenied || !profile) {
+    return failureResult(
+      ctx,
+      "vps_list_files",
+      startTime,
+      accessDenied?.code || "CAPABILITY_UNAVAILABLE",
+      accessDenied?.message || ""
+    );
   }
 
-  // 3. 执行原生 OpenSSH 探测
-  const sshBin = getSshExecutable();
+  const scopeCheck = validateRemotePathScope(profile, rawPath);
+  if (!scopeCheck.valid) {
+    return failureResult(ctx, "vps_list_files", startTime, scopeCheck.code!, scopeCheck.error!);
+  }
+
   const timeoutMs = (vpsListFilesDefinition.timeout_seconds || 5) * 1000;
-  const safePath = rawPath.replace(/'/g, "'\\''");
-
-  const sshArgs: string[] = [
-    "-p", String(profile.port),
-    "-o", "BatchMode=yes",
-    "-o", "StrictHostKeyChecking=accept-new",
-    "-o", "ConnectTimeout=5",
-  ];
-
-  if (profile.keyPath) {
-    sshArgs.push("-i", profile.keyPath);
-  }
-
-  sshArgs.push(`${profile.username}@${profile.host}`);
-  sshArgs.push(`ls -la -- '${safePath}'`);
-
-  return new Promise((resolve) => {
-    let stdoutData = "";
-    let stderrData = "";
-    let isTimedOut = false;
-
-    let proc: childProcess.ChildProcess;
-    try {
-      proc = childProcess.spawn(sshBin, sshArgs, {
-        windowsHide: true,
-      });
-    } catch (spawnErr: any) {
-      resolve({
-        operation_id: ctx.operationId,
-        tool: "vps_list_files",
-        status: "FAILED",
-        error_code: "SSH_SPAWN_ERROR",
-        error_message: `Failed to spawn SSH process: ${spawnErr.message}`,
-        duration_ms: Date.now() - startTime,
-        truncated: false,
-      });
-      return;
-    }
-
-    const timer = setTimeout(() => {
-      isTimedOut = true;
-      try {
-        proc.kill();
-      } catch {}
-    }, timeoutMs);
-
-    proc.stdout?.on("data", (chunk) => {
-      stdoutData += chunk.toString();
-    });
-
-    proc.stderr?.on("data", (chunk) => {
-      stderrData += chunk.toString();
-    });
-
-    proc.on("error", (err) => {
-      clearTimeout(timer);
-      resolve({
-        operation_id: ctx.operationId,
-        tool: "vps_list_files",
-        status: "FAILED",
-        error_code: "SSH_SPAWN_ERROR",
-        error_message: `SSH process error: ${err.message}`,
-        duration_ms: Date.now() - startTime,
-        truncated: false,
-      });
-    });
-
-    proc.on("close", (code) => {
-      clearTimeout(timer);
-      const durationMs = Date.now() - startTime;
-
-      if (isTimedOut) {
-        resolve({
-          operation_id: ctx.operationId,
-          tool: "vps_list_files",
-          status: "FAILED",
-          error_code: "TIMEOUT",
-          error_message: `SSH connection timed out after ${timeoutMs}ms`,
-          duration_ms: durationMs,
-          truncated: false,
-        });
-        return;
-      }
-
-      if (code !== 0) {
-        resolve({
-          operation_id: ctx.operationId,
-          tool: "vps_list_files",
-          status: "FAILED",
-          error_code: "SSH_EXECUTION_FAILED",
-          error_message: stderrData.trim() || `SSH exited with code ${code}`,
-          duration_ms: durationMs,
-          truncated: false,
-        });
-        return;
-      }
-
-      // 截断控制：最多 100 行或 16KB
-      const lines = stdoutData.split("\n");
-      let output = stdoutData;
-      let truncated = false;
-
-      if (lines.length > 100) {
-        output = lines.slice(0, 100).join("\n") + `\n... [truncated ${lines.length - 100} lines]`;
-        truncated = true;
-      } else if (output.length > 16384) {
-        output = output.substring(0, 16384) + "\n... [truncated bytes]";
-        truncated = true;
-      }
-
-      resolve({
-        operation_id: ctx.operationId,
-        tool: "vps_list_files",
-        status: "SUCCESS",
-        output: output.trim(),
-        duration_ms: durationMs,
-        truncated,
-      });
-    });
-  });
+  return runRemoteRead(
+    "vps_list_files",
+    `ls -la -- ${quoteRemote(path.posix.normalize(rawPath))}`,
+    ctx,
+    timeoutMs,
+    MAX_LIST_LINES
+  );
 }
 
 export const vpsReadFileDefinition: ToolDefinition = {
@@ -355,19 +603,41 @@ export async function handleVpsReadFile(
   args: Record<string, any>,
   ctx: ToolContext
 ): Promise<ToolResult> {
-  const targetPath = String(args.path || "").trim();
-  if (!targetPath) {
-    return {
-      operation_id: ctx.operationId,
-      tool: "vps_read_file",
-      status: "FAILED",
-      error_code: "INVALID_PATH",
-      error_message: "Path must not be empty",
-      duration_ms: 0,
-      truncated: false,
-    };
+  const startTime = Date.now();
+  const rawPath = String(args.path || "").trim();
+  const shapeCheck = validateRemotePathShape(rawPath);
+  if (!shapeCheck.valid) {
+    return failureResult(ctx, "vps_read_file", startTime, shapeCheck.code!, shapeCheck.error!);
   }
-  return resolveVpsExecution("vps_read_file", args, ctx);
+  if (ctx.mockVpsHandler) {
+    return mockResult(ctx, "vps_read_file", args, startTime);
+  }
+
+  const profile = loadVpsProfile(ctx);
+  const accessDenied = checkVpsAccess(profile, "vps_read_file");
+  if (accessDenied || !profile) {
+    return failureResult(
+      ctx,
+      "vps_read_file",
+      startTime,
+      accessDenied?.code || "CAPABILITY_UNAVAILABLE",
+      accessDenied?.message || ""
+    );
+  }
+
+  const scopeCheck = validateRemotePathScope(profile, rawPath);
+  if (!scopeCheck.valid) {
+    return failureResult(ctx, "vps_read_file", startTime, scopeCheck.code!, scopeCheck.error!);
+  }
+
+  const timeoutMs = (vpsReadFileDefinition.timeout_seconds || 30) * 1000;
+  return runRemoteRead(
+    "vps_read_file",
+    `cat -- ${quoteRemote(path.posix.normalize(rawPath))}`,
+    ctx,
+    timeoutMs,
+    MAX_READ_LINES
+  );
 }
 
 export const vpsWriteFileDefinition: ToolDefinition = {
@@ -391,19 +661,75 @@ export async function handleVpsWriteFile(
   args: Record<string, any>,
   ctx: ToolContext
 ): Promise<ToolResult> {
-  const targetPath = String(args.path || "").trim();
-  if (!targetPath) {
-    return {
-      operation_id: ctx.operationId,
-      tool: "vps_write_file",
-      status: "FAILED",
-      error_code: "INVALID_PATH",
-      error_message: "Path must not be empty",
-      duration_ms: 0,
-      truncated: false,
-    };
+  const startTime = Date.now();
+  const rawPath = String(args.path || "").trim();
+  const content = typeof args.content === "string" ? args.content : "";
+  const shapeCheck = validateRemotePathShape(rawPath);
+  if (!shapeCheck.valid) {
+    return failureResult(ctx, "vps_write_file", startTime, shapeCheck.code!, shapeCheck.error!);
   }
-  return resolveVpsExecution("vps_write_file", args, ctx);
+  if (ctx.mockVpsHandler) {
+    return mockResult(ctx, "vps_write_file", args, startTime);
+  }
+
+  const profile = loadVpsProfile(ctx);
+  const accessDenied = checkVpsAccess(profile, "vps_write_file");
+  if (accessDenied || !profile) {
+    return failureResult(
+      ctx,
+      "vps_write_file",
+      startTime,
+      accessDenied?.code || "CAPABILITY_UNAVAILABLE",
+      accessDenied?.message || ""
+    );
+  }
+
+  const pathCheck = validateRemotePathScope(profile, rawPath);
+  if (!pathCheck.valid) {
+    return failureResult(ctx, "vps_write_file", startTime, pathCheck.code!, pathCheck.error!);
+  }
+
+  const payload = Buffer.from(content, "utf-8");
+  if (payload.byteLength > MAX_WRITE_BYTES) {
+    return failureResult(
+      ctx,
+      "vps_write_file",
+      startTime,
+      "CONTENT_TOO_LARGE",
+      `Content exceeds the ${MAX_WRITE_BYTES} bytes write limit`
+    );
+  }
+
+  // 内容经 stdin 传输，绝不拼进命令行，避免任何远端注入
+  const remote = path.posix.normalize(rawPath);
+  const overwrite = args.overwrite === true;
+  const command = overwrite
+    ? `cat > ${quoteRemote(remote)}`
+    : `if [ -e ${quoteRemote(remote)} ]; then echo 'refusing to overwrite existing file' >&2; exit 17; fi; cat > ${quoteRemote(remote)}`;
+
+  const timeoutMs = (vpsWriteFileDefinition.timeout_seconds || 30) * 1000;
+  const outcome = await runSsh(profile, command, timeoutMs, ctx.signal, payload);
+  const transportError = transportFailure(ctx, "vps_write_file", startTime, outcome);
+  if (transportError) return transportError;
+
+  if (outcome.code !== 0) {
+    return failureResult(
+      ctx,
+      "vps_write_file",
+      startTime,
+      "SSH_EXECUTION_FAILED",
+      outcome.stderr.toString("utf-8").trim() || `SSH exited with code ${outcome.code}`
+    );
+  }
+
+  return {
+    operation_id: ctx.operationId,
+    tool: "vps_write_file",
+    status: "SUCCESS",
+    output: { path: remote, bytes_written: payload.byteLength, overwritten: overwrite },
+    duration_ms: Date.now() - startTime,
+    truncated: false,
+  };
 }
 
 export const vpsUploadFileDefinition: ToolDefinition = {
@@ -426,20 +752,96 @@ export async function handleVpsUploadFile(
   args: Record<string, any>,
   ctx: ToolContext
 ): Promise<ToolResult> {
+  const startTime = Date.now();
   const artifactFilename = String(args.artifact_filename || "").trim();
-  const remotePath = String(args.remote_path || "").trim();
-  if (!artifactFilename || !remotePath) {
-    return {
-      operation_id: ctx.operationId,
-      tool: "vps_upload_file",
-      status: "FAILED",
-      error_code: "INVALID_ARGS",
-      error_message: "Both artifact_filename and remote_path are required",
-      duration_ms: 0,
-      truncated: false,
-    };
+  const rawPath = String(args.remote_path || "").trim();
+  if (!artifactFilename || !rawPath) {
+    return failureResult(
+      ctx,
+      "vps_upload_file",
+      startTime,
+      "INVALID_ARGS",
+      "Both artifact_filename and remote_path are required"
+    );
   }
-  return resolveVpsExecution("vps_upload_file", args, ctx);
+  if (ctx.mockVpsHandler) {
+    return mockResult(ctx, "vps_upload_file", args, startTime);
+  }
+
+  const profile = loadVpsProfile(ctx);
+  const accessDenied = checkVpsAccess(profile, "vps_upload_file");
+  if (accessDenied || !profile) {
+    return failureResult(
+      ctx,
+      "vps_upload_file",
+      startTime,
+      accessDenied?.code || "CAPABILITY_UNAVAILABLE",
+      accessDenied?.message || ""
+    );
+  }
+
+  const nameError = validateArtifactName(artifactFilename);
+  if (nameError) {
+    return failureResult(ctx, "vps_upload_file", startTime, "INVALID_ARGS", nameError);
+  }
+
+  const pathCheck = validateRemotePathScope(profile, rawPath);
+  if (!pathCheck.valid) {
+    return failureResult(ctx, "vps_upload_file", startTime, pathCheck.code!, pathCheck.error!);
+  }
+
+  const localFile = path.resolve(getArtifactsRoot(ctx), ctx.pixelId, artifactFilename);
+  if (!fs.existsSync(localFile) || !fs.statSync(localFile).isFile()) {
+    return failureResult(
+      ctx,
+      "vps_upload_file",
+      startTime,
+      "ARTIFACT_NOT_FOUND",
+      `Artifact '${artifactFilename}' does not exist in this pixel's artifact directory`
+    );
+  }
+
+  const size = fs.statSync(localFile).size;
+  if (size > MAX_TRANSFER_BYTES) {
+    return failureResult(
+      ctx,
+      "vps_upload_file",
+      startTime,
+      "FILE_TOO_LARGE",
+      `Artifact is ${size} bytes, exceeding the ${MAX_TRANSFER_BYTES} bytes transfer limit`
+    );
+  }
+
+  const remote = path.posix.normalize(rawPath);
+  const timeoutMs = (vpsUploadFileDefinition.timeout_seconds || 30) * 1000;
+  const outcome = await runSsh(
+    profile,
+    `cat > ${quoteRemote(remote)}`,
+    timeoutMs,
+    ctx.signal,
+    fs.readFileSync(localFile)
+  );
+  const transportError = transportFailure(ctx, "vps_upload_file", startTime, outcome);
+  if (transportError) return transportError;
+
+  if (outcome.code !== 0) {
+    return failureResult(
+      ctx,
+      "vps_upload_file",
+      startTime,
+      "SSH_EXECUTION_FAILED",
+      outcome.stderr.toString("utf-8").trim() || `SSH exited with code ${outcome.code}`
+    );
+  }
+
+  return {
+    operation_id: ctx.operationId,
+    tool: "vps_upload_file",
+    status: "SUCCESS",
+    output: { artifact_filename: artifactFilename, remote_path: remote, bytes_sent: size },
+    duration_ms: Date.now() - startTime,
+    truncated: false,
+  };
 }
 
 export const vpsDownloadFileDefinition: ToolDefinition = {
@@ -462,18 +864,85 @@ export async function handleVpsDownloadFile(
   args: Record<string, any>,
   ctx: ToolContext
 ): Promise<ToolResult> {
-  const remotePath = String(args.remote_path || "").trim();
+  const startTime = Date.now();
+  const rawPath = String(args.remote_path || "").trim();
   const artifactFilename = String(args.artifact_filename || "").trim();
-  if (!remotePath || !artifactFilename) {
-    return {
-      operation_id: ctx.operationId,
-      tool: "vps_download_file",
-      status: "FAILED",
-      error_code: "INVALID_ARGS",
-      error_message: "Both remote_path and artifact_filename are required",
-      duration_ms: 0,
-      truncated: false,
-    };
+  if (!rawPath || !artifactFilename) {
+    return failureResult(
+      ctx,
+      "vps_download_file",
+      startTime,
+      "INVALID_ARGS",
+      "Both remote_path and artifact_filename are required"
+    );
   }
-  return resolveVpsExecution("vps_download_file", args, ctx);
+  if (ctx.mockVpsHandler) {
+    return mockResult(ctx, "vps_download_file", args, startTime);
+  }
+
+  const profile = loadVpsProfile(ctx);
+  const accessDenied = checkVpsAccess(profile, "vps_download_file");
+  if (accessDenied || !profile) {
+    return failureResult(
+      ctx,
+      "vps_download_file",
+      startTime,
+      accessDenied?.code || "CAPABILITY_UNAVAILABLE",
+      accessDenied?.message || ""
+    );
+  }
+
+  const nameError = validateArtifactName(artifactFilename);
+  if (nameError) {
+    return failureResult(ctx, "vps_download_file", startTime, "INVALID_ARGS", nameError);
+  }
+
+  const pathCheck = validateRemotePathScope(profile, rawPath);
+  if (!pathCheck.valid) {
+    return failureResult(ctx, "vps_download_file", startTime, pathCheck.code!, pathCheck.error!);
+  }
+
+  const remote = path.posix.normalize(rawPath);
+  const timeoutMs = (vpsDownloadFileDefinition.timeout_seconds || 30) * 1000;
+  const outcome = await runSsh(profile, `cat -- ${quoteRemote(remote)}`, timeoutMs, ctx.signal);
+  const transportError = transportFailure(ctx, "vps_download_file", startTime, outcome);
+  if (transportError) return transportError;
+
+  if (outcome.code !== 0) {
+    return failureResult(
+      ctx,
+      "vps_download_file",
+      startTime,
+      "SSH_EXECUTION_FAILED",
+      outcome.stderr.toString("utf-8").trim() || `SSH exited with code ${outcome.code}`
+    );
+  }
+
+  if (outcome.stdout.byteLength > MAX_TRANSFER_BYTES) {
+    return failureResult(
+      ctx,
+      "vps_download_file",
+      startTime,
+      "FILE_TOO_LARGE",
+      `Remote file is ${outcome.stdout.byteLength} bytes, exceeding the ${MAX_TRANSFER_BYTES} bytes transfer limit`
+    );
+  }
+
+  const artifactDir = path.resolve(getArtifactsRoot(ctx), ctx.pixelId);
+  fs.mkdirSync(artifactDir, { recursive: true });
+  const localFile = path.resolve(artifactDir, artifactFilename);
+  fs.writeFileSync(localFile, outcome.stdout);
+
+  return {
+    operation_id: ctx.operationId,
+    tool: "vps_download_file",
+    status: "SUCCESS",
+    output: {
+      remote_path: remote,
+      artifact_filename: artifactFilename,
+      bytes_received: outcome.stdout.byteLength,
+    },
+    duration_ms: Date.now() - startTime,
+    truncated: false,
+  };
 }
