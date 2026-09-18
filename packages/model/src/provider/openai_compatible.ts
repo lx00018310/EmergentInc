@@ -11,6 +11,21 @@ export interface OpenAICompatibleProviderConfig {
   timeoutMs?: number;
 }
 
+// Console trace of every real LLM interaction (request/response/usage/error).
+// Enabled by EMERGENT_LLM_TRACE=1 (default off to keep test output clean).
+const llmTraceEnabled = (): boolean => process.env.EMERGENT_LLM_TRACE === "1";
+
+function truncate(text: string, max: number): string {
+  const flat = text.replace(/\s+/g, " ").trim();
+  return flat.length <= max ? flat : `${flat.slice(0, max)}… (+${flat.length - max} chars)`;
+}
+
+function logTrace(direction: "REQUEST" | "RESPONSE" | "ERROR", payload: Record<string, unknown>): void {
+  if (!llmTraceEnabled()) return;
+  const ts = new Date().toISOString().slice(11, 23);
+  console.log(`[LLM ${ts} ${direction}] ${JSON.stringify(payload)}`);
+}
+
 export class OpenAICompatibleProvider implements ModelProvider {
   private baseUrl: string;
   private apiKey: string;
@@ -41,6 +56,14 @@ export class OpenAICompatibleProvider implements ModelProvider {
 
     signal?.addEventListener("abort", onAbort, { once: true });
 
+    logTrace("REQUEST", {
+      model: request.model,
+      promptHash: request.promptHash,
+      messages: request.messages.map((m) => ({ role: m.role, content: truncate(m.content, 400) })),
+      temperature: request.temperature ?? 0.2,
+      maxTokens: request.maxTokens ?? 2000,
+    });
+
     let response: Response;
     try {
       response = await fetch(url, {
@@ -64,6 +87,7 @@ export class OpenAICompatibleProvider implements ModelProvider {
       if (!response.ok) {
         // A dispatched request is not evidence of non-billing, even for a rejection.
         // Do not expose arbitrary endpoint response bodies in UI diagnostics.
+        logTrace("ERROR", { phase, httpStatus: response.status, code: `HTTP_${response.status}` });
         throw new OutcomeUnknownError(
           `Model endpoint returned HTTP ${response.status}; billing outcome requires review`,
           undefined, `HTTP_${response.status}`, phase
@@ -78,6 +102,15 @@ export class OpenAICompatibleProvider implements ModelProvider {
       const usage = data?.usage;
       const token = (value: unknown): number | null =>
         typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : null;
+
+      logTrace("RESPONSE", {
+        model: data?.model ?? request.model,
+        promptTokens: token(usage?.prompt_tokens),
+        completionTokens: token(usage?.completion_tokens),
+        totalTokens: token(usage?.total_tokens),
+        finishReason: choice?.finish_reason ?? null,
+        content: truncate(rawText, 1200),
+      });
 
       return {
         rawText,
@@ -99,6 +132,7 @@ export class OpenAICompatibleProvider implements ModelProvider {
       const code = isAbort
         ? (controller.signal.reason?.message === "REQUEST_TIMEOUT" ? "REQUEST_TIMEOUT" : "ABORTED_AFTER_DISPATCH")
         : (typeof underlyingCode === "string" ? underlyingCode : "MODEL_TRANSPORT_ERROR");
+      logTrace("ERROR", { phase, code, message: truncate(String(err?.message ?? err), 300) });
       // Only these connection-establishment failures prove no request was sent.
       if (!isAbort && phase === "dispatch" && ["ENOTFOUND", "EAI_AGAIN", "ECONNREFUSED"].includes(code)) {
         throw new InfrastructureFailureError(`Model connection failed before dispatch (${code})`, err, code, "before_dispatch");

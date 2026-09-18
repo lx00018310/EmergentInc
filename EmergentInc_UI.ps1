@@ -14,4 +14,9 @@ if (-not $nodeCmd) {
 }
 
 Start-Process "http://127.0.0.1:8765"
+
+# Print every real LLM request/response/error to this console window.
+# Set EMERGENT_LLM_TRACE=0 before launching to silence it.
+if (-not $env:EMERGENT_LLM_TRACE) { $env:EMERGENT_LLM_TRACE = "1" }
+
 node apps/server/dist/main.js $args

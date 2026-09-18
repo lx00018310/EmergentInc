@@ -17,6 +17,10 @@ if %errorlevel% neq 0 (
 
 start "" http://127.0.0.1:8765
 
+rem Print every real LLM request/response/error to this console window.
+rem Set EMERGENT_LLM_TRACE=0 before launching to silence it.
+if not defined EMERGENT_LLM_TRACE set EMERGENT_LLM_TRACE=1
+
 node apps/server/dist/main.js %*
 if %errorlevel% neq 0 (
     echo.
