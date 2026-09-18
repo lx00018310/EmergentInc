@@ -88,15 +88,18 @@ export async function registerApiRoutes(
   });
 
   server.post("/run/recovery/resolve", async (req, reply) => {
-    if (runService.getStatus().running) return reply.status(409).send({ detail: "Run in progress" });
     const body: any = req.body || {};
-    if (!["model", "tool", "run"].includes(body.kind) || typeof body.id !== "string" || !body.id ||
-        !["confirm_not_billed", "settle_billed", "settle_reserved", "abandon", "acknowledge"].includes(body.decision) ||
-        typeof body.reason !== "string" || !body.reason.trim()) {
-      return reply.status(400).send({ detail: "Operation, explicit decision and reason are required" });
+    if (runService.getStatus().running) return reply.status(409).send({ detail: "Run in progress" });
+    if (!["model", "tool", "run", "message"].includes(body.kind) || typeof body.id !== "string" || !body.id ||
+        !["confirm_not_billed", "settle_billed", "settle_reserved", "abandon", "acknowledge"].includes(body.decision)) {
+      return reply.status(400).send({ detail: "Operation and explicit decision are required" });
     }
+    const safeReason = (typeof body.reason === "string" && body.reason.trim())
+      ? body.reason.trim()
+      : (body.decision === "abandon" ? "操作人审批拒绝 (abandon)" : "操作人审批通过 (approved)");
+    const payload = { ...body, reason: safeReason };
     try {
-      return reply.send((coreStore as any).resolveRecoveryOperation(body));
+      return reply.send((coreStore as any).resolveRecoveryOperation(payload));
     } catch (err: any) {
       return reply.status(400).send({ detail: err.message });
     }

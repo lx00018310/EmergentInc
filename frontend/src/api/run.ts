@@ -35,7 +35,7 @@ export async function reconcileRun(): Promise<ReconcileResultDto> {
   });
 }
 
-export type RecoveryKind = 'model' | 'tool' | 'run';
+export type RecoveryKind = 'model' | 'tool' | 'run' | 'message';
 export type RecoveryDecision =
   | 'confirm_not_billed'
   | 'settle_billed'

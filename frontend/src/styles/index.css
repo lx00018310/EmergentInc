@@ -3,9 +3,9 @@
   --bg-card: #ffffff;
   --bg-card-hover: #f3f4f6;
   --border-color: #d0d7de;
-  --text-main: #24292f;
-  --text-dim: #57606a;
-  --text-bright: #1f2328;
+  --text-main: #000000;
+  --text-dim: #111111;
+  --text-bright: #000000;
   --accent-blue: #0969da;
   --accent-green: #1a7f37;
   --accent-yellow: #9a6700;
@@ -515,7 +515,7 @@ body {
   font-family: var(--font-mono);
   font-size: 11px;
   line-height: 1.45;
-  color: #24292f;
+  color: #000000;
   background: #f6f8fa;
   padding: 6px 8px;
   border-radius: 4px;

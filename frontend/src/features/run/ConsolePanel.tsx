@@ -13,6 +13,7 @@ export interface ConsolePanelProps {
   audit: WorkspaceAuditDto | null;
   runStatus: RunStatusDto | null;
   onReconcile?: () => Promise<void>;
+  hideRecoveryAlert?: boolean;
 }
 
 export const ConsolePanel: React.FC<ConsolePanelProps> = ({
@@ -20,6 +21,7 @@ export const ConsolePanel: React.FC<ConsolePanelProps> = ({
   audit,
   runStatus,
   onReconcile,
+  hideRecoveryAlert = false,
 }) => {
   const boxRef = useRef<HTMLDivElement | null>(null);
 
@@ -31,6 +33,7 @@ export const ConsolePanel: React.FC<ConsolePanelProps> = ({
 
   const hasUnfinalizedOps = Boolean(runStatus?.unfinalized_operations);
   const isRecoveryRequired =
+    !hideRecoveryAlert &&
     !runStatus?.running &&
     (Boolean(audit?.recovery_required) ||
       runStatus?.result_status === 'RECOVERY_REQUIRED' ||
@@ -60,7 +63,7 @@ export const ConsolePanel: React.FC<ConsolePanelProps> = ({
             style={{
               borderLeft: '4px solid var(--accent-red)',
               border: '1px solid var(--accent-red)',
-              background: '#2d1f24',
+              background: 'rgba(207, 34, 46, 0.08)',
               padding: '10px',
               marginBottom: '8px',
               borderRadius: '4px',
@@ -68,11 +71,11 @@ export const ConsolePanel: React.FC<ConsolePanelProps> = ({
           >
             <div
               className="alert-title"
-              style={{ color: '#fc8181', fontWeight: 'bold', marginBottom: '4px' }}
+              style={{ color: 'var(--accent-red)', fontWeight: 'bold', marginBottom: '4px' }}
             >
               启动受阻：需逐项审计决策 (PAUSED_RECOVERY_REQUIRED)
             </div>
-            <div style={{ fontSize: '12px', color: '#e2e8f0', lineHeight: 1.4 }}>
+            <div style={{ fontSize: '12px', color: '#000000', lineHeight: 1.4 }}>
               系统检测到未决 Reservation 或中断调用事务，已保护性拦截启动：
               {blockReasons.length > 0 && (
                 <ul style={{ paddingLeft: '18px', marginTop: '4px', marginBottom: '6px' }}>

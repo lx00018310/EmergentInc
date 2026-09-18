@@ -108,8 +108,8 @@ export interface RunStatusDto {
   unfinalized_operations?: {
     hasUnfinalized?: boolean;
     unsettledReservations?: Array<{ callId: string; runId: string; pixelId: string; amount: number; createdAt: number }>;
-    unknownCalls?: Array<{ callId: string; messageId: string; outcome: string; createdAt: number }>;
-    callingMessages?: Array<{ messageId: string; status: string; updatedAt: number }>;
+    unknownCalls?: Array<{ callId: string; messageId: string; outcome: string; pixelId?: string | null; model?: string | null; createdAt: number }>;
+    callingMessages?: Array<{ messageId: string; status: string; sender?: string | null; recipient?: string | null; contentSnippet?: string; updatedAt: number }>;
     pendingRuns?: string[];
     startedToolExecutions?: string[];
   } | null;

@@ -82,7 +82,7 @@ export const PixelDetails: React.FC<PixelDetailsProps> = ({
           style={tipsUnread ? { borderLeft: '3px solid #e3b341' } : undefined}
         >
           {tipsUnread && <div style={{ color: '#e3b341', marginBottom: '4px' }}>● 新提醒</div>}
-          {tipsContent ? tipsContent : <span style={{ color: '#8b949e' }}>暂无提醒</span>}
+          {tipsContent ? tipsContent : <span style={{ color: '#000000' }}>暂无提醒</span>}
         </div>
         {tipsContent && (
           <div style={{ marginTop: '4px', display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -91,7 +91,7 @@ export const PixelDetails: React.FC<PixelDetailsProps> = ({
                 标记已读
               </button>
             ) : (
-              <span style={{ color: '#8b949e', fontSize: '11px' }}>已读</span>
+              <span style={{ color: '#000000', fontSize: '11px' }}>已读</span>
             )}
             <button className="btn btn-xs" onClick={() => onOpenDoc('tips')}>
               完整 tips.md

@@ -117,13 +117,19 @@ export class CoreStore {
       amount: Number(r.amount),
       createdAt: Number(r.created_at),
     }));
-    const callingMsgs = (this.db.prepare("SELECT message_id, status, updated_at FROM messages WHERE status IN ('CALLING', 'CALL_OUTCOME_UNKNOWN', 'RESERVED')").all() as any[]).map(m => ({
+    const callingMsgs = (this.db.prepare("SELECT message_id, status, sender, recipient, content, updated_at FROM messages WHERE status IN ('CALLING', 'CALL_OUTCOME_UNKNOWN', 'RESERVED')").all() as any[]).map(m => ({
       messageId: m.message_id,
       status: m.status,
+      sender: m.sender || null,
+      recipient: m.recipient || null,
+      contentSnippet: typeof m.content === "string" ? m.content.slice(0, 120) : "",
       updatedAt: Number(m.updated_at),
     }));
-    const unknownCalls = (this.db.prepare("SELECT call_id, message_id, outcome, created_at FROM model_calls WHERE outcome = 'CALL_OUTCOME_UNKNOWN'").all() as any[]).map(c => ({
+    const unknownCalls = (this.db.prepare("SELECT call_id, run_id, pixel_id, model, message_id, outcome, created_at FROM model_calls WHERE outcome = 'CALL_OUTCOME_UNKNOWN'").all() as any[]).map(c => ({
       callId: c.call_id,
+      runId: c.run_id,
+      pixelId: c.pixel_id || null,
+      model: c.model || null,
       messageId: c.message_id,
       outcome: c.outcome,
       createdAt: Number(c.created_at),
@@ -168,15 +174,18 @@ export class CoreStore {
   }
 
   public resolveRecoveryOperation(params: {
-    kind: "model" | "tool" | "run";
+    kind: "model" | "tool" | "run" | "message";
     id: string;
     decision: "confirm_not_billed" | "settle_billed" | "settle_reserved" | "abandon" | "acknowledge";
-    reason: string;
+    reason?: string;
     actualTokens?: number;
     costCny?: number | null;
   }): { decisionId: string } {
-    if (!params.id || !params.reason?.trim()) throw new Error("Recovery requires an operation ID and reason");
+    if (!params.id) throw new Error("Recovery requires an operation ID");
     if (params.costCny != null && (!Number.isFinite(params.costCny) || params.costCny < 0)) throw new Error("Invalid billed cost");
+    const explicitReason = (params.reason && params.reason.trim())
+      ? params.reason.trim()
+      : (params.decision === "abandon" ? "操作人审批拒绝 (abandon)" : "操作人审批通过 (approved)");
     return this.db.transaction(() => {
       const now = Date.now() / 1000;
       if (params.kind === "model") {
@@ -210,19 +219,31 @@ export class CoreStore {
         const tool = this.toolExecutions.getExecution(params.id);
         if (!tool || !["STARTED", "UNKNOWN"].includes(tool.status)) throw new Error("Tool operation is not unresolved");
         this.db.prepare("UPDATE tool_executions SET status = 'SKIPPED', result = ?, finished_at = ? WHERE operation_id = ?")
-          .run(JSON.stringify({ outcome: "UNKNOWN", recovery: params.decision, reason: params.reason, previousResult: tool.result ?? null }), now, params.id);
+          .run(JSON.stringify({ outcome: "UNKNOWN", recovery: params.decision, reason: explicitReason, previousResult: tool.result ?? null }), now, params.id);
         this.messages.updateStatus(tool.message_id, "ABANDONED");
       } else if (params.kind === "run") {
         if (params.decision !== "acknowledge") throw new Error("Run recovery requires acknowledgement");
         const run = this.runs.getRun(params.id);
         if (!run || run.status !== "RUNNING") throw new Error("Run is not unresolved");
         this.runs.updateRunStatus(params.id, "STOPPED", "USER_STOPPED");
+      } else if (params.kind === "message") {
+        const msg = this.messages.getMessage(params.id);
+        if (!msg || !["CALLING", "CALL_OUTCOME_UNKNOWN", "RESERVED"].includes(msg.status)) {
+          throw new Error("Message operation is not unresolved");
+        }
+        if (params.decision === "abandon") {
+          this.messages.updateStatus(params.id, "ABANDONED");
+        } else if (["confirm_not_billed", "acknowledge"].includes(params.decision)) {
+          this.messages.updateStatus(params.id, "QUEUED");
+        } else {
+          throw new Error("Invalid message recovery decision. Use confirm_not_billed to retry or abandon to discard.");
+        }
       } else {
         throw new Error("Invalid recovery kind");
       }
       const decisionId = randomUUID();
       this.db.prepare("INSERT INTO recovery_decisions (decision_id, kind, id, decision, reason, details, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
-        .run(decisionId, params.kind, params.id, params.decision, params.reason.trim(), JSON.stringify(params), now);
+        .run(decisionId, params.kind, params.id, params.decision, explicitReason, JSON.stringify({ ...params, reason: explicitReason }), now);
       return { decisionId };
     });
   }

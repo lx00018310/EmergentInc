@@ -21,7 +21,6 @@ import {
   updateTemporaryPrompt,
 } from './api/prompts';
 import { fetchPixelDocument, fetchPixelArtifact, getArtifactDownloadUrl } from './api/files';
-import { RecoveryOperations } from './features/run/RecoveryOperations';
 import type { PromptDto } from './api/types';
 
 export const App: React.FC = () => {
@@ -241,9 +240,8 @@ export const App: React.FC = () => {
             messages={messages}
             audit={audit}
             runStatus={runStatus}
+            hideRecoveryAlert={Boolean(!isRunning && runStatus?.unfinalized_operations)}
           />
-
-          {!isRunning && runStatus?.unfinalized_operations && <RecoveryOperations status={runStatus} onRefresh={refreshImmediately} />}
 
           <PromptEditor
             cardId="genesis-card"
@@ -295,6 +293,8 @@ export const App: React.FC = () => {
             unreadTipsPixelIds={unreadTipsPixelIds}
             onSelectPixel={handleSelectPixel}
             onHoverPixel={handleHoverPixel}
+            runStatus={runStatus}
+            onRefresh={refreshImmediately}
           />
 
           <PixelDetails

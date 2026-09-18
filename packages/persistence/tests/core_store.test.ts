@@ -45,15 +45,34 @@ describe("Persistence: CoreStore & Repositories", () => {
     store.reconcileUnfinalizedOperations();
     expect(store.budgets.getGlobalBudget()?.totalReserved).toBe(100);
     expect(store.messages.getMessage(message.messageId)?.status).toBe("CALL_OUTCOME_UNKNOWN");
-    expect(() => store.resolveRecoveryOperation({ kind: "model", id: "unknown", decision: "confirm_not_billed", reason: "" })).toThrow();
+    expect(() => store.resolveRecoveryOperation({ kind: "model", id: "", decision: "confirm_not_billed" })).toThrow();
     expect(store.budgets.getGlobalBudget()?.totalReserved).toBe(100);
-    store.resolveRecoveryOperation({ kind: "model", id: "unknown", decision: "confirm_not_billed", reason: "Provider confirmed no charge" });
+    // 理由选填，留空自动记录标准审计说明
+    store.resolveRecoveryOperation({ kind: "model", id: "unknown", decision: "confirm_not_billed" });
     expect(store.budgets.getGlobalBudget()?.totalReserved).toBe(0);
     expect(store.messages.getMessage(message.messageId)?.status).toBe("QUEUED");
-    expect(store.db.prepare("SELECT count(*) AS n FROM recovery_decisions").get()).toEqual({ n: 1 });
+    expect(store.db.prepare("SELECT reason FROM recovery_decisions").get()).toEqual({ reason: "操作人审批通过 (approved)" });
     store.budgets.refund("unknown");
     expect(store.budgets.getGlobalBudget()?.totalReserved).toBe(0);
     expect(store.pixels.getPixelAccount("p")?.energy).toBe(1000);
+  });
+
+  it("resolves unfinalized calling message by returning to queue or abandoning", () => {
+    store.pixels.upsertPixelAccount({ pixelId: "p_msg", energy: 1000, active: true, refundDeficitTokens: 0, spendBlockedReason: null });
+    const msg = store.messages.enqueueMessage({ sender: "system", recipient: "p_msg", content: "test calling", roundNum: 1 });
+    store.messages.updateStatus(msg.messageId, "CALLING");
+    expect(store.getUnfinalizedOperations().callingMessages).toHaveLength(1);
+
+    // 确认未计费后重试：转回 QUEUED
+    store.resolveRecoveryOperation({ kind: "message", id: msg.messageId, decision: "confirm_not_billed", reason: "requeue uncalled message" });
+    expect(store.messages.getMessage(msg.messageId)?.status).toBe("QUEUED");
+    expect(store.getUnfinalizedOperations().callingMessages).toHaveLength(0);
+
+    // 再次设为 CALLING，测试 abandon
+    store.messages.updateStatus(msg.messageId, "CALLING");
+    store.resolveRecoveryOperation({ kind: "message", id: msg.messageId, decision: "abandon", reason: "discard message" });
+    expect(store.messages.getMessage(msg.messageId)?.status).toBe("ABANDONED");
+    expect(store.getUnfinalizedOperations().callingMessages).toHaveLength(0);
   });
 
   it("applies an external reward exactly once per idempotency key and rejects key reuse with different payload", () => {

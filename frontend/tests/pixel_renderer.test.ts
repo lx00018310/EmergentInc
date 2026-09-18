@@ -135,4 +135,127 @@ describe('PixelMapRenderer (Three.js Crystal Lattice)', () => {
 
     renderer.dispose();
   });
+
+  it('被选中元胞时渲染外围显著高亮选择圈，取消选中后隐藏', () => {
+    const { canvas } = createMockCanvas();
+    const renderer = new PixelMapRenderer({
+      canvas,
+      onSelectPixel: vi.fn(),
+      onHoverPixel: vi.fn(),
+    });
+
+    const pixels = [
+      makePixel('0_0_0', [0, 0, 0]),
+      makePixel('1_1_1', [1, 1, 1]),
+    ];
+
+    // 初始未选中：外围圈不可见
+    renderer.setData(pixels, [], null);
+    const ringMesh = (renderer as any).selectionRingMesh as THREE.Mesh;
+    expect(ringMesh).toBeDefined();
+    expect(ringMesh.visible).toBe(false);
+
+    // 选中 1_1_1：外围圈可见，吸附到该元胞坐标，且使用鲜橙红显著颜色 (0xff4500)
+    renderer.setSelectedPixel('1_1_1');
+    expect(ringMesh.visible).toBe(true);
+    expect(ringMesh.position.x).toBeCloseTo(1 * 2.5);
+    expect(ringMesh.position.y).toBeCloseTo(1 * 2.5);
+    expect(ringMesh.position.z).toBeCloseTo(1 * 2.5);
+    const ringMat = (renderer as any).selectionRingMaterial as THREE.MeshBasicMaterial;
+    expect(ringMat.color.getHex()).toBe(0xff4500);
+
+    // 取消选中：外围圈隐藏
+    renderer.setSelectedPixel(null);
+    expect(ringMesh.visible).toBe(false);
+
+    renderer.dispose();
+  });
+
+  it('消息传递支持动效与完成状态，且超过10次时自动清空历史超出记录', () => {
+    const { canvas } = createMockCanvas();
+    const renderer = new PixelMapRenderer({
+      canvas,
+      onSelectPixel: vi.fn(),
+      onHoverPixel: vi.fn(),
+    });
+
+    const pixels = [
+      makePixel('p0', [0, 0, 0]),
+      makePixel('p1', [1, 0, 0]),
+      makePixel('p2', [0, 1, 0]),
+    ];
+
+    // 首次加载初始化 2 条传递
+    renderer.setData(pixels, [
+      { source: 'p0', target: 'p1', message_id: 'm1' },
+      { source: 'p1', target: 'p2', message_id: 'm2' },
+    ], null);
+
+    const transfers = (renderer as any).transfers as any[];
+    const messageGroup = (renderer as any).messageGroup as THREE.Group;
+    expect(transfers).toHaveLength(2);
+    expect(messageGroup.children).toHaveLength(2);
+    expect(transfers[0].status).toBe('completed');
+
+    // 模拟后续刷新周期，陆续推入新传递，总数达到 14 条（超过 10 条上限）
+    for (let i = 3; i <= 14; i++) {
+      renderer.setData(pixels, [
+        { source: 'p0', target: 'p1', message_id: `m_${i}` },
+      ], null);
+    }
+
+    // 严格清空超出 10 次的历史记录，仅保留最新 10 次
+    expect(transfers).toHaveLength(10);
+    expect(messageGroup.children).toHaveLength(10);
+    // 验证最早的 m1, m2, m3, m4 已被淘汰，最早保留的是 m_5
+    expect(transfers[0].id).toBe('m_5');
+    expect(transfers[transfers.length - 1].id).toBe('m_14');
+
+    renderer.dispose();
+  });
+
+  it('两点间发生多次传递时各自沿独立弧度展开不重叠，并包含定向圆锥箭头', () => {
+    const { canvas } = createMockCanvas();
+    const renderer = new PixelMapRenderer({
+      canvas,
+      onSelectPixel: vi.fn(),
+      onHoverPixel: vi.fn(),
+    });
+
+    const pixels = [
+      makePixel('p0', [0, 0, 0]),
+      makePixel('p1', [2, 0, 0]),
+    ];
+
+    // 在 p0 和 p1 之间发生 3 次传递
+    renderer.setData(pixels, [
+      { source: 'p0', target: 'p1', message_id: 'flow_1' },
+      { source: 'p0', target: 'p1', message_id: 'flow_2' },
+      { source: 'p1', target: 'p0', message_id: 'flow_3' },
+    ], null);
+
+    const transfers = (renderer as any).transfers as any[];
+    expect(transfers).toHaveLength(3);
+
+    // 验证每条传递生成的贝塞尔曲线控制点不重叠
+    const ctrl0 = transfers[0].curve.v1 as THREE.Vector3;
+    const ctrl1 = transfers[1].curve.v1 as THREE.Vector3;
+    const ctrl2 = transfers[2].curve.v1 as THREE.Vector3;
+
+    expect(ctrl0.distanceTo(ctrl1)).toBeGreaterThan(0.2);
+    expect(ctrl1.distanceTo(ctrl2)).toBeGreaterThan(0.2);
+    expect(ctrl0.distanceTo(ctrl2)).toBeGreaterThan(0.2);
+
+    // 验证每条传递挂载了立体管道 (pipeMesh) 和定向箭头 (arrowMesh)，且箭头位于曲线 1/3 处
+    for (const r of transfers) {
+      expect(r.pipeMesh).toBeDefined();
+      expect(r.arrowMesh).toBeDefined();
+      expect(r.pipeMesh.geometry).toBeInstanceOf(THREE.TubeGeometry);
+      expect(r.arrowMesh.geometry).toBeInstanceOf(THREE.ConeGeometry);
+      const pointAtThird = r.curve.getPoint(1 / 3);
+      expect(r.arrowMesh.position.distanceTo(pointAtThird)).toBeCloseTo(0, 4);
+    }
+
+    renderer.dispose();
+  });
 });

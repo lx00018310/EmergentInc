@@ -51,7 +51,7 @@ describe('per-item recovery decisions', () => {
     },
   };
 
-  it('lists every unfinalized item and submits decisions with a mandatory reason', async () => {
+  it('lists every unfinalized item and submits single item approve/reject with optional reason', async () => {
     vi.mocked(runApi.resolveRecovery).mockResolvedValue({});
     const onRefresh = vi.fn().mockResolvedValue(undefined);
     render(<RecoveryOperations status={status} onRefresh={onRefresh} />);
@@ -60,23 +60,68 @@ describe('per-item recovery decisions', () => {
     expect(screen.getByText(/op-9/)).toBeDefined();
     expect(screen.getByText(/run_old/)).toBeDefined();
 
-    const submit = screen.getAllByRole('button', { name: /提交此项决定|确认此项已核实/ })[0];
-    expect(submit.disabled).toBe(true); // no reason yet
+    // 理由选填：不填也可直接点击
+    const approveButtons = screen.getAllByRole('button', { name: '通过' });
+    expect(approveButtons[0].hasAttribute('disabled')).toBe(false);
+
+    // 填写理由后点击通过
     fireEvent.change(screen.getByLabelText(/核实依据/), { target: { value: 'provider billing checked' } });
-    fireEvent.click(screen.getAllByRole('button', { name: /提交此项决定/ })[0]);
-    await waitFor(() => expect(runApi.resolveRecovery).toHaveBeenCalledWith(expect.objectContaining({ kind: 'model', id: 'call-1', decision: 'abandon', reason: 'provider billing checked' })));
+    fireEvent.click(approveButtons[0]);
+    await waitFor(() => expect(runApi.resolveRecovery).toHaveBeenCalledWith(expect.objectContaining({
+      kind: 'model',
+      id: 'call-1',
+      decision: 'confirm_not_billed',
+      reason: 'provider billing checked',
+    })));
+    expect(onRefresh).toHaveBeenCalled();
+
+    // 点击拒绝
+    const rejectButtons = screen.getAllByRole('button', { name: '拒绝' });
+    fireEvent.click(rejectButtons[0]);
+    await waitFor(() => expect(runApi.resolveRecovery).toHaveBeenCalledWith(expect.objectContaining({
+      kind: 'model',
+      id: 'call-1',
+      decision: 'abandon',
+      reason: 'provider billing checked',
+    })));
+  });
+
+  it('supports batch actions: 全部通过 and 全部拒绝', async () => {
+    vi.mocked(runApi.resolveRecovery).mockResolvedValue({});
+    const onRefresh = vi.fn().mockResolvedValue(undefined);
+    render(<RecoveryOperations status={status} onRefresh={onRefresh} />);
+
+    // 全部通过
+    const batchApprove = screen.getByRole('button', { name: '全部通过' });
+    fireEvent.click(batchApprove);
+    await waitFor(() => expect(runApi.resolveRecovery).toHaveBeenCalledTimes(4));
     expect(onRefresh).toHaveBeenCalled();
   });
 
-  it('submits billed settlement with actual tokens and cost', async () => {
+  it('lists callingMessages and allows submitting message recovery decision with 通过 / 拒绝', async () => {
     vi.mocked(runApi.resolveRecovery).mockResolvedValue({});
-    render(<RecoveryOperations status={status} onRefresh={vi.fn()} />);
-    fireEvent.change(screen.getByLabelText(/模型处理决定/), { target: { value: 'settle_billed' } });
-    fireEvent.change(screen.getByLabelText(/实际 Tokens/), { target: { value: '500' } });
-    fireEvent.change(screen.getByLabelText(/账单 CNY/), { target: { value: '0.02' } });
-    fireEvent.change(screen.getByLabelText(/核实依据/), { target: { value: 'invoice reconciled' } });
-    fireEvent.click(screen.getAllByRole('button', { name: /提交此项决定/ })[0]);
-    await waitFor(() => expect(runApi.resolveRecovery).toHaveBeenCalledWith(expect.objectContaining({ decision: 'settle_billed', actualTokens: 500, costCny: 0.02 })));
+    const onRefresh = vi.fn().mockResolvedValue(undefined);
+    const msgStatus: RunStatusDto = {
+      ...baseStatus,
+      result_status: 'PAUSED_RECOVERY_REQUIRED',
+      unfinalized_operations: {
+        hasUnfinalized: true,
+        callingMessages: [{ messageId: 'msg-calling-1', status: 'CALLING', updatedAt: 1 }],
+      },
+    };
+    render(<RecoveryOperations status={msgStatus} onRefresh={onRefresh} />);
+    expect(screen.getByText(/msg-calling-1/)).toBeDefined();
+    expect(screen.queryByText(/未提供可决策操作 ID/)).toBeNull();
+
+    // 未填理由直接点击通过
+    fireEvent.click(screen.getByRole('button', { name: '通过' }));
+    await waitFor(() => expect(runApi.resolveRecovery).toHaveBeenCalledWith(expect.objectContaining({
+      kind: 'message',
+      id: 'msg-calling-1',
+      decision: 'confirm_not_billed',
+      reason: '',
+    })));
+    expect(onRefresh).toHaveBeenCalled();
   });
 });
 
