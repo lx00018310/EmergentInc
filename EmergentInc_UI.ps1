@@ -13,6 +13,19 @@ if (-not $nodeCmd) {
     exit 1
 }
 
+# Build the frontend so the UI always matches current source code.
+Write-Host "Building frontend UI..." -ForegroundColor Cyan
+Push-Location frontend
+npm run build
+if ($LASTEXITCODE -ne 0) {
+    Pop-Location
+    Write-Host ""
+    Write-Host "[BUILD FAILED] Frontend build error - NOT starting server with a stale UI." -ForegroundColor Red
+    pause
+    exit 1
+}
+Pop-Location
+
 Start-Process "http://127.0.0.1:8765"
 
 # Print every real LLM request/response/error to this console window.

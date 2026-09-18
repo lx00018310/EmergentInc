@@ -15,6 +15,20 @@ if %errorlevel% neq 0 (
     exit /b 1
 )
 
+rem Build the frontend so the UI always matches current source code.
+rem (Stale bundles previously showed outdated controls - e.g. the removed one-click reconcile.)
+echo Building frontend UI...
+pushd frontend
+call npm run build
+if %errorlevel% neq 0 (
+    popd
+    echo.
+    echo [BUILD FAILED] Frontend build error - NOT starting server with a stale UI.
+    pause
+    exit /b 1
+)
+popd
+
 start "" http://127.0.0.1:8765
 
 rem Print every real LLM request/response/error to this console window.
