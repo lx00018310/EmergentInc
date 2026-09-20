@@ -82,7 +82,10 @@ export const ArtifactBrowser: React.FC<ArtifactBrowserProps> = ({
                   <button
                     className="btn btn-xs"
                     style={{ marginRight: '6px' }}
-                    onClick={() => onPreviewFile(`交付物: ${it.filename}`, it.filename)}
+                    onClick={() => {
+                      onClose();
+                      onPreviewFile(`交付物: ${it.filename}`, it.filename);
+                    }}
                   >
                     查看
                   </button>

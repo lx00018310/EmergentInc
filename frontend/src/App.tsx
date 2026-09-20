@@ -1,9 +1,10 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useWorldPolling } from './hooks/useWorldPolling';
 import { RunStatus } from './features/run/RunStatus';
 import { RunControls } from './features/run/RunControls';
 import { ConsolePanel, ConsoleMessage } from './features/run/ConsolePanel';
-import { PromptEditor } from './features/prompts/PromptEditor';
+import { PromptTabs } from './features/prompts/PromptTabs';
+import { HelpModal } from './components/HelpModal';
 import { EnvironmentEditor } from './features/environment/EnvironmentEditor';
 import { PixelMapCanvas } from './features/pixels/PixelMapCanvas';
 import { PixelDetails } from './features/pixels/PixelDetails';
@@ -71,12 +72,15 @@ export const App: React.FC = () => {
 
   // 元胞选择状态
   const [selectedPixelId, setSelectedPixelId] = useState<string | null>(null);
+  // 仅在首次加载时自动选中一次；用户手动关闭详情卡后不再强制重选
+  const didAutoSelectRef = useRef(false);
 
-  // 默认选中首个活跃元胞
+  // 默认选中首个活跃元胞（仅一次）
   useEffect(() => {
-    if (!selectedPixelId && world?.pixels && world.pixels.length > 0) {
+    if (!didAutoSelectRef.current && !selectedPixelId && world?.pixels && world.pixels.length > 0) {
       const activeOne = world.pixels.find((p) => p.active) || world.pixels[0];
       if (activeOne) {
+        didAutoSelectRef.current = true;
         setSelectedPixelId(activeOne.id);
       }
     }
@@ -127,6 +131,7 @@ export const App: React.FC = () => {
 
   // 弹窗状态管理
   const [isEnvModalOpen, setIsEnvModalOpen] = useState<boolean>(false);
+  const [isHelpModalOpen, setIsHelpModalOpen] = useState<boolean>(false);
   const [isToolsModalOpen, setIsToolsModalOpen] = useState<boolean>(false);
   const [isPrivateFilesModalOpen, setIsPrivateFilesModalOpen] = useState<boolean>(false);
   const [isToolExecutionsModalOpen, setIsToolExecutionsModalOpen] = useState<boolean>(false);
@@ -141,9 +146,14 @@ export const App: React.FC = () => {
   const [previewType, setPreviewType] = useState<'text' | 'image' | 'binary'>('text');
   const [previewDownloadUrl, setPreviewDownloadUrl] = useState<string | undefined>(undefined);
   const [previewFilename, setPreviewFilename] = useState<string | undefined>(undefined);
+  // 文档预览模式：'docs' = 元胞文档（含 Tab 切换），'artifact' = 交付物
+  const [previewMode, setPreviewMode] = useState<'docs' | 'artifact'>('docs');
+  const [activeDocKey, setActiveDocKey] = useState<string>('pixel');
 
   const handleOpenDoc = async (docName: string) => {
     if (!selectedPixelId) return;
+    setPreviewMode('docs');
+    setActiveDocKey(docName);
     setIsPreviewLoading(true);
     setPreviewTitle(`元胞 ${selectedPixelId} - ${docName}`);
     setPreviewType('text');
@@ -163,6 +173,7 @@ export const App: React.FC = () => {
 
   const handlePreviewArtifact = async (title: string, filename: string) => {
     if (!selectedPixelId) return;
+    setPreviewMode('artifact');
     const downloadUrl = getArtifactDownloadUrl(selectedPixelId, filename);
     setPreviewTitle(title);
     setPreviewFilename(filename);
@@ -210,7 +221,7 @@ export const App: React.FC = () => {
 
   return (
     <>
-      <RunStatus world={world} runStatus={runStatus} audit={audit} />
+      <RunStatus world={world} runStatus={runStatus} audit={audit} onOpenHelp={() => setIsHelpModalOpen(true)} />
 
       <main className="main-layout">
         {/* 左侧控制区 */}
@@ -225,17 +236,6 @@ export const App: React.FC = () => {
             onRefresh={refreshImmediately}
           />
 
-          <details className="panel-card context-guide">
-            <summary>V11 五层上下文说明</summary>
-            <ol>
-              <li><strong>CONSTITUTION</strong>：系统规则。当前 system 消息还包含工具目录、创世和临时提示词；它们不是 Pixel Self。</li>
-              <li><strong>EXTERNAL</strong>：外部来源输入，Human Mandate 独立于 pixel.md。环境、人类指令与资料只有经 runtime 传入才进入此层；当前链路传入 Mandate，并非所有外部文件自动注入。</li>
-              <li><strong>PIXEL SELF</strong>：元胞物理 state 与自主心智 pixel.md；删除 Mandate 不重置心智或历史。</li>
-              <li><strong>YOUR FILES / PIXEL FILES</strong>：该元胞可用的私有 artifacts 文件列表，不是全局私有资料，也不自动读取全部文件正文。</li>
-              <li><strong>LOCAL MESSAGES</strong>：当前投递给元胞的局部消息，不是全局聊天历史。</li>
-            </ol>
-          </details>
-
           <ConsolePanel
             messages={messages}
             audit={audit}
@@ -243,40 +243,26 @@ export const App: React.FC = () => {
             hideRecoveryAlert={Boolean(!isRunning && runStatus?.unfinalized_operations)}
           />
 
-          <PromptEditor
-            cardId="genesis-card"
-            title="创世提示词 (临时初速度)"
-            hint="当前注入 system 消息的 GENESIS_CONTEXT，作为临时初速度；不是 Pixel Self，也不写入 pixel.md。运行期间不可编辑，清空后后续运行不再注入。"
-            placeholder="可输入创世提示词，清空则完全关闭..."
-            rows={5}
-            promptData={genesisPrompt}
+          <PromptTabs
+            genesisPrompt={genesisPrompt}
+            tempPrompt={tempPrompt}
             isRunning={isRunning}
-            onSave={async (content) => {
+            onSaveGenesis={async (content) => {
               const res = await updateGenesisPrompt(content);
               setGenesisPrompt(res);
               addLogMessage('success', `[GENESIS PROMPT] 创世提示词已保存 (Rev ${res.revision})。`);
             }}
-            onClear={async () => {
+            onClearGenesis={async () => {
               const res = await updateGenesisPrompt('');
               setGenesisPrompt(res);
               addLogMessage('info', '[GENESIS PROMPT] 创世提示词已清空并关闭。');
             }}
-          />
-
-          <PromptEditor
-            cardId="temp-prompt-card"
-            title="临时提示词 (任务指引)"
-            hint="独立的 TEMPORARY_CONTEXT，当前注入 system 消息，不是单个元胞的 Human Mandate；仅在空闲时编辑，下次运行生效。"
-            placeholder="可输入当前任务的临时提示词 (如 VPS 运维指令)..."
-            rows={4}
-            promptData={tempPrompt}
-            isRunning={isRunning}
-            onSave={async (content) => {
+            onSaveTemp={async (content) => {
               const res = await updateTemporaryPrompt(content);
               setTempPrompt(res);
               addLogMessage('success', `[TEMPORARY PROMPT] 临时提示词已保存 (Rev ${res.revision})。`);
             }}
-            onClear={async () => {
+            onClearTemp={async () => {
               const res = await updateTemporaryPrompt('');
               setTempPrompt(res);
               addLogMessage('info', '[TEMPORARY PROMPT] 临时提示词已清空并关闭。');
@@ -304,6 +290,7 @@ export const App: React.FC = () => {
             onOpenDoc={handleOpenDoc}
             onOpenArtifacts={() => setIsArtifactsModalOpen(true)}
             onOpenOperation={(tab) => { if (selectedPixelId) setPixelOperation({ pixelId: selectedPixelId, tab }); }}
+            onClose={() => setSelectedPixelId(null)}
           />
         </section>
       </main>
@@ -321,6 +308,8 @@ export const App: React.FC = () => {
         onClose={() => setIsEnvModalOpen(false)}
         onLogMessage={addLogMessage}
       />
+
+      <HelpModal isOpen={isHelpModalOpen} onClose={() => setIsHelpModalOpen(false)} />
 
       <ToolCatalog
         isOpen={isToolsModalOpen}
@@ -357,6 +346,18 @@ export const App: React.FC = () => {
         downloadUrl={previewDownloadUrl}
         filename={previewFilename}
         onClose={() => setIsPreviewOpen(false)}
+        docTabs={
+          previewMode === 'docs'
+            ? [
+                { key: 'pixel', label: 'pixel.md' },
+                { key: 'tips', label: 'tips.md' },
+                { key: 'state', label: 'state.json' },
+                { key: 'environment', label: 'environment.md' },
+              ]
+            : undefined
+        }
+        activeDocTab={activeDocKey}
+        onSelectDocTab={(key) => { void handleOpenDoc(key); }}
       />
     </>
   );

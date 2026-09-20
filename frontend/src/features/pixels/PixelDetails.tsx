@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import type { PixelSummaryDto } from '../../api/types';
 
 export interface PixelDetailsProps {
@@ -8,6 +8,7 @@ export interface PixelDetailsProps {
   onOpenDoc: (docName: string) => void;
   onOpenArtifacts: () => void;
   onOpenOperation: (tab: 'mandate' | 'reward' | 'cost') => void;
+  onClose?: () => void;
 }
 
 export const PixelDetails: React.FC<PixelDetailsProps> = ({
@@ -17,13 +18,16 @@ export const PixelDetails: React.FC<PixelDetailsProps> = ({
   onOpenDoc,
   onOpenArtifacts,
   onOpenOperation,
+  onClose,
 }) => {
+  const [collapsed, setCollapsed] = useState(false);
   if (!pixel) return null;
 
   const [x, y, z] = pixel.position;
   const activeNeighborsCount = pixel.neighbors?.length || 0;
   const tipsContent = (pixel.tips_md ?? '').trim();
   const tipsUnread = Boolean(isTipsUnread?.(pixel));
+  const activity = pixel.latest_activity ?? null;
 
   return (
     <div className="pixel-hover-card">
@@ -38,98 +42,129 @@ export const PixelDetails: React.FC<PixelDetailsProps> = ({
         >
           {pixel.active ? 'Active' : 'Dead'}
         </span>
-      </div>
-
-      <div className="hover-grid">
-        <div>
-          <span className="h-k">物理坐标:</span>{' '}
-          <span className="h-v">
-            [{x}, {y}, {z}]
-          </span>
-        </div>
-        <div>
-          <span className="h-k">能量(Tokens):</span>{' '}
-          <span className="h-v">{Number(pixel.energy).toLocaleString()}</span>
-        </div>
-        <div>
-          <span className="h-k">母体 ID:</span>{' '}
-          <span className="h-v">{pixel.parent || 'None (Genesis)'}</span>
-        </div>
-        <div>
-          <span className="h-k">诞生轮次:</span> <span className="h-v">{pixel.born_round}</span>
-        </div>
-        <div>
-          <span className="h-k">代际世代:</span> <span className="h-v">{pixel.generation}</span>
-        </div>
-        <div>
-          <span className="h-k">活跃六邻域:</span>{' '}
-          <span className="h-v">{activeNeighborsCount}</span>
-        </div>
-        <div>
-          <span className="h-k">隔离交付物:</span>{' '}
-          <span className="h-v">{pixel.artifacts_count} 个</span>
-        </div>
-        <div>
-          <span className="h-k">心智字数:</span>{' '}
-          <span className="h-v">{pixel.pixel_md_length} 字</span>
-        </div>
-      </div>
-
-      <div style={{ marginTop: '8px' }}>
-        <div className="h-section-title">Tips (公开提醒):</div>
-        <div
-          className="pixel-md-preview"
-          style={tipsUnread ? { borderLeft: '3px solid #e3b341' } : undefined}
+        <button
+          className="btn btn-xs"
+          title={collapsed ? '展开详情' : '折叠详情'}
+          onClick={() => setCollapsed((v) => !v)}
         >
-          {tipsUnread && <div style={{ color: '#e3b341', marginBottom: '4px' }}>● 新提醒</div>}
-          {tipsContent ? tipsContent : <span style={{ color: '#000000' }}>暂无提醒</span>}
-        </div>
-        {tipsContent && (
-          <div style={{ marginTop: '4px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-            {tipsUnread ? (
-              <button className="btn btn-xs" onClick={() => onMarkTipsRead?.(pixel)}>
-                标记已读
-              </button>
-            ) : (
-              <span style={{ color: '#000000', fontSize: '11px' }}>已读</span>
-            )}
-            <button className="btn btn-xs" onClick={() => onOpenDoc('tips')}>
-              完整 tips.md
-            </button>
-          </div>
+          {collapsed ? '展开' : '折叠'}
+        </button>
+        {onClose && (
+          <button className="btn btn-xs" title="关闭详情卡" aria-label="关闭详情卡" onClick={onClose}>
+            ×
+          </button>
         )}
       </div>
 
-      <div style={{ marginTop: '8px' }}>
-        <div className="h-section-title">自主心智概要 (pixel.md):</div>
-        <div className="pixel-md-preview">
-          {pixel.pixel_md ? pixel.pixel_md.slice(0, 300) : '-'}
-        </div>
+      {/* 最近一轮活动：最高频诉求，零点击可见 */}
+      <div className="latest-activity">
+        <div className="h-section-title">最近一轮:</div>
+        {activity ? (
+          <div className="latest-activity-body">
+            <span className="h-v">R{activity.round}</span>{' '}
+            <span style={{ color: 'var(--accent-blue)' }}>{activity.action}</span>
+            {activity.intent && <span> · {activity.intent}</span>}
+            {activity.result && <div className="latest-activity-result">→ {activity.result}</div>}
+          </div>
+        ) : (
+          <div className="latest-activity-body latest-activity-empty">暂无活动记录</div>
+        )}
       </div>
 
-      <div className="hover-actions">
-        <button className="btn btn-xs" onClick={() => onOpenDoc('pixel')}>
-          完整 pixel.md
-        </button>
-        <button className="btn btn-xs" onClick={() => onOpenDoc('state')}>
-          物理 state.json
-        </button>
-        <button className="btn btn-xs" onClick={() => onOpenDoc('environment')}>
-          全局 environment.md
-        </button>
-        <button className="btn btn-xs" onClick={onOpenArtifacts}>
-          查看交付物
-        </button>
-        <button className="btn btn-xs" onClick={() => onOpenOperation('mandate')}>
-          Human Mandate
-        </button>
-        <button className="btn btn-xs" onClick={() => onOpenOperation('reward')}>
-          External Reward
-        </button>
-        <button className="btn btn-xs" onClick={() => onOpenOperation('cost')}>
-          Step Cost
-        </button>
-      </div>
+      {!collapsed && (
+        <>
+          <div className="hover-grid">
+            <div>
+              <span className="h-k">能量(Tokens):</span>{' '}
+              <span className="h-v">{Number(pixel.energy).toLocaleString()}</span>
+            </div>
+            <div>
+              <span className="h-k">隔离交付物:</span>{' '}
+              <span className="h-v">{pixel.artifacts_count} 个</span>
+            </div>
+          </div>
+
+          <details className="debug-props">
+            <summary>调试属性</summary>
+            <div className="hover-grid" style={{ marginTop: '6px' }}>
+              <div>
+                <span className="h-k">物理坐标:</span>{' '}
+                <span className="h-v">
+                  [{x}, {y}, {z}]
+                </span>
+              </div>
+              <div>
+                <span className="h-k">母体 ID:</span>{' '}
+                <span className="h-v">{pixel.parent || 'None (Genesis)'}</span>
+              </div>
+              <div>
+                <span className="h-k">诞生轮次:</span> <span className="h-v">{pixel.born_round}</span>
+              </div>
+              <div>
+                <span className="h-k">代际世代:</span> <span className="h-v">{pixel.generation}</span>
+              </div>
+              <div>
+                <span className="h-k">活跃六邻域:</span>{' '}
+                <span className="h-v">{activeNeighborsCount}</span>
+              </div>
+              <div>
+                <span className="h-k">心智字数:</span>{' '}
+                <span className="h-v">{pixel.pixel_md_length} 字</span>
+              </div>
+            </div>
+          </details>
+
+          <div style={{ marginTop: '8px' }}>
+            <div className="h-section-title">Tips (公开提醒):</div>
+            <div
+              className="pixel-md-preview"
+              style={tipsUnread ? { borderLeft: '3px solid var(--accent-yellow)' } : undefined}
+            >
+              {tipsUnread && <div style={{ color: 'var(--accent-yellow)', marginBottom: '4px' }}>● 新提醒</div>}
+              {tipsContent ? tipsContent : <span className="text-muted">暂无提醒</span>}
+            </div>
+            {tipsContent && (
+              <div style={{ marginTop: '4px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                {tipsUnread ? (
+                  <button className="btn btn-xs" onClick={() => onMarkTipsRead?.(pixel)}>
+                    标记已读
+                  </button>
+                ) : (
+                  <span className="text-muted" style={{ fontSize: '11px' }}>已读</span>
+                )}
+                <button className="btn btn-xs" onClick={() => onOpenDoc('tips')}>
+                  完整 tips.md
+                </button>
+              </div>
+            )}
+          </div>
+
+          <div style={{ marginTop: '8px' }}>
+            <div className="h-section-title">自主心智概要 (pixel.md):</div>
+            <div className="pixel-md-preview">
+              {pixel.pixel_md ? pixel.pixel_md.slice(0, 300) : '-'}
+            </div>
+          </div>
+
+          <div className="hover-actions">
+            <button className="btn btn-xs" onClick={() => onOpenDoc('pixel')} title="pixel.md / tips.md / state.json / environment.md">
+              查看文档
+            </button>
+            <button className="btn btn-xs" onClick={onOpenArtifacts}>
+              查看交付物
+            </button>
+            <button className="btn btn-xs" onClick={() => onOpenOperation('mandate')}>
+              Human Mandate
+            </button>
+            <button className="btn btn-xs" onClick={() => onOpenOperation('reward')}>
+              External Reward
+            </button>
+            <button className="btn btn-xs" onClick={() => onOpenOperation('cost')}>
+              Step Cost
+            </button>
+          </div>
+        </>
+      )}
     </div>
   );
 };

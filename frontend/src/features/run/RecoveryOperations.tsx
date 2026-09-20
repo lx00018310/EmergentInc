@@ -158,7 +158,7 @@ export function RecoveryOperations({
           maxWidth: '96%',
           maxHeight: '92%',
           overflowY: 'auto',
-          background: '#ffffff',
+          background: 'var(--bg-card)',
           borderRadius: '8px',
           boxShadow: '0 16px 40px rgba(0, 0, 0, 0.28), 0 0 0 1px rgba(207, 34, 46, 0.3)',
           borderLeft: '5px solid var(--accent-red)',
@@ -198,7 +198,7 @@ export function RecoveryOperations({
                 border: 'none',
                 fontSize: '20px',
                 cursor: 'pointer',
-                color: '#666666',
+                color: 'var(--text-dim)',
                 lineHeight: 1,
                 padding: '2px 8px',
               }}
@@ -249,7 +249,7 @@ export function RecoveryOperations({
         {/* 2. 审批决策指南 (同意什么 vs 拒绝什么) */}
         <div
           style={{
-            background: '#ffffff',
+            background: 'var(--bg-card)',
             border: '1px solid #e2e8f0',
             borderRadius: '6px',
             padding: '10px 12px',
@@ -286,7 +286,7 @@ export function RecoveryOperations({
               display: 'block',
               fontSize: '12px',
               fontWeight: 600,
-              color: '#000000',
+              color: 'var(--text-main)',
               marginBottom: '4px',
             }}
           >
@@ -300,8 +300,8 @@ export function RecoveryOperations({
               border: '1px solid var(--border-color)',
               borderRadius: '4px',
               fontSize: '12px',
-              color: '#000000',
-              background: '#ffffff',
+              color: 'var(--text-main)',
+              background: 'var(--bg-card)',
             }}
             placeholder="选填，留空将自动记录为“操作人审批通过/拒绝”"
             value={reason}
@@ -322,7 +322,7 @@ export function RecoveryOperations({
               paddingBottom: '8px',
             }}
           >
-            <span style={{ fontSize: '12px', fontWeight: 600, color: '#000000' }}>一键批量决策:</span>
+            <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-main)' }}>一键批量决策:</span>
             <button
               type="button"
               className="btn btn-sm btn-primary"
@@ -339,7 +339,7 @@ export function RecoveryOperations({
             >
               全部拒绝
             </button>
-            <span style={{ fontSize: '11px', color: '#666666' }}>
+            <span style={{ fontSize: '11px', color: 'var(--text-dim)' }}>
               (点击“全部通过”将退还额度并重试未决项)
             </span>
           </div>
@@ -387,11 +387,11 @@ export function RecoveryOperations({
                     alignItems: 'center',
                     justifyContent: 'space-between',
                     padding: '8px 10px',
-                    background: '#ffffff',
+                    background: 'var(--bg-card)',
                     border: '1px solid var(--border-color)',
                     borderRadius: '4px',
                     fontSize: '12px',
-                    color: '#000000',
+                    color: 'var(--text-main)',
                   }}
                 >
                   <div style={{ marginRight: '8px', minWidth: 0 }}>
@@ -402,14 +402,14 @@ export function RecoveryOperations({
                           fontFamily: 'var(--font-mono)',
                           wordBreak: 'break-all',
                           fontSize: '11px',
-                          color: '#444444',
+                          color: 'var(--text-dim)',
                         }}
                       >
                         {id}
                       </span>
                     </div>
                     {hint && (
-                      <div style={{ fontSize: '11px', color: '#666666', marginTop: '2px' }}>
+                      <div style={{ fontSize: '11px', color: 'var(--text-dim)', marginTop: '2px' }}>
                         {hint}
                       </div>
                     )}
@@ -437,7 +437,7 @@ export function RecoveryOperations({
             })}
           </ul>
         ) : (
-          <p style={{ fontSize: '12px', color: '#000000' }}>
+          <p style={{ fontSize: '12px', color: 'var(--text-main)' }}>
             未提供可决策操作 ID；请保留现场并检查未决消息。
           </p>
         )}

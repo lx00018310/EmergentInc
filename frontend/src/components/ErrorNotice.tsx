@@ -17,7 +17,7 @@ export const ErrorNotice: React.FC<ErrorNoticeProps> = ({
 
   const isError = severity === 'error';
   const borderCol = isError ? 'var(--accent-red)' : 'var(--accent-yellow)';
-  const titleCol = isError ? '#fc8181' : 'var(--accent-yellow)';
+  const titleCol = isError ? 'var(--accent-red)' : 'var(--accent-yellow)';
 
   return (
     <div

@@ -115,53 +115,57 @@ export const RunControls: React.FC<RunControlsProps> = ({
         </span>
       </div>
 
+      {isRunning && runStatus && (
+        <div className="run-progress" role="status">
+          <div className="run-progress-bar">
+            <div
+              className="run-progress-fill"
+              style={{
+                width:
+                  runStatus.requested_rounds > 0
+                    ? `${Math.min(100, (runStatus.completed_rounds / runStatus.requested_rounds) * 100)}%`
+                    : '0%',
+              }}
+            />
+          </div>
+          <div className="run-progress-text">
+            进度 {runStatus.completed_rounds}/{runStatus.requested_rounds} 轮 · 消息 {runStatus.messages_processed} · 模型调用 {runStatus.model_calls_completed}
+          </div>
+        </div>
+      )}
+
       <div
         style={{
           display: 'flex',
           gap: '8px',
           marginBottom: '8px',
           fontSize: '12px',
-          color: '#a0aec0',
         }}
       >
         <div style={{ flex: 1 }}>
           <label htmlFor="input-run-budget">本次运行上限 (Run Tokens):</label>
           <input
             id="input-run-budget"
+            className="text-input"
             type="number"
             value={runBudget}
             min={1000}
             step={1000}
             disabled={isRunning || isSubmitting}
             onChange={(e) => setRunBudget(Number(e.target.value))}
-            style={{
-              width: '100%',
-              background: '#1a202c',
-              color: '#fff',
-              border: '1px solid #4a5568',
-              borderRadius: '4px',
-              padding: '4px 6px',
-            }}
           />
         </div>
         <div style={{ flex: 1 }}>
           <label htmlFor="input-global-budget">累计总上限 (Global Tokens):</label>
           <input
             id="input-global-budget"
+            className="text-input"
             type="number"
             value={globalBudget}
             min={10000}
             step={10000}
             disabled={isRunning || isSubmitting}
             onChange={(e) => setGlobalBudget(Number(e.target.value))}
-            style={{
-              width: '100%',
-              background: '#1a202c',
-              color: '#fff',
-              border: '1px solid #4a5568',
-              borderRadius: '4px',
-              padding: '4px 6px',
-            }}
           />
         </div>
       </div>
@@ -234,8 +238,8 @@ export const RunControls: React.FC<RunControlsProps> = ({
             type="button"
             className="btn btn-sm"
             style={{
-              borderColor: '#fc8181',
-              color: '#fc8181',
+              borderColor: 'var(--accent-red)',
+              color: 'var(--accent-red)',
             }}
             disabled={isRunning || isSubmitting}
             onClick={() => onReconcile()}

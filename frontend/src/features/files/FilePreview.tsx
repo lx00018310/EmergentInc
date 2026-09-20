@@ -10,6 +10,10 @@ export interface FilePreviewProps {
   downloadUrl?: string;
   filename?: string;
   onClose: () => void;
+  /** 可选：文档 Tab 模式（P1-3 合并文档入口） */
+  docTabs?: { key: string; label: string }[];
+  activeDocTab?: string;
+  onSelectDocTab?: (key: string) => void;
 }
 
 export const FilePreview: React.FC<FilePreviewProps> = ({
@@ -21,6 +25,9 @@ export const FilePreview: React.FC<FilePreviewProps> = ({
   downloadUrl,
   filename,
   onClose,
+  docTabs,
+  activeDocTab,
+  onSelectDocTab,
 }) => {
   return (
     <Modal
@@ -46,12 +53,27 @@ export const FilePreview: React.FC<FilePreviewProps> = ({
         </div>
       }
     >
+      {docTabs && docTabs.length > 0 && (
+        <div className="operation-tabs" role="tablist" aria-label="文档">
+          {docTabs.map((t) => (
+            <button
+              key={t.key}
+              role="tab"
+              aria-selected={activeDocTab === t.key}
+              className={`btn btn-sm ${activeDocTab === t.key ? 'btn-primary' : ''}`}
+              onClick={() => onSelectDocTab?.(t.key)}
+            >
+              {t.label}
+            </button>
+          ))}
+        </div>
+      )}
       {isLoading ? (
         <div style={{ color: 'var(--text-dim)', padding: '20px', textAlign: 'center' }}>
           正在加载内容...
         </div>
       ) : previewType === 'image' && downloadUrl ? (
-        <div style={{ textAlign: 'center', padding: '16px', background: '#0d1117', borderRadius: '6px' }}>
+        <div style={{ textAlign: 'center', padding: '16px', background: 'var(--bg-main)', borderRadius: '6px' }}>
           <img
             src={downloadUrl}
             alt={filename || '交付物图片预览'}
@@ -69,7 +91,7 @@ export const FilePreview: React.FC<FilePreviewProps> = ({
           style={{
             padding: '32px 20px',
             textAlign: 'center',
-            background: '#0d1117',
+            background: 'var(--bg-main)',
             borderRadius: '6px',
             border: '1px solid var(--border-color)',
           }}

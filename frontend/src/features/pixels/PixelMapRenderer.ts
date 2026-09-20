@@ -204,6 +204,13 @@ export class PixelMapRenderer {
     this.fitCameraToPixels();
   }
 
+  /** 将 OrbitControls 焦点对准指定元胞（阻尼循环自动平滑过渡） */
+  public focusPixel(pixelId: string): void {
+    const pixel = this.pixels.find((p) => p.id === pixelId);
+    if (!pixel) return;
+    this.controls.target.copy(this.worldToScene(pixel.position));
+  }
+
   public zoomIn(): void {
     this.dollyBy(0.8);
   }
@@ -505,7 +512,9 @@ export class PixelMapRenderer {
     // 更新消息传递动效与状态队列
     this.processMessageFlows(positions);
 
-    // 小球节点渲染
+    // 小球节点渲染（能量编码：半径随能量映射、死亡缩小淡化）
+    const energies = this.pixels.map((p) => Number(p.energy) || 0);
+    const maxEnergy = Math.max(1, ...energies);
     let selectedPos: THREE.Vector3 | null = null;
     for (const pixel of this.pixels) {
       const color = this.unreadTipsPixelIds.has(pixel.id)
@@ -520,16 +529,23 @@ export class PixelMapRenderer {
         selectedPos = pos;
       }
 
+      // 能量归一化映射到 0.75 ~ 1.30 半径（上限保证选中放大后仍被选中外环 0.55 包住）；死亡元胞额外缩小降透明
+      const energyNorm = Math.max(0, Math.min(1, (Number(pixel.energy) || 0) / maxEnergy));
+      const energyScale = 0.75 + 0.55 * energyNorm;
+      const deadFactor = pixel.active ? 1.0 : 0.55;
+
       const material = new THREE.MeshStandardMaterial({
         color,
         emissive: isSelected ? new THREE.Color(color).multiplyScalar(0.35) : new THREE.Color(0x000000),
         roughness: 0.35,
         metalness: 0.05,
+        transparent: !pixel.active,
+        opacity: pixel.active ? 1.0 : 0.45,
       });
       const mesh = new THREE.Mesh(this.sphereGeometry, material);
       mesh.position.copy(pos);
-      const scale = isSelected ? 1.25 : isHovered ? 1.1 : 1.0;
-      mesh.scale.setScalar(scale);
+      const interactScale = isSelected ? 1.25 : isHovered ? 1.1 : 1.0;
+      mesh.scale.setScalar(energyScale * deadFactor * interactScale);
       mesh.userData.pixelId = pixel.id;
       this.pixelGroup.add(mesh);
     }

@@ -5,9 +5,10 @@ export interface RunStatusProps {
   world: WorldDto | null;
   runStatus: RunStatusDto | null;
   audit: WorkspaceAuditDto | null;
+  onOpenHelp?: () => void;
 }
 
-export const RunStatus: React.FC<RunStatusProps> = ({ world, runStatus, audit }) => {
+export const RunStatus: React.FC<RunStatusProps> = ({ world, runStatus, audit, onOpenHelp }) => {
   const round = world?.round ?? runStatus?.current_round ?? 0;
   const pixels = world?.pixels ?? [];
   const alivePixels = pixels.filter((p) => p.active).length;
@@ -21,7 +22,7 @@ export const RunStatus: React.FC<RunStatusProps> = ({ world, runStatus, audit })
   const totalSpentCny = hasExplicitCny ? rawSpentCny : null;
 
   let systemHealth = runStatus ? 'READY' : 'UNKNOWN';
-  let systemHealthColor = '#48bb78';
+  let systemHealthColor = 'var(--accent-green)';
 
   if (runStatus?.running) {
     systemHealth = 'RUNNING';
@@ -78,6 +79,16 @@ export const RunStatus: React.FC<RunStatusProps> = ({ world, runStatus, audit })
             {systemHealth}
           </span>
         </div>
+        {onOpenHelp && (
+          <button
+            className="btn btn-xs"
+            title="V11 五层上下文说明"
+            aria-label="帮助"
+            onClick={onOpenHelp}
+          >
+            ?
+          </button>
+        )}
       </div>
     </header>
   );

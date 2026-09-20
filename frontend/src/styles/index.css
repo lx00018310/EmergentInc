@@ -714,3 +714,258 @@ body {
 .data-table tr:hover {
   background-color: var(--bg-card-hover);
 }
+
+/* ========== UX 整改 P0 新增 ========== */
+
+/* 通用弱化文本（替代硬编码 #000000 等） */
+.text-muted {
+  color: var(--text-dim);
+  opacity: 0.75;
+}
+
+/* 浅色文本输入框（替代 RunControls 深色内联样式） */
+.text-input {
+  width: 100%;
+  background: var(--bg-card);
+  color: var(--text-bright);
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  padding: 4px 6px;
+  font-size: 12px;
+}
+
+.text-input:focus {
+  outline: none;
+  border-color: var(--accent-blue);
+}
+
+.text-input:disabled {
+  background: var(--bg-main);
+  color: var(--text-dim);
+  opacity: 0.7;
+}
+
+/* P0-3 运行进度条 */
+.run-progress {
+  margin-bottom: 10px;
+}
+
+.run-progress-bar {
+  height: 6px;
+  background: var(--bg-main);
+  border: 1px solid var(--border-color);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.run-progress-fill {
+  height: 100%;
+  background: var(--accent-green);
+  border-radius: 3px;
+  transition: width 0.4s ease;
+}
+
+.run-progress-text {
+  margin-top: 4px;
+  font-size: 11px;
+  font-family: var(--font-mono);
+  color: var(--text-dim);
+}
+
+/* P0-1 悬停轻量 tooltip */
+.pixel-tooltip {
+  position: absolute;
+  z-index: 20;
+  pointer-events: none;
+  background: rgba(255, 255, 255, 0.97);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  box-shadow: 0 4px 12px rgba(31, 35, 40, 0.15);
+  padding: 6px 10px;
+  font-size: 11px;
+  max-width: 260px;
+  color: var(--text-main);
+}
+
+.pixel-tooltip-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  font-weight: 600;
+  margin-bottom: 2px;
+}
+
+.pixel-tooltip-id {
+  font-family: var(--font-mono);
+}
+
+.pixel-tooltip-line {
+  color: var(--text-dim);
+  line-height: 1.4;
+}
+
+.pixel-tooltip-action {
+  color: var(--text-main);
+  word-break: break-all;
+}
+
+/* P0-2 最近一轮活动区块 */
+.latest-activity {
+  margin-bottom: 8px;
+  padding: 6px 8px;
+  background: var(--bg-main);
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  font-size: 11px;
+}
+
+.latest-activity-body {
+  line-height: 1.5;
+  word-break: break-all;
+}
+
+.latest-activity-result {
+  color: var(--text-dim);
+}
+
+.latest-activity-empty {
+  color: var(--text-dim);
+  opacity: 0.75;
+}
+
+/* P0-2 调试属性折叠区 */
+.debug-props {
+  margin-top: 6px;
+}
+
+.debug-props summary {
+  cursor: pointer;
+  font-size: 11px;
+  color: var(--text-dim);
+  user-select: none;
+}
+
+/* P0-4 详情卡 header 右侧按钮组 */
+.hover-header .btn {
+  margin-left: 4px;
+}
+
+/* ========== UX 整改 P1 新增 ========== */
+
+/* P1-1 控制台折叠 */
+.console-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-bright);
+  cursor: pointer;
+  user-select: none;
+  padding: 4px 2px;
+}
+
+.console-toggle:hover {
+  color: var(--accent-blue);
+}
+
+.console-box.console-collapsed {
+  height: auto;
+  max-height: 60px;
+}
+
+/* P1-1 提示词 Tab 合并卡片 */
+.prompt-tabs {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.prompt-tabs-bar {
+  display: flex;
+  gap: 6px;
+  padding: 2px 2px 0;
+}
+
+/* P1-1 帮助弹窗列表 */
+.help-list {
+  margin: 4px 0 4px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.help-list li {
+  font-size: 12px;
+  color: var(--text-dim);
+  line-height: 1.6;
+}
+
+.help-list li strong {
+  color: var(--accent-blue);
+  font-family: var(--font-mono);
+}
+
+/* P1-4 元胞列表面板 */
+.pixel-list-panel {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  width: 240px;
+  max-height: calc(100% - 20px);
+  background: rgba(255, 255, 255, 0.97);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  box-shadow: 0 4px 12px rgba(31, 35, 40, 0.15);
+  padding: 8px;
+  z-index: 15;
+  display: flex;
+  flex-direction: column;
+}
+
+.pixel-list-body {
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.pixel-list-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 4px 6px;
+  border-radius: 4px;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.pixel-list-row:hover {
+  background: var(--bg-card-hover);
+}
+
+.pixel-list-row.selected {
+  background: rgba(9, 105, 218, 0.1);
+  outline: 1px solid var(--accent-blue);
+}
+
+.pixel-list-id {
+  font-family: var(--font-mono);
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pixel-list-energy {
+  font-family: var(--font-mono);
+  color: var(--text-main);
+}
+
+.pixel-list-status {
+  font-size: 10px;
+}
+
+

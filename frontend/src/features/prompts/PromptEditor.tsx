@@ -85,7 +85,7 @@ export const PromptEditor: React.FC<PromptEditorProps> = ({
           {isActive ? '生效中' : '已关闭'}
         </span>
       </div>
-      <p className="form-hint" style={{ marginBottom: '8px', fontSize: '12px', color: '#000000' }}>
+      <p className="form-hint" style={{ marginBottom: '8px', fontSize: '12px' }}>
         {hint}
       </p>
 
@@ -110,7 +110,6 @@ export const PromptEditor: React.FC<PromptEditorProps> = ({
           alignItems: 'center',
           margin: '8px 0',
           fontSize: '12px',
-          color: '#000000',
         }}
       >
         <span>
@@ -122,7 +121,7 @@ export const PromptEditor: React.FC<PromptEditorProps> = ({
           )}
           {isDirty && <span style={{ color: 'var(--accent-yellow)', marginLeft: '6px' }}>(未保存)</span>}
         </span>
-        <span style={{ color: isOverLimit ? 'var(--accent-red)' : '#000000' }}>
+        <span style={{ color: isOverLimit ? 'var(--accent-red)' : 'var(--text-main)' }}>
           {charCount} / 12000
         </span>
       </div>
