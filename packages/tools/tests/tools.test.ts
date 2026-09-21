@@ -182,6 +182,7 @@ describe("Tools: Private Files & Security Masking", () => {
       JSON.stringify({ host: "1.2.3.4", password: "SUPER_SECRET_PASSWORD" }),
       "utf-8"
     );
+    fs.writeFileSync(path.join(privDir, "vps_owner_key"), "TEST_ONLY_PRIVATE_KEY_SENTINEL", "utf-8");
 
     registry = new ToolRegistry();
     registerAllBuiltinTools(registry);
@@ -200,13 +201,16 @@ describe("Tools: Private Files & Security Masking", () => {
     const res = await runtime.execute("list_private_files", {}, ctx);
     expect(res.status).toBe("SUCCESS");
     const items = res.output.items;
-    expect(items).toHaveLength(2);
+    expect(items).toHaveLength(3);
 
     const profileItem = items.find((i: any) => i.name === "owner_vps_profile.json");
     expect(profileItem.is_sensitive).toBe(true);
 
     const noteItem = items.find((i: any) => i.name === "notes.txt");
     expect(noteItem.is_sensitive).toBe(false);
+
+    const keyItem = items.find((i: any) => i.name === "vps_owner_key");
+    expect(keyItem.is_sensitive).toBe(true);
   });
 
   it("should mask credentials when reading sensitive profile json", async () => {
@@ -219,6 +223,44 @@ describe("Tools: Private Files & Security Masking", () => {
     expect(res.output.is_masked).toBe(true);
     expect(res.output.content).not.toContain("SUPER_SECRET_PASSWORD");
     expect(res.output.content).toContain("[CREDENTIAL_MASKED]");
+  });
+
+  it("should protect the configured passwordless VPS private key filename", async () => {
+    const listRes = await runtime.execute("list_private_files", {}, ctx);
+    expect(listRes.status).toBe("SUCCESS");
+    const keyItem = listRes.output.items.find((i: any) => i.name === "vps_owner_key");
+    expect(keyItem?.is_sensitive).toBe(true);
+
+    const readRes = await runtime.execute(
+      "read_private_file",
+      { path: "vps_owner_key" },
+      ctx
+    );
+    expect(readRes.status).toBe("FAILED");
+    expect(readRes.error_code).toBe("SENSITIVE_FILE_PROTECTED");
+    expect(JSON.stringify(readRes)).not.toContain("TEST_ONLY_PRIVATE_KEY_SENTINEL");
+  });
+
+  it("should reject sibling paths that only share the private directory prefix", async () => {
+    const siblingDir = path.join(tmpDir, "private2");
+    fs.mkdirSync(siblingDir, { recursive: true });
+    fs.writeFileSync(path.join(siblingDir, "outside.txt"), "OUTSIDE_PRIVATE_ROOT", "utf-8");
+
+    const res = await runtime.execute(
+      "read_private_file",
+      { path: "../private2/outside.txt" },
+      ctx
+    );
+    expect(res.status).toBe("FAILED");
+    expect(res.error_code).toBe("PATH_TRAVERSAL_FORBIDDEN");
+    expect(JSON.stringify(res)).not.toContain("OUTSIDE_PRIVATE_ROOT");
+  });
+
+  it("allows a contained filename beginning with two dots", async () => {
+    fs.writeFileSync(path.join(tmpDir, "private", "..notes.txt"), "contained", "utf-8");
+    const result = await runtime.execute("read_private_file", { path: "..notes.txt" }, ctx);
+    expect(result.status).toBe("SUCCESS");
+    expect(result.output.content).toBe("contained");
   });
 });
 

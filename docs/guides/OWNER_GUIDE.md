@@ -1,6 +1,6 @@
 # Owner Guide
 
-Owner 是现实权限与真实事实的守门人，不是 CEO、不是客户、也不是营销策略作者。你能提供三样东西：**运行预算、环境事实、真实收入记录**。你不能替 Pixel 思考。
+Owner 提供商业目标、预算和现实权限，也可以明确委托 Codex 决定常规方案并推进。Pixel 的实际产物须保留来源，客户付款和反馈须按真实证据记录。首发采用的权益及操作步骤见 [协助体验说明](../launch/DELIVERY.md)。
 
 所有操作走本机 HTTP API（默认 `http://127.0.0.1:8765`，前缀 `/api`），启动方式见根目录 `README.md` 或双击 `EmergentInc_UI.bat`。
 
@@ -25,7 +25,7 @@ curl http://127.0.0.1:8765/api/audit/workspace
 ```
 
 * `OK` → 可以启动。
-* `RECOVERY_REQUIRED` → 有未决预留 / 未知结果调用 / 未决消息，禁止启动。先 `POST /api/run/reconcile`（自愈可对账的部分），剩余逐条决议：
+* `RECOVERY_REQUIRED` → 有未决预留 / 未知结果调用 / 未决消息，禁止启动。`POST /api/run/reconcile` 只列出需要审阅的项目，不会自动把未知调用当作未计费。核实服务商用量后逐条决议；以下只是已证实未计费时的请求形状：
 
 ```bash
 curl -X POST http://127.0.0.1:8765/api/run/recovery/resolve \
@@ -55,9 +55,9 @@ curl -X DELETE http://127.0.0.1:8765/api/pixels/0_0_0/mandate
 
 `mandate.md` 与 `pixel.md` 物理隔离：模型只读 mandate，主链禁止把它写进自己的心智。想改变长期心智只能通过 environment 与 mandate 反复提供事实。
 
-## 5. 记录真实收入
+## 5. 区分真实收入与 Energy 奖励
 
-只有**确实来自外部客户**的支付才这样记：
+真实交易保存在忽略的 `workspace/private/first_revenue_orders.json`，核验到账、买家来源及交付/退款状态。下面的 `reward.amount` 只是内部 Energy，不能据此计算人民币收入；只有另行决定激励 Pixel 时才使用：
 
 ```bash
 curl -X POST http://127.0.0.1:8765/api/pixels/0_0_0/reward \
@@ -77,25 +77,13 @@ curl http://127.0.0.1:8765/api/temporary-prompt   # 临时初速度（GET/PUT）
 curl http://127.0.0.1:8765/api/tools             # 当前真正注册的工具
 ```
 
-`temporary_prompt.json` 是一次性输入，清空即关闭。
+这些提示词有保存接口，但当前运行主链不据此注入新任务。本次首发以已接入的 Human Mandate 为准。
 
 ## 7. 凭据与私有资料
 
-* 凭据只能放在 `workspace/private/`（不进 Git）。`GET /api/private-files`、`/api/private-files/preview` 供 Pixel 侧受控读取，但 `*_profile.json`、`*credential*`、`*secret*`、`id_*`、`*.pem|*.key|*.ppk` 被硬性拒绝。
-* **VPS 通道已落地但默认不启用**：`vps_list_files` / `vps_read_file` / `vps_write_file` / `vps_upload_file` / `vps_download_file` / `vps_exec` 均已用系统 OpenSSH 客户端原生实现，是否注册由启动时的**纯本地**探测决定（不联网探测）。`private/tools.json` 里 `enabled=true` 只会收窄、不会启用未被准入的工具。
-* 启用只需改 `workspace/private/owner_vps_profile.json`（**不要**填密码：`BatchMode=yes` 的适配器不支持密码认证，会直接返回 `AUTH_METHOD_UNSUPPORTED`）：
+凭据保存在 `workspace/private/`，不提交 Git。Pixel 通过 `read_private_file` 工具访问受控资料，敏感 profile 只返回脱敏投影，私钥拒绝返回原文；不要依赖文件扩展名代替权限检查。管理 API 的 private-files preview 只预览图片，不等同于 Pixel 文本工具。
 
-  ```json
-  {
-    "host": "<ip>", "port": 22, "username": "root",
-    "key_path": "C:/path/to/id_ed25519",
-    "allowed_operations": ["ssh_list_files", "ssh_read_file"],
-    "remote_root": "/var/www/mysite"
-  }
-  ```
-
-  `allowed_operations` 为空表示不额外收窄；`remote_root` 一旦设置，所有远端路径越界即 `PATH_OUT_OF_SCOPE`。`ssh_exec`（任意远端 shell）必须由你显式授予才会注册，授予后上述路径收敛对 `vps_exec` 无效——那是完整 shell 控制权。
-* 验证方式：重启服务端看日志 `VPS adapters available: ...` / `VPS adapters disabled: <原因>`，再 `curl http://127.0.0.1:8765/api/tools` 核对真正注册的工具列表。
+VPS 文件工具的准入依据是启动时的本地配置检查；它不证明 SSH 已连接。`tools.json` 只能收窄已注册工具。以实际工具回执区分认证失败、目录不存在和 `PATH_OUT_OF_SCOPE`；本次 /var/www 已经 SSH 认证成功，原认证阻塞提醒过时。站点初始化由管理员工具完成，不能写成 Pixel 自主部署。
 
 ## 8. 不要做的事
 
