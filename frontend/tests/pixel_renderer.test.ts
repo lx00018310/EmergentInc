@@ -171,6 +171,39 @@ describe('PixelMapRenderer (Three.js Crystal Lattice)', () => {
     renderer.dispose();
   });
 
+  it('选择环外径随元胞能量自适应，高能量大元胞也不会被球体遮住', () => {
+    const { canvas } = createMockCanvas();
+    const renderer = new PixelMapRenderer({
+      canvas,
+      onSelectPixel: vi.fn(),
+      onHoverPixel: vi.fn(),
+    });
+    const SPHERE_BASE_RADIUS = 0.32;
+    const RING_OUTER = 0.55;
+    const ringBaseScale = () => (renderer as any).selectionRingBaseScale as number;
+
+    const pixels = [
+      makePixel('0_0_0', [0, 0, 0], { energy: 9000 }),
+      makePixel('0_1_0', [1, 0, 0], { energy: 0 }),
+    ];
+
+    // 满能量元胞：球世界半径 0.32 * (0.75+0.55) * 1.25 ≈ 0.52，旧的固定环只有 0.55
+    renderer.setData(pixels, [], '0_0_0');
+    const bigSphere = SPHERE_BASE_RADIUS * 1.3 * 1.25;
+    expect(ringBaseScale() * RING_OUTER).toBeGreaterThan(bigSphere);
+
+    const bigRing = ringBaseScale();
+    renderer.setData(pixels, [], '0_1_0');
+    const smallRing = ringBaseScale();
+    const smallSphere = SPHERE_BASE_RADIUS * 0.75 * 1.25;
+
+    // 缩小能量后环同步变小，但仍完整包住小球
+    expect(smallRing).toBeLessThan(bigRing);
+    expect(smallRing * RING_OUTER).toBeGreaterThan(smallSphere);
+
+    renderer.dispose();
+  });
+
   it('消息传递支持动效与完成状态，且超过10次时自动清空历史超出记录', () => {
     const { canvas } = createMockCanvas();
     const renderer = new PixelMapRenderer({

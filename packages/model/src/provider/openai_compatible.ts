@@ -99,6 +99,9 @@ export class OpenAICompatibleProvider implements ModelProvider {
 
       const choice = data?.choices?.[0];
       const rawText = typeof choice?.message?.content === "string" ? choice.message.content : "";
+      // 推理模型的思考文本不进入 rawText：它不是可解析的决策 JSON
+      const reasoningText =
+        typeof choice?.message?.reasoning_content === "string" ? choice.message.reasoning_content : "";
       const usage = data?.usage;
       const token = (value: unknown): number | null =>
         typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : null;
@@ -110,6 +113,12 @@ export class OpenAICompatibleProvider implements ModelProvider {
         totalTokens: token(usage?.total_tokens),
         finishReason: choice?.finish_reason ?? null,
         content: truncate(rawText, 1200),
+        ...(rawText || !reasoningText
+          ? {}
+          : {
+              empty_content_cause: "reasoning_only",
+              reasoning: truncate(reasoningText, 400),
+            }),
       });
 
       return {

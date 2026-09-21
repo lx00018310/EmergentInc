@@ -139,6 +139,23 @@ describe("Model: Usage Meter & Pricing", () => {
       vi.unstubAllGlobals();
     }
   });
+  it("keeps reasoning-only truncation out of rawText", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      choices: [{
+        message: { content: "", reasoning_content: "让我先梳理一下当前目标……" },
+        finish_reason: "length",
+      }],
+      usage: { prompt_tokens: 2067, completion_tokens: 16384, total_tokens: 18451 },
+    }), { status: 200 })));
+    try {
+      const provider = new OpenAICompatibleProvider({ baseUrl: "https://model.invalid", apiKey: "test" });
+      const response = await provider.call({ model: "glm-5.3-flash", messages: [], promptHash: "h" });
+      expect(response.rawText).toBe("");
+      expect(response.usage?.completionTokens).toBe(16384);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
   it("keeps missing usage/pricing unknown and honors explicit zero cache pricing", () => {
     const unknown = new UsageMeter({ models: {} });
     expect(unknown.calculateUsage({ model: "unpriced", promptTokens: 10, completionTokens: 5 }).costCny).toBeNull();

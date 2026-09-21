@@ -32,6 +32,12 @@ const EDGE_COLOR = 0xcbd1d8;
 const FLOW_COLOR = 0x16a34a; // 高对比度鲜明翠绿
 const PACKET_COLOR = 0x22c55e; // 飞行动效发光小球
 const SELECTION_RING_COLOR = 0xff4500; // 醒目鲜橙红，在浅色背景和所有小球上极具辨识度
+const SPHERE_BASE_RADIUS = 0.32;
+const SELECTION_RING_INNER = 0.46;
+const SELECTION_RING_OUTER = 0.55;
+/** 环外径 = 选中球世界半径 × 该倍率，保证高能量大元胞也压不住选择环 */
+const SELECTION_RING_CLEARANCE = 1.35;
+
 const DRAG_THRESHOLD_PX = 5;
 const MAX_COMPLETED_TRANSFERS = 10; // 最多保留10次传递状态
 
@@ -60,6 +66,8 @@ export class PixelMapRenderer {
   private selectionRingGeometry: THREE.BufferGeometry;
   private selectionRingMaterial: THREE.MeshBasicMaterial;
   private selectionRingMesh: THREE.Mesh;
+  /** 选择环基准缩放：按当前选中元胞的世界半径自适应，呼吸动效叠加在此之上 */
+  private selectionRingBaseScale = 1;
 
   private sphereGeometry: THREE.SphereGeometry;
   private edgeMaterial: THREE.LineBasicMaterial;
@@ -129,12 +137,12 @@ export class PixelMapRenderer {
     this.messageGroup = new THREE.Group();
     this.scene.add(this.edgeGroup, this.pixelGroup, this.messageGroup);
 
-    this.sphereGeometry = new THREE.SphereGeometry(0.32, 24, 16);
+    this.sphereGeometry = new THREE.SphereGeometry(SPHERE_BASE_RADIUS, 24, 16);
     this.edgeMaterial = new THREE.LineBasicMaterial({ color: EDGE_COLOR, transparent: true, opacity: 0.6 });
     this.flowMaterial = new THREE.MeshBasicMaterial({ color: FLOW_COLOR, side: THREE.DoubleSide });
 
-    // 构造醒目的外围选择圈 (RingGeometry，半径 0.46 ~ 0.55，包围小球)
-    this.selectionRingGeometry = new THREE.RingGeometry(0.46, 0.55, 48);
+    // 构造醒目的外围选择圈；实际显示大小由 selectionRingBaseScale 按选中元胞缩放
+    this.selectionRingGeometry = new THREE.RingGeometry(SELECTION_RING_INNER, SELECTION_RING_OUTER, 48);
     this.selectionRingMaterial = new THREE.MeshBasicMaterial({
       color: SELECTION_RING_COLOR,
       side: THREE.DoubleSide,
@@ -516,6 +524,7 @@ export class PixelMapRenderer {
     const energies = this.pixels.map((p) => Number(p.energy) || 0);
     const maxEnergy = Math.max(1, ...energies);
     let selectedPos: THREE.Vector3 | null = null;
+    let selectedNodeScale = 0;
     for (const pixel of this.pixels) {
       const color = this.unreadTipsPixelIds.has(pixel.id)
         ? TIPS_COLOR
@@ -529,7 +538,8 @@ export class PixelMapRenderer {
         selectedPos = pos;
       }
 
-      // 能量归一化映射到 0.75 ~ 1.30 半径（上限保证选中放大后仍被选中外环 0.55 包住）；死亡元胞额外缩小降透明
+      // 能量归一化映射到 0.75 ~ 1.30 半径；死亡元胞额外缩小降透明。
+      // 选择环不再依赖该上限，改为按节点实际大小自适应缩放。
       const energyNorm = Math.max(0, Math.min(1, (Number(pixel.energy) || 0) / maxEnergy));
       const energyScale = 0.75 + 0.55 * energyNorm;
       const deadFactor = pixel.active ? 1.0 : 0.55;
@@ -545,7 +555,9 @@ export class PixelMapRenderer {
       const mesh = new THREE.Mesh(this.sphereGeometry, material);
       mesh.position.copy(pos);
       const interactScale = isSelected ? 1.25 : isHovered ? 1.1 : 1.0;
-      mesh.scale.setScalar(energyScale * deadFactor * interactScale);
+      const nodeScale = energyScale * deadFactor * interactScale;
+      mesh.scale.setScalar(nodeScale);
+      if (isSelected) selectedNodeScale = nodeScale;
       mesh.userData.pixelId = pixel.id;
       this.pixelGroup.add(mesh);
     }
@@ -553,6 +565,8 @@ export class PixelMapRenderer {
     // 更新外围选择圈位置与可见性
     if (selectedPos) {
       this.selectionRingMesh.position.copy(selectedPos);
+      this.selectionRingBaseScale =
+        (SPHERE_BASE_RADIUS * selectedNodeScale * SELECTION_RING_CLEARANCE) / SELECTION_RING_OUTER;
       this.selectionRingMesh.visible = true;
     } else {
       this.selectionRingMesh.visible = false;
@@ -605,7 +619,7 @@ export class PixelMapRenderer {
       // 1. 保持外围选择圈始终面向镜头，并施加轻微呼吸微动效
       if (this.selectionRingMesh && this.selectionRingMesh.visible) {
         this.selectionRingMesh.quaternion.copy(this.camera.quaternion);
-        const pulse = 1.0 + 0.05 * Math.sin(time * 0.006);
+        const pulse = this.selectionRingBaseScale * (1.0 + 0.05 * Math.sin(time * 0.006));
         this.selectionRingMesh.scale.set(pulse, pulse, pulse);
       }
 
