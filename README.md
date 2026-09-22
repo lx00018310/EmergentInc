@@ -1,5 +1,23 @@
 # Emergent Inc 元胞会社
 
+源码采用 [MIT 许可证](LICENSE)。付费首发体验提供人工协助和限定模型资源，源码仍可自由使用。
+
+## AI 创业矩阵
+
+> **做 AI 的老板，从第一笔生意开始。**
+>
+> 这套 AI 创业矩阵的第一项业务，就是为自己的首发找到第一位付费用户。
+
+EmergentInc 让用户提出商业目标，提供预算与现实权限，再观察 AI 元胞在有限能量、局部通信和受控工具下尝试形成分工、产出交付物并推进业务。它的目标是探索 AI 如何参与建立业务；当前仍处于首发筹备阶段，不能承诺使用后必然赚钱、组织必然形成或完全无人干预。
+
+这个开源仓库是产品说明、技术验证和公开案例入口；服务器上的首发业务是 EmergentInc 服务真实用户的第一个应用。计划中的闭环是：仓库 README 引导用户到业务页，EmergentInc 生成营销或交付材料，外部反馈推动系统和文档改进，再将经过脱敏的案例反馈回仓库。首发页面已上线，先接咨询、确认后付款；外部收入仍为 0。
+
+当前首发体验：**1 元，首批 3 个名额，人工协助运行 EmergentInc**。提交一个小型商业目标，获得目标拆解和一份材料，包含一次原需求修订；确认需求及排期后 48 小时内交付，模型成本由项目承担，无法交付则退回体验费。每位最多两个单轮 Run、目标预算累计 100,000 token。当前先接咨询，确认可承接和真实支付方式后才收款。公开源码不属于付费专属内容。
+
+**[查看首发业务页](http://47.116.139.252/) · [提交体验咨询](https://github.com/lx00018310/EmergentInc/issues/1) · [范围与交付说明](docs/launch/DELIVERY.md)**
+
+首发商品说明、页面初稿、宣传稿与 FAQ 已由 Pixel 实际生成，Codex 核对修订并部署。见[产物与来源](docs/launch/)和[首发尝试记录](docs/cases/first-customer.md)。尚无外部付款、交付或客户反馈，收入闭环仍未完成。
+
 基于 TypeScript 的 3D 元胞自动机世界：元胞在有限能量与预算下自主决策、互相通信、积累资产。全栈 Node.js + SQLite + React，无 Python 组件。
 
 架构主链路：
@@ -77,7 +95,7 @@ EmergentInc元胞会社/
 └─ package.json                 # pnpm workspace 根
 ```
 
-`vps_*` 工具已原生实现（系统 OpenSSH 客户端），但只有启动时的离线探测 `probeVpsAvailability()` 判定 `workspace/private/owner_vps_profile.json` 可用（密钥认证 + `allowed_operations` 命中）才注册；当前该配置只有密码，因此实际不注册，服务端启动日志会打印确切原因。
+VPS 文件工具由系统 OpenSSH 客户端执行。启动时的离线探测 `probeVpsAvailability()` 只检查配置、密钥文件是否存在及 `allowed_operations`；`private/tools.json` 只能进一步收窄。启动日志和 `GET /api/tools` 只能证明工具已注册；远端认证、路径和读写能力必须以实际调用回执为准。默认不提供任意远端 shell。
 
 ---
 
@@ -125,7 +143,7 @@ npx pnpm build
 npx pnpm --filter @emergentinc/server start
 ```
 
-服务监听 `http://127.0.0.1:8765`，同时托管前端。模型配置读取根目录 `.env`（`MCL_API_KEY` 等）；缺少有效 key 时服务以保护模式启动，Run 请求会被拒绝。
+服务监听 `http://127.0.0.1:8765`，同时托管前端。模型配置读取根目录 `.env`（`MCL_API_KEY` 等）；上游支持 SSE 时可配置 `MCL_STREAM=1`，中断仍保留为结果未知，不自动重试。缺少有效 key 时服务以保护模式启动，Run 请求会被拒绝。
 
 ### 3.4 测试与类型检查
 

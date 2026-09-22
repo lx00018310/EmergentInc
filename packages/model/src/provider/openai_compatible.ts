@@ -9,6 +9,45 @@ export interface OpenAICompatibleProviderConfig {
   baseUrl: string;
   apiKey: string;
   timeoutMs?: number;
+  stream?: boolean;
+}
+
+// Consume SSE through its terminal marker before exposing any model decision.
+// A disconnected stream remains outcome-unknown, even if it contains partial JSON.
+async function readStream(response: Response): Promise<any> {
+  if (!response.body) throw new Error("MODEL_STREAM_BODY_MISSING");
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "", content = "";
+  let usage: any, model: string | undefined, finishReason: string | null = null;
+  try {
+    while (true) {
+      const chunk = await reader.read();
+      buffer += decoder.decode(chunk.value, { stream: !chunk.done });
+      let boundary: RegExpExecArray | null;
+      while ((boundary = /\r?\n\r?\n/.exec(buffer))) {
+        const event = buffer.slice(0, boundary.index);
+        buffer = buffer.slice(boundary.index + boundary[0].length);
+        const data = event.split(/\r?\n/).filter(line => line.startsWith("data:"))
+          .map(line => line.slice(5).trimStart()).join("\n");
+        if (!data) continue;
+        if (data === "[DONE]") {
+          return { model, usage, choices: [{ message: { content }, finish_reason: finishReason }] };
+        }
+        const value = JSON.parse(data);
+        if (value.error) throw new Error("MODEL_STREAM_ERROR");
+        if (value.model) model = value.model;
+        if (value.usage) usage = value.usage;
+        const choice = value.choices?.find((entry: any) => entry.index === 0);
+        if (typeof choice?.delta?.content === "string") content += choice.delta.content;
+        if (choice?.finish_reason) finishReason = choice.finish_reason;
+      }
+      if (chunk.done) throw new Error("MODEL_STREAM_TRUNCATED");
+    }
+  } finally {
+    await reader.cancel().catch(() => {});
+    reader.releaseLock();
+  }
 }
 
 // Console trace of every real LLM interaction (request/response/usage/error).
@@ -30,10 +69,12 @@ export class OpenAICompatibleProvider implements ModelProvider {
   private baseUrl: string;
   private apiKey: string;
   private timeoutMs: number;
+  private stream: boolean;
 
   constructor(config: OpenAICompatibleProviderConfig) {
     this.baseUrl = config.baseUrl.replace(/\/+$/, "");
     this.apiKey = config.apiKey;
+    this.stream = config.stream ?? process.env.MCL_STREAM === "1";
     const envTimeout = process.env.MCL_TIMEOUT_MS ? Number(process.env.MCL_TIMEOUT_MS) : undefined;
     this.timeoutMs = config.timeoutMs || (envTimeout && !isNaN(envTimeout) ? envTimeout : 120000);
   }
@@ -79,6 +120,7 @@ export class OpenAICompatibleProvider implements ModelProvider {
           messages: request.messages,
           temperature: request.temperature ?? 0.2,
           max_tokens: request.maxTokens ?? 2000,
+          ...(this.stream ? { stream: true, stream_options: { include_usage: true } } : {}),
         }),
         signal: controller.signal,
       });
@@ -95,7 +137,7 @@ export class OpenAICompatibleProvider implements ModelProvider {
       }
 
       phase = "response_body";
-      const data: any = await response.json();
+      const data: any = this.stream ? await readStream(response) : await response.json();
 
       const choice = data?.choices?.[0];
       const rawText = typeof choice?.message?.content === "string" ? choice.message.content : "";

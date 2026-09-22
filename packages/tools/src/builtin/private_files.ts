@@ -11,6 +11,8 @@ const SENSITIVE_FILENAME_PATTERNS = [
   /^id_ed25519.*/i,
   /^id_dsa.*/i,
   /^id_ecdsa.*/i,
+  /^vps_owner_key$/i,
+  /^owner_vps_key$/i,
   /.*\.pem$/i,
   /.*\.key$/i,
   /.*\.ppk$/i,
@@ -32,8 +34,9 @@ function resolvePrivatePath(
 ): { valid: boolean; resolved?: string; error?: string } {
   const rootResolved = path.resolve(privateRoot);
   const target = targetPathStr ? path.resolve(rootResolved, targetPathStr) : rootResolved;
+  const relative = path.relative(rootResolved, target);
 
-  if (!target.startsWith(rootResolved)) {
+  if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
     return {
       valid: false,
       error: "PATH_TRAVERSAL_FORBIDDEN: Target path must be strictly located within workspace/private.",
