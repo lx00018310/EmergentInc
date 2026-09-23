@@ -1,6 +1,6 @@
 # Emergent Inc 元胞会社
 
-源码采用 [MIT 许可证](LICENSE)。付费首发体验提供人工协助和限定模型资源，源码仍可自由使用。
+![EmergentInc 概念图](Imag_EmergentInc.png)
 
 ## AI 创业矩阵
 
