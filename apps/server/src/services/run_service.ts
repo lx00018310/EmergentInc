@@ -63,73 +63,6 @@ export class RunService {
     }
   }
 
-  private exitHandler?: () => void;
-
-  private getLockFilePath(): string | null {
-    if (!this.workspaceRoot) return null;
-    return path.resolve(this.workspaceRoot, ".engine.lock");
-  }
-
-  private isPidRunning(pid: number): boolean {
-    try {
-      process.kill(pid, 0);
-      return true;
-    } catch (e: any) {
-      return e.code === "EPERM";
-    }
-  }
-
-  public acquireWorkspaceLock(runId?: string): void {
-    const lockFile = this.getLockFilePath();
-    if (!lockFile) return;
-
-    if (!this.exitHandler) {
-      this.exitHandler = () => this.releaseWorkspaceLock();
-      process.once("exit", this.exitHandler);
-    }
-
-    if (fs.existsSync(lockFile)) {
-      try {
-        const content = JSON.parse(fs.readFileSync(lockFile, "utf-8"));
-        const existingPid = Number(content.pid);
-        if (existingPid && existingPid !== process.pid && this.isPidRunning(existingPid)) {
-          throw new Error(
-            `WORKSPACE_LOCKED: Workspace is locked by active process ${existingPid} (runId: ${content.runId || "unknown"})`
-          );
-        }
-      } catch (err: any) {
-        if (err.message?.startsWith("WORKSPACE_LOCKED")) {
-          throw err;
-        }
-        // 废弃无主锁，安全接管
-      }
-    }
-
-    const lockData = {
-      pid: process.pid,
-      createdAt: Date.now(),
-      runId: runId || this.currentRunId,
-    };
-    fs.writeFileSync(lockFile, JSON.stringify(lockData, null, 2), "utf-8");
-  }
-
-  public releaseWorkspaceLock(): void {
-    if (this.exitHandler) {
-      process.removeListener("exit", this.exitHandler);
-      this.exitHandler = undefined;
-    }
-    const lockFile = this.getLockFilePath();
-    if (!lockFile) return;
-    try {
-      if (fs.existsSync(lockFile)) {
-        const content = JSON.parse(fs.readFileSync(lockFile, "utf-8"));
-        if (content.pid === process.pid) {
-          fs.unlinkSync(lockFile);
-        }
-      }
-    } catch {}
-  }
-
   public getWorldRound(): number {
     if (!this.workspaceRoot) return 0;
     const worldFile = path.resolve(this.workspaceRoot, "live", "world_state.json");
@@ -176,8 +109,10 @@ export class RunService {
     let resultStatus = "READY";
     if (this.isRunning) {
       resultStatus = "RUNNING";
-    } else if (hasUnfinalized || stopReason === "PAUSED_RECOVERY_REQUIRED") {
+    } else if (hasUnfinalized) {
       resultStatus = "PAUSED_RECOVERY_REQUIRED";
+    } else if (stopReason === "PAUSED_RECOVERY_REQUIRED") {
+      resultStatus = "RECOVERY_RESOLVED";
     } else if (this.hasExecutedRunInProcess && (lastError || stopReason === "INFRASTRUCTURE_FAILURE" || persistedStatus === "FAILED")) {
       // A fresh in-process failure: surface loudly as FAILED until resolved.
       resultStatus = "FAILED";
@@ -233,10 +168,6 @@ export class RunService {
   }
 
   public async start(options: RunStartOptions): Promise<any> {
-    if (this.isRunning) {
-      throw new Error("Run is already in progress.");
-    }
-
     if (!this.isModelConfigured && !this.isMockMode) {
       throw new Error(
         "MODEL_NOT_CONFIGURED: Valid MCL_API_KEY is not configured. Set environment variable or start server with --mock for sandbox testing."
@@ -253,23 +184,39 @@ export class RunService {
       throw new Error("global_budget_tokens must be positive.");
     }
 
-    // 1. 检查是否存在未决操作（悬挂调用、未知结果调用、未决预留）
-    const unfinalized = this.store.getUnfinalizedOperations();
-    if (unfinalized.hasUnfinalized) {
-      this.lastStopReason = "PAUSED_RECOVERY_REQUIRED";
-      throw new Error(
-        `RUN_BLOCKED_UNFINALIZED_OPERATIONS: Detected unfinalized operations in store. Manual confirmation or safe reconciliation required. ` +
-        `Summary: reservations=${unfinalized.unsettledReservations.length}, unknownCalls=${unfinalized.unknownCalls.length}, callingMessages=${unfinalized.callingMessages.length}`
-      );
-    }
-
     const runId = `run_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
-
-    // 2. 工作区排他锁检查与获取
-    this.acquireWorkspaceLock(runId);
     const currentWorldRound = this.getWorldRound();
     const startRound = currentWorldRound + 1;
     const endRound = currentWorldRound + options.rounds;
+
+    // 数据库事务是唯一的 Run 互斥点：检查旧未决状态并创建新 Run 必须原子完成。
+    const genesisPrompt = this.promptService?.getPrompt("genesis_prompt.json");
+    const genesisRevision = genesisPrompt?.revision || 1;
+    this.store.transaction(() => {
+      const unfinalized = this.store.getUnfinalizedOperations();
+      if (unfinalized.hasUnfinalized) {
+        this.lastStopReason = "PAUSED_RECOVERY_REQUIRED";
+        throw new Error(
+          `RUN_BLOCKED_UNFINALIZED_OPERATIONS: Detected unfinalized operations in store. Manual confirmation or safe reconciliation required. ` +
+          `Summary: reservations=${unfinalized.unsettledReservations.length}, unknownCalls=${unfinalized.unknownCalls.length}, callingMessages=${unfinalized.callingMessages.length}`
+        );
+      }
+      this.store.runs.createRun({
+        run_id: runId,
+        start_round: startRound,
+        end_round: endRound,
+        run_limit: options.runBudgetTokens,
+        run_spent: 0,
+        run_reserved: 0,
+        global_limit: options.globalBudgetTokens,
+        global_spent: 0,
+        global_reserved: 0,
+        genesis_revision: genesisRevision,
+        status: "RUNNING",
+        created_at: Date.now() / 1000,
+      });
+      this.store.messages.resetWaitingRunBudgetMessages();
+    });
 
     this.currentRunId = runId;
     this.isRunning = true;
@@ -283,29 +230,6 @@ export class RunService {
     this.errorCode = null;
     this.errorPhase = null;
     this.abortController = new AbortController();
-
-    // 读取创世提示词真实版本
-    const genesisPrompt = this.promptService?.getPrompt("genesis_prompt.json");
-    const genesisRevision = genesisPrompt?.revision || 1;
-
-    // 记录 Run 实体
-    this.store.runs.createRun({
-      run_id: runId,
-      start_round: startRound,
-      end_round: endRound,
-      run_limit: options.runBudgetTokens,
-      run_spent: 0,
-      run_reserved: 0,
-      global_limit: options.globalBudgetTokens,
-      global_spent: 0,
-      global_reserved: 0,
-      genesis_revision: genesisRevision,
-      status: "RUNNING",
-      created_at: Date.now() / 1000,
-    });
-
-    // 尝试激活上一轮因 Run 预算等待的消息
-    this.store.messages.resetWaitingRunBudgetMessages();
 
     // Control-plane rounds never enqueue agent messages; use per-Pixel Mandate.
 
@@ -409,7 +333,6 @@ export class RunService {
       // Marks that this process has executed a run loop, so status reporting can
       // tell a fresh in-process failure apart from a restarted historical record.
       this.hasExecutedRunInProcess = true;
-      this.releaseWorkspaceLock();
     }
   }
 }

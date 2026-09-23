@@ -74,7 +74,7 @@ curl -X POST http://127.0.0.1:8765/api/pixels/0_0_0/reward \
 ```bash
 curl http://127.0.0.1:8765/api/genesis-prompt     # 创世提示词（GET/PUT）
 curl http://127.0.0.1:8765/api/temporary-prompt   # 临时初速度（GET/PUT）
-curl http://127.0.0.1:8765/api/tools             # 当前真正注册的工具
+curl http://127.0.0.1:8765/api/tools             # 所有工具及有效 enabled 状态
 ```
 
 这些提示词有保存接口，但当前运行主链不据此注入新任务。本次首发以已接入的 Human Mandate 为准。
@@ -83,7 +83,7 @@ curl http://127.0.0.1:8765/api/tools             # 当前真正注册的工具
 
 凭据保存在 `workspace/private/`，不提交 Git。Pixel 通过 `read_private_file` 工具访问受控资料，敏感 profile 只返回脱敏投影，私钥拒绝返回原文；不要依赖文件扩展名代替权限检查。管理 API 的 private-files preview 只预览图片，不等同于 Pixel 文本工具。
 
-VPS 文件工具的准入依据是启动时的本地配置检查；它不证明 SSH 已连接。`tools.json` 只能收窄已注册工具。以实际工具回执区分认证失败、目录不存在和 `PATH_OUT_OF_SCOPE`；本次 /var/www 已经 SSH 认证成功，原认证阻塞提醒过时。站点初始化由管理员工具完成，不能写成 Pixel 自主部署。
+工具授权只在 `workspace/private/tools.json` 的 `enabled` 配置中决定；VPS 工具默认禁用。启用只代表允许调用，不证明 SSH 已连接。以实际工具回执区分认证失败、目录不存在和 `PATH_OUT_OF_SCOPE`；站点初始化由管理员工具完成，不能写成 Pixel 自主部署。
 
 ## 8. 不要做的事
 

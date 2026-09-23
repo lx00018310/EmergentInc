@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { FastifyInstance } from "fastify";
 import { createServer } from "../src/app.js";
 import { CoreStore } from "@emergentinc/persistence";
@@ -116,17 +116,21 @@ describe("Server: API Contract Integration Tests", () => {
     expect(statusRes.statusCode).toBe(200);
     expect(statusRes.json().running).toBe(false);
 
-    // 2. 模拟正在运行时的并发冲突 409
-    // 手动将 runService 状态设为运行中测试互斥拒绝
-    (runService as any).isRunning = true;
+    // 2. 数据库中已有运行中的 Run 时由唯一互斥入口拒绝
+    store.runs.createRun({
+      run_id: "existing_run", start_round: 6, end_round: 6,
+      run_limit: 1000, run_spent: 0, run_reserved: 0,
+      global_limit: 10000, global_spent: 0, global_reserved: 0,
+      genesis_revision: 1, status: "RUNNING", created_at: Date.now() / 1000,
+    });
     const conflictRes = await app.inject({
       method: "POST",
       url: "/api/run/start",
       payload: { rounds: 1, run_budget_tokens: 1000, global_budget_tokens: 10000 },
     });
     expect(conflictRes.statusCode).toBe(409);
-    expect(conflictRes.json().detail).toContain("already in progress");
-    (runService as any).isRunning = false;
+    expect(conflictRes.json().detail).toContain("RUN_BLOCKED_UNFINALIZED_OPERATIONS");
+    store.runs.updateRunStatus("existing_run", "STOPPED", "USER_STOPPED");
 
     // 3. 正常发起 Run
     const startRes = await app.inject({
@@ -166,18 +170,19 @@ describe("Server: API Contract Integration Tests", () => {
     expect(postRes.json().status).toBe("UPDATED");
   });
 
-  it("should only list actually executable tools via /api/tools", async () => {
+  it("lists all tools and their effective authorization in /api/tools", async () => {
     const res = await app.inject({
       method: "GET",
       url: "/api/tools",
     });
     expect(res.statusCode).toBe(200);
     const tools = res.json().tools;
-    expect(tools).toHaveLength(7);
+    expect(tools).toHaveLength(15);
     expect(tools.map((t: any) => t.name)).toContain("save_artifact");
     expect(tools.map((t: any) => t.name)).toContain("transfer_artifact");
-    // Unimplemented VPS tools must not be advertised as available capability (T1-4).
-    expect(tools.map((t: any) => t.name)).not.toContain("vps_exec");
+    expect(tools.map((t: any) => t.name)).toContain("webfetch");
+    expect(tools.map((t: any) => t.name)).toContain("github_repo");
+    expect(tools.find((t: any) => t.name === "vps_exec")?.enabled).toBe(false);
   });
 
   it("should support Human Mandate and External Reward APIs", async () => {
@@ -411,33 +416,65 @@ describe("Server: API Contract Integration Tests", () => {
     expect(healedStatus.statusCode).toBe(200);
     expect(healedStatus.json().result_status).toBe("PAUSED_RECOVERY_REQUIRED");
     expect(healedStatus.json().unfinalized_operations).toBeDefined();
+
+    store.resolveRecoveryOperation({ kind: "model", id: "call_hanging_test", decision: "confirm_not_billed" });
+    const resolvedStatus = await app.inject({ method: "GET", url: "/api/run/status" });
+    expect(resolvedStatus.json().result_status).toBe("RECOVERY_RESOLVED");
+    const audit = await app.inject({ method: "GET", url: "/api/audit/workspace" });
+    expect(audit.json().allowed_to_start).toBe(true);
   });
 
-  it("should block concurrent run start on same workspace with WORKSPACE_LOCKED (409)", async () => {
-    // 创建锁文件，记录当前进程之外的活跃进程 PID
-    const lockFile = path.join(tmpDir, ".engine.lock");
-    fs.writeFileSync(
-      lockFile,
-      JSON.stringify({ pid: process.pid, createdAt: Date.now(), runId: "other_run" }),
-      "utf-8"
-    );
+  it("rolls back a failed start without leaving an in-memory or database lock", async () => {
+    const failOnce = vi.spyOn(store.messages, "resetWaitingRunBudgetMessages")
+      .mockImplementationOnce(() => { throw new Error("startup failed"); });
+    const service = new RunService({
+      workspaceRoot: tmpDir, store,
+      scheduler: { executeRound: async () => ({ round: 6, messagesProcessed: 0, activePixelsCount: 0 }) } as any,
+      isMockMode: true, isModelConfigured: true,
+    });
+    try {
+      await expect(service.start({ rounds: 1, runBudgetTokens: 1000, globalBudgetTokens: 10000 }))
+        .rejects.toThrow("startup failed");
+      expect(store.getUnfinalizedOperations().hasUnfinalized).toBe(false);
+      expect(service.getStatus().running).toBe(false);
+      expect(fs.existsSync(path.join(tmpDir, ".engine.lock"))).toBe(false);
+    } finally {
+      failOnce.mockRestore();
+    }
+  });
 
-    // 尝试用一个伪造的外部活跃 PID 测试互斥
-    // 使用当前进程自身时会放行（幂等），我们修改为 1（init 进程在 Unix/Windows 宿主几乎常驻）或当前 PID
-    // 验证 acquireWorkspaceLock 方法逻辑
-    expect(() => {
-      // 模拟另外一个进程持锁
-      fs.writeFileSync(
-        lockFile,
-        JSON.stringify({ pid: 9999999, createdAt: Date.now(), runId: "dead_run" }),
-        "utf-8"
-      );
-      // 僵尸锁应该被自动接管（不抛出）
-      runService.acquireWorkspaceLock("takeover_run");
-    }).not.toThrow();
-
-    // 释放锁
-    runService.releaseWorkspaceLock();
+  it("uses the database to exclude a second RunService on the same workspace", async () => {
+    const dbPath = path.join(tmpDir, "shared.sqlite3");
+    const firstStore = new CoreStore(dbPath);
+    const secondStore = new CoreStore(dbPath);
+    let releaseRound!: () => void;
+    const waitingRound = new Promise<void>((resolve) => { releaseRound = resolve; });
+    const first = new RunService({
+      workspaceRoot: tmpDir, store: firstStore,
+      scheduler: { executeRound: async () => {
+        await waitingRound;
+        return { round: 6, messagesProcessed: 0, activePixelsCount: 0 };
+      } } as any,
+      isMockMode: true, isModelConfigured: true,
+    });
+    const second = new RunService({
+      workspaceRoot: tmpDir, store: secondStore,
+      scheduler: { executeRound: async () => ({ round: 6, messagesProcessed: 0, activePixelsCount: 0 }) } as any,
+      isMockMode: true, isModelConfigured: true,
+    });
+    try {
+      await first.start({ rounds: 1, runBudgetTokens: 1000, globalBudgetTokens: 10000 });
+      await expect(second.start({ rounds: 1, runBudgetTokens: 1000, globalBudgetTokens: 10000 }))
+        .rejects.toThrow("RUN_BLOCKED_UNFINALIZED_OPERATIONS");
+      expect(fs.existsSync(path.join(tmpDir, ".engine.lock"))).toBe(false);
+    } finally {
+      releaseRound();
+      for (let i = 0; first.getStatus().running && i < 20; i++) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      firstStore.close();
+      secondStore.close();
+    }
   });
 
   it("should not advance world round when execution fails mid-way and unify terminal status as FAILED", async () => {

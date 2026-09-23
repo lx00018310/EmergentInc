@@ -75,6 +75,26 @@ describe("Persistence: CoreStore & Repositories", () => {
     expect(store.getUnfinalizedOperations().callingMessages).toHaveLength(0);
   });
 
+  it("surfaces a claimed PROCESSING message for explicit recovery", () => {
+    const msg = store.messages.enqueueMessage({ sender: "system", recipient: "p", content: "test", roundNum: 1 });
+    expect(store.messages.claimNext(1)?.status).toBe("PROCESSING");
+    expect(store.getUnfinalizedOperations().callingMessages.map((m) => m.messageId)).toContain(msg.messageId);
+    expect(store.messages.claimNext(1)).toBeNull();
+    store.resolveRecoveryOperation({ kind: "message", id: msg.messageId, decision: "confirm_not_billed" });
+    expect(store.getUnfinalizedOperations().hasUnfinalized).toBe(false);
+    expect(store.messages.claimNext(1)?.messageId).toBe(msg.messageId);
+  });
+
+  it("keeps an orphaned settlement message blocked until an explicit decision", () => {
+    const msg = store.messages.enqueueMessage({ sender: "system", recipient: "p", content: "test", roundNum: 1 });
+    store.messages.updateStatus(msg.messageId, "AWAITING_SETTLEMENT");
+    expect(store.getUnfinalizedOperations().callingMessages.map((m) => m.messageId)).toContain(msg.messageId);
+    expect(() => store.resolveRecoveryOperation({ kind: "message", id: msg.messageId, decision: "confirm_not_billed" }))
+      .toThrow("cannot be retried as unsent");
+    store.resolveRecoveryOperation({ kind: "message", id: msg.messageId, decision: "abandon" });
+    expect(store.getUnfinalizedOperations().hasUnfinalized).toBe(false);
+  });
+
   it("applies an external reward exactly once per idempotency key and rejects key reuse with different payload", () => {
     store.pixels.upsertPixelAccount({ pixelId: "p", energy: 0, active: true, refundDeficitTokens: 0, spendBlockedReason: null });
     const first = store.applyExternalReward({ pixelId: "p", amount: 50, idempotencyKey: "key-1", reason: "bonus" });

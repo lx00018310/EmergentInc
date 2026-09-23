@@ -81,7 +81,7 @@ EmergentInc元胞会社/
 │  ├─ domain/                   # 纯领域规则（3D 拓扑、能量守恒、繁殖、路由）
 │  ├─ persistence/              # SQLite 单一事实源与事务 Repository
 │  ├─ model/                    # Prompt 组装、OpenAI 兼容适配器、用量计费
-│  ├─ tools/                    # 内置工具运行时（artifact 读写转移、私有文件）
+│  ├─ tools/                    # 内置工具运行时（artifact、私有文件、网页、GitHub、VPS）
 │  └─ runtime/                  # RoundScheduler / AgentStepRunner / EffectRuntime
 ├─ frontend/                    # React + TypeScript + Vite 控制台
 ├─ resources/
@@ -95,7 +95,7 @@ EmergentInc元胞会社/
 └─ package.json                 # pnpm workspace 根
 ```
 
-VPS 文件工具由系统 OpenSSH 客户端执行。启动时的离线探测 `probeVpsAvailability()` 只检查配置、密钥文件是否存在及 `allowed_operations`；`private/tools.json` 只能进一步收窄。启动日志和 `GET /api/tools` 只能证明工具已注册；远端认证、路径和读写能力必须以实际调用回执为准。默认不提供任意远端 shell。
+所有内置工具始终注册，`workspace/private/tools.json` 的 `enabled` 是唯一的工具授权配置；未配置的 VPS 工具默认禁用。`GET /api/tools` 显示每个工具的有效状态。VPS 工具由系统 OpenSSH 客户端执行；凭据、远端路径和读写能力以实际调用回执为准。`vps_exec` 启用后可执行任意远端命令。`webfetch` 可只读抓取公开网页；`github_repo` 可只读查看公开 GitHub 仓库的目录和文本文件。
 
 ---
 

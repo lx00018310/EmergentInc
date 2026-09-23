@@ -43,11 +43,9 @@ export class ToolRuntime {
       controller.abort(new Error("TOOL_EXECUTION_TIMEOUT"));
     }, timeoutMs);
 
-    if (ctx.signal) {
-      ctx.signal.addEventListener("abort", () => {
-        controller.abort(ctx.signal?.reason);
-      });
-    }
+    const onAbort = () => controller.abort(ctx.signal?.reason);
+    if (ctx.signal?.aborted) onAbort();
+    else ctx.signal?.addEventListener("abort", onAbort);
 
     const wrappedCtx: ToolContext = {
       ...ctx,
@@ -56,11 +54,9 @@ export class ToolRuntime {
 
     try {
       const result = await registered.handler(args, wrappedCtx);
-      clearTimeout(timeoutId);
       result.duration_ms = Date.now() - startTime;
       return result;
     } catch (err: any) {
-      clearTimeout(timeoutId);
       const durationMs = Date.now() - startTime;
 
       if (controller.signal.aborted) {
@@ -95,6 +91,9 @@ export class ToolRuntime {
         duration_ms: durationMs,
         truncated: false,
       };
+    } finally {
+      clearTimeout(timeoutId);
+      ctx.signal?.removeEventListener("abort", onAbort);
     }
   }
 }

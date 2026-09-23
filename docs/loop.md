@@ -4,9 +4,9 @@
 
 ## Run 启动
 
-1. 取 `workspace/.engine.lock`，同一时刻只允许一个 Run。
-2. 检查是否存在未决操作（OPEN `reservations`、`CALLING` 消息、未结算 `tool_executions`、`PENDING` run）；存在则拒绝启动，返回 `RECOVERY_REQUIRED`。
-3. 起始轮 = `live/world_state.json.round + 1`，在 `runs` 表登记本次 Run。
+1. 在同一 SQLite 写事务中检查未决操作并登记新 Run；旧 `RUNNING` Run、OPEN `reservations`、领取后未提交的消息或 `STARTED` 工具会阻止启动。
+2. 未决操作需要按恢复流程处理，不能通过重启绕过。
+3. 起始轮 = `live/world_state.json.round + 1`。
 
 ## 每个 Round
 

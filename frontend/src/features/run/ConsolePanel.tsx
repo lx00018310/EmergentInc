@@ -32,14 +32,10 @@ export const ConsolePanel: React.FC<ConsolePanelProps> = ({
     }
   }, [messages, expanded]);
 
-  const hasUnfinalizedOps = Boolean(runStatus?.unfinalized_operations);
   const isRecoveryRequired =
     !hideRecoveryAlert &&
     !runStatus?.running &&
-    (Boolean(audit?.recovery_required) ||
-      runStatus?.result_status === 'RECOVERY_REQUIRED' ||
-      runStatus?.result_status === 'PAUSED_RECOVERY_REQUIRED' ||
-      hasUnfinalizedOps);
+    Boolean(runStatus?.unfinalized_operations);
 
   const blockReasons: string[] = [...(audit?.block_reasons ?? [])];
   if (blockReasons.length === 0 && runStatus?.unfinalized_operations) {
@@ -102,7 +98,7 @@ export const ConsolePanel: React.FC<ConsolePanelProps> = ({
         </div>
       )}
 
-      {!runStatus?.running && (runStatus?.result_status === 'FAILED' || runStatus?.last_error) && <p role="alert">
+      {!runStatus?.running && runStatus?.result_status === 'FAILED' && <p role="alert">
         {runStatus.result_status}: {runStatus.stop_reason} {runStatus.error_code} {runStatus.error_summary ?? runStatus.last_error}
       </p>}
       <div className="console-toggle" onClick={() => setExpanded((v) => !v)} role="button">

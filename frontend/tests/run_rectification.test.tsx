@@ -7,7 +7,7 @@ import { ToolExecutionHistory } from '../src/features/tools/ToolExecutionHistory
 import type { RunStatusDto, WorldDto } from '../src/api/types';
 import * as runApi from '../src/api/run';
 
-vi.mock('../src/api/run', () => ({ resolveRecovery: vi.fn() }));
+vi.mock('../src/api/run', () => ({ resolveRecovery: vi.fn(), fetchRunStatus: vi.fn() }));
 
 const baseStatus: RunStatusDto = {
   running: false, requested_rounds: 1, completed_rounds: 0, messages_processed: 0,
@@ -26,8 +26,14 @@ describe('V11 status truthfulness', () => {
   });
 
   it('unfinalized operations force RECOVERY REQUIRED regardless of other flags', () => {
-    render(<RunStatus world={null} runStatus={{ ...baseStatus, result_status: 'PAUSED_RECOVERY_REQUIRED', stop_reason: 'PAUSED_RECOVERY_REQUIRED', last_error: null }} audit={null} />);
+    render(<RunStatus world={null} runStatus={{ ...baseStatus, result_status: 'PAUSED_RECOVERY_REQUIRED', stop_reason: 'PAUSED_RECOVERY_REQUIRED', last_error: null, unfinalized_operations: { hasUnfinalized: true, pendingRuns: ['run_x'] } }} audit={null} />);
     expect(screen.getByText('RECOVERY REQUIRED')).toBeDefined();
+  });
+
+  it('shows recovery resolved after pending operations are cleared despite the historical error', () => {
+    render(<RunStatus world={null} runStatus={{ ...baseStatus, result_status: 'RECOVERY_RESOLVED' }} audit={null} />);
+    expect(screen.queryByText('RECOVERY REQUIRED')).toBeNull();
+    expect(screen.queryByText('FAILED')).toBeNull();
   });
 
   it('exposes error_code and error_summary through the status DTO', () => {
@@ -88,6 +94,7 @@ describe('per-item recovery decisions', () => {
 
   it('supports batch actions: 全部通过 and 全部拒绝', async () => {
     vi.mocked(runApi.resolveRecovery).mockResolvedValue({});
+    vi.mocked(runApi.fetchRunStatus).mockResolvedValue(status);
     const onRefresh = vi.fn().mockResolvedValue(undefined);
     render(<RecoveryOperations status={status} onRefresh={onRefresh} />);
 
@@ -96,6 +103,39 @@ describe('per-item recovery decisions', () => {
     fireEvent.click(batchApprove);
     await waitFor(() => expect(runApi.resolveRecovery).toHaveBeenCalledTimes(4));
     expect(onRefresh).toHaveBeenCalled();
+  });
+
+  it('skips a message already resolved with its model call during batch recovery', async () => {
+    const linkedStatus: RunStatusDto = {
+      ...status,
+      unfinalized_operations: {
+        hasUnfinalized: true,
+        unknownCalls: [{ callId: 'call-linked', messageId: 'msg-linked', outcome: 'CALL_OUTCOME_UNKNOWN', createdAt: 1 }],
+        callingMessages: [{ messageId: 'msg-linked', status: 'CALL_OUTCOME_UNKNOWN', updatedAt: 1 }],
+      },
+    };
+    vi.mocked(runApi.resolveRecovery).mockResolvedValue({});
+    vi.mocked(runApi.fetchRunStatus)
+      .mockResolvedValueOnce(linkedStatus)
+      .mockResolvedValueOnce({ ...linkedStatus, unfinalized_operations: { hasUnfinalized: false } });
+    render(<RecoveryOperations status={linkedStatus} onRefresh={vi.fn().mockResolvedValue(undefined)} />);
+    fireEvent.click(screen.getByRole('button', { name: '全部通过' }));
+    await waitFor(() => expect(runApi.fetchRunStatus).toHaveBeenCalledTimes(2));
+    expect(runApi.resolveRecovery).toHaveBeenCalledTimes(1);
+    expect(runApi.resolveRecovery).toHaveBeenCalledWith(expect.objectContaining({ kind: 'model', id: 'call-linked' }));
+  });
+
+  it('does not offer an unbilled retry for a message awaiting settlement', () => {
+    const waitingStatus: RunStatusDto = {
+      ...status,
+      unfinalized_operations: {
+        hasUnfinalized: true,
+        callingMessages: [{ messageId: 'msg-settlement', status: 'AWAITING_SETTLEMENT', updatedAt: 1 }],
+      },
+    };
+    render(<RecoveryOperations status={waitingStatus} onRefresh={vi.fn()} />);
+    expect(screen.getByRole('button', { name: '通过' }).hasAttribute('disabled')).toBe(true);
+    expect(screen.getByRole('button', { name: '拒绝' }).hasAttribute('disabled')).toBe(false);
   });
 
   it('lists callingMessages and allows submitting message recovery decision with 通过 / 拒绝', async () => {

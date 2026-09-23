@@ -3,7 +3,6 @@ import {
   ToolRegistry,
   ToolRuntime,
   registerAllBuiltinTools,
-  probeVpsAvailability,
   ToolContext,
 } from "../src/index.js";
 import * as fs from "node:fs";
@@ -17,20 +16,23 @@ describe("Tools: Registry & Manifest Baseline", () => {
   );
   const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf-8"));
 
-  it("should register only available native builtin tools", () => {
+  it("registers every builtin and disables VPS tools by default", () => {
     const registry = new ToolRegistry();
     registerAllBuiltinTools(registry);
 
     const registered = registry.listDefinitions();
-    expect(registered).toHaveLength(7);
+    expect(registered).toHaveLength(15);
 
     const registeredNames = registered.map((r) => r.name);
-    for (const item of manifest.filter((item: any) => !item.name.startsWith("vps_"))) {
+    for (const item of manifest) {
       expect(registeredNames).toContain(item.name);
       const def = registry.get(item.name)?.definition;
       expect(def?.effect).toBe(item.effect);
     }
     expect(registeredNames).toContain("transfer_artifact");
+    expect(registeredNames).toContain("webfetch");
+    expect(registeredNames).toContain("github_repo");
+    expect(registry.get("vps_exec")?.definition.enabled).toBe(false);
   });
 });
 
@@ -288,16 +290,16 @@ describe("Tools: VPS Execution & Prompt Catalog", () => {
   it("should fail gracefully when VPS profile/credentials are missing, without forging SUCCESS", async () => {
     const res = await runtime.execute("vps_exec", { command: "ls -la" }, ctx);
     expect(res.status).toBe("FAILED");
-    expect(res.error_code).toBe("TOOL_NOT_FOUND");
+    expect(res.error_code).toBe("TOOL_DISABLED");
   });
 
   it("should reject vps_exec when command is empty", async () => {
     const res = await runtime.execute("vps_exec", { command: "" }, ctx);
     expect(res.status).toBe("FAILED");
-    expect(res.error_code).toBe("TOOL_NOT_FOUND");
+    expect(res.error_code).toBe("TOOL_DISABLED");
   });
 
-  it("should not expose unimplemented VPS tools even with a mock context", async () => {
+  it("should not bypass a disabled tool with a mock context", async () => {
     const mockCtx: ToolContext = {
       ...ctx,
       mockVpsHandler: (tool, args) => ({
@@ -307,33 +309,25 @@ describe("Tools: VPS Execution & Prompt Catalog", () => {
     };
     const res = await runtime.execute("vps_exec", { command: "uname -a" }, mockCtx);
     expect(res.status).toBe("FAILED");
-    expect(res.error_code).toBe("TOOL_NOT_FOUND");
+    expect(res.error_code).toBe("TOOL_DISABLED");
   });
 
-  it("should correctly render prompt catalog and respect tools.json config overrides", () => {
+  it("uses the one registration policy for the prompt catalog", () => {
     const initialCatalog = registry.renderCatalogForPrompt();
     expect(initialCatalog).toContain("- **`save_artifact`** (write):");
     expect(initialCatalog).not.toContain("vps_");
 
-    // 禁用 vps_exec
-    registry.applyConfigOverrides({
-      tools: {
-        vps_exec: { enabled: true },
-        vps_read_file: { enabled: true },
-        vps_write_file: { enabled: true },
-        vps_upload_file: { enabled: true },
-        vps_download_file: { enabled: true },
-        vps_list_files: { enabled: true },
-      },
-    });
+    const configured = new ToolRegistry();
+    registerAllBuiltinTools(configured, { vps_exec: { enabled: true } });
 
-    const updatedCatalog = registry.renderCatalogForPrompt();
-    expect(updatedCatalog).not.toContain("- **`vps_exec`**");
+    const updatedCatalog = configured.renderCatalogForPrompt();
+    expect(updatedCatalog).toContain("- **`vps_exec`**");
+    expect(updatedCatalog).not.toContain("- **`vps_read_file`**");
     expect(updatedCatalog).toContain("- **`save_artifact`**");
   });
 
   it("should validate configured vps_list_files without contacting a remote host", async () => {
-    registerAllBuiltinTools(registry, undefined, { vpsListFilesAvailable: true });
+    registerAllBuiltinTools(registry, { vps_list_files: { enabled: true } });
     // 1. 空路径校验
     const emptyRes = await runtime.execute("vps_list_files", { path: "" }, ctx);
     expect(emptyRes.status).toBe("FAILED");
@@ -369,7 +363,7 @@ describe("Tools: VPS Execution & Prompt Catalog", () => {
   });
 });
 
-describe("Tools: VPS Native Adapters (offline gates, no socket is opened)", () => {
+describe("Tools: VPS Native Adapters (single permission gate, no socket is opened)", () => {
   let tmpDir: string;
   let keyPath: string;
 
@@ -392,7 +386,7 @@ describe("Tools: VPS Native Adapters (offline gates, no socket is opened)", () =
 
   const runtimeWith = (tools: string[]) => {
     const registry = new ToolRegistry();
-    registerAllBuiltinTools(registry, undefined, { vpsAvailableTools: tools });
+    registerAllBuiltinTools(registry, Object.fromEntries(tools.map((name) => [name, { enabled: true }])));
     return new ToolRuntime(registry);
   };
 
@@ -404,17 +398,18 @@ describe("Tools: VPS Native Adapters (offline gates, no socket is opened)", () =
     fs.writeFileSync(keyPath, "dummy-private-key-material", "utf-8");
   });
 
-  it("reports an unusable probe when no profile exists", () => {
-    const probe = probeVpsAvailability(tmpDir);
-    expect(probe.tools).toEqual([]);
-    expect(probe.reason).toContain("owner_vps_profile.json");
+  it("keeps VPS tools disabled unless explicitly configured", async () => {
+    const registry = new ToolRegistry();
+    registerAllBuiltinTools(registry);
+    expect(registry.renderCatalogForPrompt()).not.toContain("- **`vps_exec`**");
+    const disabled = await new ToolRuntime(registry).execute("vps_exec", { command: "pwd" }, baseCtx());
+    expect(disabled.error_code).toBe("TOOL_DISABLED");
+    const enabled = await runtimeWith(["vps_exec"]).execute("vps_exec", { command: "pwd" }, baseCtx());
+    expect(enabled.error_code).toBe("CAPABILITY_UNAVAILABLE");
   });
 
   it("rejects password-only credentials with an actionable reason instead of pretending to work", async () => {
-    writeProfile({ host: "203.0.113.9", username: "root", password: "unused-in-test", allowed_operations: ["ssh_exec"] });
-    const probe = probeVpsAvailability(tmpDir);
-    expect(probe.tools).toEqual([]);
-    expect(probe.reason).toContain("password auth");
+    writeProfile({ host: "203.0.113.9", username: "root", password: "unused-in-test" });
 
     const res = await runtimeWith(["vps_exec"]).execute(
       "vps_exec",
@@ -426,24 +421,19 @@ describe("Tools: VPS Native Adapters (offline gates, no socket is opened)", () =
     expect(res.error_message).toContain("key_path");
   });
 
-  it("narrows advertised tools to the profile's allowed_operations", () => {
+  it("advertises only tools enabled by the one configuration", () => {
     writeProfile({
       host: "203.0.113.9",
       username: "root",
       key_path: keyPath,
-      allowed_operations: ["ssh_list_files", "ssh_read_file"],
     });
-    const probe = probeVpsAvailability(tmpDir);
-    expect(probe.tools).toEqual(["vps_list_files", "vps_read_file"]);
-    expect(probe.reason).toBeNull();
-
     const registry = new ToolRegistry();
-    registerAllBuiltinTools(registry, undefined, { vpsAvailableTools: probe.tools });
+    registerAllBuiltinTools(registry, { vps_list_files: { enabled: true }, vps_read_file: { enabled: true } });
     const catalog = registry.renderCatalogForPrompt();
     expect(catalog).toContain("- **`vps_list_files`**");
     expect(catalog).toContain("- **`vps_read_file`**");
     expect(catalog).not.toContain("- **`vps_exec`**");
-    expect(registry.listDefinitions()).toHaveLength(9);
+    expect(registry.listDefinitions()).toHaveLength(15);
   });
 
   it("reports AUTH_KEY_NOT_FOUND before touching the transport", async () => {
@@ -460,25 +450,22 @@ describe("Tools: VPS Native Adapters (offline gates, no socket is opened)", () =
     expect(res.error_code).toBe("AUTH_KEY_NOT_FOUND");
   });
 
-  it("denies operations the owner did not allow and paths outside remote_root", async () => {
+  it("denies disabled operations and paths outside remote_root", async () => {
     writeProfile({
       host: "203.0.113.9",
       username: "root",
       key_path: keyPath,
-      allowed_operations: ["ssh_list_files", "ssh_read_file", "ssh_write_file"],
       remote_root: "/srv/www",
     });
     const runtime = runtimeWith([
       "vps_list_files",
       "vps_read_file",
       "vps_write_file",
-      "vps_exec",
     ]);
 
     const notAllowed = await runtime.execute("vps_exec", { command: "id" }, baseCtx());
     expect(notAllowed.status).toBe("FAILED");
-    expect(notAllowed.error_code).toBe("OPERATION_NOT_ALLOWED");
-    expect(notAllowed.error_message).toContain("ssh_exec");
+    expect(notAllowed.error_code).toBe("TOOL_DISABLED");
 
     const outOfScope = await runtime.execute(
       "vps_read_file",

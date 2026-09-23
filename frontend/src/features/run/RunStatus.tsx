@@ -27,14 +27,10 @@ export const RunStatus: React.FC<RunStatusProps> = ({ world, runStatus, audit, o
   if (runStatus?.running) {
     systemHealth = 'RUNNING';
     systemHealthColor = 'var(--accent-blue)';
-  } else if (
-    audit?.recovery_required ||
-    runStatus?.result_status === 'RECOVERY_REQUIRED' ||
-    runStatus?.result_status === 'PAUSED_RECOVERY_REQUIRED'
-  ) {
+  } else if (runStatus?.unfinalized_operations) {
     systemHealth = 'RECOVERY REQUIRED';
     systemHealthColor = 'var(--accent-red)';
-  } else if (runStatus?.result_status === 'FAILED' || runStatus?.last_error) {
+  } else if (runStatus?.result_status === 'FAILED') {
     systemHealth = 'FAILED';
     systemHealthColor = 'var(--accent-red)';
   } else if (runStatus?.result_status === 'STOPPED') {

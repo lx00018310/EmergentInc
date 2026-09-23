@@ -244,15 +244,6 @@ export class RoundScheduler {
     };
   }
 
-  private static readonly READ_ONLY_TOOLS = new Set([
-    "list_artifacts",
-    "read_artifact",
-    "list_private_files",
-    "read_private_file",
-    "vps_list_files",
-    "vps_read_file",
-  ]);
-
   private readOnlyStreaks: Map<string, { count: number; lastOpHash: string }> = new Map();
 
   private detectReadOnlyLoop(message: any, decision: any): boolean {
@@ -265,7 +256,7 @@ export class RoundScheduler {
       Array.isArray(decision.send_to) &&
       decision.send_to.some((t: string) => t !== "SELF" && t !== "STOP" && t !== pixelId);
     const operations = Array.isArray(decision.operations) ? decision.operations : [];
-    const hasWriteTools = operations.some((op: any) => !RoundScheduler.READ_ONLY_TOOLS.has(op.tool));
+    const hasWriteTools = operations.some((op: any) => !this.stepRunner.isReadOnlyTool(op.tool));
 
     const isPureReadOnly =
       !hasEnergyTransfer &&

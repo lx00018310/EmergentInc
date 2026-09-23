@@ -1,6 +1,25 @@
 import { useState } from 'react';
 import type { RunStatusDto } from '../../api/types';
-import { resolveRecovery, type RecoveryKind, type RecoveryDecision } from '../../api/run';
+import { fetchRunStatus, resolveRecovery, type RecoveryKind, type RecoveryDecision } from '../../api/run';
+
+type RecoveryItem = { kind: RecoveryKind; id: string; status?: string };
+
+function findPendingItem(status: RunStatusDto, item: RecoveryItem): RecoveryItem | null {
+  const ops = status.unfinalized_operations;
+  if (!ops) return null;
+  switch (item.kind) {
+    case 'model':
+      return [...(ops.unsettledReservations ?? []), ...(ops.unknownCalls ?? [])].some(call => call.callId === item.id) ? item : null;
+    case 'tool':
+      return ops.startedToolExecutions?.includes(item.id) ? item : null;
+    case 'run':
+      return ops.pendingRuns?.includes(item.id) ? item : null;
+    case 'message': {
+      const message = ops.callingMessages?.find(msg => msg.messageId === item.id);
+      return message ? { ...item, status: message.status } : null;
+    }
+  }
+}
 
 export function RecoveryOperations({
   status,
@@ -39,7 +58,7 @@ export function RecoveryOperations({
   }
 
   // 整理待审批项目
-  const items = new Map<string, { kind: RecoveryKind; id: string }>();
+  const items = new Map<string, RecoveryItem>();
   for (const call of [...(ops?.unsettledReservations ?? []), ...(ops?.unknownCalls ?? [])]) {
     items.set(`model:${call.callId}`, { kind: 'model', id: call.callId });
   }
@@ -50,11 +69,15 @@ export function RecoveryOperations({
     items.set(`run:${id}`, { kind: 'run', id });
   }
   for (const msg of ops?.callingMessages ?? []) {
-    items.set(`message:${msg.messageId}`, { kind: 'message', id: msg.messageId });
+    items.set(`message:${msg.messageId}`, { kind: 'message', id: msg.messageId, status: msg.status });
   }
 
   // 单项决议：通过或拒绝
-  const resolveItem = async (kind: RecoveryKind, id: string, action: 'approve' | 'reject') => {
+  const resolveItem = async (item: RecoveryItem, action: 'approve' | 'reject') => {
+    const { kind, id } = item;
+    if (kind === 'message' && item.status === 'AWAITING_SETTLEMENT' && action === 'approve') {
+      throw new Error('该消息等待模型结算，无法确认未计费后重试；请先处理关联模型调用，或选择放弃消息。');
+    }
     let decision: RecoveryDecision;
     if (action === 'approve') {
       decision = kind === 'tool' || kind === 'run' ? 'acknowledge' : 'confirm_not_billed';
@@ -75,7 +98,7 @@ export function RecoveryOperations({
     setBusy(true);
     setError('');
     try {
-      await resolveItem(kind, id, action);
+      await resolveItem(items.get(`${kind}:${id}`) ?? { kind, id }, action);
       await onRefresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -90,13 +113,19 @@ export function RecoveryOperations({
     setBusy(true);
     setError('');
     try {
-      for (const { kind, id } of items.values()) {
-        await resolveItem(kind, id, action);
+      for (const item of items.values()) {
+        const current = findPendingItem(await fetchRunStatus(), item);
+        if (current) await resolveItem(current, action);
       }
       await onRefresh();
       setReason('');
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
+      try {
+        await onRefresh();
+      } catch {
+        // 保留导致批量决议中断的原始错误。
+      }
     } finally {
       setBusy(false);
     }
@@ -362,7 +391,7 @@ export function RecoveryOperations({
               gap: '6px',
             }}
           >
-            {[...items.values()].map(({ kind, id }) => {
+            {[...items.values()].map(({ kind, id, status: itemStatus }) => {
               let label = '待决项目';
               let hint = '';
               if (kind === 'model') {
@@ -370,7 +399,9 @@ export function RecoveryOperations({
                 hint = `预留 ${primaryAmount || ''} Tokens 审核：点击【通过】退款并重试，点击【拒绝】放弃调用`;
               } else if (kind === 'message') {
                 label = '✉️ 元胞消息';
-                hint = primaryMsgSnippet ? `“${primaryMsgSnippet.slice(0, 45)}…”` : '点击【通过】重新排队，点击【拒绝】丢弃';
+                hint = itemStatus === 'AWAITING_SETTLEMENT'
+                  ? '等待模型结算；不能按未计费重试，可选择放弃'
+                  : primaryMsgSnippet ? `“${primaryMsgSnippet.slice(0, 45)}…”` : '点击【通过】重新排队，点击【拒绝】丢弃';
               } else if (kind === 'tool') {
                 label = '🛠️ 工具执行';
                 hint = '未完结副作用安全结案';
@@ -418,7 +449,7 @@ export function RecoveryOperations({
                     <button
                       type="button"
                       className="btn btn-xs btn-primary"
-                      disabled={busy}
+                      disabled={busy || (kind === 'message' && itemStatus === 'AWAITING_SETTLEMENT')}
                       onClick={() => void handleResolveSingle(kind, id, 'approve')}
                     >
                       通过

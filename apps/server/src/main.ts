@@ -6,7 +6,6 @@ import {
   ToolRegistry,
   registerAllBuiltinTools,
   ToolRuntime,
-  probeVpsAvailability,
 } from "@emergentinc/tools";
 import {
   PromptBuilder,
@@ -57,25 +56,18 @@ async function bootstrap() {
   const dbPath = path.resolve(ledgerDir, "v9_core.sqlite3");
   const store = new CoreStore(dbPath);
 
-  // 2. 初始化工具并同步 tools.json 配置
+  // 2. 从单一配置装配工具权限；凭据检查只在实际调用时进行
   const toolRegistry = new ToolRegistry();
-  const vpsAvailability = probeVpsAvailability(workspaceRoot);
-  registerAllBuiltinTools(toolRegistry, undefined, { vpsAvailableTools: vpsAvailability.tools });
-  if (vpsAvailability.tools.length > 0) {
-    console.log(`[EmergentInc V10 Server] VPS adapters available: ${vpsAvailability.tools.join(", ")}`);
-  } else {
-    console.log(`[EmergentInc V10 Server] VPS adapters disabled: ${vpsAvailability.reason}`);
-  }
-
   const toolsConfigFile = path.resolve(privateDir, "tools.json");
+  let toolsConfig: { tools?: Record<string, { enabled?: boolean; timeout_seconds?: number }> } = {};
   if (fs.existsSync(toolsConfigFile)) {
     try {
-      const toolsConfig = JSON.parse(fs.readFileSync(toolsConfigFile, "utf-8"));
-      toolRegistry.applyConfigOverrides(toolsConfig);
+      toolsConfig = JSON.parse(fs.readFileSync(toolsConfigFile, "utf-8"));
     } catch (e) {
       console.warn("[EmergentInc V10 Server] Failed to parse private/tools.json, using defaults:", e);
     }
   }
+  registerAllBuiltinTools(toolRegistry, toolsConfig.tools);
   const toolRuntime = new ToolRuntime(toolRegistry);
 
   // 3. 模型与定价装配

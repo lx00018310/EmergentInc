@@ -99,7 +99,7 @@ export class CoreStore {
   }
 
   /**
-   * 检查工作区数据库是否存在未决状态 (旧 RUNNING Run、OPEN 预留、CALLING/UNKNOWN 消息、STARTED 工具)
+   * 检查工作区数据库是否存在未决状态 (旧 RUNNING Run、OPEN 预留、领取后未提交的消息、STARTED 工具)
    */
   public getUnfinalizedOperations(): {
     hasUnfinalized: boolean;
@@ -117,7 +117,7 @@ export class CoreStore {
       amount: Number(r.amount),
       createdAt: Number(r.created_at),
     }));
-    const callingMsgs = (this.db.prepare("SELECT message_id, status, sender, recipient, content, updated_at FROM messages WHERE status IN ('CALLING', 'CALL_OUTCOME_UNKNOWN', 'RESERVED')").all() as any[]).map(m => ({
+    const callingMsgs = (this.db.prepare("SELECT message_id, status, sender, recipient, content, updated_at FROM messages WHERE status IN ('PROCESSING', 'RESERVED', 'CALLING', 'CALL_OUTCOME_UNKNOWN', 'AWAITING_SETTLEMENT')").all() as any[]).map(m => ({
       messageId: m.message_id,
       status: m.status,
       sender: m.sender || null,
@@ -134,7 +134,7 @@ export class CoreStore {
       outcome: c.outcome,
       createdAt: Number(c.created_at),
     }));
-    const startedTools = (this.db.prepare("SELECT operation_id FROM tool_executions WHERE status = 'STARTED'").all() as any[]).map(t => t.operation_id);
+    const startedTools = (this.db.prepare("SELECT operation_id FROM tool_executions WHERE status IN ('STARTED', 'UNKNOWN')").all() as any[]).map(t => t.operation_id);
 
     const hasUnfinalized =
       runningRuns.length > 0 ||
@@ -228,8 +228,11 @@ export class CoreStore {
         this.runs.updateRunStatus(params.id, "STOPPED", "USER_STOPPED");
       } else if (params.kind === "message") {
         const msg = this.messages.getMessage(params.id);
-        if (!msg || !["CALLING", "CALL_OUTCOME_UNKNOWN", "RESERVED"].includes(msg.status)) {
+        if (!msg || !["PROCESSING", "RESERVED", "CALLING", "CALL_OUTCOME_UNKNOWN", "AWAITING_SETTLEMENT"].includes(msg.status)) {
           throw new Error("Message operation is not unresolved");
+        }
+        if (msg.status === "AWAITING_SETTLEMENT" && params.decision !== "abandon") {
+          throw new Error("Awaiting settlement cannot be retried as unsent; resolve its model call or abandon the message");
         }
         if (params.decision === "abandon") {
           this.messages.updateStatus(params.id, "ABANDONED");

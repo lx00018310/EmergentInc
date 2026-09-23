@@ -5,3 +5,5 @@ export * from "./builtin/index.js";
 export * from "./builtin/artifacts.js";
 export * from "./builtin/private_files.js";
 export * from "./builtin/vps.js";
+export * from "./builtin/webfetch.js";
+export * from "./builtin/github.js";

@@ -31,7 +31,7 @@ export const RunControls: React.FC<RunControlsProps> = ({
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
 
   const isRunning = Boolean(runStatus?.running);
-  const recoveryRequired = Boolean(runStatus?.unfinalized_operations?.hasUnfinalized) || ['PAUSED_RECOVERY_REQUIRED', 'RECOVERY_REQUIRED'].includes(runStatus?.result_status ?? '');
+  const recoveryRequired = Boolean(runStatus?.unfinalized_operations);
 
   const handleStart = async (cmdText?: string) => {
     if (isSubmitting) return;

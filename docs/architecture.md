@@ -9,7 +9,7 @@ React UI (frontend)
    ↓  HTTP /api/*
 Fastify (apps/server)
    ↓
-RunService        —— 一次 Run 的生命周期、.engine.lock、世界轮次推进
+RunService        —— 一次 Run 的生命周期、SQLite 原子互斥、世界轮次推进
    ↓
 RoundScheduler    —— 领取消息、唤醒判定、护栏（连续只读循环）
    ↓

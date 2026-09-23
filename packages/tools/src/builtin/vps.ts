@@ -10,23 +10,9 @@ export interface VpsProfile {
   username: string;
   keyPath?: string;
   password?: string;
-  /** 为空表示不额外收窄；非空时工具必须命中对应操作名才可执行 */
-  allowedOperations: string[];
   /** 设置后所有远端路径必须落在该目录内 */
   remoteRoot?: string;
 }
-
-/** 工具名 -> owner_vps_profile.json 中 allowed_operations 使用的操作标识 */
-export const VPS_TOOL_OPERATIONS: Record<string, string> = {
-  vps_exec: "ssh_exec",
-  vps_list_files: "ssh_list_files",
-  vps_read_file: "ssh_read_file",
-  vps_write_file: "ssh_write_file",
-  vps_upload_file: "ssh_upload_file",
-  vps_download_file: "ssh_download_file",
-};
-
-export const IMPLEMENTED_VPS_TOOLS = Object.keys(VPS_TOOL_OPERATIONS);
 
 const MAX_LIST_LINES = 100;
 const MAX_TEXT_BYTES = 16384;
@@ -52,9 +38,6 @@ export function loadVpsProfile(ctx: ToolContext): VpsProfile | null {
             username: String(raw.username || "root"),
             keyPath,
             password: raw.password ? String(raw.password) : undefined,
-            allowedOperations: Array.isArray(raw.allowed_operations)
-              ? raw.allowed_operations.map((op: any) => String(op))
-              : [],
             remoteRoot: raw.remote_root ? String(raw.remote_root) : undefined,
           };
         }
@@ -70,10 +53,6 @@ export function loadVpsProfile(ctx: ToolContext): VpsProfile | null {
       username: process.env.VPS_USER || "root",
       keyPath: process.env.VPS_KEY_PATH || process.env.VPS_KEY,
       password: process.env.VPS_PASSWORD,
-      allowedOperations: (process.env.VPS_ALLOWED_OPERATIONS || "")
-        .split(",")
-        .map((op) => op.trim())
-        .filter(Boolean),
       remoteRoot: process.env.VPS_REMOTE_ROOT || undefined,
     };
   }
@@ -96,27 +75,15 @@ interface AccessFailure {
   message: string;
 }
 
-/**
- * 纯本地静态准入判定：不产生任何网络连接。
- * 顺序：配置存在 -> allowed_operations 收窄 -> 认证方式可用 -> 私钥文件存在。
- */
-function checkVpsAccess(
+/** 检查执行所需凭据；是否允许调用由 ToolRegistry 的 enabled 唯一决定。 */
+function checkVpsPrerequisites(
   profile: VpsProfile | null,
-  tool: string,
-  subject: string = tool
+  subject: string
 ): AccessFailure | null {
   if (!profile) {
     return {
       code: "CAPABILITY_UNAVAILABLE",
       message: `VPS operation '${subject}' unavailable: missing owner_vps_profile.json or remote credentials`,
-    };
-  }
-
-  const operation = VPS_TOOL_OPERATIONS[tool];
-  if (profile.allowedOperations.length > 0 && !profile.allowedOperations.includes(operation)) {
-    return {
-      code: "OPERATION_NOT_ALLOWED",
-      message: `VPS operation '${subject}' is not permitted: owner_vps_profile.json allowed_operations does not include '${operation}'`,
     };
   }
 
@@ -143,24 +110,6 @@ function checkVpsAccess(
   }
 
   return null;
-}
-
-/** 离线探测当前可原生执行的 vps 工具集，供装配层决定是否注册 */
-export function probeVpsAvailability(
-  workspaceRoot: string
-): { tools: string[]; reason: string | null } {
-  const profile = loadVpsProfile({ workspaceRoot } as ToolContext);
-  const tools = IMPLEMENTED_VPS_TOOLS.filter(
-    (tool) => checkVpsAccess(profile, tool) === null
-  );
-  if (tools.length > 0) {
-    return { tools, reason: null };
-  }
-  const firstFailure = checkVpsAccess(profile, IMPLEMENTED_VPS_TOOLS[0], "the VPS channel");
-  return {
-    tools: [],
-    reason: firstFailure ? firstFailure.message : "no VPS operation is available",
-  };
 }
 
 function quoteRemote(value: string): string {
@@ -432,7 +381,7 @@ async function runRemoteRead(
 ): Promise<ToolResult> {
   const startTime = Date.now();
   const profile = loadVpsProfile(ctx);
-  const accessDenied = checkVpsAccess(profile, tool);
+  const accessDenied = checkVpsPrerequisites(profile, tool);
   if (accessDenied || !profile) {
     return failureResult(ctx, tool, startTime, accessDenied?.code || "CAPABILITY_UNAVAILABLE", accessDenied?.message || "");
   }
@@ -477,7 +426,7 @@ export const vpsExecDefinition: ToolDefinition = {
     required: ["command"],
   },
   effect: "write",
-  enabled: true,
+  enabled: false,
   timeout_seconds: 60,
 };
 
@@ -495,7 +444,7 @@ export async function handleVpsExec(
   }
 
   const profile = loadVpsProfile(ctx);
-  const accessDenied = checkVpsAccess(profile, "vps_exec");
+  const accessDenied = checkVpsPrerequisites(profile, "vps_exec");
   if (accessDenied || !profile) {
     return failureResult(
       ctx,
@@ -539,7 +488,7 @@ export const vpsListFilesDefinition: ToolDefinition = {
     required: ["path"],
   },
   effect: "read",
-  enabled: true,
+  enabled: false,
   timeout_seconds: 5,
 };
 
@@ -558,7 +507,7 @@ export async function handleVpsListFiles(
   }
 
   const profile = loadVpsProfile(ctx);
-  const accessDenied = checkVpsAccess(profile, "vps_list_files");
+  const accessDenied = checkVpsPrerequisites(profile, "vps_list_files");
   if (accessDenied || !profile) {
     return failureResult(
       ctx,
@@ -595,7 +544,7 @@ export const vpsReadFileDefinition: ToolDefinition = {
     required: ["path"],
   },
   effect: "read",
-  enabled: true,
+  enabled: false,
   timeout_seconds: 30,
 };
 
@@ -614,7 +563,7 @@ export async function handleVpsReadFile(
   }
 
   const profile = loadVpsProfile(ctx);
-  const accessDenied = checkVpsAccess(profile, "vps_read_file");
+  const accessDenied = checkVpsPrerequisites(profile, "vps_read_file");
   if (accessDenied || !profile) {
     return failureResult(
       ctx,
@@ -653,7 +602,7 @@ export const vpsWriteFileDefinition: ToolDefinition = {
     required: ["path", "content"],
   },
   effect: "write",
-  enabled: true,
+  enabled: false,
   timeout_seconds: 30,
 };
 
@@ -673,7 +622,7 @@ export async function handleVpsWriteFile(
   }
 
   const profile = loadVpsProfile(ctx);
-  const accessDenied = checkVpsAccess(profile, "vps_write_file");
+  const accessDenied = checkVpsPrerequisites(profile, "vps_write_file");
   if (accessDenied || !profile) {
     return failureResult(
       ctx,
@@ -744,7 +693,7 @@ export const vpsUploadFileDefinition: ToolDefinition = {
     required: ["artifact_filename", "remote_path"],
   },
   effect: "write",
-  enabled: true,
+  enabled: false,
   timeout_seconds: 30,
 };
 
@@ -769,7 +718,7 @@ export async function handleVpsUploadFile(
   }
 
   const profile = loadVpsProfile(ctx);
-  const accessDenied = checkVpsAccess(profile, "vps_upload_file");
+  const accessDenied = checkVpsPrerequisites(profile, "vps_upload_file");
   if (accessDenied || !profile) {
     return failureResult(
       ctx,
@@ -856,7 +805,7 @@ export const vpsDownloadFileDefinition: ToolDefinition = {
     required: ["remote_path", "artifact_filename"],
   },
   effect: "write",
-  enabled: true,
+  enabled: false,
   timeout_seconds: 30,
 };
 
@@ -881,7 +830,7 @@ export async function handleVpsDownloadFile(
   }
 
   const profile = loadVpsProfile(ctx);
-  const accessDenied = checkVpsAccess(profile, "vps_download_file");
+  const accessDenied = checkVpsPrerequisites(profile, "vps_download_file");
   if (accessDenied || !profile) {
     return failureResult(
       ctx,

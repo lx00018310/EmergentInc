@@ -56,10 +56,6 @@ export async function registerApiRoutes(
     const runBudgetTokens = Number(body.run_budget_tokens ?? 1000000);
     const globalBudgetTokens = Number(body.global_budget_tokens ?? 10000000);
 
-    if (runService.getStatus().running) {
-      return reply.status(409).send({ detail: "Run is already in progress." });
-    }
-
     try {
       const res = await runService.start({
         rounds,
@@ -69,7 +65,6 @@ export async function registerApiRoutes(
       return reply.send(res);
     } catch (err: any) {
       const isConflict =
-        err.message?.startsWith("WORKSPACE_LOCKED") ||
         err.message?.startsWith("RUN_BLOCKED_UNFINALIZED_OPERATIONS");
       return reply.status(isConflict ? 409 : 400).send({ detail: err.message });
     }
@@ -550,7 +545,7 @@ export async function registerApiRoutes(
         block_reasons: ["RUN_IN_PROGRESS"],
       });
     }
-    if (status.unfinalized_operations || status.result_status === "PAUSED_RECOVERY_REQUIRED") {
+    if (status.unfinalized_operations) {
       const ops = status.unfinalized_operations;
       const reasons: string[] = [];
       if (ops?.unsettledReservations?.length) {

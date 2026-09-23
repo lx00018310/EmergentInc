@@ -47,21 +47,4 @@ export class ToolRegistry {
     return lines.join("\n");
   }
 
-  /**
-   * 应用来自 tools.json 的启用与超时配置
-   */
-  public applyConfigOverrides(config: { tools?: Record<string, { enabled?: boolean; timeout_seconds?: number }> }): void {
-    if (!config?.tools) return;
-    for (const [name, cfg] of Object.entries(config.tools)) {
-      const reg = this.tools.get(name);
-      if (reg) {
-        if (typeof cfg.enabled === "boolean") {
-          reg.definition.enabled = cfg.enabled;
-        }
-        if (typeof cfg.timeout_seconds === "number") {
-          reg.definition.timeout_seconds = cfg.timeout_seconds;
-        }
-      }
-    }
-  }
 }

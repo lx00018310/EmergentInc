@@ -48,6 +48,10 @@ export class AgentStepRunner {
     this.usageMeter = options.usageMeter;
   }
 
+  public isReadOnlyTool(name: string): boolean {
+    return this.toolRuntime.registry.get(name)?.definition.effect === "read";
+  }
+
   public async execute(input: AgentStepInput, signal?: AbortSignal): Promise<AgentStepResult> {
     const { trace, pixelState, pixelMind, message, round } = input;
     let callId = `call_${message.messageId}_${randomUUID()}`;

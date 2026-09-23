@@ -194,7 +194,6 @@ export async function handleReadPrivateFile(
         username: data.username,
         has_password: Boolean(data.password),
         has_private_key: Boolean(data.key_path || data.private_key_path || data.key_path_env),
-        allowed_operations: Array.isArray(data.allowed_operations) ? data.allowed_operations : [],
         remote_root: data.remote_root || null,
         note: "[CREDENTIAL_MASKED] Raw credentials and keys are protected and not readable.",
       };

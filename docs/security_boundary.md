@@ -1,13 +1,13 @@
 # Security Boundary
 
-边界目标只有一个：让模型拥有决策权，但不拥有现实操作权与秘密读取权。
+模型的外部能力仅由已注册工具和 Owner 配置授予；工具调用经过运行时记录与校验。
 
 ## Pixel / 模型侧
 
 1. 模型每次调用只拿到三类输入：自身 `pixel.md`、自身可见的邻居消息、`environment.md`。没有宿主 shell、没有全局世界状态、没有非邻居 Pixel 数据、没有聊天历史记忆。
 2. 模型不能直接改世界。它的输出必须经 `DecisionCompiler` 编译成受校验的 `Effects[]`，未知动作与越界参数被拒绝并回喂 `[ENGINE_FEEDBACK]`。
-3. 内置工具默认只有 artifact 读写/列举/转移与私有文件读取（`packages/tools/src/builtin/index.ts`）。唯一的进程/网络出口是 `vps_*` 适配器，且必须显式准入才注册。
-4. `vps_*` 已原生实现（`vps_list_files` / `vps_read_file` / `vps_write_file` / `vps_upload_file` / `vps_download_file` / `vps_exec`，走系统 OpenSSH 客户端），注册由启动时的**纯本地**探测 `probeVpsAvailability(workspaceRoot)` 决定，探测不发起任何网络连接。`private/tools.json` 的 `enabled=true` 只能收窄、不能启用未被准入的工具。执行期还有三道独立门：`owner_vps_profile.json` 的 `allowed_operations` 白名单、`remote_root` 路径收敛、以及只支持**密钥认证**（`BatchMode=yes`，密码认证直接返回 `AUTH_METHOD_UNSUPPORTED`）。远端命令只经 argv 传递，路径参数拒绝 Shell 控制字符，写入/上传内容走 stdin，绝不拼进命令行；`vps_exec` 需要 Owner 在 `allowed_operations` 中显式授予 `ssh_exec`。
+3. 内置工具包括 artifact 读写/列举/转移、私有文件读取，以及只读的 `webfetch` 和 `github_repo`（`packages/tools/src/builtin/index.ts`）。`webfetch` 只接受公开 HTTP(S) 地址，不执行网页脚本；`github_repo` 通过固定的 GitHub API 读取公开仓库目录与文本文件。
+4. 所有内置工具始终注册，`workspace/private/tools.json` 的 `enabled` 是唯一的工具授权配置；未配置的 VPS 工具默认禁用。运行时只检查注册表中的有效 `enabled` 值。VPS 执行时仍须具备密钥认证（`BatchMode=yes`）；文件类工具还检查 `remote_root` 路径范围。`vps_exec` 启用后可执行任意远端命令，不受 `remote_root` 约束。文件类工具的路径参数拒绝 Shell 控制字符，写入内容经 stdin 传输。
 5. 写入被限制在自身目录，文件名白名单为 `pixel.md` / `tips.md`；`mandate.md` 只能由 Owner 经 API 写，模型侧只读，且严禁把 mandate 内容回写进 `pixel.md`。
 6. 所有路径参数经 `containedPath()` / `validatePathSegment()` 校验，拒绝 `..`、`/`、`\`；私有工具另有 `PATH_TRAVERSAL_FORBIDDEN` 前缀检查。
 
