@@ -8,7 +8,7 @@ export interface RunStatusProps {
   onOpenHelp?: () => void;
 }
 
-export const RunStatus: React.FC<RunStatusProps> = ({ world, runStatus, audit, onOpenHelp }) => {
+export const RunStatus: React.FC<RunStatusProps> = ({ world, runStatus, onOpenHelp }) => {
   const round = world?.round ?? runStatus?.current_round ?? 0;
   const pixels = world?.pixels ?? [];
   const alivePixels = pixels.filter((p) => p.active).length;
