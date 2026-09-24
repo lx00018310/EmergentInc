@@ -51,20 +51,18 @@ export class PixelRepository {
     const now = Date.now() / 1000;
     const stmt = this.db.prepare(`
       UPDATE pixel_accounts
-      SET energy = energy + ?, updated_at = ?
+      SET energy = MAX(0, energy + ?),
+          active = CASE WHEN energy + ? > 0 THEN 1 ELSE 0 END,
+          updated_at = ?
       WHERE pixel_id = ?
       RETURNING energy, active
     `);
-    const row = stmt.get(delta, now, pixelId) as any;
+    const row = stmt.get(delta, delta, now, pixelId) as any;
     if (!row) {
       throw new Error(`Pixel ${pixelId} not found`);
     }
 
     const currentEnergy = Number(row.energy);
-    // 如果能量耗尽归零，自动设为失活
-    if (currentEnergy <= 0 && row.active === 1) {
-      this.setActive(pixelId, false);
-    }
     return currentEnergy;
   }
 

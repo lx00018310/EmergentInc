@@ -37,7 +37,7 @@ CoreStore         —— node:sqlite，单事务仓储
 
 ## 真值划分
 
-* **SQLite `workspace/ledger/v9_core.sqlite3` 是唯一机器真值**：`pixel_accounts`（能量/active）、`runs`、`messages`、`reservations`、`model_calls`、`effects`、`ledger_entries`、`tool_executions`、`recovery_decisions`、`global_budget`、`external_revenues`。
+* **SQLite `workspace/ledger/v9_core.sqlite3` 是唯一机器真值**：`pixel_accounts`（能量/active）、`runs`、`messages`、`reservations`、`model_calls`、`effects`、`ledger_entries`、`tool_executions`、`recovery_decisions`、`global_budget`（仅保留历史累计消耗统计）、`external_revenues`。
 * **文件是人类可读的心智与交付物**：`live/pixels/<id>/{state.json,pixel.md,tips.md,mandate.md}`、`live/artifacts/<id>/`、`live/environment.md`、`live/world_state.json`。
 * `state.json` 的 `energy` 是副本；`/api/world` 读取时以 `pixel_accounts` 覆盖磁盘值。`neighbors` 不落盘，由 `getNeighbors6()` 按坐标实时计算。
 

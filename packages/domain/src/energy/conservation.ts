@@ -5,7 +5,7 @@ export interface EnergyTransferValidationParams {
   fromEnergy: number;
   fromActive: boolean;
   toPixelId: string;
-  toActive: boolean;
+  toExists: boolean;
   amount: number;
 }
 
@@ -21,7 +21,7 @@ export interface DomainValidationResult {
 export function validateEnergyTransfer(
   params: EnergyTransferValidationParams
 ): DomainValidationResult {
-  const { fromPixelId, fromEnergy, fromActive, toPixelId, toActive, amount } = params;
+  const { fromPixelId, fromEnergy, fromActive, toPixelId, toExists, amount } = params;
 
   if (!fromActive) {
     return {
@@ -55,11 +55,11 @@ export function validateEnergyTransfer(
     };
   }
 
-  if (!toActive) {
+  if (!toExists) {
     return {
       valid: false,
-      errorCode: "TARGET_INACTIVE",
-      errorMessage: `Target pixel '${toPixelId}' is inactive`,
+      errorCode: "TARGET_NOT_FOUND",
+      errorMessage: `Target pixel '${toPixelId}' does not exist`,
     };
   }
 

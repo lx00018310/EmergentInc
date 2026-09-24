@@ -16,7 +16,7 @@ curl http://127.0.0.1:8765/api/run/status     # 观察进度与 stop_reason
 curl -X POST http://127.0.0.1:8765/api/run/stop   # 优雅停止：refund 后退出，不推进轮次
 ```
 
-实际生效的全局上限来自 SQLite `global_budget.total_limit`（默认 1,000,000），不是请求里的 `global_budget_tokens`。
+界面的 Run Tokens 输入值保存在当前浏览器本机；每次运行的实际额度写入 SQLite。累计消耗保留审计记录，不再作为预算上限。
 
 ## 2. 启动前的健康检查
 
@@ -78,6 +78,8 @@ curl http://127.0.0.1:8765/api/tools             # 所有工具及有效 enabled
 ```
 
 这些提示词有保存接口，但当前运行主链不据此注入新任务。本次首发以已接入的 Human Mandate 为准。
+
+控制区的“老板窗口”“创世提示词”“临时提示词”均以弹窗打开。老板窗口可询问项目进度等问题；每次提问会读取当时的世界状态、运行和账本摘要，并按问题选择最多 4 个代码、Pixel 文档或文本交付物阅读。回答显示读取时间与依据。`.env`、`workspace/private` 和原始数据库文件不会发给模型。对话记录保存在当前浏览器本机；模型调用单独记入 `owner_chat_calls`，不消耗 Pixel 能量或 Run Tokens。使用老板窗口需要配置真实模型。
 
 ## 7. 凭据与私有资料
 

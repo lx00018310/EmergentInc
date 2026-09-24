@@ -15,6 +15,26 @@ describe('RunControls Component', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    localStorage.clear();
+  });
+
+  it('在私有资料和执行记录旁打开三个独立弹窗入口', () => {
+    const onOpenOwnerChat = vi.fn();
+    const onOpenGenesisPrompt = vi.fn();
+    const onOpenTemporaryPrompt = vi.fn();
+    render(<RunControls
+      runStatus={null} onOpenEnvironment={vi.fn()} onOpenTools={vi.fn()}
+      onOpenPrivateFiles={vi.fn()} onOpenToolExecutions={vi.fn()}
+      onOpenOwnerChat={onOpenOwnerChat} onOpenGenesisPrompt={onOpenGenesisPrompt}
+      onOpenTemporaryPrompt={onOpenTemporaryPrompt}
+      onLogMessage={onLogMessage} onRefresh={onRefresh}
+    />);
+    fireEvent.click(screen.getByText('老板窗口'));
+    fireEvent.click(screen.getByText('创世提示词'));
+    fireEvent.click(screen.getByText('临时提示词'));
+    expect(onOpenOwnerChat).toHaveBeenCalledOnce();
+    expect(onOpenGenesisPrompt).toHaveBeenCalledOnce();
+    expect(onOpenTemporaryPrompt).toHaveBeenCalledOnce();
   });
 
   it('输入“跑5轮”并提交，正确传递 rounds: 5', async () => {
@@ -45,12 +65,11 @@ describe('RunControls Component', () => {
     expect(runApi.startRun).toHaveBeenCalledWith({
       rounds: 5,
       run_budget_tokens: 100000,
-      global_budget_tokens: 1000000,
     });
     expect(onRefresh).toHaveBeenCalled();
   });
 
-  it('点击“跑 10 轮”快捷按钮，正确传递 rounds: 10', async () => {
+  it('快捷按钮分别提交 100、1000、10000 轮', async () => {
     vi.mocked(runApi.startRun).mockResolvedValue({ status: 'STARTED', loop_id: 'run_2' });
 
     render(
@@ -65,16 +84,52 @@ describe('RunControls Component', () => {
       />
     );
 
-    const quickBtn10 = screen.getByText('跑 10 轮');
+    const quickBtn100 = screen.getByText('跑 100 轮');
     await act(async () => {
-      fireEvent.click(quickBtn10);
+      fireEvent.click(quickBtn100);
     });
 
     expect(runApi.startRun).toHaveBeenCalledWith({
-      rounds: 10,
+      rounds: 100,
       run_budget_tokens: 100000,
-      global_budget_tokens: 1000000,
     });
+    await act(async () => { fireEvent.click(screen.getByText('跑 1000 轮')); });
+    await act(async () => { fireEvent.click(screen.getByText('跑 10000 轮')); });
+    expect(vi.mocked(runApi.startRun).mock.calls.map(([request]) => request.rounds)).toEqual([100, 1000, 10000]);
+  });
+
+  it('Run Tokens 输入值刷新组件后仍从本机存储恢复', () => {
+    const props = {
+      runStatus: null, onOpenEnvironment: vi.fn(), onOpenTools: vi.fn(),
+      onOpenPrivateFiles: vi.fn(), onOpenToolExecutions: vi.fn(), onLogMessage, onRefresh,
+    };
+    const first = render(<RunControls {...props} />);
+    fireEvent.change(screen.getByLabelText('本次运行上限 (Run Tokens):'), { target: { value: '250000' } });
+    expect(localStorage.getItem('emergentinc.runBudgetTokens')).toBe('250000');
+    expect(screen.queryByLabelText('累计总上限 (Global Tokens):')).toBeNull();
+    first.unmount();
+    render(<RunControls {...props} />);
+    expect((screen.getByLabelText('本次运行上限 (Run Tokens):') as HTMLInputElement).value).toBe('250000');
+  });
+
+  it('本页启动的运行因空队列停止时弹窗说明实际完成轮数', async () => {
+    vi.mocked(runApi.startRun).mockResolvedValue({ status: 'STARTED', run_id: 'run_empty' });
+    const props = {
+      onOpenEnvironment: vi.fn(), onOpenTools: vi.fn(), onOpenPrivateFiles: vi.fn(),
+      onOpenToolExecutions: vi.fn(), onLogMessage, onRefresh,
+    };
+    const { rerender } = render(<RunControls {...props} runStatus={null} />);
+    await act(async () => { fireEvent.click(screen.getByText('跑 10000 轮')); });
+    expect(screen.queryByRole('dialog')).toBeNull();
+
+    rerender(<RunControls {...props} runStatus={{
+      run_id: 'run_empty', running: false, stop_reason: 'NO_ACTIVE_MESSAGES',
+      completed_rounds: 1, requested_rounds: 10000,
+    } as any} />);
+    expect(await screen.findByRole('dialog')).toBeDefined();
+    expect(screen.getByText(/完成 1 \/ 10000 轮/)).toBeDefined();
+    fireEvent.click(screen.getByRole('button', { name: '关闭' }));
+    expect(screen.queryByRole('dialog')).toBeNull();
   });
 
   it('空闲时输入“停止”并提交，不启动运行，不调用 startRun', async () => {

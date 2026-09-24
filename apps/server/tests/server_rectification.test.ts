@@ -118,7 +118,7 @@ describe("Server rectification: containment, CORS, control plane, reward idempot
   });
 
   it("control-plane rounds do not enqueue agent messages", async () => {
-    await app.inject({ method: "POST", url: "/api/run/start", payload: { rounds: 1, run_budget_tokens: 1000, global_budget_tokens: 10000, command: "跑1轮" } });
+    await app.inject({ method: "POST", url: "/api/run/start", payload: { rounds: 1, run_budget_tokens: 1000, command: "跑1轮" } });
     await new Promise((r) => setTimeout(r, 50));
     const messages = store.messages.listRecentMessages(50);
     expect(messages.filter((m: any) => m.sender === "human")).toHaveLength(0);

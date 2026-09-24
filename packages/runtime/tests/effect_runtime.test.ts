@@ -263,4 +263,96 @@ describe("Runtime: EffectRuntime Execution & Short-circuiting", () => {
     expect(store.pixels.getPixelAccount("0_0_0")?.energy).toBe(4500);
     expect(store.pixels.getPixelAccount("1_0_0")?.energy).toBe(1500);
   });
+
+  it("lets an active pixel revive an inactive neighbor with one token", async () => {
+    store.pixels.upsertPixelAccount({ pixelId: "1_0_0", energy: 0, active: false, refundDeficitTokens: 0, spendBlockedReason: null });
+    const runtime = new EffectRuntime({ workspaceRoot: tmpDir, store, toolRuntime, round: 7, runId: "r" });
+    const effects = DecisionCompiler.compile({
+      decision: { energy_transfer: [{ target: "1_0_0", amount: 1 }] },
+      pixelId: "0_0_0", messageId: "msg_revive", currentHop: 1,
+    });
+    await runtime.applyEffects(effects);
+    expect(store.pixels.getPixelAccount("0_0_0")?.energy).toBe(4999);
+    expect(store.pixels.getPixelAccount("1_0_0")).toMatchObject({ energy: 1, active: true });
+  });
+
+  it("stops later effects when an active pixel gives away all its energy", async () => {
+    const runtime = new EffectRuntime({ workspaceRoot: tmpDir, store, toolRuntime, round: 7, runId: "r" });
+    const effects = DecisionCompiler.compile({
+      decision: { energy_transfer: [{ target: "1_0_0", amount: 5000 }], send_to: "1_0_0", message_md: "late message" },
+      pixelId: "0_0_0", messageId: "msg_exhaust", currentHop: 1,
+    });
+    await runtime.applyEffects(effects);
+    expect(store.pixels.getPixelAccount("0_0_0")).toMatchObject({ energy: 0, active: false });
+    expect(store.pixels.getPixelAccount("1_0_0")?.energy).toBe(6000);
+    expect(store.effects.getEffect(effects[1].effectId)).toBeNull();
+  });
+
+  it("restarts a dead neighbor as a new life while preserving old files and ledger history", async () => {
+    store.pixels.upsertPixelAccount({ pixelId: "1_0_0", energy: 0, active: false, refundDeficitTokens: 0, spendBlockedReason: null });
+    const oldDir = path.join(tmpDir, "live", "pixels", "1_0_0");
+    const artifactsDir = path.join(tmpDir, "live", "artifacts", "1_0_0");
+    fs.mkdirSync(oldDir, { recursive: true });
+    fs.mkdirSync(artifactsDir, { recursive: true });
+    fs.writeFileSync(path.join(oldDir, "pixel.md"), "old mind");
+    fs.writeFileSync(path.join(oldDir, "tips.md"), "old tips");
+    fs.writeFileSync(path.join(oldDir, "mandate.md"), "old owner task");
+    fs.writeFileSync(path.join(oldDir, "state.json"), JSON.stringify({ generation: 2, incarnation: 1 }));
+    fs.writeFileSync(path.join(artifactsDir, "old.txt"), "old artifact");
+    fs.mkdirSync(path.join(tmpDir, "live", "pixels", "0_0_0"), { recursive: true });
+    fs.writeFileSync(path.join(tmpDir, "live", "pixels", "0_0_0", "state.json"), JSON.stringify({ generation: 3 }));
+    const oldMessage = store.messages.enqueueMessage({ sender: "system", recipient: "1_0_0", content: "old task", roundNum: 1 });
+    const runtime = new EffectRuntime({ workspaceRoot: tmpDir, store, toolRuntime, round: 7, runId: "r" });
+    const effects = DecisionCompiler.compile({
+      decision: { reproduce: { direction: "1_0_0", initial_energy: 150 } },
+      pixelId: "0_0_0", messageId: "msg_reset", currentHop: 1,
+    });
+    await runtime.applyEffects(effects);
+    const history = path.join(tmpDir, "live", "history", "1_0_0", effects[0].effectId);
+    expect(store.pixels.getPixelAccount("0_0_0")?.energy).toBe(4850);
+    expect(store.pixels.getPixelAccount("1_0_0")).toMatchObject({ energy: 150, active: true });
+    expect(store.messages.getMessage(oldMessage.messageId)?.status).toBe("ABANDONED");
+    expect(fs.readFileSync(path.join(oldDir, "pixel.md"), "utf-8")).toBe("");
+    expect(fs.readFileSync(path.join(oldDir, "tips.md"), "utf-8")).toBe("");
+    expect(fs.readFileSync(path.join(oldDir, "mandate.md"), "utf-8")).toBe("");
+    expect(fs.existsSync(artifactsDir)).toBe(false);
+    expect(fs.readFileSync(path.join(history, "pixel", "pixel.md"), "utf-8")).toBe("old mind");
+    expect(fs.readFileSync(path.join(history, "artifacts", "old.txt"), "utf-8")).toBe("old artifact");
+    expect(JSON.parse(fs.readFileSync(path.join(oldDir, "state.json"), "utf-8"))).toMatchObject({
+      id: "1_0_0", parent: "0_0_0", born_round: 7, generation: 4, incarnation: 2,
+    });
+    expect(store.db.prepare("SELECT COUNT(*) AS n FROM ledger_entries WHERE pixel_id = '1_0_0'").get()).toEqual({ n: 1 });
+  });
+
+  it("cannot reset an active neighbor", async () => {
+    const runtime = new EffectRuntime({ workspaceRoot: tmpDir, store, toolRuntime, round: 7, runId: "r" });
+    const effects = DecisionCompiler.compile({
+      decision: { reproduce: { direction: "1_0_0", initial_energy: 150 } },
+      pixelId: "0_0_0", messageId: "msg_alive", currentHop: 1,
+    });
+    await runtime.applyEffects(effects);
+    expect(store.pixels.getPixelAccount("0_0_0")?.energy).toBe(5000);
+    expect(store.pixels.getPixelAccount("1_0_0")?.energy).toBe(1000);
+    expect(store.effects.getEffect(effects[0].effectId)?.status).toBe("FAILED");
+  });
+
+  it("restores an inactive neighbor's files if reset accounting rolls back", async () => {
+    store.pixels.upsertPixelAccount({ pixelId: "1_0_0", energy: 0, active: false, refundDeficitTokens: 0, spendBlockedReason: null });
+    const oldDir = path.join(tmpDir, "live", "pixels", "1_0_0");
+    fs.mkdirSync(oldDir, { recursive: true });
+    fs.writeFileSync(path.join(oldDir, "pixel.md"), "old mind");
+    const runtime = new EffectRuntime({ workspaceRoot: tmpDir, store, toolRuntime, round: 7, runId: "r" });
+    const effects = DecisionCompiler.compile({
+      decision: { reproduce: { direction: "1_0_0", initial_energy: 150 } },
+      pixelId: "0_0_0", messageId: "msg_reset_rollback", currentHop: 1,
+    });
+    store.ledger.appendEntry({
+      entry_id: `${effects[0].effectId}_parent`, timestamp: 1, pixel_id: "0_0_0",
+      entry_type: "reproduction_out", amount: 0, balance_after: 5000,
+    });
+    await expect(runtime.applyEffects(effects)).rejects.toThrow();
+    expect(fs.readFileSync(path.join(oldDir, "pixel.md"), "utf-8")).toBe("old mind");
+    expect(store.pixels.getPixelAccount("0_0_0")?.energy).toBe(5000);
+    expect(store.pixels.getPixelAccount("1_0_0")).toMatchObject({ energy: 0, active: false });
+  });
 });

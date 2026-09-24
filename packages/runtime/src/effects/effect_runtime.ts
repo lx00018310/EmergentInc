@@ -38,10 +38,12 @@ export class EffectRuntime {
 
   public async applyEffects(effects: Effect[]): Promise<void> {
     let priorToolFailed = false;
+    let actorDeactivated = false;
     const toolExecutions: Array<{ tool: string; status: string; outputOrError: any }> = [];
     let toolTargetPixelId: string | null = null;
 
     for (const effect of effects) {
+      if (actorDeactivated) break;
       // 1. Exactly-Once 幂等检查
       if (this.ctx.store.effects.hasEffectBeenApplied(effect.effectId)) {
         continue;
@@ -87,10 +89,12 @@ export class EffectRuntime {
 
         case "TRANSFER_ENERGY":
           await this.applyTransferEnergy(effect);
+          actorDeactivated = !this.ctx.store.pixels.getPixelAccount(effect.fromPixelId)?.active;
           break;
 
         case "REPRODUCE":
           await this.applyReproduce(effect);
+          actorDeactivated = !this.ctx.store.pixels.getPixelAccount(effect.parentPixelId)?.active;
           break;
 
         case "ROUTE_MESSAGE":
@@ -290,7 +294,7 @@ export class EffectRuntime {
       fromEnergy: fromAccount?.energy || 0,
       fromActive: Boolean(fromAccount?.active),
       toPixelId: effect.transfer.target,
-      toActive: Boolean(toAccount?.active),
+      toExists: Boolean(toAccount),
       amount: effect.transfer.amount,
     });
 
@@ -350,6 +354,8 @@ export class EffectRuntime {
         details: JSON.stringify({ from: effect.fromPixelId }),
       });
     });
+    this.syncAccountStateFile(effect.fromPixelId);
+    this.syncAccountStateFile(effect.transfer.target);
 
     this.ctx.store.effects.recordEffect({
       effect_id: effect.effectId,
@@ -377,82 +383,144 @@ export class EffectRuntime {
     });
 
     if (!validation.valid || !validation.childPixelId) {
-      const feedback = FeedbackFactory.createReproductionFailureFeedback(
-        effect.parentPixelId,
-        this.ctx.round,
-        this.ctx.runId,
-        validation.errorCode || "VALIDATION_FAILED",
-        validation.errorMessage || "Reproduction validation failed"
-      );
-      this.ctx.store.messages.enqueueMessage(feedback);
-
-      this.ctx.store.effects.recordEffect({
-        effect_id: effect.effectId,
-        message_id: effect.messageId,
-        effect_type: effect.effectType,
-        effect_index: effect.effectIndex,
-        payload_hash: effect.payloadHash,
-        status: "FAILED",
-        details: JSON.stringify(validation),
-        created_at: Date.now() / 1000,
-      });
+      this.recordReproductionFailure(effect, validation.errorCode || "VALIDATION_FAILED", validation.errorMessage || "Reproduction validation failed");
       return;
     }
 
     const childPixelId = validation.childPixelId;
-
-    // 原子事务创建子元胞
-    this.ctx.store.transaction(() => {
-      const parentAfter = this.ctx.store.pixels.updateEnergy(
-        effect.parentPixelId,
-        -effect.request.initial_energy
-      );
-
-      this.ctx.store.pixels.upsertPixelAccount({
-        pixelId: childPixelId,
-        energy: effect.request.initial_energy,
-        active: true,
-        refundDeficitTokens: 0,
-        spendBlockedReason: null,
-      });
-
-      const now = Date.now() / 1000;
-      this.ctx.store.ledger.appendEntry({
-        entry_id: `${effect.effectId}_parent`,
-        timestamp: now,
-        pixel_id: effect.parentPixelId,
-        entry_type: "reproduction_out",
-        amount: -effect.request.initial_energy,
-        balance_after: parentAfter,
-        details: JSON.stringify({ child: childPixelId }),
-      });
-
-      this.ctx.store.ledger.appendEntry({
-        entry_id: `${effect.effectId}_child`,
-        timestamp: now,
-        pixel_id: childPixelId,
-        entry_type: "reproduction_in",
-        amount: effect.request.initial_energy,
-        balance_after: effect.request.initial_energy,
-        details: JSON.stringify({ parent: effect.parentPixelId }),
-      });
-    });
-
-    // 写入子元胞初始心智文件
-    const childDir = path.resolve(this.ctx.workspaceRoot, "live", "pixels", childPixelId);
-    if (!fs.existsSync(childDir)) {
-      fs.mkdirSync(childDir, { recursive: true });
+    const oldAccount = this.ctx.store.pixels.getPixelAccount(childPixelId);
+    const unsettledMessage = this.ctx.store.db.prepare(`
+      SELECT 1 FROM messages WHERE recipient = ?
+      AND status IN ('PROCESSING', 'RESERVED', 'CALLING', 'RESPONSE_STORED', 'CALL_OUTCOME_UNKNOWN', 'AWAITING_SETTLEMENT') LIMIT 1
+    `).get(childPixelId);
+    const openReservation = this.ctx.store.db.prepare("SELECT 1 FROM reservations WHERE pixel_id = ? AND status = 'OPEN' LIMIT 1").get(childPixelId);
+    if (unsettledMessage || openReservation || (oldAccount && (oldAccount.active || oldAccount.energy !== 0 || oldAccount.refundDeficitTokens > 0))) {
+      this.recordReproductionFailure(effect, "TARGET_NOT_RESETTABLE", `Target '${childPixelId}' must be inactive, empty of energy and free of unsettled work`);
+      return;
     }
-    fs.writeFileSync(path.resolve(childDir, "pixel.md"), "", "utf-8");
-    fs.writeFileSync(path.resolve(childDir, "tips.md"), "", "utf-8");
 
+    // 同坐标的新生命不继承旧文件；旧文件与交付物移入历史目录。
+    const childDir = path.resolve(this.ctx.workspaceRoot, "live", "pixels", childPixelId);
+    const artifactsDir = path.resolve(this.ctx.workspaceRoot, "live", "artifacts", childPixelId);
+    const historyDir = path.resolve(this.ctx.workspaceRoot, "live", "history", childPixelId, effect.effectId);
+    const archivedPixelDir = path.resolve(historyDir, "pixel");
+    const archivedArtifactsDir = path.resolve(historyDir, "artifacts");
+    if (fs.existsSync(historyDir)) {
+      throw new Error(`Reproduction archive already exists: ${historyDir}`);
+    }
+    const readState = (file: string): any => {
+      return fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, "utf-8")) : {};
+    };
+    const oldState = readState(path.resolve(childDir, "state.json"));
+    const parentState = readState(path.resolve(this.ctx.workspaceRoot, "live", "pixels", effect.parentPixelId, "state.json"));
+    const generation = Number.isSafeInteger(parentState.generation) && parentState.generation >= 0 ? parentState.generation + 1 : 1;
+    const incarnation = oldAccount
+      ? (Number.isSafeInteger(oldState.incarnation) && oldState.incarnation > 0 ? oldState.incarnation + 1 : 2)
+      : 1;
+    const hadPixelDir = fs.existsSync(childDir);
+    const hadArtifactsDir = fs.existsSync(artifactsDir);
+    if ((hadPixelDir && !fs.lstatSync(childDir).isDirectory()) ||
+        (hadArtifactsDir && !fs.lstatSync(artifactsDir).isDirectory())) {
+      throw new Error("Reproduction target is not a directory");
+    }
+
+    let movedPixel = false;
+    let movedArtifacts = false;
+    try {
+      if (hadPixelDir || hadArtifactsDir) fs.mkdirSync(historyDir, { recursive: true });
+      if (hadPixelDir) {
+        fs.renameSync(childDir, archivedPixelDir);
+        movedPixel = true;
+      }
+      if (hadArtifactsDir) {
+        fs.renameSync(artifactsDir, archivedArtifactsDir);
+        movedArtifacts = true;
+      }
+      fs.mkdirSync(childDir, { recursive: true });
+      fs.writeFileSync(path.resolve(childDir, "pixel.md"), "", "utf-8");
+      fs.writeFileSync(path.resolve(childDir, "tips.md"), "", "utf-8");
+      fs.writeFileSync(path.resolve(childDir, "mandate.md"), "", "utf-8");
+      fs.writeFileSync(path.resolve(childDir, "state.json"), JSON.stringify({
+        id: childPixelId,
+        position: validation.childCoord,
+        active: true,
+        energy: effect.request.initial_energy,
+        parent: effect.parentPixelId,
+        born_round: this.ctx.round,
+        last_active_round: this.ctx.round,
+        generation,
+        incarnation,
+      }, null, 2), "utf-8");
+
+      this.ctx.store.transaction(() => {
+        const current = this.ctx.store.pixels.getPixelAccount(childPixelId);
+        if (current?.active || (current && (current.energy !== 0 || current.refundDeficitTokens > 0))) {
+          throw new Error("Reproduction target changed during reset");
+        }
+        const parent = this.ctx.store.pixels.getPixelAccount(effect.parentPixelId);
+        if (!parent?.active || parent.energy < effect.request.initial_energy) {
+          throw new Error("Reproduction parent no longer has enough energy");
+        }
+        const parentAfter = this.ctx.store.pixels.updateEnergy(effect.parentPixelId, -effect.request.initial_energy);
+        this.ctx.store.pixels.upsertPixelAccount({
+          pixelId: childPixelId,
+          energy: effect.request.initial_energy,
+          active: true,
+          refundDeficitTokens: 0,
+          spendBlockedReason: null,
+        });
+        this.ctx.store.db.prepare(`
+          UPDATE messages SET status = 'ABANDONED', updated_at = ?
+          WHERE recipient = ? AND status IN ('QUEUED', 'WAITING_PIXEL_BUDGET', 'WAITING_RUN_BUDGET')
+        `).run(Date.now() / 1000, childPixelId);
+        const now = Date.now() / 1000;
+        this.ctx.store.ledger.appendEntry({
+          entry_id: `${effect.effectId}_parent`, timestamp: now, pixel_id: effect.parentPixelId,
+          entry_type: "reproduction_out", amount: -effect.request.initial_energy,
+          balance_after: parentAfter, details: JSON.stringify({ child: childPixelId, incarnation }),
+        });
+        this.ctx.store.ledger.appendEntry({
+          entry_id: `${effect.effectId}_child`, timestamp: now, pixel_id: childPixelId,
+          entry_type: "reproduction_in", amount: effect.request.initial_energy,
+          balance_after: effect.request.initial_energy,
+          details: JSON.stringify({ parent: effect.parentPixelId, incarnation }),
+        });
+        this.ctx.store.effects.recordEffect({
+          effect_id: effect.effectId, message_id: effect.messageId, effect_type: effect.effectType,
+          effect_index: effect.effectIndex, payload_hash: effect.payloadHash,
+          status: "APPLIED", created_at: now,
+        });
+      });
+    } catch (err) {
+      if ((movedPixel || !hadPixelDir) && fs.existsSync(childDir)) fs.rmSync(childDir, { recursive: true, force: true });
+      if (movedPixel) fs.renameSync(archivedPixelDir, childDir);
+      if (movedArtifacts) fs.renameSync(archivedArtifactsDir, artifactsDir);
+      throw err;
+    }
+    this.syncAccountStateFile(effect.parentPixelId);
+  }
+
+  private syncAccountStateFile(pixelId: string): void {
+    const stateFile = path.resolve(this.ctx.workspaceRoot, "live", "pixels", pixelId, "state.json");
+    try {
+      if (!fs.existsSync(stateFile)) return;
+      const account = this.ctx.store.pixels.getPixelAccount(pixelId);
+      if (!account) return;
+      const state = JSON.parse(fs.readFileSync(stateFile, "utf-8"));
+      state.energy = account.energy;
+      state.active = account.active;
+      fs.writeFileSync(stateFile, JSON.stringify(state, null, 2), "utf-8");
+    } catch {}
+  }
+
+  private recordReproductionFailure(effect: ReproduceEffect, code: string, message: string): void {
+    this.ctx.store.messages.enqueueMessage(FeedbackFactory.createReproductionFailureFeedback(
+      effect.parentPixelId, this.ctx.round, this.ctx.runId, code, message
+    ));
     this.ctx.store.effects.recordEffect({
-      effect_id: effect.effectId,
-      message_id: effect.messageId,
-      effect_type: effect.effectType,
-      effect_index: effect.effectIndex,
-      payload_hash: effect.payloadHash,
-      status: "APPLIED",
+      effect_id: effect.effectId, message_id: effect.messageId, effect_type: effect.effectType,
+      effect_index: effect.effectIndex, payload_hash: effect.payloadHash,
+      status: "FAILED", details: JSON.stringify({ errorCode: code, errorMessage: message }),
       created_at: Date.now() / 1000,
     });
   }

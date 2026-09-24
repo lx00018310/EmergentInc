@@ -19,21 +19,21 @@ const baseStatus: RunStatusDto = {
 describe('V11 status truthfulness', () => {
   afterEach(cleanup);
 
-  it('FAILED run shows FAILED, never READY, with persisted error details', () => {
+  it('失败的运行显示中文失败状态，不显示就绪', () => {
     render(<RunStatus world={null} runStatus={baseStatus} audit={null} />);
-    expect(screen.getByText('FAILED')).toBeDefined();
-    expect(screen.queryByText('READY')).toBeNull();
+    expect(screen.getByText('失败')).toBeDefined();
+    expect(screen.queryByText('就绪')).toBeNull();
   });
 
   it('unfinalized operations force RECOVERY REQUIRED regardless of other flags', () => {
     render(<RunStatus world={null} runStatus={{ ...baseStatus, result_status: 'PAUSED_RECOVERY_REQUIRED', stop_reason: 'PAUSED_RECOVERY_REQUIRED', last_error: null, unfinalized_operations: { hasUnfinalized: true, pendingRuns: ['run_x'] } }} audit={null} />);
-    expect(screen.getByText('RECOVERY REQUIRED')).toBeDefined();
+    expect(screen.getByText('需要处理未决操作')).toBeDefined();
   });
 
   it('shows recovery resolved after pending operations are cleared despite the historical error', () => {
     render(<RunStatus world={null} runStatus={{ ...baseStatus, result_status: 'RECOVERY_RESOLVED' }} audit={null} />);
-    expect(screen.queryByText('RECOVERY REQUIRED')).toBeNull();
-    expect(screen.queryByText('FAILED')).toBeNull();
+    expect(screen.queryByText('需要处理未决操作')).toBeNull();
+    expect(screen.queryByText('失败')).toBeNull();
   });
 
   it('exposes error_code and error_summary through the status DTO', () => {

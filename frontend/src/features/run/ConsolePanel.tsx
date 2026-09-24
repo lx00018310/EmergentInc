@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import type { WorkspaceAuditDto, RunStatusDto } from '../../api/types';
+import { displayRunStatus, displayStopReason } from './runStatusLabels';
 
 export interface ConsoleMessage {
   id: string;
@@ -70,7 +71,7 @@ export const ConsolePanel: React.FC<ConsolePanelProps> = ({
               className="alert-title"
               style={{ color: 'var(--accent-red)', fontWeight: 'bold', marginBottom: '4px' }}
             >
-              启动受阻：需逐项审计决策 (PAUSED_RECOVERY_REQUIRED)
+              启动受阻：需逐项审计决策（需要处理未决操作）
             </div>
             <div style={{ fontSize: '12px', lineHeight: 1.4 }}>
               系统检测到未决 Reservation 或中断调用事务，已保护性拦截启动：
@@ -99,7 +100,7 @@ export const ConsolePanel: React.FC<ConsolePanelProps> = ({
       )}
 
       {!runStatus?.running && runStatus?.result_status === 'FAILED' && <p role="alert">
-        {runStatus.result_status}: {runStatus.stop_reason} {runStatus.error_code} {runStatus.error_summary ?? runStatus.last_error}
+        {displayRunStatus(runStatus.result_status)}：{displayStopReason(runStatus.stop_reason)} {runStatus.error_code} {runStatus.error_summary ?? runStatus.last_error}
       </p>}
       <div className="console-toggle" onClick={() => setExpanded((v) => !v)} role="button">
         <span>控制台日志 ({messages.length})</span>

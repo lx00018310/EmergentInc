@@ -7,6 +7,7 @@ export interface ModalProps {
   children: React.ReactNode;
   footer?: React.ReactNode;
   contentClassName?: string;
+  keepMounted?: boolean;
 }
 
 export const Modal: React.FC<ModalProps> = ({
@@ -16,6 +17,7 @@ export const Modal: React.FC<ModalProps> = ({
   children,
   footer,
   contentClassName = '',
+  keepMounted = false,
 }) => {
   useEffect(() => {
     if (!isOpen) return;
@@ -30,10 +32,10 @@ export const Modal: React.FC<ModalProps> = ({
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [isOpen, onClose]);
 
-  if (!isOpen) return null;
+  if (!isOpen && !keepMounted) return null;
 
   return (
-    <div className="modal-overlay" onClick={onClose} role="dialog" aria-modal="true">
+    <div className="modal-overlay" onClick={onClose} role="dialog" aria-modal="true" style={isOpen ? undefined : { display: 'none' }}>
       <div
         className={`modal-content ${contentClassName}`}
         onClick={(e) => e.stopPropagation()}

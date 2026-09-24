@@ -3,7 +3,9 @@ import { useWorldPolling } from './hooks/useWorldPolling';
 import { RunStatus } from './features/run/RunStatus';
 import { RunControls } from './features/run/RunControls';
 import { ConsolePanel, ConsoleMessage } from './features/run/ConsolePanel';
-import { PromptTabs } from './features/prompts/PromptTabs';
+import { PromptEditor } from './features/prompts/PromptEditor';
+import { OwnerChat } from './features/owner/OwnerChat';
+import { Modal } from './components/Modal';
 import { HelpModal } from './components/HelpModal';
 import { EnvironmentEditor } from './features/environment/EnvironmentEditor';
 import { PixelMapCanvas } from './features/pixels/PixelMapCanvas';
@@ -14,6 +16,7 @@ import { ArtifactBrowser } from './features/files/ArtifactBrowser';
 import { PrivateFileBrowser } from './features/files/PrivateFileBrowser';
 import { ToolCatalog } from './features/tools/ToolCatalog';
 import { ToolExecutionHistory } from './features/tools/ToolExecutionHistory';
+import { displayStopReason } from './features/run/runStatusLabels';
 
 import {
   fetchGenesisPrompt,
@@ -62,10 +65,10 @@ export const App: React.FC = () => {
       // surface once as info, not as a recurring error on every page load.
       if (runStatus.result_status === 'RECOVERY_RESOLVED') {
         addLogMessage('info',
-          `[RUN RESOLVED] ${runStatus.stop_reason ?? ''} ${runStatus.error_code ?? ''} — 未决项已逐项审计处理，可正常启动。历史错误: ${runStatus.error_summary ?? runStatus.last_error ?? ''}`);
+          `[RUN RESOLVED] ${displayStopReason(runStatus.stop_reason)} ${runStatus.error_code ?? ''} — 未决项已逐项审计处理，可正常启动。历史错误: ${runStatus.error_summary ?? runStatus.last_error ?? ''}`);
       } else {
         addLogMessage(runStatus.result_status === 'FAILED' ? 'error' : 'warn',
-          `[RUN ${runStatus.result_status}] ${runStatus.stop_reason ?? ''} ${runStatus.error_code ?? ''} ${runStatus.error_summary ?? runStatus.last_error ?? ''}`);
+          `[RUN ${runStatus.result_status}] ${displayStopReason(runStatus.stop_reason)} ${runStatus.error_code ?? ''} ${runStatus.error_summary ?? runStatus.last_error ?? ''}`);
       }
     }
   }, [runStatus?.run_id, runStatus?.result_status, runStatus?.stop_reason, runStatus?.error_summary, runStatus?.last_error, addLogMessage]);
@@ -135,6 +138,7 @@ export const App: React.FC = () => {
   const [isToolsModalOpen, setIsToolsModalOpen] = useState<boolean>(false);
   const [isPrivateFilesModalOpen, setIsPrivateFilesModalOpen] = useState<boolean>(false);
   const [isToolExecutionsModalOpen, setIsToolExecutionsModalOpen] = useState<boolean>(false);
+  const [activePromptModal, setActivePromptModal] = useState<'owner' | 'genesis' | 'temp' | null>(null);
   const [isArtifactsModalOpen, setIsArtifactsModalOpen] = useState<boolean>(false);
   const [pixelOperation, setPixelOperation] = useState<{ pixelId: string; tab: PixelOperationTab } | null>(null);
 
@@ -232,6 +236,9 @@ export const App: React.FC = () => {
             onOpenTools={() => setIsToolsModalOpen(true)}
             onOpenPrivateFiles={() => setIsPrivateFilesModalOpen(true)}
             onOpenToolExecutions={() => setIsToolExecutionsModalOpen(true)}
+            onOpenOwnerChat={() => setActivePromptModal('owner')}
+            onOpenGenesisPrompt={() => setActivePromptModal('genesis')}
+            onOpenTemporaryPrompt={() => setActivePromptModal('temp')}
             onLogMessage={addLogMessage}
             onRefresh={refreshImmediately}
           />
@@ -243,31 +250,6 @@ export const App: React.FC = () => {
             hideRecoveryAlert={Boolean(!isRunning && runStatus?.unfinalized_operations)}
           />
 
-          <PromptTabs
-            genesisPrompt={genesisPrompt}
-            tempPrompt={tempPrompt}
-            isRunning={isRunning}
-            onSaveGenesis={async (content) => {
-              const res = await updateGenesisPrompt(content);
-              setGenesisPrompt(res);
-              addLogMessage('success', `[GENESIS PROMPT] 创世提示词已保存 (Rev ${res.revision})。`);
-            }}
-            onClearGenesis={async () => {
-              const res = await updateGenesisPrompt('');
-              setGenesisPrompt(res);
-              addLogMessage('info', '[GENESIS PROMPT] 创世提示词已清空并关闭。');
-            }}
-            onSaveTemp={async (content) => {
-              const res = await updateTemporaryPrompt(content);
-              setTempPrompt(res);
-              addLogMessage('success', `[TEMPORARY PROMPT] 临时提示词已保存 (Rev ${res.revision})。`);
-            }}
-            onClearTemp={async () => {
-              const res = await updateTemporaryPrompt('');
-              setTempPrompt(res);
-              addLogMessage('info', '[TEMPORARY PROMPT] 临时提示词已清空并关闭。');
-            }}
-          />
         </section>
 
         {/* 右侧地图与详情 */}
@@ -328,6 +310,54 @@ export const App: React.FC = () => {
         onClose={() => setIsToolExecutionsModalOpen(false)}
         onLogMessage={addLogMessage}
       />
+
+      <Modal isOpen={activePromptModal === 'owner'} title="老板窗口" onClose={() => setActivePromptModal(null)} contentClassName="doc-modal-content" keepMounted>
+        <OwnerChat />
+      </Modal>
+
+      <Modal isOpen={activePromptModal === 'genesis'} title="创世提示词" onClose={() => setActivePromptModal(null)} contentClassName="doc-modal-content" keepMounted>
+        <PromptEditor
+          cardId="genesis-card"
+          title="创世提示词 (临时初速度)"
+          hint="当前注入 system 消息的 GENESIS_CONTEXT，作为临时初速度；不是 Pixel Self，也不写入 pixel.md。运行期间不可编辑，清空后后续运行不再注入。"
+          placeholder="可输入创世提示词，清空则完全关闭..."
+          rows={12}
+          promptData={genesisPrompt}
+          isRunning={isRunning}
+          onSave={async content => {
+            const res = await updateGenesisPrompt(content);
+            setGenesisPrompt(res);
+            addLogMessage('success', `[GENESIS PROMPT] 创世提示词已保存 (Rev ${res.revision})。`);
+          }}
+          onClear={async () => {
+            const res = await updateGenesisPrompt('');
+            setGenesisPrompt(res);
+            addLogMessage('info', '[GENESIS PROMPT] 创世提示词已清空并关闭。');
+          }}
+        />
+      </Modal>
+
+      <Modal isOpen={activePromptModal === 'temp'} title="临时提示词" onClose={() => setActivePromptModal(null)} contentClassName="doc-modal-content" keepMounted>
+        <PromptEditor
+          cardId="temp-prompt-card"
+          title="临时提示词 (任务指引)"
+          hint="独立的 TEMPORARY_CONTEXT，当前注入 system 消息，不是单个元胞的 Human Mandate；仅在空闲时编辑，下次运行生效。"
+          placeholder="可输入当前任务的临时提示词 (如 VPS 运维指令)..."
+          rows={12}
+          promptData={tempPrompt}
+          isRunning={isRunning}
+          onSave={async content => {
+            const res = await updateTemporaryPrompt(content);
+            setTempPrompt(res);
+            addLogMessage('success', `[TEMPORARY PROMPT] 临时提示词已保存 (Rev ${res.revision})。`);
+          }}
+          onClear={async () => {
+            const res = await updateTemporaryPrompt('');
+            setTempPrompt(res);
+            addLogMessage('info', '[TEMPORARY PROMPT] 临时提示词已清空并关闭。');
+          }}
+        />
+      </Modal>
 
       <ArtifactBrowser
         isOpen={isArtifactsModalOpen}

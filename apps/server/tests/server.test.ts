@@ -126,7 +126,7 @@ describe("Server: API Contract Integration Tests", () => {
     const conflictRes = await app.inject({
       method: "POST",
       url: "/api/run/start",
-      payload: { rounds: 1, run_budget_tokens: 1000, global_budget_tokens: 10000 },
+      payload: { rounds: 1, run_budget_tokens: 1000 },
     });
     expect(conflictRes.statusCode).toBe(409);
     expect(conflictRes.json().detail).toContain("RUN_BLOCKED_UNFINALIZED_OPERATIONS");
@@ -139,7 +139,6 @@ describe("Server: API Contract Integration Tests", () => {
       payload: {
         rounds: 2,
         run_budget_tokens: 5000,
-        global_budget_tokens: 50000,
       },
     });
     expect(startRes.statusCode).toBe(200);
@@ -349,7 +348,6 @@ describe("Server: API Contract Integration Tests", () => {
       unconfiguredRunService.start({
         rounds: 1,
         runBudgetTokens: 1000,
-        globalBudgetTokens: 10000,
       })
     ).rejects.toThrow("MODEL_NOT_CONFIGURED");
   });
@@ -394,7 +392,7 @@ describe("Server: API Contract Integration Tests", () => {
     const startRes = await app.inject({
       method: "POST",
       url: "/api/run/start",
-      payload: { rounds: 1, run_budget_tokens: 1000, global_budget_tokens: 10000 },
+      payload: { rounds: 1, run_budget_tokens: 1000 },
     });
     expect(startRes.statusCode).toBe(409);
     expect(startRes.json().detail).toContain("RUN_BLOCKED_UNFINALIZED_OPERATIONS");
@@ -424,6 +422,34 @@ describe("Server: API Contract Integration Tests", () => {
     expect(audit.json().allowed_to_start).toBe(true);
   });
 
+  it("stops when no processable messages remain, but advances to queued future messages", async () => {
+    store.pixels.upsertPixelAccount({ pixelId: "0_0_0", energy: 1000, active: true, refundDeficitTokens: 0, spendBlockedReason: null });
+    const pixelDir = path.join(tmpDir, "live", "pixels", "0_0_0");
+    fs.mkdirSync(pixelDir, { recursive: true });
+    fs.writeFileSync(path.join(pixelDir, "state.json"), JSON.stringify({ last_active_round: 5 }));
+    const waitUntilStopped = async () => {
+      for (let i = 0; runService.getStatus().running && i < 20; i++) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+    };
+
+    const first = await runService.start({ rounds: 1000, runBudgetTokens: 10000 });
+    await waitUntilStopped();
+    expect(runService.getStatus()).toMatchObject({
+      running: false, current_round: 6, completed_rounds: 1,
+      stop_reason: "NO_ACTIVE_MESSAGES", result_status: "STOPPED",
+    });
+    expect(store.runs.getRun(first.run_id)).toMatchObject({ status: "STOPPED", stop_reason: "NO_ACTIVE_MESSAGES" });
+
+    store.messages.enqueueMessage({ roundNum: 8, sender: "system", recipient: "2_0_0", content: "future", sourceType: "system" });
+    await runService.start({ rounds: 1000, runBudgetTokens: 10000 });
+    await waitUntilStopped();
+    expect(runService.getStatus()).toMatchObject({
+      running: false, current_round: 8, completed_rounds: 2, messages_processed: 1,
+      stop_reason: "NO_ACTIVE_MESSAGES", result_status: "STOPPED",
+    });
+  });
+
   it("rolls back a failed start without leaving an in-memory or database lock", async () => {
     const failOnce = vi.spyOn(store.messages, "resetWaitingRunBudgetMessages")
       .mockImplementationOnce(() => { throw new Error("startup failed"); });
@@ -433,7 +459,7 @@ describe("Server: API Contract Integration Tests", () => {
       isMockMode: true, isModelConfigured: true,
     });
     try {
-      await expect(service.start({ rounds: 1, runBudgetTokens: 1000, globalBudgetTokens: 10000 }))
+      await expect(service.start({ rounds: 1, runBudgetTokens: 1000 }))
         .rejects.toThrow("startup failed");
       expect(store.getUnfinalizedOperations().hasUnfinalized).toBe(false);
       expect(service.getStatus().running).toBe(false);
@@ -463,8 +489,8 @@ describe("Server: API Contract Integration Tests", () => {
       isMockMode: true, isModelConfigured: true,
     });
     try {
-      await first.start({ rounds: 1, runBudgetTokens: 1000, globalBudgetTokens: 10000 });
-      await expect(second.start({ rounds: 1, runBudgetTokens: 1000, globalBudgetTokens: 10000 }))
+      await first.start({ rounds: 1, runBudgetTokens: 1000 });
+      await expect(second.start({ rounds: 1, runBudgetTokens: 1000 }))
         .rejects.toThrow("RUN_BLOCKED_UNFINALIZED_OPERATIONS");
       expect(fs.existsSync(path.join(tmpDir, ".engine.lock"))).toBe(false);
     } finally {
@@ -504,7 +530,6 @@ describe("Server: API Contract Integration Tests", () => {
     const runRes = await guardedRunService.start({
       rounds: 5,
       runBudgetTokens: 10000,
-      globalBudgetTokens: 100000,
     });
 
     // 等待异步 runLoop 完成

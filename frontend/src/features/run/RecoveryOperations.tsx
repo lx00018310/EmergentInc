@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import type { RunStatusDto } from '../../api/types';
 import { fetchRunStatus, resolveRecovery, type RecoveryKind, type RecoveryDecision } from '../../api/run';
+import { displayStopReason } from './runStatusLabels';
 
 type RecoveryItem = { kind: RecoveryKind; id: string; status?: string };
 
@@ -54,7 +55,7 @@ export function RecoveryOperations({
     summaryLines.push(`PENDING_RUNS: ${ops.pendingRuns.length} 个未决运行`);
   }
   if (summaryLines.length === 0 && status.stop_reason) {
-    summaryLines.push(`状态原因: ${status.stop_reason}`);
+    summaryLines.push(`状态原因: ${displayStopReason(status.stop_reason)}`);
   }
 
   // 整理待审批项目

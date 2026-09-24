@@ -238,7 +238,7 @@ POST /api/run/start
 {"rounds":1,"run_budget_tokens":本次已确认的正整数额度}
 ```
 
-这些结构需由 Python/TypeScript 或 PowerShell JSON 序列化构造；UTF-8 请求体发送，不把中文 JSON 手工拼接到 shell 参数。不要传一个很大的 global_budget_tokens 以为它会调整实际全局余额。
+这些结构需由 Python/TypeScript 或 PowerShell JSON 序列化构造；UTF-8 请求体发送，不把中文 JSON 手工拼接到 shell 参数。运行只受本次 Run Tokens 上限和 Pixel 自身能量约束。
 
 **验收**：版本实际刷新；新 Mandate 已回读；真实 Pixel 能读取事实并输出可核对的理解；无未决结算。若没有实际付费运行授权，只标明离线验证完成，E04 保持 WAITING_INPUT。
 

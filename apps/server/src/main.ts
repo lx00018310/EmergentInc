@@ -17,6 +17,7 @@ import { AgentStepRunner, RoundScheduler } from "@emergentinc/runtime";
 import { WorldService } from "./services/world_service.js";
 import { RunService } from "./services/run_service.js";
 import { PromptService } from "./services/prompt_service.js";
+import { OwnerChatService } from "./services/owner_chat_service.js";
 
 async function bootstrap() {
   const projectRoot = path.resolve(import.meta.dirname, "../../..");
@@ -151,6 +152,13 @@ async function bootstrap() {
     isMockMode,
     isModelConfigured,
   });
+  const ownerChatService = new OwnerChatService({
+    projectRoot, workspaceRoot, store, worldService, runService,
+    provider: isModelConfigured
+      ? new OpenAICompatibleProvider({ baseUrl, apiKey, timeoutMs: 60 * 60 * 1000 })
+      : provider,
+    usageMeter, modelName, isModelConfigured,
+  });
 
   // 5. 创建 Fastify 服务器
   const app = await createServer({
@@ -160,6 +168,7 @@ async function bootstrap() {
     toolRegistry,
     coreStore: store,
     workspaceRoot,
+    ownerChatService,
     frontendDistDir,
     development: process.env.EMERGENT_DEV === "1",
     allowedOrigins: (process.env.EMERGENT_ALLOWED_ORIGINS || "")

@@ -21,6 +21,6 @@
 
 ## 预算即安全护栏
 
-12. 三级硬预算（PIXEL / RUN / GLOBAL）在同一事务内检查，超限立即 `BudgetExceededError` 并停调度，不允许"先花后补"。
+12. Pixel 能量与本次 Run 预算在同一事务内检查，超限立即 `BudgetExceededError`；历史累计消耗仅用于审计。
 13. 存在未决 `reservations` 或未结算调用时禁止启动新 Run；恢复必须走 `/api/run/recovery/resolve` 并留下 `recovery_decisions` 审计记录。
 14. 外部真实收入只能通过 `/api/pixels/:id/reward` 由 Owner 提交，且必须带 `idempotency_key`，防止重复记账。

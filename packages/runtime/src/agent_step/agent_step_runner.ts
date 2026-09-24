@@ -260,6 +260,13 @@ export class AgentStepRunner {
       });
     }
 
+    // 模型费用若已耗尽能量，本次响应只留作审计，不允许失活 Pixel 再执行副作用。
+    if (!this.store.pixels.getPixelAccount(pixelState.pixelId)?.active) {
+      this.store.messages.commitMessage(message.messageId);
+      this.syncPixelState(pixelState.pixelId, round);
+      return { decision: {}, usage, effects: [], trace };
+    }
+
     // 8. 解析归一化决策
     let decision: AgentDecision;
     try {
@@ -302,14 +309,7 @@ export class AgentStepRunner {
     this.store.messages.commitMessage(message.messageId);
 
     // 12. 更新元胞状态中的实际活动轮次
-    try {
-      const stateFile = path.resolve(this.workspaceRoot, "live", "pixels", pixelState.pixelId, "state.json");
-      if (fs.existsSync(stateFile)) {
-        const rawState = JSON.parse(fs.readFileSync(stateFile, "utf-8"));
-        rawState.last_active_round = round;
-        fs.writeFileSync(stateFile, JSON.stringify(rawState, null, 2), "utf-8");
-      }
-    } catch {}
+    this.syncPixelState(pixelState.pixelId, round);
 
     return {
       decision,
@@ -317,5 +317,21 @@ export class AgentStepRunner {
       effects,
       trace,
     };
+  }
+
+  private syncPixelState(pixelId: string, round: number): void {
+    try {
+      const stateFile = path.resolve(this.workspaceRoot, "live", "pixels", pixelId, "state.json");
+      if (fs.existsSync(stateFile)) {
+        const rawState = JSON.parse(fs.readFileSync(stateFile, "utf-8"));
+        const account = this.store.pixels.getPixelAccount(pixelId);
+        if (account) {
+          rawState.energy = account.energy;
+          rawState.active = account.active;
+        }
+        rawState.last_active_round = round;
+        fs.writeFileSync(stateFile, JSON.stringify(rawState, null, 2), "utf-8");
+      }
+    } catch {}
   }
 }

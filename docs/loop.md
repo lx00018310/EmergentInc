@@ -18,7 +18,7 @@
 ## 单条消息（AgentStepRunner）
 
 8. 组装上下文：自身 `pixel.md`、`tips.md`、`mandate.md`（只读）、邻居来信、`environment.md`、genesis / temporary prompt、工具目录。**不含**全局状态、非邻居数据、历史聊天。
-9. 估算 token 并 `reserve()`，三级预算 PIXEL → RUN → GLOBAL 任一超限即抛 `BudgetExceededError`：PIXEL 级把消息置 `WAITING_PIXEL_BUDGET` 继续下一个，RUN / GLOBAL 级直接停机并记录原因。
+9. 估算 token 并 `reserve()`，检查 Pixel 能量与本次 Run 预算：Pixel 不足把消息置 `WAITING_PIXEL_BUDGET` 继续下一个，Run 预算不足直接停机并记录原因。
 10. 调用真实模型；响应非法时最多一次付费重试，仍失败则 Fail Fast。
 11. `DecisionCompiler` 把响应编译成 `Effects[]`（UPDATE_MIND / ROUTE_MESSAGE / TRANSFER_ENERGY / REPRODUCE / TOOL_CALL / SELF 等）。
 12. `EffectRuntime` 在事务内落盘：写文件 + 写 `effects` / `ledger_entries` / `messages` / `pixel_accounts`。

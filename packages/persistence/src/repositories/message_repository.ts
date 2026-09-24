@@ -190,6 +190,20 @@ export class MessageRepository {
     return Number(row?.count ?? 0);
   }
 
+  /** 当前或未来轮次仍有可处理的消息；可补足预算的等待消息留待下一轮恢复。 */
+  public hasProcessableMessages(): boolean {
+    const row = this.db.prepare(`
+      SELECT 1 FROM messages
+      WHERE status IN ('QUEUED', 'RESPONSE_STORED')
+         OR (status = 'WAITING_PIXEL_BUDGET' AND recipient IN (
+           SELECT pixel_id FROM pixel_accounts
+           WHERE energy >= 100 AND active = 1 AND refund_deficit_tokens = 0
+         ))
+      LIMIT 1
+    `).get();
+    return Boolean(row);
+  }
+
   /**
    * 在新 Run 启动或新轮次开始时，将因 Run 预算不足等待的消息重置为 QUEUED
    */

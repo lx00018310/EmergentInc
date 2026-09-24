@@ -115,7 +115,10 @@ export class RoundScheduler {
       // 领取下一条消息
       const message = this.store.messages.claimNext(currentRound);
       if (!message) {
-        // 本轮无更多可处理消息
+        // 未来轮次仍有消息时继续推进；否则立即停止，避免空转到轮数上限。
+        if (!this.store.messages.hasProcessableMessages()) {
+          stopReason = "NO_ACTIVE_MESSAGES";
+        }
         break;
       }
 
@@ -209,11 +212,6 @@ export class RoundScheduler {
             // 预算护栏是正常停机，不是基础设施故障；不得携带误导性诊断
             errorCode = errorSummary = errorPhase = null;
             stopReason = "RUN_BUDGET_EXHAUSTED";
-            break;
-          }
-          if (err.kind === "GLOBAL") {
-            errorCode = errorSummary = errorPhase = null;
-            stopReason = "GLOBAL_BUDGET_EXHAUSTED";
             break;
           }
         }

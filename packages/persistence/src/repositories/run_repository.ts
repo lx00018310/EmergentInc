@@ -10,9 +10,10 @@ export interface RunRecord {
   run_limit: number;
   run_spent: number;
   run_reserved: number;
-  global_limit: number;
-  global_spent: number;
-  global_reserved: number;
+  /** 旧版字段，仅保留历史记录；新 Run 写入 0。 */
+  global_limit?: number;
+  global_spent?: number;
+  global_reserved?: number;
   genesis_revision: number;
   genesis_hash?: string | null;
   pricing_revision?: string | null;
@@ -49,9 +50,9 @@ export class RunRepository {
       run.run_limit,
       run.run_spent,
       run.run_reserved,
-      run.global_limit,
-      run.global_spent,
-      run.global_reserved,
+      run.global_limit ?? 0,
+      run.global_spent ?? 0,
+      run.global_reserved ?? 0,
       run.genesis_revision,
       run.genesis_hash ?? null,
       run.pricing_revision ?? null,

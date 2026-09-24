@@ -1,5 +1,6 @@
 import React from 'react';
 import type { WorldDto, RunStatusDto, WorkspaceAuditDto } from '../../api/types';
+import { displayRunStatus } from './runStatusLabels';
 
 export interface RunStatusProps {
   world: WorldDto | null;
@@ -72,7 +73,7 @@ export const RunStatus: React.FC<RunStatusProps> = ({ world, runStatus, onOpenHe
         <div className="metric-item">
           <span className="m-label">系统状态:</span>{' '}
           <span className="m-val" style={{ color: systemHealthColor }}>
-            {systemHealth}
+            {displayRunStatus(systemHealth)}
           </span>
         </div>
         {onOpenHelp && (

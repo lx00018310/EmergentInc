@@ -119,7 +119,6 @@ export interface RunStartRequest {
   rounds: number;
   command?: string; // Deprecated; controls do not dispatch messages.
   run_budget_tokens: number;
-  global_budget_tokens: number;
 }
 
 export interface PromptDto {

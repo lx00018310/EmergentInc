@@ -54,7 +54,7 @@ describe("Domain: Energy Conservation & Transfer", () => {
       fromEnergy: 1000,
       fromActive: true,
       toPixelId: "1_0_0",
-      toActive: true,
+      toExists: true,
       amount: 200,
     });
     expect(result.valid).toBe(true);
@@ -68,7 +68,7 @@ describe("Domain: Energy Conservation & Transfer", () => {
         fromEnergy: 1000,
         fromActive: true,
         toPixelId: "0_0_0",
-        toActive: true,
+        toExists: true,
         amount: 100,
       }).errorCode
     ).toBe("SELF_TRANSFER_DISALLOWED");
@@ -80,22 +80,33 @@ describe("Domain: Energy Conservation & Transfer", () => {
         fromEnergy: 1000,
         fromActive: true,
         toPixelId: "2_0_0",
-        toActive: true,
+        toExists: true,
         amount: 100,
       }).errorCode
     ).toBe("NON_NEIGHBOR_TRANSFER");
 
-    // 3. 目标失活
+    // 3. 失活但存在的邻居可获赠 Token 复活
     expect(
       validateEnergyTransfer({
         fromPixelId: "0_0_0",
         fromEnergy: 1000,
         fromActive: true,
         toPixelId: "1_0_0",
-        toActive: false,
+        toExists: true,
+        amount: 100,
+      }).valid
+    ).toBe(true);
+
+    expect(
+      validateEnergyTransfer({
+        fromPixelId: "0_0_0",
+        fromEnergy: 1000,
+        fromActive: true,
+        toPixelId: "1_0_0",
+        toExists: false,
         amount: 100,
       }).errorCode
-    ).toBe("TARGET_INACTIVE");
+    ).toBe("TARGET_NOT_FOUND");
 
     // 4. 余额不足
     expect(
@@ -104,7 +115,7 @@ describe("Domain: Energy Conservation & Transfer", () => {
         fromEnergy: 50,
         fromActive: true,
         toPixelId: "1_0_0",
-        toActive: true,
+        toExists: true,
         amount: 100,
       }).errorCode
     ).toBe("INSUFFICIENT_ENERGY");

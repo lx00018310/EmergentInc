@@ -875,18 +875,45 @@ body {
   max-height: 60px;
 }
 
-/* P1-1 提示词 Tab 合并卡片 */
-.prompt-tabs {
+.owner-chat {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  min-height: 100%;
+  gap: 12px;
 }
 
-.prompt-tabs-bar {
+.owner-chat-history {
+  flex: 1;
+  min-height: 200px;
+  overflow-y: auto;
   display: flex;
-  gap: 6px;
-  padding: 2px 2px 0;
+  flex-direction: column;
+  gap: 10px;
 }
+
+.owner-chat-message {
+  max-width: 92%;
+  padding: 10px 12px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.owner-chat-message.user {
+  align-self: flex-end;
+  background: rgba(47, 129, 247, 0.12);
+}
+
+.owner-chat-message.assistant {
+  align-self: flex-start;
+}
+
+.owner-chat-content { white-space: pre-wrap; overflow-wrap: anywhere; }
+.owner-chat-evidence { margin-top: 8px; color: var(--text-dim); font-size: 11px; overflow-wrap: anywhere; }
+.owner-chat-compose { margin-top: auto; }
+.owner-chat-actions { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
+.owner-chat-actions .form-hint { margin-right: auto; }
 
 /* P1-1 帮助弹窗列表 */
 .help-list {

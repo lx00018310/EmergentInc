@@ -43,6 +43,22 @@ describe("Mainflow rectification: real runner requests and lifecycle", () => {
     expect(prompt.split("=== PIXEL SELF ===")[0]).not.toContain("PEER_SENTINEL");
     expect(prompt.split("=== LOCAL MESSAGES ===")[1]).toContain("PEER_SENTINEL");
   });
+  it("does not execute a paid response's effects after model tokens deactivate the pixel", async () => {
+    store.pixels.upsertPixelAccount({ pixelId: "0_0_0", energy: 2000, active: true, refundDeficitTokens: 0, spendBlockedReason: null });
+    store.pixels.upsertPixelAccount({ pixelId: "1_0_0", energy: 100, active: true, refundDeficitTokens: 0, spendBlockedReason: null });
+    fs.writeFileSync(path.join(root, "live", "pixels", "0_0_0", "state.json"), JSON.stringify({ active: true, energy: 2000 }));
+    call.mockResolvedValue({
+      rawText: '{"pixel_md":"should not be written","energy_transfer":[{"to":"1_0_0","amount":10}]}',
+      usage: { promptTokens: 1000, completionTokens: 1000, actualTokens: 2000 },
+    });
+    const step = await runner.execute(input());
+    expect(step.effects).toHaveLength(0);
+    expect(store.pixels.getPixelAccount("0_0_0")).toMatchObject({ energy: 0, active: false });
+    expect(store.pixels.getPixelAccount("1_0_0")?.energy).toBe(100);
+    expect(store.messages.getMessage("message_pixel")?.status).toBe("COMMITTED");
+    expect(fs.existsSync(path.join(root, "live", "pixels", "0_0_0", "pixel.md"))).toBe(false);
+    expect(JSON.parse(fs.readFileSync(path.join(root, "live", "pixels", "0_0_0", "state.json"), "utf-8"))).toMatchObject({ active: false, energy: 0 });
+  });
   it("exposes environment only in the next-hop environment response", async () => {
     call.mockResolvedValueOnce(paid('{"environment_read":true}')).mockResolvedValue(paid());
     const step = input();

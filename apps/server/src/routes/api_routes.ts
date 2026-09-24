@@ -7,6 +7,7 @@ import { PromptService } from "../services/prompt_service.js";
 import { containedPath, validatePathSegment } from "../services/safe_path.js";
 import { ToolRegistry } from "@emergentinc/tools";
 import { CoreStore } from "@emergentinc/persistence";
+import { OwnerChatService } from "../services/owner_chat_service.js";
 
 export interface ApiRoutesOptions {
   worldService: WorldService;
@@ -15,6 +16,7 @@ export interface ApiRoutesOptions {
   toolRegistry: ToolRegistry;
   coreStore: CoreStore;
   workspaceRoot: string;
+  ownerChatService?: OwnerChatService;
 }
 
 export async function registerApiRoutes(
@@ -28,6 +30,7 @@ export async function registerApiRoutes(
     toolRegistry,
     coreStore,
     workspaceRoot,
+    ownerChatService,
   } = options;
 
   server.addHook("preHandler", async (req, reply) => {
@@ -45,6 +48,22 @@ export async function registerApiRoutes(
     return reply.send(worldService.getWorldDto());
   });
 
+  server.post("/owner/chat", async (req, reply) => {
+    if (!ownerChatService) return reply.status(503).send({ detail: "老板窗口未配置模型服务。" });
+    const body = (req.body ?? {}) as { question?: unknown; history?: unknown };
+    if (typeof body.question !== "string" || !body.question.trim() || body.question.length > 2000 ||
+        (body.history !== undefined && (!Array.isArray(body.history) || body.history.length > 12 ||
+          body.history.some((t: any) => !t || !["user", "assistant"].includes(t.role) || typeof t.content !== "string" || t.content.length > 4000)))) {
+      return reply.status(400).send({ detail: "问题或对话历史格式无效。" });
+    }
+    try {
+      return reply.send(await ownerChatService.ask(body.question, body.history as any[] | undefined));
+    } catch (err: any) {
+      const code = err.message?.includes("需要配置真实模型") ? 503 : 502;
+      return reply.status(code).send({ detail: err.message || "老板窗口回答失败。" });
+    }
+  });
+
   // 2. Run
   server.get("/run/status", async (_req, reply) => {
     return reply.send(runService.getStatus());
@@ -54,13 +73,11 @@ export async function registerApiRoutes(
     const body: any = req.body || {};
     const rounds = Number(body.rounds ?? 1);
     const runBudgetTokens = Number(body.run_budget_tokens ?? 1000000);
-    const globalBudgetTokens = Number(body.global_budget_tokens ?? 10000000);
 
     try {
       const res = await runService.start({
         rounds,
         runBudgetTokens,
-        globalBudgetTokens,
       });
       return reply.send(res);
     } catch (err: any) {
@@ -298,6 +315,7 @@ export async function registerApiRoutes(
       try {
         const stateObj = JSON.parse(fs.readFileSync(statePath, "utf-8"));
         stateObj.energy = result.newBalance;
+        stateObj.active = coreStore.pixels.getPixelAccount(pixelId)?.active ?? stateObj.active;
         fs.writeFileSync(statePath, JSON.stringify(stateObj, null, 2), "utf-8");
       } catch {}
     }

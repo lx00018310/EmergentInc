@@ -1,8 +1,12 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { startRun, stopRun } from '../../api/run';
 import { ApiError } from '../../api/client';
 import type { RunStatusDto } from '../../api/types';
+import { Modal } from '../../components/Modal';
+import { displayRunStatus } from './runStatusLabels';
 import { parseCommand } from './commandParser';
+
+const RUN_BUDGET_STORAGE_KEY = 'emergentinc.runBudgetTokens';
 
 export interface RunControlsProps {
   runStatus: RunStatusDto | null;
@@ -10,6 +14,9 @@ export interface RunControlsProps {
   onOpenTools: () => void;
   onOpenPrivateFiles: () => void;
   onOpenToolExecutions: () => void;
+  onOpenOwnerChat: () => void;
+  onOpenGenesisPrompt: () => void;
+  onOpenTemporaryPrompt: () => void;
   onLogMessage: (type: 'info' | 'success' | 'warn' | 'error', text: string) => void;
   onRefresh: () => Promise<void>;
   onReconcile?: () => Promise<void>;
@@ -21,17 +28,31 @@ export const RunControls: React.FC<RunControlsProps> = ({
   onOpenTools,
   onOpenPrivateFiles,
   onOpenToolExecutions,
+  onOpenOwnerChat,
+  onOpenGenesisPrompt,
+  onOpenTemporaryPrompt,
   onLogMessage,
   onRefresh,
   onReconcile,
 }) => {
   const [command, setCommand] = useState<string>('');
-  const [runBudget, setRunBudget] = useState<number>(100000);
-  const [globalBudget, setGlobalBudget] = useState<number>(1000000);
+  const [runBudget, setRunBudget] = useState<number>(() => {
+    const saved = Number(localStorage.getItem(RUN_BUDGET_STORAGE_KEY));
+    return Number.isSafeInteger(saved) && saved > 0 ? saved : 100000;
+  });
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
+  const [startedRunId, setStartedRunId] = useState<string | null>(null);
+  const [emptyQueueNotice, setEmptyQueueNotice] = useState<{ completed: number; requested: number } | null>(null);
 
   const isRunning = Boolean(runStatus?.running);
   const recoveryRequired = Boolean(runStatus?.unfinalized_operations);
+
+  useEffect(() => {
+    if (startedRunId && runStatus?.run_id === startedRunId && !runStatus.running && runStatus.stop_reason === 'NO_ACTIVE_MESSAGES') {
+      setEmptyQueueNotice({ completed: runStatus.completed_rounds, requested: runStatus.requested_rounds });
+      setStartedRunId(null);
+    }
+  }, [startedRunId, runStatus]);
 
   const handleStart = async (cmdText?: string) => {
     if (isSubmitting) return;
@@ -52,15 +73,15 @@ export const RunControls: React.FC<RunControlsProps> = ({
     if (parsed.action === 'UNKNOWN') {
       onLogMessage(
         'warn',
-        `[CMD WARN] 未识别指令: "${actualCommand}"。支持格式：跑10轮 / run 5 / 5轮 / 停止`
+        `[CMD WARN] 未识别指令: "${actualCommand}"。支持格式：跑100轮 / run 5 / 5轮 / 停止`
       );
       return;
     }
 
     if (isRunning) return;
 
-    if (runBudget <= 0 || globalBudget <= 0) {
-      onLogMessage('error', '[ERROR] 预算上限必须为大于 0 的整数 Token。');
+    if (!Number.isSafeInteger(runBudget) || runBudget <= 0) {
+      onLogMessage('error', '[ERROR] 本次运行上限必须为大于 0 的整数 Token。');
       return;
     }
 
@@ -68,11 +89,11 @@ export const RunControls: React.FC<RunControlsProps> = ({
     onLogMessage('info', `[DISPATCH] 发送推进请求：rounds=${parsed.rounds}, command="${actualCommand || '默认推进'}"...`);
 
     try {
-      await startRun({
+      const started = await startRun({
         rounds: parsed.rounds,
         run_budget_tokens: Number(runBudget),
-        global_budget_tokens: Number(globalBudget),
       });
+      if (typeof started.run_id === 'string') setStartedRunId(started.run_id);
       onLogMessage('success', `[SUCCESS] 推进任务已成功启动 (${parsed.rounds} 轮)。`);
       setCommand('');
       await onRefresh();
@@ -111,7 +132,7 @@ export const RunControls: React.FC<RunControlsProps> = ({
         <span
           className={`run-status-indicator ${isRunning ? 'running' : 'stopped'}`}
         >
-          {isRunning ? 'RUNNING' : 'IDLE'}
+          {isRunning ? displayRunStatus('RUNNING') : '空闲'}
         </span>
       </div>
 
@@ -149,23 +170,16 @@ export const RunControls: React.FC<RunControlsProps> = ({
             className="text-input"
             type="number"
             value={runBudget}
-            min={1000}
-            step={1000}
+            min={1}
+            step={1}
             disabled={isRunning || isSubmitting}
-            onChange={(e) => setRunBudget(Number(e.target.value))}
-          />
-        </div>
-        <div style={{ flex: 1 }}>
-          <label htmlFor="input-global-budget">累计总上限 (Global Tokens):</label>
-          <input
-            id="input-global-budget"
-            className="text-input"
-            type="number"
-            value={globalBudget}
-            min={10000}
-            step={10000}
-            disabled={isRunning || isSubmitting}
-            onChange={(e) => setGlobalBudget(Number(e.target.value))}
+            onChange={(e) => {
+              const value = Number(e.target.value);
+              setRunBudget(value);
+              if (Number.isSafeInteger(value) && value > 0) {
+                localStorage.setItem(RUN_BUDGET_STORAGE_KEY, String(value));
+              }
+            }}
           />
         </div>
       </div>
@@ -174,7 +188,7 @@ export const RunControls: React.FC<RunControlsProps> = ({
         <input
           type="text"
           value={command}
-          placeholder="输入命令，例如：跑10轮 / run 5 / 停止"
+          placeholder="输入命令，例如：跑100轮 / run 5 / 停止"
           disabled={isRunning || isSubmitting || recoveryRequired}
           onChange={(e) => setCommand(e.target.value)}
           onKeyDown={(e) => {
@@ -203,23 +217,23 @@ export const RunControls: React.FC<RunControlsProps> = ({
         <button
           className="btn btn-sm run-quick-btn"
           disabled={isRunning || isSubmitting || recoveryRequired}
-          onClick={() => handleStart('跑1轮')}
+          onClick={() => handleStart('跑100轮')}
         >
-          跑 1 轮
+          跑 100 轮
         </button>
         <button
           className="btn btn-sm run-quick-btn"
           disabled={isRunning || isSubmitting || recoveryRequired}
-          onClick={() => handleStart('跑5轮')}
+          onClick={() => handleStart('跑1000轮')}
         >
-          跑 5 轮
+          跑 1000 轮
         </button>
         <button
           className="btn btn-sm run-quick-btn"
           disabled={isRunning || isSubmitting || recoveryRequired}
-          onClick={() => handleStart('跑10轮')}
+          onClick={() => handleStart('跑10000轮')}
         >
-          跑 10 轮
+          跑 10000 轮
         </button>
         <button className="btn btn-sm" onClick={onOpenEnvironment}>
           外部环境
@@ -232,6 +246,15 @@ export const RunControls: React.FC<RunControlsProps> = ({
         </button>
         <button className="btn btn-sm" onClick={onOpenToolExecutions}>
           执行记录
+        </button>
+        <button className="btn btn-sm" onClick={onOpenOwnerChat}>
+          老板窗口
+        </button>
+        <button className="btn btn-sm" onClick={onOpenGenesisPrompt}>
+          创世提示词
+        </button>
+        <button className="btn btn-sm" onClick={onOpenTemporaryPrompt}>
+          临时提示词
         </button>
         {onReconcile && recoveryRequired && (
           <button
@@ -248,6 +271,9 @@ export const RunControls: React.FC<RunControlsProps> = ({
           </button>
         )}
       </div>
+      <Modal isOpen={emptyQueueNotice !== null} title="无可处理消息，已自动停止" onClose={() => setEmptyQueueNotice(null)}>
+        <p>当前没有可处理的消息。本次运行完成 {emptyQueueNotice?.completed} / {emptyQueueNotice?.requested} 轮。</p>
+      </Modal>
     </div>
   );
 };

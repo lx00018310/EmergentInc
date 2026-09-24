@@ -1,8 +1,8 @@
 import { SqliteDatabase } from "../sqlite/db.js";
 
 export class BudgetExceededError extends Error {
-  public readonly kind: "PIXEL" | "RUN" | "GLOBAL";
-  constructor(message: string, kind: "PIXEL" | "RUN" | "GLOBAL" = "PIXEL") {
+  public readonly kind: "PIXEL" | "RUN";
+  constructor(message: string, kind: "PIXEL" | "RUN" = "PIXEL") {
     super(message);
     this.name = "BudgetExceededError";
     this.kind = kind;
@@ -69,9 +69,7 @@ export class BudgetRepository {
     };
   }
 
-  /**
-   * 原子多级预算检查与预留
-   */
+  /** 原子检查 Pixel 能量与本次 Run 预算，然后预留。 */
   public reserve(params: {
     callId: string;
     runId: string;
@@ -117,25 +115,14 @@ export class BudgetRepository {
         }
       }
 
-      // 3. 检查 Global 预算
-      const global = this.getGlobalBudget();
-      if (global) {
-        if (global.totalSpent + global.totalReserved + estimatedTokens > global.totalLimit) {
-          throw new BudgetExceededError(
-            `Global budget exceeded: limit=${global.totalLimit}, current=${global.totalSpent + global.totalReserved}, request=${estimatedTokens}`,
-            "GLOBAL"
-          );
-        }
-      }
-
-      // 4. 写入预留记录
+      // 3. 写入预留记录
       const resStmt = this.db.prepare(`
         INSERT INTO reservations (call_id, run_id, pixel_id, amount, status, created_at)
         VALUES (?, ?, ?, ?, 'OPEN', ?)
       `);
       resStmt.run(callId, runId, pixelId, estimatedTokens, now);
 
-      // 5. 更新 Run 和 Global 预留量
+      // 4. 更新 Run 预留量与历史累计统计
       if (run) {
         this.db.prepare(`UPDATE runs SET run_reserved = run_reserved + ? WHERE run_id = ?`).run(estimatedTokens, runId);
       }
@@ -169,9 +156,11 @@ export class BudgetRepository {
       // 1. 扣减 Pixel 能量
       this.db.prepare(`
         UPDATE pixel_accounts 
-        SET energy = MAX(0, energy - ?), updated_at = ? 
+        SET energy = MAX(0, energy - ?),
+            active = CASE WHEN energy <= ? THEN 0 ELSE active END,
+            updated_at = ?
         WHERE pixel_id = ?
-      `).run(actualTokens, now, pixelId);
+      `).run(actualTokens, actualTokens, now, pixelId);
 
       // 2. 扣除 Run 预算 (释放 reserved，增加 spent)
       this.db.prepare(`
@@ -180,7 +169,7 @@ export class BudgetRepository {
         WHERE run_id = ?
       `).run(reservedAmount, actualTokens, runId);
 
-      // 3. 扣除 Global 预算
+      // 3. 更新历史累计消耗统计（不作为预算上限）
       this.db.prepare(`
         UPDATE global_budget
         SET total_reserved = MAX(0, total_reserved - ?), total_spent = total_spent + ?, updated_at = ?
@@ -216,7 +205,7 @@ export class BudgetRepository {
         WHERE run_id = ?
       `).run(reservedAmount, runId);
 
-      // 释放 Global 预留
+      // 释放历史累计预留统计
       this.db.prepare(`
         UPDATE global_budget
         SET total_reserved = MAX(0, total_reserved - ?), updated_at = ?

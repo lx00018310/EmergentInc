@@ -84,6 +84,19 @@ export function initSchema(db: SqliteDatabase): void {
           created_at REAL NOT NULL
       );
 
+      CREATE TABLE IF NOT EXISTS owner_chat_calls (
+          call_id TEXT PRIMARY KEY,
+          stage TEXT NOT NULL,
+          model TEXT NOT NULL,
+          question_hash TEXT NOT NULL,
+          prompt_tokens INTEGER,
+          completion_tokens INTEGER,
+          actual_tokens INTEGER,
+          cost_cny REAL,
+          outcome TEXT NOT NULL,
+          created_at REAL NOT NULL
+      );
+
       CREATE TABLE IF NOT EXISTS messages (
           message_id TEXT PRIMARY KEY,
           run_id TEXT,

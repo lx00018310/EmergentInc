@@ -75,6 +75,29 @@ describe("Persistence: CoreStore & Repositories", () => {
     expect(store.getUnfinalizedOperations().callingMessages).toHaveLength(0);
   });
 
+  it("deactivates a pixel when model token settlement exhausts its energy", () => {
+    store.pixels.upsertPixelAccount({ pixelId: "p", energy: 50, active: true, refundDeficitTokens: 0, spendBlockedReason: null });
+    store.budgets.reserve({ callId: "exhaust", runId: "r", pixelId: "p", estimatedTokens: 40 });
+    store.budgets.settle({ callId: "exhaust", actualTokens: 50, costCny: null });
+    expect(store.pixels.getPixelAccount("p")).toMatchObject({ energy: 0, active: false });
+  });
+
+  it("does not enforce the retired global limit while preserving cumulative spend", () => {
+    store.pixels.upsertPixelAccount({ pixelId: "p", energy: 1000, active: true, refundDeficitTokens: 0, spendBlockedReason: null });
+    store.runs.createRun({ run_id: "r", start_round: 1, run_limit: 500, run_spent: 0, run_reserved: 0,
+      genesis_revision: 1, status: "RUNNING", created_at: 1 });
+    store.db.prepare("UPDATE global_budget SET total_limit = 1 WHERE id = 'GLOBAL'").run();
+
+    store.budgets.reserve({ callId: "above_legacy_limit", runId: "r", pixelId: "p", estimatedTokens: 100 });
+    store.budgets.settle({ callId: "above_legacy_limit", actualTokens: 100, costCny: null });
+
+    expect(store.runs.getRun("r")).toMatchObject({ run_spent: 100, global_limit: 0 });
+    expect(store.budgets.getGlobalBudget()?.totalSpent).toBe(100);
+    expect(store.pixels.getPixelAccount("p")?.energy).toBe(900);
+    expect(() => store.budgets.reserve({ callId: "above_run_limit", runId: "r", pixelId: "p", estimatedTokens: 401 }))
+      .toThrow(BudgetExceededError);
+  });
+
   it("surfaces a claimed PROCESSING message for explicit recovery", () => {
     const msg = store.messages.enqueueMessage({ sender: "system", recipient: "p", content: "test", roundNum: 1 });
     expect(store.messages.claimNext(1)?.status).toBe("PROCESSING");
@@ -96,11 +119,11 @@ describe("Persistence: CoreStore & Repositories", () => {
   });
 
   it("applies an external reward exactly once per idempotency key and rejects key reuse with different payload", () => {
-    store.pixels.upsertPixelAccount({ pixelId: "p", energy: 0, active: true, refundDeficitTokens: 0, spendBlockedReason: null });
+    store.pixels.upsertPixelAccount({ pixelId: "p", energy: 0, active: false, refundDeficitTokens: 0, spendBlockedReason: null });
     const first = store.applyExternalReward({ pixelId: "p", amount: 50, idempotencyKey: "key-1", reason: "bonus" });
     const replay = store.applyExternalReward({ pixelId: "p", amount: 50, idempotencyKey: "key-1", reason: "bonus" });
     expect(replay).toEqual(first);
-    expect(store.pixels.getPixelAccount("p")?.energy).toBe(50);
+    expect(store.pixels.getPixelAccount("p")).toMatchObject({ energy: 50, active: true });
     expect(store.db.prepare("SELECT count(*) AS n FROM ledger_entries WHERE entry_type = 'external_reward'").get()).toEqual({ n: 1 });
     expect(() => store.applyExternalReward({ pixelId: "p", amount: 99, idempotencyKey: "key-1" })).toThrow();
     expect(() => store.applyExternalReward({ pixelId: "p", amount: 10, idempotencyKey: "" })).toThrow();

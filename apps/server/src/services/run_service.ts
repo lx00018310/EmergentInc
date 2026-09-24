@@ -8,7 +8,6 @@ export interface RunStartOptions {
   rounds: number;
   commandText?: string; // Deprecated: never dispatched to agents.
   runBudgetTokens: number;
-  globalBudgetTokens: number;
 }
 
 export interface RunServiceOptions {
@@ -124,9 +123,9 @@ export class RunService {
     } else if (
       stopReason === "USER_STOPPED" ||
       stopReason === "RUN_BUDGET_EXHAUSTED" ||
-      stopReason === "GLOBAL_BUDGET_EXHAUSTED" ||
       stopReason === "READ_LOOP_THRESHOLD_REACHED" ||
       stopReason === "MODEL_RESPONSE_INVALID" ||
+      stopReason === "NO_ACTIVE_MESSAGES" ||
       persistedStatus === "STOPPED"
     ) {
       resultStatus = "STOPPED";
@@ -180,9 +179,6 @@ export class RunService {
     if (!Number.isSafeInteger(options.runBudgetTokens) || options.runBudgetTokens <= 0) {
       throw new Error("run_budget_tokens must be positive.");
     }
-    if (!Number.isSafeInteger(options.globalBudgetTokens) || options.globalBudgetTokens <= 0) {
-      throw new Error("global_budget_tokens must be positive.");
-    }
 
     const runId = `run_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
     const currentWorldRound = this.getWorldRound();
@@ -208,9 +204,6 @@ export class RunService {
         run_limit: options.runBudgetTokens,
         run_spent: 0,
         run_reserved: 0,
-        global_limit: options.globalBudgetTokens,
-        global_spent: 0,
-        global_reserved: 0,
         genesis_revision: genesisRevision,
         status: "RUNNING",
         created_at: Date.now() / 1000,
@@ -312,9 +305,9 @@ export class RunService {
         signal.aborted ||
         this.lastStopReason === "USER_STOPPED" ||
         this.lastStopReason === "RUN_BUDGET_EXHAUSTED" ||
-        this.lastStopReason === "GLOBAL_BUDGET_EXHAUSTED" ||
         this.lastStopReason === "READ_LOOP_THRESHOLD_REACHED" ||
-        this.lastStopReason === "MODEL_RESPONSE_INVALID";
+        this.lastStopReason === "MODEL_RESPONSE_INVALID" ||
+        this.lastStopReason === "NO_ACTIVE_MESSAGES";
       const isFailed = this.lastStopReason === "INFRASTRUCTURE_FAILURE";
       const finalStatus = isFailed ? "FAILED" : (isStopped || this.lastStopReason === "PAUSED_RECOVERY_REQUIRED") ? "STOPPED" : "COMPLETED";
       const finalReason = this.lastStopReason || (signal.aborted ? "USER_STOPPED" : "ROUND_LIMIT_REACHED");
