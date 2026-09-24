@@ -2,10 +2,25 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import type { PixelSummaryDto, MessageFlowDto } from '../../api/types';
 
+/** 能量突变（心跳）事件：屏幕坐标相对 canvas 左上角，单位 px */
+export interface EnergySpikeInfo {
+  x: number;
+  y: number;
+}
+
+/** 相机系下轴线的 2D 投影方向（y 屏幕向下为正，behind 表示远离相机） */
+export interface Axis2D {
+  x: number;
+  y: number;
+  behind: boolean;
+}
+
 export interface PixelMapRendererOptions {
   canvas: HTMLCanvasElement;
   onSelectPixel: (pixelId: string) => void;
   onHoverPixel: (pixelId: string | null) => void;
+  /** 能量突变回调：驱动全屏心跳冲击波等 DOM 层特效 */
+  onEnergySpike?: (info: EnergySpikeInfo) => void;
 }
 
 export interface TransferRecord {
@@ -25,6 +40,8 @@ export interface TransferRecord {
 }
 
 const SPACING = 2.5;
+const Z_BEACON_HEIGHT = 2.5;
+const WAVE_COOLDOWN_MS = 9000;
 const ACTIVE_COLOR = 0x38e1ff; // 数据冷青光
 const DEAD_COLOR = 0x3a4656; // 熄灭的暗石青
 const TIPS_COLOR = 0xf5c56b; // 提醒琥珀金
@@ -74,6 +91,43 @@ function createHaloTexture(): THREE.CanvasTexture {
   return new THREE.CanvasTexture(canvas);
 }
 
+/** 生成水平面径向渐变贴图（中心微光向外衰减至透明） */
+function createFloorTexture(): THREE.CanvasTexture {
+  const canvas = document.createElement('canvas');
+  canvas.width = 512;
+  canvas.height = 512;
+  const ctx = canvas.getContext('2d');
+  if (ctx) {
+    const gradient = ctx.createRadialGradient(256, 256, 0, 256, 256, 256);
+    gradient.addColorStop(0, 'rgba(34, 62, 102, 0.60)');
+    gradient.addColorStop(0.45, 'rgba(20, 40, 72, 0.38)');
+    gradient.addColorStop(0.8, 'rgba(10, 22, 42, 0.14)');
+    gradient.addColorStop(1, 'rgba(5, 9, 20, 0)');
+    ctx.fillStyle = gradient;
+    ctx.fillRect(0, 0, 512, 512);
+  }
+  return new THREE.CanvasTexture(canvas);
+}
+
+/** 生成文字标签贴图（金色发光描边，用于 +Z 轴标签） */
+function createTextTexture(text: string): THREE.CanvasTexture {
+  const canvas = document.createElement('canvas');
+  canvas.width = 256;
+  canvas.height = 128;
+  const ctx = canvas.getContext('2d');
+  if (ctx) {
+    ctx.clearRect(0, 0, 256, 128);
+    ctx.font = '700 84px "JetBrains Mono", monospace';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.shadowColor = 'rgba(255, 200, 97, 0.9)';
+    ctx.shadowBlur = 22;
+    ctx.fillStyle = '#ffd98a';
+    ctx.fillText(text, 128, 68);
+  }
+  return new THREE.CanvasTexture(canvas);
+}
+
 /**
  * 3D Crystal Lattice 渲染器 (Three.js + OrbitControls)
  * World (x, y, z) → Three (x, z, y): World Z 垂直向上
@@ -102,7 +156,22 @@ export class PixelMapRenderer {
   private pulseGeometry: THREE.RingGeometry;
   private pulses: Array<{ mesh: THREE.Mesh; startTime: number }> = [];
   private prevEnergies: Map<string, number> = new Map();
-  private starfield: THREE.Points | null = null;
+  // 演化星空 / 星云 / 水平面底盘 / +Z 方向信标
+  private skyGroup: THREE.Group | null = null;
+  private skyLayers: Array<{
+    points: THREE.Points;
+    baseOpacity: number;
+    twinkleSpeed: number;
+    twinklePhase: number;
+  }> = [];
+  private nebulaSprites: THREE.Sprite[] = [];
+  private floorMesh: THREE.Mesh | null = null;
+  private floorRim: THREE.Mesh | null = null;
+  private floorTexture: THREE.CanvasTexture | null = null;
+  private axisGroup: THREE.Group | null = null;
+  private axisPulse: THREE.Mesh | null = null;
+  private axisLabelTexture: THREE.CanvasTexture | null = null;
+  private lastSpikeAt = -Infinity;
   private haloTexture: THREE.CanvasTexture;
 
   private sphereGeometry: THREE.SphereGeometry;
@@ -122,6 +191,7 @@ export class PixelMapRenderer {
 
   private onSelectPixel: (pixelId: string) => void;
   private onHoverPixel: (pixelId: string | null) => void;
+  private onEnergySpike?: (info: EnergySpikeInfo) => void;
 
   private animationFrameId: number | null = null;
   private resizeObserver: ResizeObserver | null = null;
@@ -139,6 +209,7 @@ export class PixelMapRenderer {
     this.canvas = options.canvas;
     this.onSelectPixel = options.onSelectPixel;
     this.onHoverPixel = options.onHoverPixel;
+    this.onEnergySpike = options.onEnergySpike;
 
     this.renderer = new THREE.WebGLRenderer({ canvas: this.canvas, antialias: true });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -148,7 +219,7 @@ export class PixelMapRenderer {
     this.scene.fog = new THREE.FogExp2(0x050914, 0.028);
 
     this.camera = new THREE.PerspectiveCamera(45, 1, 0.1, 1000);
-    this.camera.position.set(8, 8, 8);
+    this.camera.position.set(8, 3, 8);
 
     this.controls = new OrbitControls(this.camera, this.renderer.domElement);
     this.controls.enableDamping = true;
@@ -193,9 +264,35 @@ export class PixelMapRenderer {
     grid.position.y = 0;
     this.scene.add(grid);
 
-    // 星空粒子（约 400 点，大半径球壳）
-    this.starfield = this.createStarfield();
-    this.scene.add(this.starfield);
+    // 水平面径向辉光底盘：仅上表面可见（从下方看消失 → 一眼辨别上下）
+    this.floorTexture = createFloorTexture();
+    this.floorMesh = new THREE.Mesh(
+      new THREE.CircleGeometry(24, 72),
+      new THREE.MeshBasicMaterial({
+        map: this.floorTexture,
+        transparent: true,
+        depthWrite: false,
+        side: THREE.FrontSide,
+      })
+    );
+    this.floorMesh.rotation.x = -Math.PI / 2;
+    this.floorMesh.position.y = -0.02;
+    this.scene.add(this.floorMesh);
+
+    // 底盘边缘微光环，强化水平面边界
+    this.floorRim = new THREE.Mesh(
+      new THREE.RingGeometry(23.55, 24, 128),
+      new THREE.MeshBasicMaterial({
+        color: 0x2fd4ff,
+        transparent: true,
+        opacity: 0.22,
+        depthWrite: false,
+        side: THREE.FrontSide,
+      })
+    );
+    this.floorRim.rotation.x = -Math.PI / 2;
+    this.floorRim.position.y = -0.01;
+    this.scene.add(this.floorRim);
 
     this.pixelGroup = new THREE.Group();
     this.edgeGroup = new THREE.Group();
@@ -224,6 +321,14 @@ export class PixelMapRenderer {
     this.pulseGeometry = new THREE.RingGeometry(0.3, 0.36, 48);
     this.haloTexture = createHaloTexture();
 
+    // 多层缓慢演化星空 + 漂移星云（依赖 haloTexture，须在其后构建）
+    this.skyGroup = this.createSky();
+    this.scene.add(this.skyGroup);
+
+    // +Z 方向信标：金色高亮箭头 + 行进脉冲 + 浮动标签
+    this.axisGroup = this.createAxisBeacon();
+    this.scene.add(this.axisGroup);
+
     this.raycaster = new THREE.Raycaster();
 
     this.handlePointerDownBound = (e) => this.onPointerDown(e);
@@ -244,29 +349,145 @@ export class PixelMapRenderer {
     this.startAnimationLoop();
   }
 
-  /** 构建大半径球壳静态星空粒子群 */
-  private createStarfield(): THREE.Points {
-    const count = 400;
-    const positions = new Float32Array(count * 3);
-    for (let i = 0; i < count; i++) {
-      const r = 70 + Math.random() * 50;
-      const theta = Math.random() * Math.PI * 2;
-      const phi = Math.acos(Math.random() * 2 - 1);
-      positions[i * 3] = r * Math.sin(phi) * Math.cos(theta);
-      positions[i * 3 + 1] = r * Math.sin(phi) * Math.sin(theta);
-      positions[i * 3 + 2] = r * Math.cos(phi);
+  /**
+   * 构建多层缓慢演化的星空天空（纯程序化，无素材）：
+   * 三层不同尺度/亮度的星点错相闪烁 + 六团漂移星云，整体极缓自转
+   */
+  private createSky(): THREE.Group {
+    const group = new THREE.Group();
+
+    // 星层配置：尘埃远景 / 中景 / 少量亮星，闪烁周期错开形成"演化"感
+    const layerConfigs = [
+      { count: 3000, size: 0.8, baseOpacity: 0.65, twinkleSpeed: 0.00021, twinklePhase: 0 },
+      { count: 950, size: 1.4, baseOpacity: 0.8, twinkleSpeed: 0.00013, twinklePhase: 2.1 },
+      { count: 180, size: 2.3, baseOpacity: 0.95, twinkleSpeed: 0.00009, twinklePhase: 4.2 },
+    ];
+    const palette = [
+      new THREE.Color(0xbfd8ff), // 冷白蓝（主）
+      new THREE.Color(0x8fb8ff), // 月光蓝
+      new THREE.Color(0x6f9fdf), // 深空蓝
+      new THREE.Color(0xfff1cf), // 暖金（稀有点缀）
+    ];
+
+    for (const cfg of layerConfigs) {
+      const positions = new Float32Array(cfg.count * 3);
+      const colors = new Float32Array(cfg.count * 3);
+      for (let i = 0; i < cfg.count; i++) {
+        const r = 75 + Math.random() * 55;
+        const theta = Math.random() * Math.PI * 2;
+        const phi = Math.acos(Math.random());
+        positions[i * 3] = r * Math.sin(phi) * Math.cos(theta);
+        positions[i * 3 + 1] = r * Math.cos(phi);
+        positions[i * 3 + 2] = r * Math.sin(phi) * Math.sin(theta);
+        const pick = Math.random();
+        const c = pick < 0.5 ? palette[0]! : pick < 0.75 ? palette[1]! : pick < 0.9 ? palette[2]! : palette[3]!;
+        const brightness = 0.55 + Math.random() * 0.45;
+        colors[i * 3] = c.r * brightness;
+        colors[i * 3 + 1] = c.g * brightness;
+        colors[i * 3 + 2] = c.b * brightness;
+      }
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+      geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+      const mat = new THREE.PointsMaterial({
+        size: cfg.size,
+        map: this.haloTexture,
+        transparent: true,
+        opacity: cfg.baseOpacity,
+        vertexColors: true,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+        sizeAttenuation: true,
+        fog: false,
+      });
+      const points = new THREE.Points(geo, mat);
+      group.add(points);
+      this.skyLayers.push({
+        points,
+        baseOpacity: cfg.baseOpacity,
+        twinkleSpeed: cfg.twinkleSpeed,
+        twinklePhase: cfg.twinklePhase,
+      });
     }
-    const geo = new THREE.BufferGeometry();
-    geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-    const mat = new THREE.PointsMaterial({
-      color: 0x8fb8ff,
-      size: 0.06,
-      transparent: true,
-      opacity: 0.7,
-      fog: false,
-      depthWrite: false,
-    });
-    return new THREE.Points(geo, mat);
+
+    // 漂移星云：大号低透明度光晕精灵，分布于上半球远处
+    const nebulaColors = [0x345eb1, 0x704ba2, 0x26758a, 0x603d82, 0x846229, 0x31598b];
+    for (let i = 0; i < nebulaColors.length; i++) {
+      const mat = new THREE.SpriteMaterial({
+        map: this.haloTexture,
+        color: nebulaColors[i],
+        transparent: true,
+        opacity: 0.24 + Math.random() * 0.1,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+        fog: false,
+      });
+      const sprite = new THREE.Sprite(mat);
+      const theta = (i / nebulaColors.length) * Math.PI * 2 + Math.random() * 0.6;
+      const r = 62 + Math.random() * 30;
+      sprite.position.set(r * Math.cos(theta), 12 + Math.random() * 40, r * Math.sin(theta));
+      const s = 46 + Math.random() * 46;
+      sprite.scale.set(s, s * 0.72, 1);
+      sprite.userData.baseOpacity = mat.opacity;
+      sprite.userData.phase = Math.random() * Math.PI * 2;
+      group.add(sprite);
+      this.nebulaSprites.push(sprite);
+    }
+
+    return group;
+  }
+
+  /** 构建 +Z 方向信标：暗色基准轴 + 金色高亮主轴箭头 + 循环行进脉冲 + 浮动标签 */
+  private createAxisBeacon(): THREE.Group {
+    const group = new THREE.Group();
+    const baseY = 0.04; // 略高于地面网格，避免深度冲突
+
+    const mkLine = (from: THREE.Vector3, to: THREE.Vector3, color: number, opacity: number): THREE.Line => {
+      const geo = new THREE.BufferGeometry().setFromPoints([from, to]);
+      const mat = new THREE.LineBasicMaterial({ color, transparent: true, opacity, depthWrite: false });
+      return new THREE.Line(geo, mat);
+    };
+
+    // 世界 X/Y 位于水平面；世界 -Z 在竖直下方
+    group.add(mkLine(new THREE.Vector3(-16, baseY, 0), new THREE.Vector3(16, baseY, 0), 0x27445e, 0.5));
+    group.add(mkLine(new THREE.Vector3(0, baseY, -16), new THREE.Vector3(0, baseY, 16), 0x27445e, 0.5));
+    group.add(mkLine(new THREE.Vector3(0, -2, 0), new THREE.Vector3(0, baseY, 0), 0x27445e, 0.5));
+
+    // 世界 +Z 对应 Three.js +Y：从水平面竖直向上
+    group.add(mkLine(new THREE.Vector3(0, baseY, 0), new THREE.Vector3(0, baseY + Z_BEACON_HEIGHT, 0), 0xffc861, 0.95));
+
+    // 金色箭头（圆锥默认沿 Three.js +Y）
+    const cone = new THREE.Mesh(
+      new THREE.ConeGeometry(0.34, 1.15, 20),
+      new THREE.MeshBasicMaterial({ color: 0xffc861 })
+    );
+    cone.position.set(0, baseY + Z_BEACON_HEIGHT + 0.55, 0);
+    group.add(cone);
+
+    // 沿 +Z 循环行进的暖光脉冲（运动方向即正方向）
+    this.axisPulse = new THREE.Mesh(
+      new THREE.SphereGeometry(0.16, 12, 8),
+      new THREE.MeshBasicMaterial({
+        color: 0xffe1a1,
+        transparent: true,
+        opacity: 0,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+      })
+    );
+    this.axisPulse.position.set(0, baseY, 0);
+    group.add(this.axisPulse);
+
+    // 浮动 +Z 标签（Sprite 自动面向相机）
+    this.axisLabelTexture = createTextTexture('+Z');
+    const label = new THREE.Sprite(
+      new THREE.SpriteMaterial({ map: this.axisLabelTexture, transparent: true, depthWrite: false, fog: false })
+    );
+    label.scale.set(2.6, 1.3, 1);
+    label.position.set(0, baseY + Z_BEACON_HEIGHT + 1.45, 0);
+    group.add(label);
+
+    return group;
   }
 
   /** 在指定元胞位置产生能量变化扩散环 (心跳脉冲) */
@@ -311,14 +532,37 @@ export class PixelMapRenderer {
 
     // 细胞心跳脉冲：对比能量变动（首次 setData 加载不触发）
     if (!this.isFirstDataCall) {
+      let spikePos: THREE.Vector3 | null = null;
+      let spikeScore = 0;
       for (const pixel of nextPixels) {
         const currentEnergy = Number(pixel.energy) || 0;
         if (this.prevEnergies.has(pixel.id)) {
           const prev = this.prevEnergies.get(pixel.id)!;
-          if (Math.abs(currentEnergy - prev) > 0.001) {
+          const delta = Math.abs(currentEnergy - prev);
+          if (delta > 0.001) {
             const isIncrease = currentEnergy > prev;
             const pos = this.worldToScene(pixel.position);
             this.spawnPulse(pos, isIncrease);
+            const relativeDelta = delta / Math.max(prev, 1);
+            if (delta >= 20 && relativeDelta >= 0.25 && relativeDelta > spikeScore) {
+              spikeScore = relativeDelta;
+              spikePos = pos;
+            }
+          }
+        }
+      }
+      // 全屏心跳冲击波：选相对变化最大的可感知突变，避免普通小额消耗反复触发
+      if (spikePos && this.onEnergySpike) {
+        const nowSpike = performance.now();
+        if (nowSpike - this.lastSpikeAt >= WAVE_COOLDOWN_MS) {
+          const projected = (spikePos as THREE.Vector3).clone().project(this.camera);
+          if (projected.z > -1 && projected.z < 1 && Math.abs(projected.x) <= 1 && Math.abs(projected.y) <= 1) {
+            this.lastSpikeAt = nowSpike;
+            const rect = this.canvas.getBoundingClientRect();
+            this.onEnergySpike({
+              x: ((projected.x + 1) / 2) * rect.width,
+              y: ((1 - projected.y) / 2) * rect.height,
+            });
           }
         }
       }
@@ -394,7 +638,7 @@ export class PixelMapRenderer {
       this.controls.target.set(0, 0, 0);
     }
     const distance = Math.max(10, maxDim * 1.8);
-    const direction = new THREE.Vector3(1, 0.55, 1).normalize();
+    const direction = new THREE.Vector3(1, 0.25, 1).normalize();
     this.camera.position.copy(this.controls.target).add(direction.multiplyScalar(distance));
     this.controls.update();
   }
@@ -884,10 +1128,47 @@ export class PixelMapRenderer {
         }
       }
 
+      // 5. 星空缓慢演化：整体极缓自转 + 各星层错相闪烁 + 星云呼吸漂移
+      if (this.skyGroup) {
+        this.skyGroup.rotation.y = time * 0.000012;
+        this.skyGroup.rotation.x = Math.sin(time * 0.000021) * 0.035;
+        for (const layer of this.skyLayers) {
+          (layer.points.material as THREE.PointsMaterial).opacity =
+            layer.baseOpacity * (0.72 + 0.28 * Math.sin(time * layer.twinkleSpeed + layer.twinklePhase));
+        }
+        for (const nebula of this.nebulaSprites) {
+          const mat = nebula.material as THREE.SpriteMaterial;
+          mat.opacity =
+            (Number(nebula.userData.baseOpacity) || 0.06) *
+            (0.8 + 0.2 * Math.sin(time * 0.00005 + (Number(nebula.userData.phase) || 0)));
+        }
+      }
+
+      // 6. +Z 信标行进脉冲（2.6s 一个循环，两端渐隐，运动方向即正方向）
+      if (this.axisPulse) {
+        const u = (time % 2600) / 2600;
+        this.axisPulse.position.set(0, 0.04 + u * Z_BEACON_HEIGHT, 0);
+        (this.axisPulse.material as THREE.MeshBasicMaterial).opacity = Math.sin(u * Math.PI) * 0.95;
+      }
+
       this.renderer.render(this.scene, this.camera);
       this.animationFrameId = requestAnimationFrame(loop);
     };
     this.animationFrameId = requestAnimationFrame(loop);
+  }
+
+  /** 获取相机系下三轴的屏幕投影方向（供 2D 方向罗盘 HUD 每帧同步） */
+  public getScreenAxes(): { x: Axis2D; y: Axis2D; z: Axis2D } {
+    const inv = this.camera.quaternion.clone().invert();
+    const project = (v: THREE.Vector3): Axis2D => {
+      v.applyQuaternion(inv);
+      return { x: v.x, y: -v.y, behind: v.z < 0 };
+    };
+    return {
+      x: project(new THREE.Vector3(1, 0, 0)),
+      y: project(new THREE.Vector3(0, 0, 1)),
+      z: project(new THREE.Vector3(0, 1, 0)),
+    };
   }
 
   public dispose(): void {
@@ -910,11 +1191,58 @@ export class PixelMapRenderer {
     this.resizeObserver = null;
     this.controls.dispose();
 
-    if (this.starfield) {
-      this.scene.remove(this.starfield);
-      this.starfield.geometry.dispose();
-      (this.starfield.material as THREE.Material).dispose();
-      this.starfield = null;
+    if (this.skyGroup) {
+      this.scene.remove(this.skyGroup);
+      this.skyGroup.traverse((obj) => {
+        if (obj instanceof THREE.Sprite) {
+          (obj.material as THREE.SpriteMaterial).dispose();
+        } else {
+          const points = obj as THREE.Points;
+          if (points.geometry) points.geometry.dispose();
+          const mat = points.material as THREE.Material | undefined;
+          if (mat) mat.dispose();
+        }
+      });
+      this.skyGroup = null;
+      this.skyLayers = [];
+      this.nebulaSprites = [];
+    }
+
+    if (this.axisGroup) {
+      this.scene.remove(this.axisGroup);
+      this.axisGroup.traverse((obj) => {
+        if (obj instanceof THREE.Sprite) {
+          (obj.material as THREE.SpriteMaterial).dispose();
+        } else {
+          const line = obj as THREE.Line;
+          if (line.geometry) line.geometry.dispose();
+          const mat = line.material as THREE.Material | undefined;
+          if (mat) mat.dispose();
+        }
+      });
+      this.axisGroup = null;
+      this.axisPulse = null;
+    }
+    if (this.axisLabelTexture) {
+      this.axisLabelTexture.dispose();
+      this.axisLabelTexture = null;
+    }
+
+    if (this.floorMesh) {
+      this.scene.remove(this.floorMesh);
+      this.floorMesh.geometry.dispose();
+      (this.floorMesh.material as THREE.Material).dispose();
+      this.floorMesh = null;
+    }
+    if (this.floorRim) {
+      this.scene.remove(this.floorRim);
+      this.floorRim.geometry.dispose();
+      (this.floorRim.material as THREE.Material).dispose();
+      this.floorRim = null;
+    }
+    if (this.floorTexture) {
+      this.floorTexture.dispose();
+      this.floorTexture = null;
     }
 
     if (this.selectionRingMesh) {

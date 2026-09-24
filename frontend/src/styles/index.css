@@ -1556,3 +1556,79 @@ select:focus {
 ::-webkit-scrollbar-thumb:hover {
   background: rgba(122, 178, 214, 0.6);
 }
+
+/* ===== 14. 全屏心跳冲击波 & 方向罗盘（Midnight Foundry 二期） ===== */
+
+/* 冲击波：双层径向渐变（核心辉光 + 扩散波前环），screen 混合提亮全场 */
+.heartbeat-wave {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  mix-blend-mode: screen;
+  opacity: 0;
+  z-index: 1000;
+  will-change: opacity;
+  background:
+    radial-gradient(
+      circle var(--cr, 240px) at var(--hx, 50%) var(--hy, 50%),
+      var(--cCore, transparent),
+      transparent 72%
+    ),
+    radial-gradient(
+      circle at var(--hx, 50%) var(--hy, 50%),
+      transparent calc(var(--wr, 0px) - 110px),
+      var(--cRing, transparent) var(--wr, 0px),
+      transparent calc(var(--wr, 0px) + 200px)
+    );
+}
+
+/* 方向罗盘：右下角固定 HUD，Z 轴金色高亮 */
+.axis-gizmo {
+  position: absolute;
+  right: 14px;
+  bottom: 14px;
+  width: 76px;
+  height: 76px;
+  z-index: 6;
+  pointer-events: none;
+  opacity: 0.92;
+}
+
+.axis-gizmo .gizmo-bg {
+  fill: rgba(6, 12, 24, 0.55);
+  stroke: rgba(120, 170, 220, 0.25);
+  stroke-width: 1;
+}
+
+.axis-gizmo .gizmo-line {
+  stroke-width: 2;
+  stroke-linecap: round;
+}
+
+.axis-gizmo .gizmo-x {
+  stroke: #4a7ba6;
+}
+
+.axis-gizmo .gizmo-y {
+  stroke: #8a9bb0;
+}
+
+.axis-gizmo .gizmo-z {
+  stroke: #ffc861;
+  stroke-width: 2.6;
+  filter: drop-shadow(0 0 3px rgba(255, 200, 97, 0.8));
+}
+
+.axis-gizmo .gizmo-z-tip {
+  fill: #ffc861;
+}
+
+.axis-gizmo .gizmo-label {
+  font: 700 9px "JetBrains Mono", monospace;
+  text-anchor: middle;
+  fill: #9fb4c8;
+}
+
+.axis-gizmo .gizmo-z-label {
+  fill: #ffd98a;
+}
