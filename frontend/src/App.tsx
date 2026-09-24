@@ -253,7 +253,7 @@ export const App: React.FC = () => {
         </section>
 
         {/* 右侧地图与详情 */}
-        <section style={{ flex: 1, display: 'flex', position: 'relative', overflow: 'hidden' }}>
+        <section className="map-hero">
           <PixelMapCanvas
             pixels={world?.pixels || []}
             messageFlow={world?.latest_message_flow || []}

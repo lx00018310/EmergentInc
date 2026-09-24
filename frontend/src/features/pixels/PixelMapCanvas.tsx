@@ -112,7 +112,7 @@ export const PixelMapCanvas: React.FC<PixelMapCanvasProps> = ({
     <div className="right-panel">
       <div className="canvas-toolbar">
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <span className="toolbar-title">3D 晶格</span>
+          <span className="toolbar-title">活体晶格 · LIVING LATTICE</span>
           {hasUnfinalized && (
             <button
               type="button"

@@ -25,13 +25,13 @@ export interface TransferRecord {
 }
 
 const SPACING = 2.5;
-const ACTIVE_COLOR = 0x3b82f6;
-const DEAD_COLOR = 0xb8bec7;
-const TIPS_COLOR = 0xf2b01e;
-const EDGE_COLOR = 0xcbd1d8;
-const FLOW_COLOR = 0x16a34a; // 高对比度鲜明翠绿
-const PACKET_COLOR = 0x22c55e; // 飞行动效发光小球
-const SELECTION_RING_COLOR = 0xff4500; // 醒目鲜橙红，在浅色背景和所有小球上极具辨识度
+const ACTIVE_COLOR = 0x38e1ff; // 数据冷青光
+const DEAD_COLOR = 0x3a4656; // 熄灭的暗石青
+const TIPS_COLOR = 0xf5c56b; // 提醒琥珀金
+const EDGE_COLOR = 0x16324a; // 冷青暗网格线
+const FLOW_COLOR = 0x2fd4ff; // 冷青色传递管道
+const PACKET_COLOR = 0xffcf6b; // 暖金飞行动效小球
+const SELECTION_RING_COLOR = 0xffc861; // 权威黄铜金选择环
 const SPHERE_BASE_RADIUS = 0.32;
 const SELECTION_RING_INNER = 0.46;
 const SELECTION_RING_OUTER = 0.55;
@@ -44,7 +44,35 @@ const MAX_COMPLETED_TRANSFERS = 10; // 最多保留10次传递状态
 const TUBE_RADIUS = 0.005; // 极细立体曲线管道半径，细腻精致且不粗重
 const ARROW_RADIUS = 0.022; // 灵巧箭头底面半径，与细线和谐匹配
 const ARROW_HEIGHT = 0.07; // 灵巧箭头高度
-const ARROW_POSITION_T = 1 / 3; // 箭头置于绿色传递曲线的前进方向 1/3 处
+const ARROW_POSITION_T = 1 / 3; // 箭头置于传递曲线的前进方向 1/3 处
+
+/** 基于 pixelId 生成稳定的 [0, 2π) 呼吸相位 */
+function hashStringToPhase(str: string): number {
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) {
+    hash = (hash << 5) - hash + str.charCodeAt(i);
+    hash |= 0;
+  }
+  return (Math.abs(hash % 1000) / 1000) * Math.PI * 2;
+}
+
+/** 生成径向渐变光晕贴图 (白芯向外衰减) */
+function createHaloTexture(): THREE.CanvasTexture {
+  const canvas = document.createElement('canvas');
+  canvas.width = 128;
+  canvas.height = 128;
+  const ctx = canvas.getContext('2d');
+  if (ctx) {
+    const gradient = ctx.createRadialGradient(64, 64, 0, 64, 64, 64);
+    gradient.addColorStop(0, 'rgba(255, 255, 255, 1)');
+    gradient.addColorStop(0.2, 'rgba(255, 255, 255, 0.85)');
+    gradient.addColorStop(0.5, 'rgba(255, 255, 255, 0.25)');
+    gradient.addColorStop(1, 'rgba(255, 255, 255, 0)');
+    ctx.fillStyle = gradient;
+    ctx.fillRect(0, 0, 128, 128);
+  }
+  return new THREE.CanvasTexture(canvas);
+}
 
 /**
  * 3D Crystal Lattice 渲染器 (Three.js + OrbitControls)
@@ -61,6 +89,7 @@ export class PixelMapRenderer {
   private pixelGroup: THREE.Group;
   private edgeGroup: THREE.Group;
   private messageGroup: THREE.Group;
+  private pulseGroup: THREE.Group;
 
   // 选中外围圈 (Billboard 面向相机)
   private selectionRingGeometry: THREE.BufferGeometry;
@@ -68,6 +97,13 @@ export class PixelMapRenderer {
   private selectionRingMesh: THREE.Mesh;
   /** 选择环基准缩放：按当前选中元胞的世界半径自适应，呼吸动效叠加在此之上 */
   private selectionRingBaseScale = 1;
+
+  // 心跳扩散脉冲与光晕贴图
+  private pulseGeometry: THREE.RingGeometry;
+  private pulses: Array<{ mesh: THREE.Mesh; startTime: number }> = [];
+  private prevEnergies: Map<string, number> = new Map();
+  private starfield: THREE.Points | null = null;
+  private haloTexture: THREE.CanvasTexture;
 
   private sphereGeometry: THREE.SphereGeometry;
   private edgeMaterial: THREE.LineBasicMaterial;
@@ -90,11 +126,14 @@ export class PixelMapRenderer {
   private animationFrameId: number | null = null;
   private resizeObserver: ResizeObserver | null = null;
   private pointerDownPos: { x: number; y: number } | null = null;
+  private autoRotateTimeout: number | null = null;
 
   private handlePointerDownBound: (e: PointerEvent) => void;
   private handlePointerMoveBound: (e: PointerEvent) => void;
   private handlePointerUpBound: (e: PointerEvent) => void;
   private handleResizeBound: () => void;
+  private controlsStartBound: () => void;
+  private controlsEndBound: () => void;
 
   constructor(options: PixelMapRendererOptions) {
     this.canvas = options.canvas;
@@ -105,7 +144,8 @@ export class PixelMapRenderer {
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 
     this.scene = new THREE.Scene();
-    this.scene.background = new THREE.Color(0xf7f8fa);
+    this.scene.background = new THREE.Color(0x050914);
+    this.scene.fog = new THREE.FogExp2(0x050914, 0.028);
 
     this.camera = new THREE.PerspectiveCamera(45, 1, 0.1, 1000);
     this.camera.position.set(8, 8, 8);
@@ -117,28 +157,54 @@ export class PixelMapRenderer {
     this.controls.enableZoom = true;
     this.controls.enablePan = true;
     this.controls.target.set(0, 0, 0);
+    this.controls.autoRotate = true;
+    this.controls.autoRotateSpeed = 0.4;
 
-    // 光照：环境光 + 单方向光
-    this.scene.add(new THREE.AmbientLight(0xffffff, 1.5));
-    const dirLight = new THREE.DirectionalLight(0xffffff, 2.0);
+    this.controlsStartBound = () => {
+      if (this.autoRotateTimeout !== null) {
+        window.clearTimeout(this.autoRotateTimeout);
+        this.autoRotateTimeout = null;
+      }
+      this.controls.autoRotate = false;
+    };
+    this.controlsEndBound = () => {
+      if (this.autoRotateTimeout !== null) {
+        window.clearTimeout(this.autoRotateTimeout);
+      }
+      this.autoRotateTimeout = window.setTimeout(() => {
+        this.controls.autoRotate = true;
+      }, 6000);
+    };
+    this.controls.addEventListener('start', this.controlsStartBound);
+    this.controls.addEventListener('end', this.controlsEndBound);
+
+    // 光照：暗冷环境光 + 月光蓝平行光 + 低角度暖色点光
+    this.scene.add(new THREE.AmbientLight(0x33445e, 0.7));
+    const dirLight = new THREE.DirectionalLight(0x8fb8ff, 1.2);
     dirLight.position.set(8, 12, 10);
     this.scene.add(dirLight);
 
-    // 地面网格：世界 z=0 → Three Y=0
-    const grid = new THREE.GridHelper(30, 20, 0xd0d7de, 0xe7ebef);
+    const warmPointLight = new THREE.PointLight(0xf5c56b, 0.6, 60);
+    warmPointLight.position.set(-6, 3, 6);
+    this.scene.add(warmPointLight);
+
+    // 地面网格：冷色系世界 z=0 → Three Y=0
+    const grid = new THREE.GridHelper(30, 20, 0x1c3a52, 0x0d1c2e);
     grid.position.y = 0;
     this.scene.add(grid);
 
-    // 坐标轴：Three Y = World Z
-    this.scene.add(new THREE.AxesHelper(3));
+    // 星空粒子（约 400 点，大半径球壳）
+    this.starfield = this.createStarfield();
+    this.scene.add(this.starfield);
 
     this.pixelGroup = new THREE.Group();
     this.edgeGroup = new THREE.Group();
     this.messageGroup = new THREE.Group();
-    this.scene.add(this.edgeGroup, this.pixelGroup, this.messageGroup);
+    this.pulseGroup = new THREE.Group();
+    this.scene.add(this.edgeGroup, this.pixelGroup, this.messageGroup, this.pulseGroup);
 
     this.sphereGeometry = new THREE.SphereGeometry(SPHERE_BASE_RADIUS, 24, 16);
-    this.edgeMaterial = new THREE.LineBasicMaterial({ color: EDGE_COLOR, transparent: true, opacity: 0.6 });
+    this.edgeMaterial = new THREE.LineBasicMaterial({ color: EDGE_COLOR, transparent: true, opacity: 0.35 });
     this.flowMaterial = new THREE.MeshBasicMaterial({ color: FLOW_COLOR, side: THREE.DoubleSide });
 
     // 构造醒目的外围选择圈；实际显示大小由 selectionRingBaseScale 按选中元胞缩放
@@ -153,6 +219,10 @@ export class PixelMapRenderer {
     this.selectionRingMesh = new THREE.Mesh(this.selectionRingGeometry, this.selectionRingMaterial);
     this.selectionRingMesh.visible = false;
     this.scene.add(this.selectionRingMesh);
+
+    // 脉冲几何体与光晕贴图
+    this.pulseGeometry = new THREE.RingGeometry(0.3, 0.36, 48);
+    this.haloTexture = createHaloTexture();
 
     this.raycaster = new THREE.Raycaster();
 
@@ -174,6 +244,58 @@ export class PixelMapRenderer {
     this.startAnimationLoop();
   }
 
+  /** 构建大半径球壳静态星空粒子群 */
+  private createStarfield(): THREE.Points {
+    const count = 400;
+    const positions = new Float32Array(count * 3);
+    for (let i = 0; i < count; i++) {
+      const r = 70 + Math.random() * 50;
+      const theta = Math.random() * Math.PI * 2;
+      const phi = Math.acos(Math.random() * 2 - 1);
+      positions[i * 3] = r * Math.sin(phi) * Math.cos(theta);
+      positions[i * 3 + 1] = r * Math.sin(phi) * Math.sin(theta);
+      positions[i * 3 + 2] = r * Math.cos(phi);
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    const mat = new THREE.PointsMaterial({
+      color: 0x8fb8ff,
+      size: 0.06,
+      transparent: true,
+      opacity: 0.7,
+      fog: false,
+      depthWrite: false,
+    });
+    return new THREE.Points(geo, mat);
+  }
+
+  /** 在指定元胞位置产生能量变化扩散环 (心跳脉冲) */
+  private spawnPulse(pos: THREE.Vector3, isIncrease: boolean): void {
+    while (this.pulses.length >= 12) {
+      const oldest = this.pulses.shift();
+      if (oldest) {
+        this.pulseGroup.remove(oldest.mesh);
+        (oldest.mesh.material as THREE.Material).dispose();
+      }
+    }
+    const color = isIncrease ? 0x7df0ff : 0xff9a5a;
+    const material = new THREE.MeshBasicMaterial({
+      color,
+      transparent: true,
+      opacity: 0.8,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+    });
+    const mesh = new THREE.Mesh(this.pulseGeometry, material);
+    mesh.position.copy(pos);
+    mesh.quaternion.copy(this.camera.quaternion);
+    this.pulseGroup.add(mesh);
+    this.pulses.push({
+      mesh,
+      startTime: performance.now(),
+    });
+  }
+
   /** World (x, y, z) → Three (x, z, y)：World Z 竖直向上 */
   private worldToScene([x, y, z]: [number, number, number]): THREE.Vector3 {
     return new THREE.Vector3(x * SPACING, z * SPACING, y * SPACING);
@@ -185,7 +307,29 @@ export class PixelMapRenderer {
     selectedId: string | null,
     unreadTipsPixelIds?: Set<string>
   ): void {
-    this.pixels = pixels || [];
+    const nextPixels = pixels || [];
+
+    // 细胞心跳脉冲：对比能量变动（首次 setData 加载不触发）
+    if (!this.isFirstDataCall) {
+      for (const pixel of nextPixels) {
+        const currentEnergy = Number(pixel.energy) || 0;
+        if (this.prevEnergies.has(pixel.id)) {
+          const prev = this.prevEnergies.get(pixel.id)!;
+          if (Math.abs(currentEnergy - prev) > 0.001) {
+            const isIncrease = currentEnergy > prev;
+            const pos = this.worldToScene(pixel.position);
+            this.spawnPulse(pos, isIncrease);
+          }
+        }
+      }
+    }
+
+    this.prevEnergies.clear();
+    for (const pixel of nextPixels) {
+      this.prevEnergies.set(pixel.id, Number(pixel.energy) || 0);
+    }
+
+    this.pixels = nextPixels;
     this.messageFlow = messageFlow || [];
     this.selectedPixelId = selectedId;
     if (unreadTipsPixelIds) this.unreadTipsPixelIds = unreadTipsPixelIds;
@@ -250,7 +394,7 @@ export class PixelMapRenderer {
       this.controls.target.set(0, 0, 0);
     }
     const distance = Math.max(10, maxDim * 1.8);
-    const direction = new THREE.Vector3(1, 0.85, 1).normalize();
+    const direction = new THREE.Vector3(1, 0.55, 1).normalize();
     this.camera.position.copy(this.controls.target).add(direction.multiplyScalar(distance));
     this.controls.update();
   }
@@ -272,6 +416,13 @@ export class PixelMapRenderer {
       ) {
         if (Array.isArray(material)) material.forEach((m) => m.dispose());
         else material.dispose();
+      }
+
+      // 清理挂载的子对象 (如 halo Sprite)
+      for (const subChild of [...child.children]) {
+        child.remove(subChild);
+        const subMat = (subChild as THREE.Sprite).material;
+        if (subMat) subMat.dispose();
       }
     }
   }
@@ -464,7 +615,7 @@ export class PixelMapRenderer {
       if (!start || !end) continue;
 
       const container = new THREE.Group();
-      const packetGeo = new THREE.SphereGeometry(0.045, 16, 12);
+      const packetGeo = new THREE.SphereGeometry(0.06, 16, 12);
       const packetMat = new THREE.MeshBasicMaterial({ color: PACKET_COLOR });
       const packetMesh = new THREE.Mesh(packetGeo, packetMat);
       packetMesh.position.copy(start);
@@ -520,17 +671,15 @@ export class PixelMapRenderer {
     // 更新消息传递动效与状态队列
     this.processMessageFlows(positions);
 
-    // 小球节点渲染（能量编码：半径随能量映射、死亡缩小淡化）
+    // 小球节点渲染（能量自发光：按能量归一化在青色与金色间渐变插值）
     const energies = this.pixels.map((p) => Number(p.energy) || 0);
     const maxEnergy = Math.max(1, ...energies);
+    const cyanColor = new THREE.Color(ACTIVE_COLOR);
+    const goldColor = new THREE.Color(0xffb545);
+
     let selectedPos: THREE.Vector3 | null = null;
     let selectedNodeScale = 0;
     for (const pixel of this.pixels) {
-      const color = this.unreadTipsPixelIds.has(pixel.id)
-        ? TIPS_COLOR
-        : pixel.active
-          ? ACTIVE_COLOR
-          : DEAD_COLOR;
       const isSelected = pixel.id === this.selectedPixelId;
       const isHovered = pixel.id === this.hoveredPixelId;
       const pos = positions.get(pixel.id)!;
@@ -538,19 +687,41 @@ export class PixelMapRenderer {
         selectedPos = pos;
       }
 
-      // 能量归一化映射到 0.75 ~ 1.30 半径；死亡元胞额外缩小降透明。
-      // 选择环不再依赖该上限，改为按节点实际大小自适应缩放。
+      // 能量归一化映射到 0.75 ~ 1.30 半径；死亡元胞额外缩小降透明
       const energyNorm = Math.max(0, Math.min(1, (Number(pixel.energy) || 0) / maxEnergy));
       const energyScale = 0.75 + 0.55 * energyNorm;
       const deadFactor = pixel.active ? 1.0 : 0.55;
 
+      let sphereColor: THREE.Color;
+      let emissiveColor: THREE.Color;
+      let emissiveIntensity = 0;
+
+      if (this.unreadTipsPixelIds.has(pixel.id)) {
+        sphereColor = new THREE.Color(TIPS_COLOR);
+        emissiveColor = new THREE.Color(TIPS_COLOR);
+        emissiveIntensity = 0.6;
+      } else if (pixel.active) {
+        sphereColor = new THREE.Color().lerpColors(cyanColor, goldColor, energyNorm);
+        emissiveColor = sphereColor.clone();
+        emissiveIntensity = 0.5 + 1.3 * energyNorm;
+      } else {
+        sphereColor = new THREE.Color(DEAD_COLOR);
+        emissiveColor = new THREE.Color(0x000000);
+        emissiveIntensity = 0;
+      }
+
+      if (isSelected) {
+        emissiveIntensity = Math.max(emissiveIntensity, 0.9);
+      }
+
       const material = new THREE.MeshStandardMaterial({
-        color,
-        emissive: isSelected ? new THREE.Color(color).multiplyScalar(0.35) : new THREE.Color(0x000000),
-        roughness: 0.35,
-        metalness: 0.05,
+        color: sphereColor,
+        emissive: emissiveColor,
+        emissiveIntensity: pixel.active ? emissiveIntensity : 0,
+        roughness: pixel.active ? 0.25 : 0.6,
+        metalness: 0.1,
         transparent: !pixel.active,
-        opacity: pixel.active ? 1.0 : 0.45,
+        opacity: pixel.active ? 1.0 : 0.35,
       });
       const mesh = new THREE.Mesh(this.sphereGeometry, material);
       mesh.position.copy(pos);
@@ -558,7 +729,30 @@ export class PixelMapRenderer {
       const nodeScale = energyScale * deadFactor * interactScale;
       mesh.scale.setScalar(nodeScale);
       if (isSelected) selectedNodeScale = nodeScale;
+
+      const phase = hashStringToPhase(pixel.id);
       mesh.userData.pixelId = pixel.id;
+      mesh.userData.baseScale = nodeScale;
+      mesh.userData.phase = phase;
+      mesh.userData.energyNorm = energyNorm;
+
+      // 为活跃元胞附加自发光光晕 (Halo Sprite)
+      if (pixel.active) {
+        const haloMat = new THREE.SpriteMaterial({
+          map: this.haloTexture,
+          color: sphereColor,
+          transparent: true,
+          opacity: 0.65,
+          blending: THREE.AdditiveBlending,
+          depthWrite: false,
+        });
+        const haloSprite = new THREE.Sprite(haloMat);
+        const haloScale = 0.9 + 1.6 * energyNorm;
+        haloSprite.scale.set(haloScale, haloScale, 1.0);
+        mesh.add(haloSprite);
+        mesh.userData.halo = haloSprite;
+      }
+
       this.pixelGroup.add(mesh);
     }
 
@@ -652,6 +846,44 @@ export class PixelMapRenderer {
         }
       }
 
+      // 3. 元胞微呼吸动效与光晕闪烁（基于确定性哈希相位）
+      for (const child of this.pixelGroup.children) {
+        const mesh = child as THREE.Mesh;
+        const baseScale = mesh.userData?.baseScale;
+        const phase = mesh.userData?.phase;
+        if (typeof baseScale === 'number' && typeof phase === 'number') {
+          const breath = 1.0 + 0.05 * Math.sin(time * 0.002 + phase);
+          mesh.scale.setScalar(baseScale * breath);
+
+          const halo = mesh.userData?.halo as THREE.Sprite | undefined;
+          if (halo && halo.material) {
+            const energyNorm = Number(mesh.userData.energyNorm) || 0;
+            const haloMat = halo.material as THREE.SpriteMaterial;
+            haloMat.opacity = (0.55 + 0.25 * energyNorm) * (1.0 + 0.12 * Math.sin(time * 0.002 + phase));
+          }
+        }
+      }
+
+      // 4. 细胞心跳扩散脉冲生命周期更新 (900ms 扩散 1->4 并渐隐)
+      const now = performance.now();
+      for (let i = this.pulses.length - 1; i >= 0; i--) {
+        const p = this.pulses[i];
+        if (!p) continue;
+        const elapsed = now - p.startTime;
+        const progress = Math.min(1.0, elapsed / 900);
+        if (progress >= 1.0) {
+          this.pulseGroup.remove(p.mesh);
+          (p.mesh.material as THREE.Material).dispose();
+          this.pulses.splice(i, 1);
+        } else {
+          p.mesh.quaternion.copy(this.camera.quaternion);
+          const currentScale = 1.0 + 3.0 * progress;
+          p.mesh.scale.set(currentScale, currentScale, currentScale);
+          const mat = p.mesh.material as THREE.MeshBasicMaterial;
+          mat.opacity = 0.8 * (1.0 - progress);
+        }
+      }
+
       this.renderer.render(this.scene, this.camera);
       this.animationFrameId = requestAnimationFrame(loop);
     };
@@ -663,6 +895,13 @@ export class PixelMapRenderer {
       cancelAnimationFrame(this.animationFrameId);
       this.animationFrameId = null;
     }
+    if (this.autoRotateTimeout !== null) {
+      window.clearTimeout(this.autoRotateTimeout);
+      this.autoRotateTimeout = null;
+    }
+    this.controls.removeEventListener('start', this.controlsStartBound);
+    this.controls.removeEventListener('end', this.controlsEndBound);
+
     this.canvas.removeEventListener('pointerdown', this.handlePointerDownBound);
     this.canvas.removeEventListener('pointermove', this.handlePointerMoveBound);
     this.canvas.removeEventListener('pointerup', this.handlePointerUpBound);
@@ -671,11 +910,29 @@ export class PixelMapRenderer {
     this.resizeObserver = null;
     this.controls.dispose();
 
+    if (this.starfield) {
+      this.scene.remove(this.starfield);
+      this.starfield.geometry.dispose();
+      (this.starfield.material as THREE.Material).dispose();
+      this.starfield = null;
+    }
+
     if (this.selectionRingMesh) {
       this.scene.remove(this.selectionRingMesh);
     }
     this.selectionRingGeometry.dispose();
     this.selectionRingMaterial.dispose();
+
+    for (const p of this.pulses) {
+      this.pulseGroup.remove(p.mesh);
+      (p.mesh.material as THREE.Material).dispose();
+    }
+    this.pulses = [];
+    this.pulseGeometry.dispose();
+
+    if (this.haloTexture) {
+      this.haloTexture.dispose();
+    }
 
     for (const t of this.transfers) {
       this.messageGroup.remove(t.container);
@@ -686,6 +943,7 @@ export class PixelMapRenderer {
     this.disposeGroup(this.pixelGroup, true);
     this.disposeGroup(this.edgeGroup, true);
     this.disposeGroup(this.messageGroup, true);
+    this.disposeGroup(this.pulseGroup, true);
     this.sphereGeometry.dispose();
     this.edgeMaterial.dispose();
     this.flowMaterial.dispose();

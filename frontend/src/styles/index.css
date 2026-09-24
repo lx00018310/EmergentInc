@@ -1,18 +1,20 @@
 :root {
-  --bg-main: #f6f8fa;
-  --bg-card: #ffffff;
-  --bg-card-hover: #f3f4f6;
-  --border-color: #d0d7de;
-  --text-main: #000000;
-  --text-dim: #111111;
-  --text-bright: #000000;
-  --accent-blue: #0969da;
-  --accent-green: #1a7f37;
-  --accent-yellow: #9a6700;
-  --accent-red: #cf222e;
-  --accent-purple: #8250df;
+  --bg-main: #050914;
+  --bg-card: rgba(11, 19, 34, 0.78);
+  --bg-card-hover: rgba(20, 32, 54, 0.9);
+  --border-color: rgba(122, 178, 214, 0.16);
+  --text-main: #c9d6e8;
+  --text-dim: #5d7186;
+  --text-bright: #eef4fb;
+  --accent-blue: #38e1ff;
+  --accent-green: #57e6a9;
+  --accent-yellow: #e8b04b;
+  --accent-red: #ff5a6e;
+  --accent-purple: #9d8cff;
+  --gold: #f5c56b;
   --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
-  --font-mono: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, Courier, monospace;
+  --font-display: "Noto Serif SC", "Songti SC", Georgia, serif;
+  --font-mono: "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
 }
 
 * {
@@ -56,6 +58,11 @@ body {
   display: flex;
   align-items: center;
   gap: 10px;
+}
+
+.logo-title h1,
+#run-badge {
+  white-space: nowrap;
 }
 
 .logo-icon {
@@ -995,4 +1002,557 @@ body {
   font-size: 10px;
 }
 
+/* ===== MIDNIGHT FOUNDRY OVERRIDE ===== */
 
+/* 1. 基础布局与多层深色星空氛围 */
+body {
+  background: radial-gradient(circle at 50% 0%, #0a1630 0%, #050914 55%, #03060d 100%);
+  background-attachment: fixed;
+  color: var(--text-main);
+  position: relative;
+}
+
+body::before {
+  content: "";
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  pointer-events: none;
+  z-index: 0;
+  opacity: 0.45;
+  background-image:
+    radial-gradient(1px 1px at 25px 35px, #ffffff, rgba(0, 0, 0, 0)),
+    radial-gradient(1px 1px at 85px 120px, #b0d4ff, rgba(0, 0, 0, 0)),
+    radial-gradient(1.5px 1.5px at 160px 45px, #ffffff, rgba(0, 0, 0, 0)),
+    radial-gradient(1px 1px at 230px 190px, #a8e0ff, rgba(0, 0, 0, 0)),
+    radial-gradient(1px 1px at 340px 90px, #ffffff, rgba(0, 0, 0, 0)),
+    radial-gradient(1.5px 1.5px at 450px 210px, #ffd89b, rgba(0, 0, 0, 0)),
+    radial-gradient(1px 1px at 580px 140px, #ffffff, rgba(0, 0, 0, 0)),
+    radial-gradient(1.5px 1.5px at 720px 80px, #88c0ff, rgba(0, 0, 0, 0)),
+    radial-gradient(1px 1px at 850px 240px, #ffffff, rgba(0, 0, 0, 0)),
+    radial-gradient(1px 1px at 980px 160px, #ffd89b, rgba(0, 0, 0, 0));
+  background-size: 550px 320px;
+  animation: midnight-twinkle 8s ease-in-out infinite alternate;
+}
+
+body::after {
+  content: "";
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  pointer-events: none;
+  z-index: 1;
+  background: radial-gradient(circle at 50% 50%, transparent 60%, rgba(1, 4, 10, 0.7) 100%);
+}
+
+#root {
+  position: relative;
+  z-index: 2;
+  background: transparent;
+}
+
+@keyframes midnight-twinkle {
+  0% { opacity: 0.3; transform: scale(1); }
+  50% { opacity: 0.6; }
+  100% { opacity: 0.35; transform: scale(1.02); }
+}
+
+/* 2. 地图容器 */
+.map-hero {
+  flex: 1;
+  display: flex;
+  position: relative;
+  overflow: hidden;
+}
+
+/* 3. 顶部 Header 与标题组 */
+.app-header {
+  background: rgba(8, 14, 26, 0.85);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--border-color);
+  position: relative;
+}
+
+.app-header::after {
+  content: "";
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: linear-gradient(90deg, transparent 0%, rgba(245, 197, 107, 0.45) 50%, transparent 100%);
+}
+
+.logo-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.logo-icon {
+  color: var(--gold);
+  font-size: 16px;
+  text-shadow: 0 0 8px rgba(245, 197, 107, 0.6);
+}
+
+.app-header h1 {
+  font-family: var(--font-display);
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--text-bright);
+}
+
+.logo-cn {
+  font-family: var(--font-display);
+  color: var(--gold);
+  margin-left: 4px;
+  text-shadow: 0 0 10px rgba(245, 197, 107, 0.35);
+}
+
+.logo-sub {
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.12em;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  margin-left: 6px;
+  padding: 2px 6px;
+  border-left: 1px solid rgba(122, 178, 214, 0.2);
+}
+
+.badge#run-badge,
+.badge {
+  background: rgba(5, 9, 20, 0.85);
+  border: 1px solid rgba(245, 197, 107, 0.35);
+  color: var(--gold);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  box-shadow: 0 0 6px rgba(245, 197, 107, 0.15);
+}
+
+/* 头部指标发光与排版 */
+.header-metrics {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.metric-item {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.metric-item .m-label {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+.metric-item .m-val {
+  font-family: var(--font-mono);
+  font-weight: 600;
+  color: var(--accent-blue);
+  text-shadow: 0 0 8px rgba(56, 225, 255, 0.45);
+}
+
+@media (max-width: 1400px) {
+  .logo-sub {
+    display: none;
+  }
+}
+
+/* 4. 侧边栏与面板卡片 (深色玻璃质感) */
+.left-panel {
+  background: rgba(6, 12, 22, 0.65);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border-right: 1px solid var(--border-color);
+}
+
+.panel-card {
+  background: var(--bg-card);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border: 1px solid var(--border-color);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04), 0 4px 16px rgba(0, 0, 0, 0.35);
+}
+
+.panel-header {
+  border-bottom: 1px solid var(--border-color);
+  background: rgba(14, 23, 40, 0.6);
+}
+
+.panel-header h2 {
+  font-family: var(--font-sans);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  font-size: 11px;
+  color: var(--text-bright);
+}
+
+/* 5. 按钮体系 (幽灵款 + 黄铜金主按钮) */
+.btn {
+  background: rgba(15, 25, 45, 0.6);
+  border: 1px solid var(--border-color);
+  color: var(--text-main);
+  transition: all 0.2s ease;
+}
+
+.btn:hover:not(:disabled) {
+  background: rgba(28, 44, 76, 0.85);
+  border-color: rgba(56, 225, 255, 0.4);
+  box-shadow: 0 0 10px rgba(56, 225, 255, 0.25);
+  color: var(--text-bright);
+}
+
+.btn:disabled {
+  background: rgba(10, 16, 28, 0.4);
+  border-color: rgba(255, 255, 255, 0.05);
+  color: rgba(93, 113, 134, 0.5);
+}
+
+.btn-primary {
+  background: linear-gradient(180deg, #e8b04b 0%, #a97a2a 100%) !important;
+  border-color: #f5c56b !important;
+  color: #050914 !important;
+  font-weight: 600;
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.2);
+  box-shadow: 0 0 12px rgba(232, 176, 75, 0.35);
+}
+
+.btn-primary:hover:not(:disabled) {
+  background: linear-gradient(180deg, #f5c56b 0%, #b88530 100%) !important;
+  box-shadow: 0 0 16px rgba(245, 197, 107, 0.55);
+  color: #03060d !important;
+}
+
+.btn-danger {
+  background: rgba(255, 90, 110, 0.15) !important;
+  border-color: rgba(255, 90, 110, 0.45) !important;
+  color: #ff8594 !important;
+}
+
+.btn-danger:hover:not(:disabled) {
+  background: rgba(255, 90, 110, 0.3) !important;
+  box-shadow: 0 0 10px rgba(255, 90, 110, 0.4) !important;
+  color: #ffeef0 !important;
+}
+
+/* 6. 输入框与表单 */
+.command-input-group input,
+.text-input,
+.modal-textarea,
+.operation-section input,
+input[type="text"],
+input[type="number"],
+input[type="password"],
+textarea,
+select {
+  background: #0a1220 !important;
+  border: 1px solid var(--border-color) !important;
+  color: var(--text-bright) !important;
+  border-radius: 4px;
+  transition: all 0.2s ease;
+}
+
+.command-input-group input:focus,
+.text-input:focus,
+.modal-textarea:focus,
+.operation-section input:focus,
+input[type="text"]:focus,
+input[type="number"]:focus,
+textarea:focus,
+select:focus {
+  border-color: var(--accent-blue) !important;
+  box-shadow: 0 0 8px rgba(56, 225, 255, 0.35) !important;
+  outline: none;
+}
+
+/* 7. 控制台电报感荧光日志 */
+.console-box {
+  background: #04070f !important;
+  border: 1px solid var(--border-color) !important;
+  color: var(--text-main);
+  background-image: linear-gradient(rgba(18, 30, 52, 0.12) 1px, transparent 1px);
+  background-size: 100% 20px;
+}
+
+.console-line {
+  font-family: var(--font-mono);
+}
+
+.console-line .time {
+  color: var(--text-dim) !important;
+}
+
+.console-line.system-line {
+  color: var(--accent-blue) !important;
+  text-shadow: 0 0 6px rgba(56, 225, 255, 0.35);
+}
+
+.console-line.info-line {
+  color: #8fb8ff !important;
+}
+
+.console-line.success-line {
+  color: var(--accent-green) !important;
+  text-shadow: 0 0 6px rgba(87, 230, 169, 0.35);
+}
+
+.console-line.warn-line {
+  color: var(--accent-yellow) !important;
+  text-shadow: 0 0 6px rgba(232, 176, 75, 0.35);
+}
+
+.console-line.error-line {
+  color: var(--accent-red) !important;
+  text-shadow: 0 0 6px rgba(255, 90, 110, 0.4);
+}
+
+/* 8. 运行进度条 */
+.run-progress-bar {
+  background: rgba(10, 18, 32, 0.8) !important;
+  border: 1px solid var(--border-color);
+}
+
+.run-progress-fill {
+  background: linear-gradient(90deg, #2fd4ff, #38e1ff) !important;
+  box-shadow: 0 0 10px rgba(56, 225, 255, 0.6);
+}
+
+/* 9. 3D 画布与观测仪器氛围 */
+.right-panel {
+  background: transparent !important;
+}
+
+.canvas-toolbar {
+  background: rgba(9, 16, 30, 0.82) !important;
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border-bottom: 1px solid var(--border-color) !important;
+}
+
+.canvas-toolbar .toolbar-title {
+  font-family: var(--font-display);
+  color: var(--gold);
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-shadow: 0 0 8px rgba(245, 197, 107, 0.35);
+}
+
+.canvas-container {
+  position: relative;
+  box-shadow: inset 0 0 120px rgba(0, 0, 0, 0.65) !important;
+}
+
+/* 仪器取景器角标 */
+.canvas-container::before,
+.canvas-container::after {
+  content: "";
+  position: absolute;
+  width: 18px;
+  height: 18px;
+  pointer-events: none;
+  z-index: 10;
+  border-color: rgba(56, 225, 255, 0.35);
+}
+
+.canvas-container::before {
+  top: 12px;
+  left: 12px;
+  border-top: 1.5px solid;
+  border-left: 1.5px solid;
+}
+
+.canvas-container::after {
+  bottom: 12px;
+  right: 12px;
+  border-bottom: 1.5px solid;
+  border-right: 1.5px solid;
+}
+
+/* 图例改色 */
+.canvas-legend {
+  background: rgba(8, 15, 28, 0.85) !important;
+  border: 1px solid var(--border-color) !important;
+  color: var(--text-dim) !important;
+}
+
+.canvas-legend .dot.active-dot {
+  background: var(--accent-blue) !important;
+  box-shadow: 0 0 6px var(--accent-blue);
+}
+
+.canvas-legend .dot.inactive-dot {
+  background: #3a4656 !important;
+  box-shadow: none;
+}
+
+.canvas-legend .dot.flow-line-legend {
+  background: var(--gold) !important;
+  box-shadow: 0 0 6px var(--gold);
+}
+
+/* 10. 悬浮详情卡、Tooltip 与列表 */
+.pixel-hover-card,
+.pixel-tooltip,
+.pixel-details,
+.pixel-list-panel {
+  background: rgba(10, 18, 34, 0.88) !important;
+  backdrop-filter: blur(12px) !important;
+  -webkit-backdrop-filter: blur(12px) !important;
+  border: 1px solid var(--border-color) !important;
+  color: var(--text-main) !important;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6) !important;
+}
+
+.pixel-list-header {
+  background: rgba(14, 25, 46, 0.7) !important;
+  border-bottom: 1px solid var(--border-color) !important;
+}
+
+.pixel-list-row:hover {
+  background: rgba(30, 48, 80, 0.6) !important;
+}
+
+.pixel-list-row.selected {
+  background: rgba(56, 225, 255, 0.15) !important;
+  outline: 1px solid var(--accent-blue) !important;
+}
+
+.pixel-list-row.selected .pixel-list-id {
+  color: var(--accent-blue) !important;
+}
+
+.pixel-details-header {
+  border-bottom: 1px solid var(--border-color) !important;
+  background: rgba(14, 25, 46, 0.5) !important;
+}
+
+.pixel-details-title {
+  color: var(--gold) !important;
+  font-family: var(--font-display) !important;
+}
+
+.pixel-md-preview,
+.doc-view-box {
+  background: #060b16 !important;
+  border: 1px solid var(--border-color) !important;
+  color: var(--text-main) !important;
+}
+
+/* 11. 弹窗群与表格暗化 */
+.modal-overlay {
+  background: rgba(2, 5, 12, 0.75) !important;
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+}
+
+.modal-content {
+  background: rgba(11, 19, 36, 0.94) !important;
+  backdrop-filter: blur(16px) !important;
+  -webkit-backdrop-filter: blur(16px) !important;
+  border: 1px solid rgba(122, 178, 214, 0.25) !important;
+  box-shadow: 0 12px 48px rgba(0, 0, 0, 0.75), 0 0 1px rgba(56, 225, 255, 0.3) !important;
+  color: var(--text-main) !important;
+}
+
+.modal-header {
+  border-bottom: 1px solid var(--border-color) !important;
+  background: rgba(14, 24, 44, 0.7) !important;
+}
+
+.modal-header h3 {
+  font-family: var(--font-display);
+  color: var(--gold);
+  letter-spacing: 0.05em;
+}
+
+.modal-footer {
+  border-top: 1px solid var(--border-color) !important;
+  background: rgba(14, 24, 44, 0.5) !important;
+}
+
+.data-table th {
+  background: rgba(14, 25, 48, 0.8) !important;
+  color: var(--text-dim) !important;
+  border-bottom: 1px solid var(--border-color) !important;
+}
+
+.data-table td {
+  border-bottom: 1px solid rgba(122, 178, 214, 0.08) !important;
+  color: var(--text-main) !important;
+}
+
+.data-table tr:hover td {
+  background: rgba(25, 40, 70, 0.4) !important;
+}
+
+.owner-chat-message.user {
+  background: rgba(20, 36, 64, 0.7) !important;
+  border: 1px solid rgba(56, 225, 255, 0.25) !important;
+}
+
+.owner-chat-message.assistant {
+  background: rgba(12, 22, 40, 0.8) !important;
+  border: 1px solid var(--border-color) !important;
+}
+
+.alert-box {
+  background: rgba(15, 25, 45, 0.75) !important;
+  border: 1px solid var(--border-color) !important;
+  color: var(--text-main) !important;
+}
+
+.context-guide a {
+  color: var(--accent-blue) !important;
+}
+
+/* 12. 运行状态指示器发光 */
+.run-status-indicator.running {
+  background: rgba(56, 225, 255, 0.12) !important;
+  border: 1px solid rgba(56, 225, 255, 0.4) !important;
+  color: var(--accent-blue) !important;
+  box-shadow: 0 0 10px rgba(56, 225, 255, 0.25);
+}
+
+.run-status-indicator.stopped {
+  background: rgba(232, 176, 75, 0.12) !important;
+  border: 1px solid rgba(232, 176, 75, 0.4) !important;
+  color: var(--accent-yellow) !important;
+}
+
+.run-status-indicator.error {
+  background: rgba(255, 90, 110, 0.12) !important;
+  border: 1px solid rgba(255, 90, 110, 0.4) !important;
+  color: var(--accent-red) !important;
+  box-shadow: 0 0 10px rgba(255, 90, 110, 0.25);
+}
+
+/* 13. 深色滚动条 */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: rgba(5, 9, 20, 0.5);
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(93, 113, 134, 0.4);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(122, 178, 214, 0.6);
+}

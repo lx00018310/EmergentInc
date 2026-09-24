@@ -46,11 +46,10 @@ export const RunStatus: React.FC<RunStatusProps> = ({ world, runStatus, onOpenHe
   return (
     <header className="app-header">
       <div className="logo-title">
-        <span className="logo-icon">▣</span>
-        <h1>EmergentInc V11 商业元胞自动机</h1>
-        <span className="badge" id="run-badge">
-          run: {runId}
-        </span>
+        <span className="logo-icon">◈</span>
+        <h1>EmergentInc <span className="logo-cn">元胞会社</span></h1>
+        <span className="logo-sub">MIDNIGHT FOUNDRY // CELLULAR SOCIETY OBSERVATORY</span>
+        <span className="badge" id="run-badge">run: {runId}</span>
       </div>
       <div className="header-metrics">
         <div className="metric-item">
