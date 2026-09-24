@@ -1,8 +1,5 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { PixelMapRenderer } from './PixelMapRenderer';
-import type { EnergySpikeInfo } from './PixelMapRenderer';
-import { makeLightning, paintSkyLightning } from './SkyLightning';
-import type { LightningBolt } from './SkyLightning';
 import { PixelHoverTooltip } from './PixelHoverTooltip';
 import { PixelListPanel } from './PixelListPanel';
 import type { PixelSummaryDto, MessageFlowDto, RunStatusDto } from '../../api/types';
@@ -17,81 +14,6 @@ export interface PixelMapCanvasProps {
   onHoverPixel: (pixelId: string | null) => void;
   runStatus?: RunStatusDto | null;
   onRefresh?: () => Promise<void>;
-}
-
-/* ===== 星空闪电心跳：曲线控制颜色、扩散速度与分叉密度 ===== */
-const WAVE_TOTAL_SEC = 8.4;
-
-/** 手绘的两次跃迁：第一峰较低，回落后冲到主峰 */
-function heartbeatEnvelope(t: number): number {
-  if (t < 2.2) {
-    return 0.02 + 0.1 * (t / 2.2) + 0.015 * Math.sin((t * Math.PI * 2) / 1.1);
-  }
-  if (t < 3.4) {
-    const u = (t - 2.2) / 1.2;
-    return 0.12 + 0.18 * u * u * u;
-  }
-  if (t < 3.7) {
-    const u = (t - 3.4) / 0.3;
-    return 0.3 + 0.32 * Math.sin(u * Math.PI * 0.5);
-  }
-  if (t < 4.1) {
-    const u = (t - 3.7) / 0.4;
-    return 0.62 - 0.34 * u;
-  }
-  if (t < 4.5) {
-    const u = (t - 4.1) / 0.4;
-    return 0.28 + 0.72 * Math.sin(u * Math.PI * 0.5);
-  }
-  const u = t - 4.5;
-  return Math.exp(-u / 1.2) * (1 + 0.04 * Math.sin(u * 5));
-}
-
-/** 在两个峰值前短促变色，保留慢呼吸期的冷青色 */
-const WAVE_COLOR_KEYS: Array<[number, [number, number, number]]> = [
-  [0, [79, 216, 255]],
-  [3.6, [79, 216, 255]],
-  [3.7, [255, 200, 97]],
-  [4.1, [255, 138, 61]],
-  [4.4, [255, 138, 61]],
-  [4.5, [255, 246, 220]],
-  [6.0, [240, 178, 92]],
-  [8.4, [38, 60, 112]],
-];
-
-function heartbeatColor(t: number): [number, number, number] {
-  for (let i = 0; i < WAVE_COLOR_KEYS.length - 1; i++) {
-    const [t0, c0] = WAVE_COLOR_KEYS[i]!;
-    const [t1, c1] = WAVE_COLOR_KEYS[i + 1]!;
-    if (t <= t1) {
-      const u = Math.max(0, Math.min(1, (t - t0) / (t1 - t0)));
-      return [
-        Math.round(c0[0] + (c1[0] - c0[0]) * u),
-        Math.round(c0[1] + (c1[1] - c0[1]) * u),
-        Math.round(c0[2] + (c1[2] - c0[2]) * u),
-      ];
-    }
-  }
-  return WAVE_COLOR_KEYS[WAVE_COLOR_KEYS.length - 1]![1];
-}
-
-/** 闪电前沿在第二次跃迁时扫到星空最远角落 */
-function heartbeatRadius(t: number, reach: number): number {
-  if (t < 2.2) return 18 + 18 * (t / 2.2) + 4 * Math.sin((t * Math.PI * 2) / 1.1);
-  if (t < 3.4) {
-    const u = (t - 2.2) / 1.2;
-    return 36 + (reach * 0.08 - 36) * u * u * u;
-  }
-  if (t < 3.7) {
-    const u = (t - 3.4) / 0.3;
-    return reach * (0.08 + 0.22 * Math.sin(u * Math.PI * 0.5));
-  }
-  if (t < 4.1) return reach * (0.3 + 0.03 * ((t - 3.7) / 0.4));
-  if (t < 4.5) {
-    const u = (t - 4.1) / 0.4;
-    return reach * (0.33 + 0.72 * u * u * u);
-  }
-  return reach * (1.05 + 0.15 * Math.min(1, (t - 4.5) / 1.2));
 }
 
 export const PixelMapCanvas: React.FC<PixelMapCanvasProps> = ({
@@ -114,76 +36,36 @@ export const PixelMapCanvas: React.FC<PixelMapCanvasProps> = ({
   const [viewMode, setViewMode] = useState<'3d' | 'list'>('3d');
   const prevUnfinalizedCountRef = useRef(0);
 
-  // 星空闪电心跳状态（在独立画布上逐帧绘制，不触发 React 重渲染）
-  const lightningCanvasRef = useRef<HTMLCanvasElement | null>(null);
-  const waveStateRef = useRef<{ start: number; x: number; y: number; bolts: LightningBolt[] } | null>(null);
-  const waveRafRef = useRef<number | null>(null);
   const gizmoRef = useRef<SVGSVGElement | null>(null);
 
-  // 能量突变 → 从星空中的色点扩散分叉闪电
-  const handleEnergySpike = useCallback((info: EnergySpikeInfo) => {
-    const canvasRect = canvasRef.current?.getBoundingClientRect();
-    if (!canvasRect) return;
-    const skyBottom = rendererRef.current?.getSkyBoundaryY() ?? canvasRect.height * 0.3;
-    const x = Math.max(0, Math.min(canvasRect.width, info.x));
-    const y = Math.max(20, Math.min(info.y, skyBottom * 0.55));
-    const reach = Math.hypot(Math.max(x, canvasRect.width - x), Math.max(y, skyBottom - y));
-    waveStateRef.current = { start: performance.now(), x, y, bolts: makeLightning(x, y, reach) };
-    if (waveRafRef.current !== null) return;
-    const step = () => {
-      const st = waveStateRef.current;
-      const canvas = lightningCanvasRef.current;
-      const ctx = canvas?.getContext('2d');
-      if (!st || !canvas || !ctx) {
-        waveRafRef.current = null;
-        return;
-      }
-      const rect = canvas.getBoundingClientRect();
-      const dpr = Math.min(window.devicePixelRatio || 1, 2);
-      if (canvas.width !== Math.round(rect.width * dpr) || canvas.height !== Math.round(rect.height * dpr)) {
-        canvas.width = Math.round(rect.width * dpr);
-        canvas.height = Math.round(rect.height * dpr);
-      }
-      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      const t = (performance.now() - st.start) / 1000;
-      if (t >= WAVE_TOTAL_SEC) {
-        ctx.clearRect(0, 0, rect.width, rect.height);
-        waveStateRef.current = null;
-        waveRafRef.current = null;
-        return;
-      }
-      const skyBottom = rendererRef.current?.getSkyBoundaryY() ?? rect.height * 0.3;
-      const reach = Math.hypot(Math.max(st.x, rect.width - st.x), Math.max(st.y, skyBottom - st.y));
-      paintSkyLightning(ctx, st.bolts, { x: st.x, y: st.y },
-        { width: rect.width, height: rect.height, skyBottom },
-        heartbeatRadius(t, reach), heartbeatEnvelope(t), heartbeatColor(t));
-      waveRafRef.current = requestAnimationFrame(step);
-    };
-    waveRafRef.current = requestAnimationFrame(step);
-  }, []);
+  // 心跳闪电 = LLM 调用脉搏：model_calls_completed 计数每递增一次触发一次；
+  // 播放期间（8.4s 周期内）到来的新调用直接忽略，不重置不叠加。
+  const prevModelCallsRef = useRef<number | null>(null);
+  useEffect(() => {
+    const calls = runStatus?.model_calls_completed;
+    if (calls == null) return;
+    const prev = prevModelCallsRef.current;
+    prevModelCallsRef.current = calls;
+    // 首次采样仅记录基线；计数回退（新一轮 Run 归零）不触发
+    if (prev === null || calls <= prev) return;
+    const renderer = rendererRef.current;
+    if (!renderer || renderer.getHeartbeatDebug().active) return;
+    renderer.triggerHeartbeatWave();
+  }, [runStatus]);
 
-  // 卸载时停止绘制
-  useEffect(
-    () => () => {
-      if (waveRafRef.current !== null) cancelAnimationFrame(waveRafRef.current);
-    },
-    []
-  );
-
-  // 开发环境预览钩子：x/y 为相对画布的坐标
+  // 开发环境预览钩子：触发从原点扩散的 3D 心跳闪电
   useEffect(() => {
     if (!(import.meta as { env?: { DEV?: boolean } }).env?.DEV) return;
-    (window as unknown as Record<string, unknown>).__triggerHeartbeatWave = (x?: number, y?: number) => {
-      const rect = canvasRef.current?.getBoundingClientRect();
-      handleEnergySpike({
-        x: x ?? (rect ? rect.width * 0.5 : 200),
-        y: y ?? (rect ? rect.height * 0.45 : 150),
-      });
-    };
+    (window as unknown as Record<string, unknown>).__triggerHeartbeatWave = (offsetSec?: number) =>
+      rendererRef.current?.triggerHeartbeatWave(offsetSec ?? 0);
+    (window as unknown as Record<string, unknown>).__heartbeatDebug = () =>
+      rendererRef.current?.getHeartbeatDebug();
     return () => {
-      delete (window as unknown as Record<string, unknown>).__triggerHeartbeatWave;
+      const w = window as unknown as Record<string, unknown>;
+      delete w.__triggerHeartbeatWave;
+      delete w.__heartbeatDebug;
     };
-  }, [handleEnergySpike]);
+  }, []);
 
   // 右下角方向罗盘随相机转动；它独立于场景中央的 3D 信标。
   useEffect(() => {
@@ -272,7 +154,6 @@ export const PixelMapCanvas: React.FC<PixelMapCanvasProps> = ({
       canvas: canvasRef.current,
       onSelectPixel: (id) => onSelectPixelRef.current(id),
       onHoverPixel: (id) => onHoverPixelRef.current(id),
-      onEnergySpike: handleEnergySpike,
     });
     rendererRef.current = renderer;
 
@@ -364,7 +245,6 @@ export const PixelMapCanvas: React.FC<PixelMapCanvasProps> = ({
         onPointerDown={() => setHoverPos(null)}
       >
         <canvas ref={canvasRef} id="pixel-canvas" />
-        <canvas ref={lightningCanvasRef} className="sky-lightning" aria-hidden="true" />
 
         <svg ref={gizmoRef} className="axis-gizmo" viewBox="0 0 80 80" aria-hidden="true">
           <circle className="gizmo-bg" cx="40" cy="40" r="33" />

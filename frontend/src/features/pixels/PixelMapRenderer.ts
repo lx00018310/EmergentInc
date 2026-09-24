@@ -1,12 +1,8 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+import { HeartbeatLightning } from './HeartbeatLightning';
+import type { HeartbeatDebugInfo } from './HeartbeatLightning';
 import type { PixelSummaryDto, MessageFlowDto } from '../../api/types';
-
-/** 能量突变（心跳）事件：屏幕坐标相对 canvas 左上角，单位 px */
-export interface EnergySpikeInfo {
-  x: number;
-  y: number;
-}
 
 /** 相机系下轴线的屏幕投影方向 */
 export interface Axis2D {
@@ -19,8 +15,6 @@ export interface PixelMapRendererOptions {
   canvas: HTMLCanvasElement;
   onSelectPixel: (pixelId: string) => void;
   onHoverPixel: (pixelId: string | null) => void;
-  /** 能量突变回调：驱动全屏心跳冲击波等 DOM 层特效 */
-  onEnergySpike?: (info: EnergySpikeInfo) => void;
 }
 
 export interface TransferRecord {
@@ -202,7 +196,8 @@ export class PixelMapRenderer {
 
   private onSelectPixel: (pixelId: string) => void;
   private onHoverPixel: (pixelId: string | null) => void;
-  private onEnergySpike?: (info: EnergySpikeInfo) => void;
+  /** 心跳闪电风暴：能量突变时从原点沿 XY 平面扩散 */
+  private readonly heartbeatLightning: HeartbeatLightning;
 
   private animationFrameId: number | null = null;
   private resizeObserver: ResizeObserver | null = null;
@@ -220,7 +215,6 @@ export class PixelMapRenderer {
     this.canvas = options.canvas;
     this.onSelectPixel = options.onSelectPixel;
     this.onHoverPixel = options.onHoverPixel;
-    this.onEnergySpike = options.onEnergySpike;
 
     this.renderer = new THREE.WebGLRenderer({ canvas: this.canvas, antialias: true });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -335,6 +329,9 @@ export class PixelMapRenderer {
     // 多层缓慢演化星空 + 漂移星云（依赖 haloTexture，须在其后构建）
     this.skyGroup = this.createSky();
     this.scene.add(this.skyGroup);
+
+    // 心跳闪电风暴：触发时从原点沿世界 XY 平面径向扩散
+    this.heartbeatLightning = new HeartbeatLightning(this.scene);
 
     // +Z 方向光迹（不显示轴线、箭头或文字）
     this.axisGroup = this.createAxisBeacon();
@@ -553,19 +550,12 @@ export class PixelMapRenderer {
           }
         }
       }
-      // 全屏心跳冲击波：选相对变化最大的可感知突变，避免普通小额消耗反复触发
-      if (spikePos && this.onEnergySpike) {
+      // 心跳闪电风暴：选相对变化最大的可感知突变，避免普通小额消耗反复触发
+      if (spikePos) {
         const nowSpike = performance.now();
         if (nowSpike - this.lastSpikeAt >= WAVE_COOLDOWN_MS) {
-          const projected = (spikePos as THREE.Vector3).clone().project(this.camera);
-          if (projected.z > -1 && projected.z < 1 && Math.abs(projected.x) <= 1 && Math.abs(projected.y) <= 1) {
-            this.lastSpikeAt = nowSpike;
-            const rect = this.canvas.getBoundingClientRect();
-            this.onEnergySpike({
-              x: ((projected.x + 1) / 2) * rect.width,
-              y: ((1 - projected.y) / 2) * rect.height,
-            });
-          }
+          this.lastSpikeAt = nowSpike;
+          this.heartbeatLightning.trigger(nowSpike);
         }
       }
     }
@@ -594,6 +584,14 @@ export class PixelMapRenderer {
     const width = Math.max(1, Math.floor(rect.width));
     const height = Math.max(1, Math.floor(rect.height));
     this.renderer.setSize(width, height, false);
+    // 闪电条带着色器需要绘制缓冲分辨率与像素比来做屏幕空间恒定线宽
+    // （与构造时 setPixelRatio 同一口径，避免依赖 renderer.getPixelRatio）
+    const pixelRatio = Math.min(window.devicePixelRatio, 2);
+    this.heartbeatLightning.setViewport(
+      Math.floor(width * pixelRatio),
+      Math.floor(height * pixelRatio),
+      pixelRatio
+    );
     this.camera.aspect = width / height;
     this.camera.updateProjectionMatrix();
   }
@@ -1163,6 +1161,9 @@ export class PixelMapRenderer {
         }
       }
 
+      // 7. 心跳闪电风暴推进（触发后的 8.4s 生命周期）
+      this.heartbeatLightning.tick(time);
+
       this.renderer.render(this.scene, this.camera);
       this.animationFrameId = requestAnimationFrame(loop);
     };
@@ -1183,14 +1184,13 @@ export class PixelMapRenderer {
     };
   }
 
-  /** 地面底盘远侧边缘的屏幕高度；星空特效只画在其上方 */
-  public getSkyBoundaryY(): number {
-    const horizontal = this.camera.position.clone();
-    horizontal.y = 0;
-    if (horizontal.lengthSq() < 0.001) horizontal.set(1, 0, 0);
-    const farEdge = horizontal.normalize().multiplyScalar(-24).project(this.camera);
-    const height = this.canvas.getBoundingClientRect().height;
-    return Math.max(0, Math.min(height, ((1 - farEdge.y) / 2) * height));
+  /** 手动触发心跳闪电（预览/调试）；offsetSec 可直接跳到周期中间相位 */
+  public triggerHeartbeatWave(offsetSec = 0): void {
+    this.heartbeatLightning.trigger(performance.now(), offsetSec);
+  }
+
+  public getHeartbeatDebug(): HeartbeatDebugInfo {
+    return this.heartbeatLightning.getDebug();
   }
 
   public dispose(): void {
@@ -1198,6 +1198,7 @@ export class PixelMapRenderer {
       cancelAnimationFrame(this.animationFrameId);
       this.animationFrameId = null;
     }
+    this.heartbeatLightning.dispose();
     if (this.autoRotateTimeout !== null) {
       window.clearTimeout(this.autoRotateTimeout);
       this.autoRotateTimeout = null;

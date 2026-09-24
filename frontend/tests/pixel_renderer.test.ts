@@ -104,7 +104,7 @@ describe('PixelMapRenderer (Three.js Crystal Lattice)', () => {
       new Set(['0_0_0'])
     );
     const sphere = pixelGroup.children[0] as THREE.Mesh;
-    expect((sphere.material as THREE.MeshStandardMaterial).color.getHex()).toBe(0xf2b01e);
+    expect((sphere.material as THREE.MeshStandardMaterial).color.getHex()).toBe(0xf5c56b);
 
     // 正常销毁不抛错
     expect(() => renderer.dispose()).not.toThrow();
@@ -155,14 +155,14 @@ describe('PixelMapRenderer (Three.js Crystal Lattice)', () => {
     expect(ringMesh).toBeDefined();
     expect(ringMesh.visible).toBe(false);
 
-    // 选中 1_1_1：外围圈可见，吸附到该元胞坐标，且使用鲜橙红显著颜色 (0xff4500)
+    // 选中 1_1_1：外围圈可见，吸附到该元胞坐标，且使用权威黄铜金显著颜色 (0xffc861)
     renderer.setSelectedPixel('1_1_1');
     expect(ringMesh.visible).toBe(true);
     expect(ringMesh.position.x).toBeCloseTo(1 * 2.5);
     expect(ringMesh.position.y).toBeCloseTo(1 * 2.5);
     expect(ringMesh.position.z).toBeCloseTo(1 * 2.5);
     const ringMat = (renderer as any).selectionRingMaterial as THREE.MeshBasicMaterial;
-    expect(ringMat.color.getHex()).toBe(0xff4500);
+    expect(ringMat.color.getHex()).toBe(0xffc861);
 
     // 取消选中：外围圈隐藏
     renderer.setSelectedPixel(null);
