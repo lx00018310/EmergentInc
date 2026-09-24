@@ -1,7 +1,8 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
 import { PixelMapRenderer } from './PixelMapRenderer';
 import type { EnergySpikeInfo } from './PixelMapRenderer';
+import { makeLightning, paintSkyLightning } from './SkyLightning';
+import type { LightningBolt } from './SkyLightning';
 import { PixelHoverTooltip } from './PixelHoverTooltip';
 import { PixelListPanel } from './PixelListPanel';
 import type { PixelSummaryDto, MessageFlowDto, RunStatusDto } from '../../api/types';
@@ -18,7 +19,7 @@ export interface PixelMapCanvasProps {
   onRefresh?: () => Promise<void>;
 }
 
-/* ===== 全屏心跳冲击波：包络 / 颜色 / 半径（呼吸 → 加速 → 双峰跃迁 → 缓落） ===== */
+/* ===== 星空闪电心跳：曲线控制颜色、扩散速度与分叉密度 ===== */
 const WAVE_TOTAL_SEC = 8.4;
 
 /** 手绘的两次跃迁：第一峰较低，回落后冲到主峰 */
@@ -74,7 +75,7 @@ function heartbeatColor(t: number): [number, number, number] {
   return WAVE_COLOR_KEYS[WAVE_COLOR_KEYS.length - 1]![1];
 }
 
-/** 波前在第二次跃迁时扫到视口最远角落 */
+/** 闪电前沿在第二次跃迁时扫到星空最远角落 */
 function heartbeatRadius(t: number, reach: number): number {
   if (t < 2.2) return 18 + 18 * (t / 2.2) + 4 * Math.sin((t * Math.PI * 2) / 1.1);
   if (t < 3.4) {
@@ -91,11 +92,6 @@ function heartbeatRadius(t: number, reach: number): number {
     return reach * (0.33 + 0.72 * u * u * u);
   }
   return reach * (1.05 + 0.15 * Math.min(1, (t - 4.5) / 1.2));
-}
-
-/** 核心辉光半径（px） */
-function heartbeatCoreRadius(t: number, reach: number): number {
-  return Math.max(70, heartbeatRadius(t, reach) * 0.85);
 }
 
 export const PixelMapCanvas: React.FC<PixelMapCanvasProps> = ({
@@ -118,51 +114,55 @@ export const PixelMapCanvas: React.FC<PixelMapCanvasProps> = ({
   const [viewMode, setViewMode] = useState<'3d' | 'list'>('3d');
   const prevUnfinalizedCountRef = useRef(0);
 
-  // 全屏心跳冲击波状态（rAF 直写 CSS 变量，避免每帧 React 重渲染）
-  const waveElRef = useRef<HTMLDivElement | null>(null);
-  const waveStateRef = useRef<{ start: number; x: number; y: number } | null>(null);
+  // 星空闪电心跳状态（在独立画布上逐帧绘制，不触发 React 重渲染）
+  const lightningCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const waveStateRef = useRef<{ start: number; x: number; y: number; bolts: LightningBolt[] } | null>(null);
   const waveRafRef = useRef<number | null>(null);
-  // 方向罗盘 HUD
   const gizmoRef = useRef<SVGSVGElement | null>(null);
 
-  // 能量突变 → 触发/重置全屏心跳冲击波
+  // 能量突变 → 从星空中的色点扩散分叉闪电
   const handleEnergySpike = useCallback((info: EnergySpikeInfo) => {
     const canvasRect = canvasRef.current?.getBoundingClientRect();
     if (!canvasRect) return;
-    waveStateRef.current = { start: performance.now(), x: canvasRect.left + info.x, y: canvasRect.top + info.y };
-    if (waveRafRef.current !== null) return; // 已在播放：仅重置波源与起点
+    const skyBottom = rendererRef.current?.getSkyBoundaryY() ?? canvasRect.height * 0.3;
+    const x = Math.max(0, Math.min(canvasRect.width, info.x));
+    const y = Math.max(20, Math.min(info.y, skyBottom * 0.55));
+    const reach = Math.hypot(Math.max(x, canvasRect.width - x), Math.max(y, skyBottom - y));
+    waveStateRef.current = { start: performance.now(), x, y, bolts: makeLightning(x, y, reach) };
+    if (waveRafRef.current !== null) return;
     const step = () => {
       const st = waveStateRef.current;
-      const el = waveElRef.current;
-      if (!st || !el) {
+      const canvas = lightningCanvasRef.current;
+      const ctx = canvas?.getContext('2d');
+      if (!st || !canvas || !ctx) {
         waveRafRef.current = null;
         return;
       }
+      const rect = canvas.getBoundingClientRect();
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      if (canvas.width !== Math.round(rect.width * dpr) || canvas.height !== Math.round(rect.height * dpr)) {
+        canvas.width = Math.round(rect.width * dpr);
+        canvas.height = Math.round(rect.height * dpr);
+      }
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       const t = (performance.now() - st.start) / 1000;
       if (t >= WAVE_TOTAL_SEC) {
-        el.style.opacity = '0';
+        ctx.clearRect(0, 0, rect.width, rect.height);
         waveStateRef.current = null;
         waveRafRef.current = null;
         return;
       }
-      const [r, g, b] = heartbeatColor(t);
-      const reach = Math.hypot(Math.max(st.x, window.innerWidth - st.x), Math.max(st.y, window.innerHeight - st.y));
-      el.style.setProperty('--hx', `${st.x}px`);
-      el.style.setProperty('--hy', `${st.y}px`);
-      el.style.setProperty('--wr', `${heartbeatRadius(t, reach)}px`);
-      el.style.setProperty('--cr', `${heartbeatCoreRadius(t, reach)}px`);
-      el.style.setProperty('--cRing', `rgba(${r}, ${g}, ${b}, 0.85)`);
-      el.style.setProperty(
-        '--cCore',
-        `rgba(${Math.min(255, r + 40)}, ${Math.min(255, g + 40)}, ${Math.min(255, b + 30)}, 0.9)`
-      );
-      el.style.opacity = String(Math.min(1, heartbeatEnvelope(t)));
+      const skyBottom = rendererRef.current?.getSkyBoundaryY() ?? rect.height * 0.3;
+      const reach = Math.hypot(Math.max(st.x, rect.width - st.x), Math.max(st.y, skyBottom - st.y));
+      paintSkyLightning(ctx, st.bolts, { x: st.x, y: st.y },
+        { width: rect.width, height: rect.height, skyBottom },
+        heartbeatRadius(t, reach), heartbeatEnvelope(t), heartbeatColor(t));
       waveRafRef.current = requestAnimationFrame(step);
     };
     waveRafRef.current = requestAnimationFrame(step);
   }, []);
 
-  // 卸载时停止冲击波 rAF
+  // 卸载时停止绘制
   useEffect(
     () => () => {
       if (waveRafRef.current !== null) cancelAnimationFrame(waveRafRef.current);
@@ -185,57 +185,39 @@ export const PixelMapCanvas: React.FC<PixelMapCanvasProps> = ({
     };
   }, [handleEnergySpike]);
 
-  // 方向罗盘：每帧同步相机系三轴投影（直接改 SVG 属性，无 React 渲染开销）
+  // 右下角方向罗盘随相机转动；它独立于场景中央的 3D 信标。
   useEffect(() => {
     let raf = 0;
-    let cached: {
-      lines: Record<'x' | 'y' | 'z', SVGLineElement | null>;
-      labels: Record<'x' | 'y' | 'z', SVGTextElement | null>;
-      tip: SVGCircleElement | null;
-    } | null = null;
-    const C = 40;
-    const AXIS_LEN = 24;
-    const LABEL_LEN = 31;
     const tick = () => {
       const renderer = rendererRef.current;
       const svg = gizmoRef.current;
       if (renderer && svg) {
-        if (!cached) {
-          cached = {
-            lines: {
-              x: svg.querySelector<SVGLineElement>('.gizmo-x'),
-              y: svg.querySelector<SVGLineElement>('.gizmo-y'),
-              z: svg.querySelector<SVGLineElement>('.gizmo-z'),
-            },
-            labels: {
-              x: svg.querySelector<SVGTextElement>('.gizmo-x-label'),
-              y: svg.querySelector<SVGTextElement>('.gizmo-y-label'),
-              z: svg.querySelector<SVGTextElement>('.gizmo-z-label'),
-            },
-            tip: svg.querySelector<SVGCircleElement>('.gizmo-z-tip'),
-          };
-        }
         const axes = renderer.getScreenAxes();
-        (['x', 'y', 'z'] as const).forEach((k) => {
+        for (const k of ['x', 'y', 'z'] as const) {
           const d = axes[k];
-          const line = cached!.lines[k];
+          const line = svg.querySelector<SVGLineElement>(`.gizmo-${k}`);
+          const label = svg.querySelector<SVGTextElement>(`.gizmo-${k}-label`);
           if (line) {
-            line.setAttribute('x2', String(C + d.x * AXIS_LEN));
-            line.setAttribute('y2', String(C + d.y * AXIS_LEN));
+            line.setAttribute('x2', String(40 + d.x * 24));
+            line.setAttribute('y2', String(40 + d.y * 24));
             line.style.opacity = k === 'z' ? '1' : d.behind ? '0.3' : '0.95';
           }
-          const label = cached!.labels[k];
           if (label) {
-            label.setAttribute('x', String(C + d.x * LABEL_LEN));
-            label.setAttribute('y', String(C + d.y * LABEL_LEN + 3));
+            label.setAttribute('x', String(40 + d.x * 31));
+            label.setAttribute('y', String(43 + d.y * 31));
             label.style.opacity = k === 'z' ? '1' : d.behind ? '0.35' : '1';
           }
-        });
-        if (cached.tip) {
-          cached.tip.setAttribute('cx', String(C + axes.z.x * AXIS_LEN));
-          cached.tip.setAttribute('cy', String(C + axes.z.y * AXIS_LEN));
-          cached.tip.style.opacity = '1';
         }
+        const d = axes.z;
+        const len = Math.hypot(d.x, d.y) || 1;
+        const ux = d.x / len;
+        const uy = d.y / len;
+        const tipX = 40 + d.x * 24;
+        const tipY = 40 + d.y * 24;
+        svg.querySelector<SVGPolygonElement>('.gizmo-z-tip')?.setAttribute(
+          'points',
+          `${tipX},${tipY} ${tipX - ux * 8 - uy * 4},${tipY - uy * 8 + ux * 4} ${tipX - ux * 8 + uy * 4},${tipY - uy * 8 - ux * 4}`
+        );
       }
       raf = requestAnimationFrame(tick);
     };
@@ -382,14 +364,14 @@ export const PixelMapCanvas: React.FC<PixelMapCanvasProps> = ({
         onPointerDown={() => setHoverPos(null)}
       >
         <canvas ref={canvasRef} id="pixel-canvas" />
+        <canvas ref={lightningCanvasRef} className="sky-lightning" aria-hidden="true" />
 
-        {/* 方向罗盘：金标 +Z，跟随相机实时投影，一眼辨别方位与上下 */}
         <svg ref={gizmoRef} className="axis-gizmo" viewBox="0 0 80 80" aria-hidden="true">
           <circle className="gizmo-bg" cx="40" cy="40" r="33" />
           <line className="gizmo-line gizmo-x" x1="40" y1="40" x2="40" y2="40" />
           <line className="gizmo-line gizmo-y" x1="40" y1="40" x2="40" y2="40" />
           <line className="gizmo-line gizmo-z" x1="40" y1="40" x2="40" y2="40" />
-          <circle className="gizmo-z-tip" cx="40" cy="40" r="3" />
+          <polygon className="gizmo-z-tip" points="40,40" />
           <text className="gizmo-label gizmo-x-label" x="40" y="40">X</text>
           <text className="gizmo-label gizmo-y-label" x="40" y="40">Y</text>
           <text className="gizmo-label gizmo-z-label" x="40" y="40">+Z</text>
@@ -421,7 +403,6 @@ export const PixelMapCanvas: React.FC<PixelMapCanvasProps> = ({
           />
         )}
       </div>
-      {createPortal(<div ref={waveElRef} className="heartbeat-wave" aria-hidden="true" />, document.body)}
     </div>
   );
 };

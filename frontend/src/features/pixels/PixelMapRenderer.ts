@@ -8,7 +8,7 @@ export interface EnergySpikeInfo {
   y: number;
 }
 
-/** 相机系下轴线的 2D 投影方向（y 屏幕向下为正，behind 表示远离相机） */
+/** 相机系下轴线的屏幕投影方向 */
 export interface Axis2D {
   x: number;
   y: number;
@@ -40,7 +40,9 @@ export interface TransferRecord {
 }
 
 const SPACING = 2.5;
-const Z_BEACON_HEIGHT = 2.5;
+const AXIS_PULSE_SPEED_Z_PER_SEC = 0.3;
+const AXIS_PULSE_FADE_Z = 0.8;
+const AXIS_PULSE_PAUSE_MS = 700;
 const WAVE_COOLDOWN_MS = 9000;
 const ACTIVE_COLOR = 0x38e1ff; // 数据冷青光
 const DEAD_COLOR = 0x3a4656; // 熄灭的暗石青
@@ -109,21 +111,27 @@ function createFloorTexture(): THREE.CanvasTexture {
   return new THREE.CanvasTexture(canvas);
 }
 
-/** 生成文字标签贴图（金色发光描边，用于 +Z 轴标签） */
-function createTextTexture(text: string): THREE.CanvasTexture {
+/** 朝 +Z 飞行的短光迹：无箭头，前端明亮、尾迹渐隐 */
+function createAxisTrailTexture(): THREE.CanvasTexture {
   const canvas = document.createElement('canvas');
-  canvas.width = 256;
-  canvas.height = 128;
+  canvas.width = 64;
+  canvas.height = 192;
   const ctx = canvas.getContext('2d');
   if (ctx) {
-    ctx.clearRect(0, 0, 256, 128);
-    ctx.font = '700 84px "JetBrains Mono", monospace';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.shadowColor = 'rgba(255, 200, 97, 0.9)';
-    ctx.shadowBlur = 22;
-    ctx.fillStyle = '#ffd98a';
-    ctx.fillText(text, 128, 68);
+    const gradient = ctx.createLinearGradient(0, 180, 0, 12);
+    gradient.addColorStop(0, 'rgba(255, 177, 72, 0)');
+    gradient.addColorStop(0.65, 'rgba(255, 194, 93, 0.35)');
+    gradient.addColorStop(1, 'rgba(255, 246, 210, 1)');
+    ctx.fillStyle = gradient;
+    ctx.shadowColor = '#ffc861';
+    ctx.shadowBlur = 8;
+    ctx.beginPath();
+    ctx.moveTo(29, 180);
+    ctx.lineTo(27, 28);
+    ctx.quadraticCurveTo(32, 5, 37, 28);
+    ctx.lineTo(35, 180);
+    ctx.closePath();
+    ctx.fill();
   }
   return new THREE.CanvasTexture(canvas);
 }
@@ -169,8 +177,11 @@ export class PixelMapRenderer {
   private floorRim: THREE.Mesh | null = null;
   private floorTexture: THREE.CanvasTexture | null = null;
   private axisGroup: THREE.Group | null = null;
-  private axisPulse: THREE.Mesh | null = null;
-  private axisLabelTexture: THREE.CanvasTexture | null = null;
+  private axisPulse: THREE.Sprite | null = null;
+  private axisTrailTexture: THREE.CanvasTexture | null = null;
+  private axisPulseStartZ = 0;
+  private axisPulseFadeStartZ = 3;
+  private axisPulseCycleStart = performance.now();
   private lastSpikeAt = -Infinity;
   private haloTexture: THREE.CanvasTexture;
 
@@ -325,7 +336,7 @@ export class PixelMapRenderer {
     this.skyGroup = this.createSky();
     this.scene.add(this.skyGroup);
 
-    // +Z 方向信标：金色高亮箭头 + 行进脉冲 + 浮动标签
+    // +Z 方向光迹（不显示轴线、箭头或文字）
     this.axisGroup = this.createAxisBeacon();
     this.scene.add(this.axisGroup);
 
@@ -437,7 +448,7 @@ export class PixelMapRenderer {
     return group;
   }
 
-  /** 构建 +Z 方向信标：暗色基准轴 + 金色高亮主轴箭头 + 循环行进脉冲 + 浮动标签 */
+  /** 构建方向参照：水平基准轴与循环上行光迹 */
   private createAxisBeacon(): THREE.Group {
     const group = new THREE.Group();
     const baseY = 0.04; // 略高于地面网格，避免深度冲突
@@ -448,44 +459,25 @@ export class PixelMapRenderer {
       return new THREE.Line(geo, mat);
     };
 
-    // 世界 X/Y 位于水平面；世界 -Z 在竖直下方
+    // 世界 X/Y 位于水平面；场景内不绘制 Z 轴线
     group.add(mkLine(new THREE.Vector3(-16, baseY, 0), new THREE.Vector3(16, baseY, 0), 0x27445e, 0.5));
     group.add(mkLine(new THREE.Vector3(0, baseY, -16), new THREE.Vector3(0, baseY, 16), 0x27445e, 0.5));
-    group.add(mkLine(new THREE.Vector3(0, -2, 0), new THREE.Vector3(0, baseY, 0), 0x27445e, 0.5));
 
-    // 世界 +Z 对应 Three.js +Y：从水平面竖直向上
-    group.add(mkLine(new THREE.Vector3(0, baseY, 0), new THREE.Vector3(0, baseY + Z_BEACON_HEIGHT, 0), 0xffc861, 0.95));
-
-    // 金色箭头（圆锥默认沿 Three.js +Y）
-    const cone = new THREE.Mesh(
-      new THREE.ConeGeometry(0.34, 1.15, 20),
-      new THREE.MeshBasicMaterial({ color: 0xffc861 })
-    );
-    cone.position.set(0, baseY + Z_BEACON_HEIGHT + 0.55, 0);
-    group.add(cone);
-
-    // 沿 +Z 循环行进的暖光脉冲（运动方向即正方向）
-    this.axisPulse = new THREE.Mesh(
-      new THREE.SphereGeometry(0.16, 12, 8),
-      new THREE.MeshBasicMaterial({
-        color: 0xffe1a1,
+    // 沿 +Z 循环行进的独立光带，以运动方向传达正向
+    this.axisTrailTexture = createAxisTrailTexture();
+    this.axisPulse = new THREE.Sprite(
+      new THREE.SpriteMaterial({
+        map: this.axisTrailTexture,
         transparent: true,
         opacity: 0,
         blending: THREE.AdditiveBlending,
         depthWrite: false,
+        depthTest: false,
       })
     );
+    this.axisPulse.scale.set(0.3, 1.5, 1);
     this.axisPulse.position.set(0, baseY, 0);
     group.add(this.axisPulse);
-
-    // 浮动 +Z 标签（Sprite 自动面向相机）
-    this.axisLabelTexture = createTextTexture('+Z');
-    const label = new THREE.Sprite(
-      new THREE.SpriteMaterial({ map: this.axisLabelTexture, transparent: true, depthWrite: false, fog: false })
-    );
-    label.scale.set(2.6, 1.3, 1);
-    label.position.set(0, baseY + Z_BEACON_HEIGHT + 1.45, 0);
-    group.add(label);
 
     return group;
   }
@@ -529,6 +521,16 @@ export class PixelMapRenderer {
     unreadTipsPixelIds?: Set<string>
   ): void {
     const nextPixels = pixels || [];
+    const maxPixelZ = nextPixels.length > 0
+      ? nextPixels.reduce((max, pixel) => Math.max(max, pixel.position[2]), -Infinity)
+      : 0;
+    const pulseStartZ = Math.min(0, maxPixelZ);
+    const fadeStartZ = maxPixelZ + 3;
+    if (pulseStartZ !== this.axisPulseStartZ || fadeStartZ !== this.axisPulseFadeStartZ) {
+      this.axisPulseStartZ = pulseStartZ;
+      this.axisPulseFadeStartZ = fadeStartZ;
+      this.axisPulseCycleStart = performance.now();
+    }
 
     // 细胞心跳脉冲：对比能量变动（首次 setData 加载不触发）
     if (!this.isFirstDataCall) {
@@ -1144,11 +1146,21 @@ export class PixelMapRenderer {
         }
       }
 
-      // 6. +Z 信标行进脉冲（2.6s 一个循环，两端渐隐，运动方向即正方向）
+      // 6. 沿世界 +Z 缓行；越过最高元胞 3 格后才开始渐隐
       if (this.axisPulse) {
-        const u = (time % 2600) / 2600;
-        this.axisPulse.position.set(0, 0.04 + u * Z_BEACON_HEIGHT, 0);
-        (this.axisPulse.material as THREE.MeshBasicMaterial).opacity = Math.sin(u * Math.PI) * 0.95;
+        const fadeEndZ = this.axisPulseFadeStartZ + AXIS_PULSE_FADE_Z;
+        const travelMs = ((fadeEndZ - this.axisPulseStartZ) / AXIS_PULSE_SPEED_Z_PER_SEC) * 1000;
+        const elapsed = (time - this.axisPulseCycleStart) % (travelMs + AXIS_PULSE_PAUSE_MS);
+        const worldZ = this.axisPulseStartZ + (elapsed / 1000) * AXIS_PULSE_SPEED_Z_PER_SEC;
+        this.axisPulse.visible = worldZ < fadeEndZ;
+        if (this.axisPulse.visible) {
+          this.axisPulse.position.set(0, 0.04 + worldZ * SPACING, 0);
+          const fade = worldZ < this.axisPulseFadeStartZ
+            ? 1
+            : 1 - (worldZ - this.axisPulseFadeStartZ) / AXIS_PULSE_FADE_Z;
+          const appear = Math.min(1, (worldZ - this.axisPulseStartZ) / 0.25);
+          (this.axisPulse.material as THREE.SpriteMaterial).opacity = 0.8 * Math.min(appear, fade);
+        }
       }
 
       this.renderer.render(this.scene, this.camera);
@@ -1157,7 +1169,7 @@ export class PixelMapRenderer {
     this.animationFrameId = requestAnimationFrame(loop);
   }
 
-  /** 获取相机系下三轴的屏幕投影方向（供 2D 方向罗盘 HUD 每帧同步） */
+  /** 三轴在罗盘中的屏幕方向：世界 +Z 对应 Three.js +Y */
   public getScreenAxes(): { x: Axis2D; y: Axis2D; z: Axis2D } {
     const inv = this.camera.quaternion.clone().invert();
     const project = (v: THREE.Vector3): Axis2D => {
@@ -1169,6 +1181,16 @@ export class PixelMapRenderer {
       y: project(new THREE.Vector3(0, 0, 1)),
       z: project(new THREE.Vector3(0, 1, 0)),
     };
+  }
+
+  /** 地面底盘远侧边缘的屏幕高度；星空特效只画在其上方 */
+  public getSkyBoundaryY(): number {
+    const horizontal = this.camera.position.clone();
+    horizontal.y = 0;
+    if (horizontal.lengthSq() < 0.001) horizontal.set(1, 0, 0);
+    const farEdge = horizontal.normalize().multiplyScalar(-24).project(this.camera);
+    const height = this.canvas.getBoundingClientRect().height;
+    return Math.max(0, Math.min(height, ((1 - farEdge.y) / 2) * height));
   }
 
   public dispose(): void {
@@ -1223,9 +1245,9 @@ export class PixelMapRenderer {
       this.axisGroup = null;
       this.axisPulse = null;
     }
-    if (this.axisLabelTexture) {
-      this.axisLabelTexture.dispose();
-      this.axisLabelTexture = null;
+    if (this.axisTrailTexture) {
+      this.axisTrailTexture.dispose();
+      this.axisTrailTexture = null;
     }
 
     if (this.floorMesh) {

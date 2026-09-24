@@ -1557,38 +1557,26 @@ select:focus {
   background: rgba(122, 178, 214, 0.6);
 }
 
-/* ===== 14. 全屏心跳冲击波 & 方向罗盘（Midnight Foundry 二期） ===== */
+/* ===== 14. 星空闪电心跳 ===== */
 
-/* 冲击波：双层径向渐变（核心辉光 + 扩散波前环），screen 混合提亮全场 */
-.heartbeat-wave {
-  position: fixed;
+/* 闪电只在地图的星空区域绘制，画布保持透明且不接管交互 */
+.sky-lightning {
+  position: absolute;
   inset: 0;
+  width: 100%;
+  height: 100%;
   pointer-events: none;
   mix-blend-mode: screen;
-  opacity: 0;
-  z-index: 1000;
-  will-change: opacity;
-  background:
-    radial-gradient(
-      circle var(--cr, 240px) at var(--hx, 50%) var(--hy, 50%),
-      var(--cCore, transparent),
-      transparent 72%
-    ),
-    radial-gradient(
-      circle at var(--hx, 50%) var(--hy, 50%),
-      transparent calc(var(--wr, 0px) - 110px),
-      var(--cRing, transparent) var(--wr, 0px),
-      transparent calc(var(--wr, 0px) + 200px)
-    );
+  z-index: 2;
 }
 
-/* 方向罗盘：右下角固定 HUD，Z 轴金色高亮 */
+/* 右下角方向罗盘保留 +Z 文字与箭头 */
 .axis-gizmo {
   position: absolute;
   right: 14px;
   bottom: 14px;
-  width: 76px;
-  height: 76px;
+  width: 96px;
+  height: 96px;
   z-index: 6;
   pointer-events: none;
   opacity: 0.92;
@@ -1605,30 +1593,18 @@ select:focus {
   stroke-linecap: round;
 }
 
-.axis-gizmo .gizmo-x {
-  stroke: #4a7ba6;
-}
-
-.axis-gizmo .gizmo-y {
-  stroke: #8a9bb0;
-}
-
+.axis-gizmo .gizmo-x { stroke: #4a7ba6; }
+.axis-gizmo .gizmo-y { stroke: #8a9bb0; }
 .axis-gizmo .gizmo-z {
   stroke: #ffc861;
   stroke-width: 2.6;
   filter: drop-shadow(0 0 3px rgba(255, 200, 97, 0.8));
 }
 
-.axis-gizmo .gizmo-z-tip {
-  fill: #ffc861;
-}
-
+.axis-gizmo .gizmo-z-tip { fill: #ffc861; }
 .axis-gizmo .gizmo-label {
-  font: 700 9px "JetBrains Mono", monospace;
+  font: 700 11px "JetBrains Mono", monospace;
   text-anchor: middle;
   fill: #9fb4c8;
 }
-
-.axis-gizmo .gizmo-z-label {
-  fill: #ffd98a;
-}
+.axis-gizmo .gizmo-z-label { fill: #ffd98a; }
