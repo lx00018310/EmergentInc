@@ -7,10 +7,11 @@ export class ModelCallRepository {
   public recordModelCall(record: ModelCallRecord): void {
     const stmt = this.db.prepare(`
       INSERT INTO model_calls (
-        call_id, run_id, pixel_id, message_id, round_num, model, pricing_revision,
+        call_id, run_id, pixel_id, message_id, execution_id, round_num, model, pricing_revision,
+        binding_id, narrative_revision,
         prompt_hash, raw_response, normalized_response, prompt_tokens,
         completion_tokens, cached_tokens, actual_tokens, cost_cny, tool_cost, outcome, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     stmt.run(
@@ -18,9 +19,12 @@ export class ModelCallRepository {
       record.runId,
       record.pixelId,
       record.messageId ?? null,
+      record.executionId ?? null,
       record.roundNum ?? null,
       record.model,
       record.pricingRevision ?? null,
+      record.bindingId ?? null,
+      record.narrativeRevision ?? null,
       record.promptHash ?? null,
       record.rawResponse ?? null,
       record.normalizedResponse ?? null,
@@ -58,8 +62,11 @@ export class ModelCallRepository {
     return {
       callId: row.call_id,
       runId: row.run_id,
+      executionId: row.execution_id ?? null,
       pixelId: row.pixel_id,
       messageId: row.message_id,
+      bindingId: row.binding_id ?? null,
+      narrativeRevision: row.narrative_revision == null ? null : Number(row.narrative_revision),
       roundNum: row.round_num == null ? null : Number(row.round_num),
       model: row.model,
       pricingRevision: row.pricing_revision,

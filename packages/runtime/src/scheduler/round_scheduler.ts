@@ -44,15 +44,21 @@ export class RoundScheduler {
   /**
    * 轮次开始：恢复可用等待消息与自然唤醒检查
    */
-  public beginRound(currentRound: number, runId: string | null): void {
+  public beginRound(currentRound: number, runId: string | null, executionId: string | null = null): void {
     // 1. 尝试激活已补充能量的元胞等待消息
-    this.store.messages.tryRecoverWaitingPixelBudgetMessages();
+    this.store.messages.tryRecoverWaitingPixelBudgetMessages(100, executionId);
 
-    // 2. 检查活跃元胞的自然唤醒
-    const activePixels = this.store.pixels.listActivePixels();
+    // 2. 自然唤醒只作用于当前调度范围内的合格成员。
+    const execution = executionId ? this.store.executions.get(executionId) : null;
+    const activePixels = executionId
+      ? this.store.executions.listEligibleMembers(executionId)
+          .filter(member => execution?.kind === "mission" ? member.careerStatus === "active" : member.careerStatus === "trial")
+          .map(member => this.store.pixels.getPixelAccount(member.pixelId))
+          .filter((pixel): pixel is NonNullable<typeof pixel> => Boolean(pixel?.active))
+      : this.store.pixels.listActivePixels().filter(pixel => this.store.executions.isWorldPixelEligible(pixel.pixelId));
 
     for (const pixel of activePixels) {
-      const pendingCount = this.store.messages.countPendingMessages(pixel.pixelId);
+      const pendingCount = this.store.messages.countPendingMessages(pixel.pixelId, executionId);
 
       // 从权威状态文件读取该元胞的真实最后活动轮次
       let lastActiveRound = 0;
@@ -78,6 +84,7 @@ export class RoundScheduler {
       if (wake) {
         this.store.messages.enqueueMessage({
           runId,
+          executionId,
           roundNum: currentRound,
           sender: "system",
           recipient: pixel.pixelId,
@@ -95,9 +102,10 @@ export class RoundScheduler {
   public async executeRound(
     currentRound: number,
     runId: string,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    executionId: string | null = null
   ): Promise<RoundSummary> {
-    this.beginRound(currentRound, runId);
+    this.beginRound(currentRound, runId, executionId);
 
     let messagesProcessed = 0;
     let stopReason: StopReason | null = null;
@@ -113,10 +121,10 @@ export class RoundScheduler {
       }
 
       // 领取下一条消息
-      const message = this.store.messages.claimNext(currentRound);
+      const message = this.store.messages.claimNext(currentRound, executionId);
       if (!message) {
         // 未来轮次仍有消息时继续推进；否则立即停止，避免空转到轮数上限。
-        if (!this.store.messages.hasProcessableMessages()) {
+        if (!this.store.messages.hasProcessableMessages(executionId)) {
           stopReason = "NO_ACTIVE_MESSAGES";
         }
         break;
@@ -154,6 +162,7 @@ export class RoundScheduler {
 
       const trace: TraceContext = {
         runId,
+        executionId,
         round: currentRound,
         pixelId: message.recipient,
         messageId: message.messageId,
@@ -176,6 +185,7 @@ export class RoundScheduler {
           stopReason = "READ_LOOP_THRESHOLD_REACHED";
           this.store.messages.enqueueMessage({
             runId,
+            executionId,
             roundNum: currentRound,
             sender: "system",
             recipient: message.recipient,
@@ -212,6 +222,11 @@ export class RoundScheduler {
             // 预算护栏是正常停机，不是基础设施故障；不得携带误导性诊断
             errorCode = errorSummary = errorPhase = null;
             stopReason = "RUN_BUDGET_EXHAUSTED";
+            break;
+          }
+          if (err.kind === "EXECUTION") {
+            errorCode = errorSummary = errorPhase = null;
+            stopReason = "EXECUTION_BUDGET_EXHAUSTED";
             break;
           }
         }

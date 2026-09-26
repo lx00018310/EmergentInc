@@ -9,6 +9,8 @@ import {
   TransferEnergyEffect,
   ReproduceEffect,
   RouteMessageEffect,
+  OwnerReplyEffect,
+  EnqueueMessageParams,
   isValidPixelMdLength,
   getUnicodeLength,
 } from "@emergentinc/protocol";
@@ -20,7 +22,7 @@ import {
   isHopLimitReached,
   getNeighbors6,
 } from "@emergentinc/domain";
-import { ToolRuntime, ToolContext } from "@emergentinc/tools";
+import { ToolRuntime, ToolContext, ExecutionToolScope } from "@emergentinc/tools";
 import { FeedbackFactory } from "../feedback/feedback_factory.js";
 
 export interface EffectRuntimeContext {
@@ -29,12 +31,20 @@ export interface EffectRuntimeContext {
   toolRuntime: ToolRuntime;
   round: number;
   runId: string | null;
+  executionScope?: Readonly<ExecutionToolScope>;
   signal?: AbortSignal;
   modelCallId?: string;
 }
 
 export class EffectRuntime {
   constructor(private ctx: EffectRuntimeContext) {}
+
+  private enqueueMessage(params: EnqueueMessageParams): void {
+    this.ctx.store.messages.enqueueMessage({
+      ...params,
+      executionId: this.ctx.executionScope?.executionId ?? null,
+    });
+  }
 
   public async applyEffects(effects: Effect[]): Promise<void> {
     let priorToolFailed = false;
@@ -100,6 +110,10 @@ export class EffectRuntime {
         case "ROUTE_MESSAGE":
           await this.applyRouteMessage(effect);
           break;
+
+        case "OWNER_REPLY":
+          await this.applyOwnerReply(effect);
+          break;
       }
     }
 
@@ -111,7 +125,7 @@ export class EffectRuntime {
         this.ctx.runId,
         toolExecutions
       );
-      this.ctx.store.messages.enqueueMessage(feedback);
+      this.enqueueMessage(feedback);
     }
   }
 
@@ -128,7 +142,7 @@ export class EffectRuntime {
         this.ctx.runId,
         actualLen
       );
-      this.ctx.store.messages.enqueueMessage(feedback);
+      this.enqueueMessage(feedback);
 
       this.ctx.store.effects.recordEffect({
         effect_id: effect.effectId,
@@ -181,7 +195,7 @@ export class EffectRuntime {
       this.ctx.runId,
       effect.capability
     );
-    this.ctx.store.messages.enqueueMessage(feedback);
+    this.enqueueMessage(feedback);
 
     this.ctx.store.effects.recordEffect({
       effect_id: effect.effectId,
@@ -196,13 +210,14 @@ export class EffectRuntime {
 
   private async applyReadEnvironment(effect: ReadEnvironmentEffect): Promise<void> {
     const envPath = path.resolve(this.ctx.workspaceRoot, "live", "environment.md");
-    let content = "";
-    if (fs.existsSync(envPath)) {
+    let content = this.ctx.executionScope && typeof this.ctx.executionScope.inputSnapshot.environment === "string"
+      ? this.ctx.executionScope.inputSnapshot.environment as string : "";
+    if (!this.ctx.executionScope && fs.existsSync(envPath)) {
       content = fs.readFileSync(envPath, "utf-8");
     }
 
     // 生成 ENVIRONMENT 消息加入队列
-    this.ctx.store.messages.enqueueMessage({
+    this.enqueueMessage({
       runId: this.ctx.runId,
       roundNum: this.ctx.round,
       sender: "environment",
@@ -234,6 +249,7 @@ export class EffectRuntime {
       messageId: effect.messageId,
       operationId: effect.operationId,
       signal: this.ctx.signal,
+      executionScope: this.ctx.executionScope,
     };
 
     // 记录工具执行开始
@@ -286,6 +302,17 @@ export class EffectRuntime {
   }
 
   private async applyTransferEnergy(effect: TransferEnergyEffect): Promise<void> {
+    if (this.ctx.executionScope && (this.ctx.executionScope.kind === "trial_candidate" ||
+        !this.ctx.executionScope.allowedRecipients.includes(effect.transfer.target))) {
+      this.enqueueMessage(FeedbackFactory.createTransferFailureFeedback(
+        effect.fromPixelId, this.ctx.round, this.ctx.runId, effect.transfer.target,
+        "EXECUTION_SCOPE_DENIED", "Energy transfer is outside this execution's allowed participant set"
+      ));
+      this.ctx.store.effects.recordEffect({ effect_id: effect.effectId, message_id: effect.messageId,
+        effect_type: effect.effectType, effect_index: effect.effectIndex, payload_hash: effect.payloadHash,
+        status: "FAILED", details: JSON.stringify({ error: "EXECUTION_SCOPE_DENIED" }), created_at: Date.now() / 1000 });
+      return;
+    }
     const fromAccount = this.ctx.store.pixels.getPixelAccount(effect.fromPixelId);
     const toAccount = this.ctx.store.pixels.getPixelAccount(effect.transfer.target);
 
@@ -307,7 +334,7 @@ export class EffectRuntime {
         validation.errorCode || "VALIDATION_FAILED",
         validation.errorMessage || "Transfer validation failed"
       );
-      this.ctx.store.messages.enqueueMessage(feedback);
+      this.enqueueMessage(feedback);
 
       this.ctx.store.effects.recordEffect({
         effect_id: effect.effectId,
@@ -369,6 +396,10 @@ export class EffectRuntime {
   }
 
   private async applyReproduce(effect: ReproduceEffect): Promise<void> {
+    if (this.ctx.executionScope) {
+      this.recordReproductionFailure(effect, "EXECUTION_SCOPE_DENIED", "Reproduction is disabled inside an execution");
+      return;
+    }
     const parentAccount = this.ctx.store.pixels.getPixelAccount(effect.parentPixelId);
     const activePixels = this.ctx.store.pixels.listActivePixels();
     const occupiedPositions = new Set(activePixels.map((p) => p.pixelId));
@@ -409,14 +440,47 @@ export class EffectRuntime {
       throw new Error(`Reproduction archive already exists: ${historyDir}`);
     }
     const readState = (file: string): any => {
-      return fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, "utf-8")) : {};
+      if (!fs.existsSync(file)) return {};
+      const state = JSON.parse(fs.readFileSync(file, "utf-8"));
+      if (!state || typeof state !== "object" || Array.isArray(state)) {
+        throw new Error("state.json must contain an object");
+      }
+      return state;
     };
-    const oldState = readState(path.resolve(childDir, "state.json"));
-    const parentState = readState(path.resolve(this.ctx.workspaceRoot, "live", "pixels", effect.parentPixelId, "state.json"));
+    let oldState: any;
+    let parentState: any;
+    try {
+      oldState = readState(path.resolve(childDir, "state.json"));
+      parentState = readState(path.resolve(this.ctx.workspaceRoot, "live", "pixels", effect.parentPixelId, "state.json"));
+    } catch {
+      this.recordReproductionFailure(effect, "INVALID_STATE_FILE", "Reproduction source state.json is not valid JSON");
+      return;
+    }
     const generation = Number.isSafeInteger(parentState.generation) && parentState.generation >= 0 ? parentState.generation + 1 : 1;
-    const incarnation = oldAccount
-      ? (Number.isSafeInteger(oldState.incarnation) && oldState.incarnation > 0 ? oldState.incarnation + 1 : 2)
-      : 1;
+    const oldHasIncarnation = Object.prototype.hasOwnProperty.call(oldState, "incarnation");
+    const oldIncarnationValid = Number.isSafeInteger(oldState.incarnation) && oldState.incarnation > 0;
+    const previousBinding = this.ctx.store.qianji.getCurrentBindingByPixel(childPixelId);
+    let incarnation: number;
+    if (previousBinding) {
+      const previousProfile = this.ctx.store.qianji.getProfile(previousBinding.qianjiId);
+      if (!oldAccount || !oldIncarnationValid || oldState.incarnation !== previousBinding.incarnation || !previousProfile || previousProfile.careerStatus === "retired") {
+        this.recordReproductionFailure(
+          effect,
+          "IDENTITY_INCARNATION_CONFLICT",
+          `Current identity binding for '${childPixelId}' does not match its account, profile, and state.json incarnation`,
+        );
+        return;
+      }
+      incarnation = previousBinding.incarnation + 1;
+    } else if (oldHasIncarnation && !oldIncarnationValid) {
+      this.recordReproductionFailure(effect, "IDENTITY_INCARNATION_CONFLICT", `state.json incarnation for '${childPixelId}' is invalid`);
+      return;
+    } else if (oldIncarnationValid) {
+      incarnation = oldState.incarnation + 1;
+    } else {
+      // A pre-incarnation account represents legacy incarnation 1; a never-used coordinate starts at 1.
+      incarnation = oldAccount ? 2 : 1;
+    }
     const hadPixelDir = fs.existsSync(childDir);
     const hadArtifactsDir = fs.existsSync(artifactsDir);
     if ((hadPixelDir && !fs.lstatSync(childDir).isDirectory()) ||
@@ -453,6 +517,10 @@ export class EffectRuntime {
       }, null, 2), "utf-8");
 
       this.ctx.store.transaction(() => {
+        const currentBinding = this.ctx.store.qianji.getCurrentBindingByPixel(childPixelId);
+        if (currentBinding?.bindingId !== previousBinding?.bindingId) {
+          throw new Error("Reproduction identity binding changed during reset");
+        }
         const current = this.ctx.store.pixels.getPixelAccount(childPixelId);
         if (current?.active || (current && (current.energy !== 0 || current.refundDeficitTokens > 0))) {
           throw new Error("Reproduction target changed during reset");
@@ -474,6 +542,33 @@ export class EffectRuntime {
           WHERE recipient = ? AND status IN ('QUEUED', 'WAITING_PIXEL_BUDGET', 'WAITING_RUN_BUDGET')
         `).run(Date.now() / 1000, childPixelId);
         const now = Date.now() / 1000;
+        if (previousBinding) {
+          const archiveRelativePath = path.relative(this.ctx.workspaceRoot, archivedPixelDir).split(path.sep).join("/");
+          this.ctx.store.qianji.unbindAndRetire(previousBinding.bindingId, archiveRelativePath, "body_replaced", now);
+        }
+        const newborn = this.ctx.store.qianji.createProfile({
+          careerStatus: "candidate",
+          createdAt: now,
+          narrative: {
+            displayName: `未命名千机 ${childPixelId}`,
+            title: null,
+            roleLabel: null,
+            traits: {},
+            behaviorProfile: [],
+            flaw: null,
+            shortBio: null,
+            appearanceSpec: null,
+            portraitAsset: null,
+            contentRevision: null,
+          },
+        });
+        this.ctx.store.qianji.createBinding({
+          qianjiId: newborn.qianjiId,
+          pixelId: childPixelId,
+          incarnation,
+          boundAt: now,
+          birthEffectId: effect.effectId,
+        });
         this.ctx.store.ledger.appendEntry({
           entry_id: `${effect.effectId}_parent`, timestamp: now, pixel_id: effect.parentPixelId,
           entry_type: "reproduction_out", amount: -effect.request.initial_energy,
@@ -514,7 +609,7 @@ export class EffectRuntime {
   }
 
   private recordReproductionFailure(effect: ReproduceEffect, code: string, message: string): void {
-    this.ctx.store.messages.enqueueMessage(FeedbackFactory.createReproductionFailureFeedback(
+    this.enqueueMessage(FeedbackFactory.createReproductionFailureFeedback(
       effect.parentPixelId, this.ctx.round, this.ctx.runId, code, message
     ));
     this.ctx.store.effects.recordEffect({
@@ -528,9 +623,9 @@ export class EffectRuntime {
   private async applyRouteMessage(effect: RouteMessageEffect): Promise<void> {
     const activePixels = this.ctx.store.pixels.listActivePixels();
     const activeNeighbors = new Set(
-      getNeighbors6(effect.sender).filter((nId) =>
-        activePixels.some((p) => p.pixelId === nId && p.active)
-      )
+      (this.ctx.executionScope
+        ? this.ctx.executionScope.allowedRecipients
+        : getNeighbors6(effect.sender).filter((nId) => activePixels.some((p) => p.pixelId === nId && p.active)))
     );
 
     const validation = validateMessageRouting({
@@ -550,7 +645,7 @@ export class EffectRuntime {
         validation.errorCode || "VALIDATION_FAILED",
         validation.errorMessage || "Routing validation failed"
       );
-      this.ctx.store.messages.enqueueMessage(feedback);
+      this.enqueueMessage(feedback);
 
       this.ctx.store.effects.recordEffect({
         effect_id: effect.effectId,
@@ -573,7 +668,7 @@ export class EffectRuntime {
     const hopOverLimit = isHopLimitReached(effect.hop);
     const targetRound = hopOverLimit ? this.ctx.round + 1 : this.ctx.round;
 
-    this.ctx.store.messages.enqueueMessage({
+    this.enqueueMessage({
       runId: this.ctx.runId,
       roundNum: targetRound,
       hop: effect.hop,
@@ -593,6 +688,47 @@ export class EffectRuntime {
       status: "APPLIED",
       details: hopOverLimit ? JSON.stringify({ deferred_to_round: targetRound }) : undefined,
       created_at: Date.now() / 1000,
+    });
+  }
+
+  private async applyOwnerReply(effect: OwnerReplyEffect): Promise<void> {
+    const turn = this.ctx.store.qianjiChat.getTurnForMessage(effect.messageId);
+    const message = this.ctx.store.messages.getMessage(effect.messageId);
+    const modelCall = this.ctx.modelCallId ? this.ctx.store.modelCalls.getModelCall(this.ctx.modelCallId) : null;
+    const binding = turn ? this.ctx.store.qianji.getBinding(turn.bindingId) : null;
+    const current = turn ? this.ctx.store.qianji.getCurrentBindingByPixel(effect.pixelId) : null;
+    const valid = Boolean(turn && message && binding && current &&
+      turn.bindingId === message.recipientBindingId &&
+      turn.qianjiId === binding.qianjiId && binding.pixelId === effect.pixelId &&
+      current.bindingId === turn.bindingId && modelCall?.bindingId === turn.bindingId &&
+      modelCall.messageId === effect.messageId);
+    const now = Date.now() / 1000;
+    if (!valid) {
+      this.ctx.store.transaction(() => {
+        this.ctx.store.effects.recordEffect({
+          effect_id: effect.effectId, message_id: effect.messageId, effect_type: effect.effectType,
+          effect_index: effect.effectIndex, payload_hash: effect.payloadHash, status: "FAILED",
+          details: JSON.stringify({ error: "OWNER_REPLY_NOT_A_VALID_CHAT_TURN" }), created_at: now,
+        });
+      });
+      if (message) this.enqueueMessage({
+        runId: this.ctx.runId,
+        roundNum: this.ctx.round + 1,
+        sender: "system",
+        recipient: effect.pixelId,
+        content: "OWNER_REPLY was ignored because this message is not a valid Qianji chat turn.",
+        sourceType: "system",
+      });
+      return;
+    }
+    this.ctx.store.transaction(() => {
+      const applied = this.ctx.store.qianjiChat.completeReply(effect.messageId, turn!.bindingId, effect.reply, this.ctx.modelCallId ?? null);
+      this.ctx.store.effects.recordEffect({
+        effect_id: effect.effectId, message_id: effect.messageId, effect_type: effect.effectType,
+        effect_index: effect.effectIndex, payload_hash: effect.payloadHash, status: applied ? "APPLIED" : "FAILED",
+        ...(applied ? {} : { details: JSON.stringify({ error: "OWNER_REPLY_ALREADY_RECORDED" }) }),
+        created_at: now,
+      });
     });
   }
 }

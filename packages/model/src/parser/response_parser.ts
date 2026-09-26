@@ -1,4 +1,5 @@
 import { AgentDecision, ToolCall } from "@emergentinc/protocol";
+import { getUnicodeLength } from "@emergentinc/protocol";
 import { parseJsonWithRepair } from "./json_repair.js";
 
 export class InvalidModelResponseError extends Error {
@@ -51,6 +52,13 @@ export function parseAndNormalizeResponse(
 
   if (!rawData || typeof rawData !== "object" || Array.isArray(rawData)) {
     throw new InvalidModelResponseError("Model response is not a JSON object", rawText);
+  }
+
+  if (rawData.owner_reply !== undefined && rawData.owner_reply !== null && typeof rawData.owner_reply !== "string") {
+    throw new InvalidModelResponseError("owner_reply must be a string", rawText);
+  }
+  if (typeof rawData.owner_reply === "string" && getUnicodeLength(rawData.owner_reply) > 2000) {
+    throw new InvalidModelResponseError("owner_reply exceeds 2000 Unicode code points", rawText);
   }
 
   // 1. pixel_md 归一化
@@ -171,6 +179,7 @@ export function parseAndNormalizeResponse(
     send_to: sendToTarget,
     message_md: messageMd,
     owner_request: cleanOwnerReq,
+    owner_reply: typeof rawData.owner_reply === "string" && rawData.owner_reply.length > 0 ? rawData.owner_reply : null,
     raw_thought: typeof rawData.thought === "string" ? rawData.thought : null,
   };
 }

@@ -24,3 +24,12 @@
 12. Pixel 能量与本次 Run 预算在同一事务内检查，超限立即 `BudgetExceededError`；历史累计消耗仅用于审计。
 13. 存在未决 `reservations` 或未结算调用时禁止启动新 Run；恢复必须走 `/api/run/recovery/resolve` 并留下 `recovery_decisions` 审计记录。
 14. 外部真实收入只能通过 `/api/pixels/:id/reward` 由 Owner 提交，且必须带 `idempotency_key`，防止重复记账。
+
+## 组织执行隔离
+
+15. Mission/Trial 通过现有 RunService 执行，并以 `execution_id` 隔离消息、预留和模型调用。HTTP world Run 不接受参与者、工具快照或内部事务回调；execution 参与者与工具范围由服务端从已发布快照解析。
+16. 任务 Prompt 只列出 execution 工具快照内且注册表当前启用的工具。ToolRuntime 再次检查同一授权；不临时修改全局 registry 或 `tools.json`。任务 handler 不能读取 `workspace/private`；artifact 读写使用 `workspace/evidence/<executionId>/artifacts/<pixelId>` 私有范围。
+17. 任务不加载载体 `mandate.md` 或全局 `environment.md`。Mission/Trial 指令来自 SQLite execution 输入快照；任务环境响应也只能使用该快照中的 `environment` 字段。
+18. 任务路由和能量/产物转移只允许同一 execution 的直接六邻居。Trial 禁止跨成员通信及任何转移；所有 execution 都禁止繁殖。handler 本身复核范围，不能依赖 Prompt 或 UI 拒绝越权动作。
+19. 接收 binding 与消息快照不符时消息进入 `ABANDONED`，不会向新载体继续交付。execution 结束不代表任务完成；Owner 验收及关闭成员占用由业务服务单独完成。
+20. scoped 模型预留受 Pixel/Run/Execution/Trial 额度同时约束，输出上限在最终请求上执行。真实 usage 即使超过预留也按原值结算；未知用量继续占用预留并进入恢复审查，不以零成本放行。

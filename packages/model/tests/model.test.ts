@@ -17,6 +17,7 @@ describe("Model: Prompt Assembly & Hashing", () => {
     "../../../tests/fixtures/golden/prompt_hash_vector.json"
   );
   const hashFixture = JSON.parse(fs.readFileSync(hashFixturePath, "utf-8"));
+  const qianjiHashFixture = JSON.parse(fs.readFileSync(path.resolve(__dirname, "../../../tests/fixtures/golden/qianji_prompt_hash_vectors.json"), "utf-8"));
 
   it("should match SHA-256 hash vector from Python baseline", () => {
     const text = hashFixture.genesis_initial_content;
@@ -42,6 +43,33 @@ describe("Model: Prompt Assembly & Hashing", () => {
       worldState: { global: "leak" },
     };
     expect(() => builder.prepare(invalidInputs)).toThrow(CognitiveIsolationViolation);
+  });
+
+  it("adds only the bound Qianji identity layer and keeps it before external input", () => {
+    const builder = new PromptBuilder({ baseSystemPrompt: "constitution" });
+    const base = { state: { energy: 10 }, pixelMd: "mind", messageMd: "local", external: { humanInstructions: "question" } };
+    const unbound = builder.prepare(base);
+    expect(unbound.promptHash).toBe(qianjiHashFixture.unboundPromptHash);
+    expect(unbound.request.messages[1].content).not.toContain("=== IDENTITY ===");
+    expect(unbound.request.messages[1].content.indexOf("=== EXTERNAL ===")).toBe(0);
+    const identity = {
+      qianjiId: "qj_golden", bindingId: "binding_golden", narrativeRevision: 2,
+      displayName: "守序者", title: "校验师", roleLabel: "研究员", traits: { patience: 0.8 },
+      behaviorProfile: ["先核对证据"], flaw: "谨慎过度", careerStatus: "active" as const,
+    };
+    const input = { ...base, identity };
+    const first = builder.prepare(input);
+    expect(first.promptHash).toBe(qianjiHashFixture.boundPromptHash);
+    const second = builder.prepare(input);
+    const content = first.request.messages[1].content;
+    expect(content.indexOf("=== IDENTITY ===")).toBeLessThan(content.indexOf("=== EXTERNAL ==="));
+    expect(content).toContain("Qianji ID: qj_golden");
+    expect(content).not.toContain("shortBio");
+    expect(content).not.toContain("appearanceSpec");
+    expect(content).toContain("does not grant permissions");
+    expect(second.promptHash).toBe(first.promptHash);
+    expect(() => builder.prepare({ ...input, identity: { ...identity, hidden: "leak" } as any }))
+      .toThrow(CognitiveIsolationViolation);
   });
 });
 
@@ -122,6 +150,13 @@ Have a great day!
     // 显式新内容 = 覆盖
     const updated = parseAndNormalizeResponse(JSON.stringify({ pixel_md: "m3", tips_md: "new tip" }), "old_mind", "old_tips");
     expect(updated.tips_md).toBe("new tip");
+  });
+
+  it("validates owner_reply length in Unicode code points and keeps old responses compatible", () => {
+    expect(parseAndNormalizeResponse(JSON.stringify({ pixel_md: "mind" }), "fallback").owner_reply).toBeNull();
+    expect(parseAndNormalizeResponse(JSON.stringify({ pixel_md: "mind", owner_reply: "答复" }), "fallback").owner_reply).toBe("答复");
+    expect(() => parseAndNormalizeResponse(JSON.stringify({ owner_reply: "😀".repeat(2001) }), "fallback"))
+      .toThrow("owner_reply exceeds 2000 Unicode code points");
   });
 });
 

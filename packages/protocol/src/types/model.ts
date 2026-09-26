@@ -68,8 +68,11 @@ export interface CostSummary {
 export interface ModelCallRecord {
   callId: string;
   runId: string;
+  executionId?: string | null;
   pixelId: string;
   messageId?: string | null;
+  bindingId?: string | null;
+  narrativeRevision?: number | null;
   roundNum?: number | null;
   model: string;
   pricingRevision?: string | null;

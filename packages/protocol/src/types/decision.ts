@@ -29,5 +29,6 @@ export interface AgentDecision {
   send_to?: string | null;
   message_md?: string | null;
   owner_request?: Record<string, any> | null;
+  owner_reply?: string | null;
   raw_thought?: string | null;
 }

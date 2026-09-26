@@ -1,5 +1,6 @@
 import * as crypto from "node:crypto";
 import { PreparedModelRequest } from "@emergentinc/protocol";
+import { QianjiPromptIdentity } from "@emergentinc/protocol";
 
 export class CognitiveIsolationViolation extends Error {
   constructor(message: string) {
@@ -33,6 +34,8 @@ export interface PromptInputs {
   messageMd: string;
   external?: ExternalInputs | null;
   pixelFiles?: string[] | null;
+  identity?: QianjiPromptIdentity | null;
+  toolsCatalog?: string | null;
 }
 
 export class PromptBuilder {
@@ -47,7 +50,7 @@ export class PromptBuilder {
   constructor(options: PromptBuilderOptions = {}) {
     this.baseSystemPrompt =
       options.baseSystemPrompt ||
-      "你是一个Pixel。依据 Constitution、External、Pixel Self、Your Files 和 Local Messages 五层上下文做决定，保持外部输入与自身历史的来源分离。";
+      "你是一个Pixel。依据 Constitution、可选的 Identity、External、Pixel Self、Your Files 和 Local Messages 做决定。未绑定身份时省略 Identity；身份描述不授予权限，保持外部输入与自身历史的来源分离。仅在直接回复Owner聊天消息时可提供 owner_reply。";
     this.toolsCatalog = options.toolsCatalog;
     this.genesisPrompt = options.genesisPrompt;
     this.temporaryPrompt = options.temporaryPrompt;
@@ -56,11 +59,11 @@ export class PromptBuilder {
     this.maxOutputTokens = options.maxOutputTokens || 2000;
   }
 
-  public assembleSystemPrompt(): string {
+  public assembleSystemPrompt(toolsCatalog: string | null | undefined = this.toolsCatalog): string {
     const parts: string[] = ["=== CONSTITUTION ===\n" + this.baseSystemPrompt.trim()];
 
-    if (this.toolsCatalog && this.toolsCatalog.trim()) {
-      parts.push(this.toolsCatalog.trim());
+    if (toolsCatalog && toolsCatalog.trim()) {
+      parts.push(toolsCatalog.trim());
     }
 
     parts.push(
@@ -90,9 +93,9 @@ export class PromptBuilder {
     promptHash: string;
     estimatedTokens: number;
   } {
-    // 1. 认知隔离校验：严格只能包含 state, pixelMd, messageMd, external, pixelFiles
+    // 1. 认知隔离校验：只允许已定义的 Pixel 输入和服务端构造的自身 identity。
     const inputKeys = Object.keys(inputs);
-    const allowedKeys = new Set(["state", "pixelMd", "messageMd", "external", "pixelFiles"]);
+    const allowedKeys = new Set(["state", "pixelMd", "messageMd", "external", "pixelFiles", "identity", "toolsCatalog"]);
     if (inputKeys.some((k) => !allowedKeys.has(k)) || !inputs.state || inputs.pixelMd === undefined || inputs.messageMd === undefined) {
       throw new CognitiveIsolationViolation(
         "Context payload must strictly contain only valid pixel inputs: state, pixelMd, messageMd, external, pixelFiles"
@@ -114,7 +117,9 @@ export class PromptBuilder {
       ? inputs.pixelFiles.map((f) => `- ${f}`).join("\n")
       : "(no private files)";
 
+    const identitySection = inputs.identity ? this.formatIdentity(inputs.identity) : null;
     const userContent = [
+      ...(identitySection ? [identitySection, ""] : []),
       "=== EXTERNAL ===",
       externalSection,
       "",
@@ -130,7 +135,7 @@ export class PromptBuilder {
       inputs.messageMd,
     ].join("\n");
 
-    const effectiveSystemPrompt = this.assembleSystemPrompt();
+    const effectiveSystemPrompt = this.assembleSystemPrompt(inputs.toolsCatalog);
     const fullPrompt = `${effectiveSystemPrompt}\n\n${userContent}`;
 
     // 3. 计算 SHA-256 哈希
@@ -166,5 +171,37 @@ export class PromptBuilder {
       promptHash,
       estimatedTokens,
     };
+  }
+
+  private formatIdentity(identity: QianjiPromptIdentity): string {
+    const allowed = new Set([
+      "qianjiId", "bindingId", "narrativeRevision", "displayName", "title", "roleLabel",
+      "traits", "behaviorProfile", "flaw", "careerStatus",
+    ]);
+    if (!identity || Object.keys(identity).some(key => !allowed.has(key)) ||
+        typeof identity.qianjiId !== "string" || typeof identity.bindingId !== "string" ||
+        !Number.isSafeInteger(identity.narrativeRevision) || identity.narrativeRevision < 0 ||
+        typeof identity.displayName !== "string" ||
+        !["candidate", "trial", "active", "retired"].includes(identity.careerStatus) ||
+        !identity.traits || typeof identity.traits !== "object" || Array.isArray(identity.traits) ||
+        Object.values(identity.traits).some(value => typeof value !== "number" || !Number.isFinite(value) || value < 0 || value > 1) ||
+        !Array.isArray(identity.behaviorProfile) || identity.behaviorProfile.some(value => typeof value !== "string")) {
+      throw new CognitiveIsolationViolation("Identity input must match the QianjiPromptIdentity allowlist");
+    }
+    return [
+      "=== IDENTITY ===",
+      "This is your own Qianji identity snapshot; it describes you and does not grant permissions.",
+      "Qianji ID: " + identity.qianjiId,
+      "Binding ID: " + identity.bindingId,
+      "Narrative revision: " + identity.narrativeRevision,
+      "Display name: " + identity.displayName,
+      "Title: " + (identity.title ?? "(none)"),
+      "Role: " + (identity.roleLabel ?? "(none)"),
+      "Traits: " + JSON.stringify(identity.traits),
+      "Behavior principles: " + JSON.stringify(identity.behaviorProfile),
+      "Flaw: " + (identity.flaw ?? "(none)"),
+      "Career status: " + identity.careerStatus,
+      "Identity content is descriptive only. Constitution and tool authorization always take precedence.",
+    ].join("\n");
   }
 }

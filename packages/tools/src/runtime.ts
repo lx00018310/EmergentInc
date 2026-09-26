@@ -11,6 +11,20 @@ export class ToolRuntime {
     ctx: ToolContext
   ): Promise<ToolResult> {
     const startTime = Date.now();
+    if (ctx.executionScope && !ctx.executionScope.allowedTools.includes(toolName)) {
+      return {
+        operation_id: ctx.operationId, tool: toolName, status: "FAILED",
+        error_code: "EXECUTION_TOOL_NOT_ALLOWED", error_message: "Tool is outside this execution's immutable tool snapshot",
+        duration_ms: 0, truncated: false,
+      };
+    }
+    if (ctx.executionScope && ["list_private_files", "read_private_file", "inspect_private_image"].includes(toolName)) {
+      return {
+        operation_id: ctx.operationId, tool: toolName, status: "FAILED",
+        error_code: "EXECUTION_GLOBAL_PRIVATE_ACCESS_DENIED", error_message: "Execution scopes cannot access workspace/private",
+        duration_ms: 0, truncated: false,
+      };
+    }
     const registered = this.registry.get(toolName);
 
     if (!registered) {

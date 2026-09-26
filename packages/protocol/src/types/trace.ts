@@ -3,6 +3,7 @@
  */
 export interface TraceContext {
   runId: string;
+  executionId?: string | null;
   round: number;
   pixelId?: string;
   messageId?: string;

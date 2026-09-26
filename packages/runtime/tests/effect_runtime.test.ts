@@ -55,6 +55,41 @@ describe("Runtime: Decision Compiler", () => {
     const mindEffect = effects.find((e) => e.effectType === "UPDATE_MIND") as any;
     expect(mindEffect.tipsContent).toBe("owner hint");
   });
+
+  it("appends OWNER_REPLY last without shifting existing effects", () => {
+    const effects = DecisionCompiler.compile({
+      decision: { pixel_md: "mind", owner_reply: "你好", send_to: "STOP" },
+      pixelId: "0_0_0", messageId: "msg_owner_reply", currentHop: 1,
+    });
+    expect(effects.map(effect => effect.effectType)).toEqual(["UPDATE_MIND", "OWNER_REPLY"]);
+    expect(effects[1]).toMatchObject({ effectIndex: 1, pixelId: "0_0_0", reply: "你好" });
+  });
+
+  it("rejects OWNER_REPLY on a non-chat message and leaves no false chat turn", async () => {
+    const store = new CoreStore(":memory:");
+    try {
+      const profile = store.qianji.createProfile({ careerStatus: "active" });
+      const binding = store.qianji.createBinding({ qianjiId: profile.qianjiId, pixelId: "0_0_0", incarnation: 1 });
+      const message = store.messages.enqueueMessage({ roundNum: 1, sender: "human", recipient: "0_0_0", content: "通知", sourceType: "human" });
+      store.modelCalls.recordModelCall({
+        callId: "call_nonchat_reply", runId: "run_nonchat", pixelId: "0_0_0", messageId: message.messageId,
+        bindingId: binding.bindingId, narrativeRevision: 0, model: "test", promptTokens: 1, completionTokens: 1,
+        cachedTokens: null, actualTokens: 2, costCny: null, outcome: "SUCCESS", createdAt: Date.now() / 1000,
+      });
+      const effects = DecisionCompiler.compile({
+        decision: { owner_reply: "不能伪造聊天" }, pixelId: "0_0_0", messageId: message.messageId, currentHop: 1,
+      });
+      const registry = new ToolRegistry();
+      await new EffectRuntime({
+        workspaceRoot: os.tmpdir(), store, toolRuntime: new ToolRuntime(registry), round: 1,
+        runId: "run_nonchat", modelCallId: "call_nonchat_reply",
+      }).applyEffects(effects);
+
+      expect(store.qianjiChat.getTurnForMessage(message.messageId)).toBeNull();
+      expect(store.effects.getEffect(effects[0].effectId)?.status).toBe("FAILED");
+      expect(store.messages.listRecentMessages().some(item => item.sourceType === "system" && item.content.includes("not a valid Qianji chat turn"))).toBe(true);
+    } finally { store.close(); }
+  });
 });
 
 describe("Runtime: tips.md write semantics", () => {
@@ -322,6 +357,68 @@ describe("Runtime: EffectRuntime Execution & Short-circuiting", () => {
       id: "1_0_0", parent: "0_0_0", born_round: 7, generation: 4, incarnation: 2,
     });
     expect(store.db.prepare("SELECT COUNT(*) AS n FROM ledger_entries WHERE pixel_id = '1_0_0'").get()).toEqual({ n: 1 });
+    const binding = store.qianji.getCurrentBindingByPixel("1_0_0");
+    expect(binding).toMatchObject({ incarnation: 2, birthEffectId: effects[0].effectId });
+    expect(store.qianji.getProfile(binding!.qianjiId)?.careerStatus).toBe("candidate");
+  });
+
+  it("retires the previous identity and binds a neutral candidate to the next incarnation", async () => {
+    store.pixels.upsertPixelAccount({ pixelId: "1_0_0", energy: 0, active: false, refundDeficitTokens: 0, spendBlockedReason: null });
+    const oldDir = path.join(tmpDir, "live", "pixels", "1_0_0");
+    fs.mkdirSync(oldDir, { recursive: true });
+    fs.writeFileSync(path.join(oldDir, "pixel.md"), "old mind");
+    fs.writeFileSync(path.join(oldDir, "state.json"), JSON.stringify({ incarnation: 3, generation: 2 }));
+    fs.mkdirSync(path.join(tmpDir, "live", "pixels", "0_0_0"), { recursive: true });
+    fs.writeFileSync(path.join(tmpDir, "live", "pixels", "0_0_0", "state.json"), JSON.stringify({ generation: 3 }));
+    const oldProfile = store.qianji.createProfile({ careerStatus: "active" });
+    const oldBinding = store.qianji.createBinding({ qianjiId: oldProfile.qianjiId, pixelId: "1_0_0", incarnation: 3, boundAt: 1 });
+    const runtime = new EffectRuntime({ workspaceRoot: tmpDir, store, toolRuntime, round: 7, runId: "r" });
+    const effects = DecisionCompiler.compile({
+      decision: { reproduce: { direction: "1_0_0", initial_energy: 150 } },
+      pixelId: "0_0_0", messageId: "msg_rebirth_identity", currentHop: 1,
+    });
+
+    await runtime.applyEffects(effects);
+
+    const newBinding = store.qianji.getCurrentBindingByPixel("1_0_0");
+    expect(newBinding).toMatchObject({ incarnation: 4, birthEffectId: effects[0].effectId });
+    expect(store.qianji.getProfile(oldProfile.qianjiId)).toMatchObject({ careerStatus: "retired", retiredReason: "body_replaced" });
+    expect(store.qianji.getBinding(oldBinding.bindingId)).toMatchObject({
+      unboundAt: expect.any(Number),
+      archiveRelativePath: "live/history/1_0_0/" + effects[0].effectId + "/pixel",
+    });
+    expect(store.qianji.getProfile(newBinding!.qianjiId)).toMatchObject({
+      careerStatus: "candidate",
+      narrative: { traits: {}, behaviorProfile: [], portraitAsset: null },
+    });
+    const archivedPixelDir = path.join(tmpDir, "live", "history", "1_0_0", effects[0].effectId, "pixel");
+    expect(fs.readFileSync(path.join(archivedPixelDir, "pixel.md"), "utf-8")).toBe("old mind");
+  });
+
+  it("rejects a bound carrier whose persisted incarnation disagrees with its identity", async () => {
+    store.pixels.upsertPixelAccount({ pixelId: "1_0_0", energy: 0, active: false, refundDeficitTokens: 0, spendBlockedReason: null });
+    const oldDir = path.join(tmpDir, "live", "pixels", "1_0_0");
+    fs.mkdirSync(oldDir, { recursive: true });
+    fs.writeFileSync(path.join(oldDir, "pixel.md"), "old mind");
+    fs.writeFileSync(path.join(oldDir, "state.json"), JSON.stringify({ incarnation: 2 }));
+    const oldProfile = store.qianji.createProfile({ careerStatus: "active" });
+    store.qianji.createBinding({ qianjiId: oldProfile.qianjiId, pixelId: "1_0_0", incarnation: 3, boundAt: 1 });
+    const runtime = new EffectRuntime({ workspaceRoot: tmpDir, store, toolRuntime, round: 7, runId: "r" });
+    const effects = DecisionCompiler.compile({
+      decision: { reproduce: { direction: "1_0_0", initial_energy: 150 } },
+      pixelId: "0_0_0", messageId: "msg_rebirth_conflict", currentHop: 1,
+    });
+
+    await runtime.applyEffects(effects);
+
+    expect(store.pixels.getPixelAccount("0_0_0")?.energy).toBe(5000);
+    expect(store.pixels.getPixelAccount("1_0_0")?.energy).toBe(0);
+    expect(store.qianji.getProfile(oldProfile.qianjiId)?.careerStatus).toBe("active");
+    expect(store.qianji.getCurrentBindingByPixel("1_0_0")?.incarnation).toBe(3);
+    expect(fs.readFileSync(path.join(oldDir, "pixel.md"), "utf-8")).toBe("old mind");
+    const failedEffect = store.effects.getEffect(effects[0].effectId);
+    expect(failedEffect?.status).toBe("FAILED");
+    expect(JSON.parse(failedEffect?.details ?? "{}").errorCode).toBe("IDENTITY_INCARNATION_CONFLICT");
   });
 
   it("cannot reset an active neighbor", async () => {
@@ -354,5 +451,7 @@ describe("Runtime: EffectRuntime Execution & Short-circuiting", () => {
     expect(fs.readFileSync(path.join(oldDir, "pixel.md"), "utf-8")).toBe("old mind");
     expect(store.pixels.getPixelAccount("0_0_0")?.energy).toBe(5000);
     expect(store.pixels.getPixelAccount("1_0_0")).toMatchObject({ energy: 0, active: false });
+    expect(store.db.prepare("SELECT COUNT(*) AS count FROM qianji_profiles").get()).toEqual({ count: 0 });
+    expect(store.db.prepare("SELECT COUNT(*) AS count FROM qianji_bindings").get()).toEqual({ count: 0 });
   });
 });

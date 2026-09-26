@@ -3,6 +3,8 @@ import { RunStatus, StopReason } from "@emergentinc/protocol";
 
 export interface RunRecord {
   run_id: string;
+  execution_id?: string | null;
+  last_scope_round?: number | null;
   loop_id?: string | null;
   branch_name?: string | null;
   start_round: number;
@@ -31,11 +33,11 @@ export class RunRepository {
   public createRun(run: RunRecord): void {
     const stmt = this.db.prepare(`
       INSERT INTO runs (
-        run_id, loop_id, branch_name, start_round, end_round,
+        run_id, execution_id, last_scope_round, loop_id, branch_name, start_round, end_round,
         run_limit, run_spent, run_reserved, global_limit, global_spent, global_reserved,
         genesis_revision, genesis_hash, pricing_revision, status, stop_reason, created_at, finished_at
       ) VALUES (
-        ?, ?, ?, ?, ?,
+        ?, ?, ?, ?, ?, ?, ?,
         ?, ?, ?, ?, ?, ?,
         ?, ?, ?, ?, ?, ?, ?
       )
@@ -43,6 +45,8 @@ export class RunRepository {
 
     stmt.run(
       run.run_id,
+      run.execution_id ?? null,
+      run.last_scope_round ?? null,
       run.loop_id ?? null,
       run.branch_name ?? null,
       run.start_round,

@@ -63,6 +63,12 @@ export interface RouteMessageEffect extends BaseEffect {
   hop: number;
 }
 
+export interface OwnerReplyEffect extends BaseEffect {
+  effectType: "OWNER_REPLY";
+  pixelId: string;
+  reply: string;
+}
+
 export interface EngineFeedbackEffect extends BaseEffect {
   effectType: "ENGINE_FEEDBACK";
   recipient: string;
@@ -81,4 +87,5 @@ export type Effect =
   | TransferEnergyEffect
   | ReproduceEffect
   | RouteMessageEffect
+  | OwnerReplyEffect
   | EngineFeedbackEffect;

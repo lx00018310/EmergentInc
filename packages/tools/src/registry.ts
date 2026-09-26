@@ -30,10 +30,11 @@ export class ToolRegistry {
   /**
    * 将当前所有已启用的工具渲染为 Prompt 上下文目录
    */
-  public renderCatalogForPrompt(): string {
+  public renderCatalogForPrompt(allowedToolNames?: readonly string[]): string {
     const lines = ["## Available Tools", "当前环境已启用的可用工具列表及参数格式如下："];
     for (const { definition } of this.tools.values()) {
-      if (definition.enabled) {
+      if (definition.enabled && (!allowedToolNames || allowedToolNames.includes(definition.name)) &&
+          !(allowedToolNames && ["list_private_files", "read_private_file", "inspect_private_image"].includes(definition.name))) {
         let paramsDesc = "{}";
         if (definition.input_schema && definition.input_schema.properties) {
           const props = Object.entries(definition.input_schema.properties)

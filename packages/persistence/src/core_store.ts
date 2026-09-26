@@ -9,6 +9,14 @@ import { ModelCallRepository } from "./repositories/model_call_repository.js";
 import { ToolExecutionRepository } from "./repositories/tool_execution_repository.js";
 import { EffectRepository } from "./repositories/effect_repository.js";
 import { LedgerRepository } from "./repositories/ledger_repository.js";
+import { QianjiRepository } from "./repositories/qianji_repository.js";
+import { WorldEventRepository } from "./repositories/world_event_repository.js";
+import { OwnerActionRepository } from "./repositories/owner_action_repository.js";
+import { QianjiChatRepository } from "./repositories/qianji_chat_repository.js";
+import { MissionRepository } from "./repositories/mission_repository.js";
+import { TrialRepository } from "./repositories/trial_repository.js";
+import { ExecutionRepository } from "./repositories/execution_repository.js";
+import { BusinessRepository } from "./repositories/business_repository.js";
 
 /**
  * CoreStore：单一事务事实源门面
@@ -23,6 +31,14 @@ export class CoreStore {
   public readonly toolExecutions: ToolExecutionRepository;
   public readonly effects: EffectRepository;
   public readonly ledger: LedgerRepository;
+  public readonly qianji: QianjiRepository;
+  public readonly worldEvents: WorldEventRepository;
+  public readonly ownerActions: OwnerActionRepository;
+  public readonly qianjiChat: QianjiChatRepository;
+  public readonly missions: MissionRepository;
+  public readonly trials: TrialRepository;
+  public readonly executions: ExecutionRepository;
+  public readonly business: BusinessRepository;
 
   constructor(dbPath: string = ":memory:") {
     this.db = new SqliteDatabase(dbPath);
@@ -36,6 +52,14 @@ export class CoreStore {
     this.toolExecutions = new ToolExecutionRepository(this.db);
     this.effects = new EffectRepository(this.db);
     this.ledger = new LedgerRepository(this.db);
+    this.worldEvents = new WorldEventRepository(this.db);
+    this.qianji = new QianjiRepository(this.db, this.worldEvents);
+    this.ownerActions = new OwnerActionRepository(this.db);
+    this.qianjiChat = new QianjiChatRepository(this.db, this.messages);
+    this.missions = new MissionRepository(this.db, this.worldEvents);
+    this.trials = new TrialRepository(this.db, this.worldEvents);
+    this.executions = new ExecutionRepository(this.db);
+    this.business = new BusinessRepository(this.db);
 
     // 确保全局预算记录存在
     this.budgets.ensureGlobalBudget();
@@ -51,8 +75,11 @@ export class CoreStore {
   public settleAndStoreModelResponse(params: {
     callId: string;
     runId: string;
+    executionId?: string | null;
     pixelId: string;
     messageId: string;
+    bindingId?: string | null;
+    narrativeRevision?: number | null;
     model: string;
     pricingRevision?: string;
     promptHash: string;
@@ -69,6 +96,16 @@ export class CoreStore {
     };
   }): void {
     this.db.transaction(() => {
+      const reservation = this.db.prepare(
+        "SELECT binding_id, narrative_revision, execution_id FROM reservations WHERE call_id = ?"
+      ).get(params.callId) as any;
+      if (reservation && (reservation.execution_id ?? null) !== (params.executionId ?? null)) {
+        throw new Error("EXECUTION_SCOPE_RESERVATION_CONFLICT");
+      }
+      const bindingId = reservation ? reservation.binding_id ?? null : params.bindingId ?? null;
+      const narrativeRevision = reservation
+        ? (reservation.narrative_revision == null ? null : Number(reservation.narrative_revision))
+        : (params.narrativeRevision ?? null);
       this.budgets.settle({
         callId: params.callId,
         actualTokens: params.usage.actualTokens,
@@ -77,8 +114,11 @@ export class CoreStore {
       this.modelCalls.recordModelCall({
         callId: params.callId,
         runId: params.runId,
+        executionId: reservation?.execution_id ?? params.executionId ?? null,
         pixelId: params.pixelId,
         messageId: params.messageId,
+        bindingId,
+        narrativeRevision,
         roundNum: params.roundNum ?? null,
         model: params.model,
         pricingRevision: params.pricingRevision,

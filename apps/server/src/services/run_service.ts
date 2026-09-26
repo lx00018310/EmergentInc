@@ -8,6 +8,12 @@ export interface RunStartOptions {
   rounds: number;
   commandText?: string; // Deprecated: never dispatched to agents.
   runBudgetTokens: number;
+  /** Server-resolved organization scope. Never populated from a world Run HTTP body. */
+  executionId?: string | null;
+  /** Internal synchronous transaction hook; route handlers never accept this value. */
+  onRunCreated?: (runId: string) => void;
+  /** Internal callback for scoped organization work; never accepted from HTTP input. */
+  onRunFinalized?: (runId: string, executionId: string, status: "awaiting_review" | "blocked", reason: string) => void;
 }
 
 export interface RunServiceOptions {
@@ -40,6 +46,8 @@ export class RunService {
   private errorCode: string | null = null;
   private hasExecutedRunInProcess: boolean = false;
   private errorPhase: string | null = null;
+  private currentExecutionId: string | null = null;
+  private readonly executionFinalizers = new Map<string, (runId: string, executionId: string, status: "awaiting_review" | "blocked", reason: string) => void>();
 
   constructor(
     optionsOrStore: RunServiceOptions | CoreStore,
@@ -123,6 +131,7 @@ export class RunService {
     } else if (
       stopReason === "USER_STOPPED" ||
       stopReason === "RUN_BUDGET_EXHAUSTED" ||
+      stopReason === "EXECUTION_BUDGET_EXHAUSTED" ||
       stopReason === "READ_LOOP_THRESHOLD_REACHED" ||
       stopReason === "MODEL_RESPONSE_INVALID" ||
       stopReason === "NO_ACTIVE_MESSAGES" ||
@@ -182,8 +191,20 @@ export class RunService {
 
     const runId = `run_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
     const currentWorldRound = this.getWorldRound();
-    const startRound = currentWorldRound + 1;
-    const endRound = currentWorldRound + options.rounds;
+    const executionId = options.executionId ?? null;
+    if (executionId && !options.onRunCreated) {
+      throw new Error("EXECUTION_RUN_REQUIRES_INTERNAL_START_HOOK");
+    }
+    const execution = executionId ? this.store.executions.get(executionId) : null;
+    if (executionId && !execution) throw new Error("EXECUTION_NOT_FOUND");
+    if (execution && !["ready", "blocked", "awaiting_review"].includes(execution.status)) {
+      throw new Error(`EXECUTION_NOT_STARTABLE:${execution.status}`);
+    }
+    if (execution && options.rounds > execution.roundsLimit - execution.roundsUsed) {
+      throw new Error("EXECUTION_ROUND_LIMIT_EXCEEDED");
+    }
+    const startRound = currentWorldRound + (execution?.roundsUsed ?? 0) + 1;
+    const endRound = startRound + options.rounds - 1;
 
     // 数据库事务是唯一的 Run 互斥点：检查旧未决状态并创建新 Run 必须原子完成。
     const genesisPrompt = this.promptService?.getPrompt("genesis_prompt.json");
@@ -199,6 +220,7 @@ export class RunService {
       }
       this.store.runs.createRun({
         run_id: runId,
+        execution_id: executionId,
         start_round: startRound,
         end_round: endRound,
         run_limit: options.runBudgetTokens,
@@ -208,10 +230,13 @@ export class RunService {
         status: "RUNNING",
         created_at: Date.now() / 1000,
       });
-      this.store.messages.resetWaitingRunBudgetMessages();
+      if (options.onRunCreated) options.onRunCreated(runId);
+      this.store.messages.resetWaitingRunBudgetMessages(executionId);
     });
+    if (executionId && options.onRunFinalized) this.executionFinalizers.set(runId, options.onRunFinalized);
 
     this.currentRunId = runId;
+    this.currentExecutionId = executionId;
     this.isRunning = true;
     this.requestedRounds = options.rounds;
     this.completedRounds = 0;
@@ -227,7 +252,7 @@ export class RunService {
     // Control-plane rounds never enqueue agent messages; use per-Pixel Mandate.
 
     // 异步执行轮次调度，不阻塞 HTTP 响应
-    this.runLoop(runId, startRound, endRound, this.abortController.signal).catch((err) => {
+    this.runLoop(runId, startRound, endRound, this.abortController.signal, executionId).catch((err) => {
       console.error(`Run ${runId} execution encountered an error:`, err);
     });
 
@@ -263,7 +288,8 @@ export class RunService {
     runId: string,
     startRound: number,
     endRound: number,
-    signal: AbortSignal
+    signal: AbortSignal,
+    executionId: string | null
   ): Promise<void> {
     try {
       for (let r = startRound; r <= endRound; r++) {
@@ -273,7 +299,8 @@ export class RunService {
         }
 
         this.currentRound = r;
-        const summary: RoundSummary = await this.scheduler.executeRound(r, runId, signal);
+        if (executionId) this.store.executions.beginScopeRound(executionId, runId, r);
+        const summary: RoundSummary = await this.scheduler.executeRound(r, runId, signal, executionId);
 
         const diagnostic = summary as RoundSummary & { errorCode?: string; errorSummary?: string; errorPhase?: string };
         if (diagnostic.errorCode) this.errorCode = diagnostic.errorCode;
@@ -293,7 +320,7 @@ export class RunService {
         }
 
         // 仅在整轮完整成功执行后，才推进持久化的绝对世界轮次
-        this.updateWorldRound(r);
+        if (!executionId) this.updateWorldRound(r);
 
         if (summary.stopReason) {
           this.lastStopReason = summary.stopReason;
@@ -305,6 +332,7 @@ export class RunService {
         signal.aborted ||
         this.lastStopReason === "USER_STOPPED" ||
         this.lastStopReason === "RUN_BUDGET_EXHAUSTED" ||
+        this.lastStopReason === "EXECUTION_BUDGET_EXHAUSTED" ||
         this.lastStopReason === "READ_LOOP_THRESHOLD_REACHED" ||
         this.lastStopReason === "MODEL_RESPONSE_INVALID" ||
         this.lastStopReason === "NO_ACTIVE_MESSAGES";
@@ -314,18 +342,59 @@ export class RunService {
 
       this.lastStopReason = finalReason;
       this.store.runs.updateRunStatus(runId, finalStatus, finalReason as any, this.errorCode, this.lastError);
+      this.finalizeExecutionRun(executionId, finalReason);
+      this.notifyExecutionFinalized(runId, executionId, finalReason);
     } catch (err: any) {
       this.lastError = err.summary || err.message || String(err);
       this.errorCode = err.code || "INFRASTRUCTURE_FAILURE";
       this.errorPhase = err.phase || null;
       this.lastStopReason = "INFRASTRUCTURE_FAILURE";
       this.store.runs.updateRunStatus(runId, "FAILED", "INFRASTRUCTURE_FAILURE", this.errorCode, this.lastError);
+      this.finalizeExecutionRun(executionId, this.lastStopReason);
+      this.notifyExecutionFinalized(runId, executionId, this.lastStopReason);
     } finally {
       this.isRunning = false;
       this.abortController = null;
       // Marks that this process has executed a run loop, so status reporting can
       // tell a fresh in-process failure apart from a restarted historical record.
       this.hasExecutedRunInProcess = true;
+    }
+  }
+
+  private finalizeExecutionRun(executionId: string | null, reason: string | null): void {
+    if (!executionId) return;
+    const execution = this.store.executions.get(executionId);
+    if (!execution || execution.status !== "running") return;
+    const unresolved = this.store.db.prepare(`SELECT
+        (SELECT COUNT(*) FROM reservations WHERE execution_id=? AND status='OPEN') +
+        (SELECT COUNT(*) FROM messages WHERE execution_id=? AND status IN ('PROCESSING','RESERVED','CALLING','CALL_OUTCOME_UNKNOWN','AWAITING_SETTLEMENT')) +
+        (SELECT COUNT(*) FROM model_calls WHERE execution_id=? AND outcome='CALL_OUTCOME_UNKNOWN') AS count`)
+      .get(executionId, executionId, executionId) as any;
+    let overBudget = execution.spentTokens + execution.reservedTokens > execution.budgetTokens;
+    if (execution.kind === "trial_candidate") {
+      const trialBudget = this.store.db.prepare(`SELECT t.total_budget_tokens,
+          COALESCE(SUM(e.spent_tokens + e.reserved_tokens), 0) AS used_tokens
+        FROM trials t LEFT JOIN executions e ON e.kind='trial_candidate' AND e.subject_id=t.trial_id
+        WHERE t.trial_id=? GROUP BY t.trial_id`).get(execution.subjectId) as any;
+      overBudget = overBudget || Boolean(trialBudget && Number(trialBudget.used_tokens) > Number(trialBudget.total_budget_tokens));
+    }
+    const blocked = overBudget || Number(unresolved?.count ?? 0) > 0 ||
+      ["CALL_OUTCOME_UNKNOWN", "TOOL_OUTCOME_UNKNOWN", "PAUSED_RECOVERY_REQUIRED"].includes(reason || "");
+    this.store.executions.transition(executionId, "running", blocked ? "blocked" : "awaiting_review");
+  }
+
+  private notifyExecutionFinalized(runId: string, executionId: string | null, reason: string | null): void {
+    if (!executionId) return;
+    const callback = this.executionFinalizers.get(runId);
+    this.executionFinalizers.delete(runId);
+    if (!callback) return;
+    const status = this.store.executions.get(executionId)?.status;
+    if (status !== "awaiting_review" && status !== "blocked") return;
+    try {
+      callback(runId, executionId, status, reason ?? "RUN_FINISHED");
+    } catch (error) {
+      // A notification error must not rewrite an already-finalized Run or hide its ledger state.
+      console.error(`[RunService] Scoped finalization callback failed for ${executionId}:`, error);
     }
   }
 }

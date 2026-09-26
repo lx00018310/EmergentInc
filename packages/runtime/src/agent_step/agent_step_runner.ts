@@ -7,6 +7,7 @@ import {
   AgentDecision,
   ModelUsage,
   ModelCallRecord,
+  QianjiPromptIdentity,
 } from "@emergentinc/protocol";
 import { CoreStore, BudgetExceededError, SpendBlockedError } from "@emergentinc/persistence";
 import {
@@ -18,7 +19,8 @@ import {
   InfrastructureFailureError,
   InvalidModelResponseError,
 } from "@emergentinc/model";
-import { ToolRuntime } from "@emergentinc/tools";
+import { ExecutionToolScope, ToolRuntime } from "@emergentinc/tools";
+import { getNeighbors6 } from "@emergentinc/domain";
 import { DecisionCompiler } from "../compiler/decision_compiler.js";
 import { EffectRuntime } from "../effects/effect_runtime.js";
 
@@ -54,6 +56,9 @@ export class AgentStepRunner {
 
   public async execute(input: AgentStepInput, signal?: AbortSignal): Promise<AgentStepResult> {
     const { trace, pixelState, pixelMind, message, round } = input;
+    if ((trace.executionId ?? null) !== (message.executionId ?? null)) {
+      throw Object.assign(new Error("Message and Run execution scopes do not match"), { code: "EXECUTION_SCOPE_MESSAGE_CONFLICT", phase: "scope" });
+    }
     let callId = `call_${message.messageId}_${randomUUID()}`;
     const persistedStatus = this.store.messages.getMessage(message.messageId)?.status;
     if (["AWAITING_SETTLEMENT", "CALL_OUTCOME_UNKNOWN", "ABANDONED"].includes(persistedStatus || "")) {
@@ -68,9 +73,17 @@ export class AgentStepRunner {
 
     // 1. 检查当前消息是否已有成功的 ModelCall (响应复用：支持安全重试与崩溃恢复)
     const existingModelCall = this.store.modelCalls.getLatestByMessageId(message.messageId);
+    // Validate a bound message even when replaying a stored response. A response
+    // from a prior body must never be applied after that carrier has been reborn.
+    const identitySnapshot = this.resolveIdentitySnapshot(message);
+    const executionScope = trace.executionId
+      ? this.resolveExecutionScope(trace.executionId, pixelState.pixelId, identitySnapshot.bindingId)
+      : undefined;
     let rawText: string | null = null;
     let currentTipsMd = "";
     let usage: ModelUsage | undefined;
+    let bindingId = identitySnapshot.bindingId;
+    let narrativeRevision = identitySnapshot.narrativeRevision;
 
     if (existingModelCall && existingModelCall.outcome === "SUCCESS" && existingModelCall.rawResponse) {
       callId = existingModelCall.callId;
@@ -85,7 +98,9 @@ export class AgentStepRunner {
       this.store.messages.updateStatus(message.messageId, "RESPONSE_STORED");
     } else {
       // 读取私有 artifacts 列表 (历史私有) — canonical root 与工具层 live/artifacts/<pixelId> 一致
-      const pixelArtifactsDir = path.resolve(this.workspaceRoot, "live", "artifacts", pixelState.pixelId);
+      const pixelArtifactsDir = executionScope
+        ? path.resolve(this.workspaceRoot, "evidence", executionScope.executionId, "artifacts", pixelState.pixelId)
+        : path.resolve(this.workspaceRoot, "live", "artifacts", pixelState.pixelId);
       let pixelFiles: string[] = [];
       if (fs.existsSync(pixelArtifactsDir)) {
         try {
@@ -97,11 +112,12 @@ export class AgentStepRunner {
       const pixelDir = path.resolve(this.workspaceRoot, "live", "pixels", pixelState.pixelId);
       const mandateFile = path.resolve(pixelDir, "mandate.md");
       let humanMandate: string | null = null;
-      if (fs.existsSync(mandateFile)) {
+      if (!executionScope && fs.existsSync(mandateFile)) {
         try {
           humanMandate = fs.readFileSync(mandateFile, "utf-8").trim();
         } catch {}
       }
+      if (executionScope) humanMandate = this.renderExecutionMandate(executionScope, identitySnapshot.bindingId);
 
       // 读取当前 tips.md（模型缺失 tips_md 输出时保留原值）
       const tipsFile = path.resolve(pixelDir, "tips.md");
@@ -147,6 +163,8 @@ export class AgentStepRunner {
           active: pixelState.active,
           generation: pixelState.generation,
         },
+        ...(identitySnapshot.identity ? { identity: identitySnapshot.identity } : {}),
+        ...(executionScope ? { toolsCatalog: this.toolRuntime.registry.renderCatalogForPrompt(executionScope.allowedTools) } : {}),
         pixelMd: pixelMind,
         messageMd: messageMd || "(no local messages)",
         external: {
@@ -162,11 +180,29 @@ export class AgentStepRunner {
 
       // 3. 多级预算检查与预留
       try {
+        let reservationTokens = estimatedTokens;
+        if (trace.executionId) {
+          const capacity = this.store.budgets.getAvailableTokenCapacity({
+            runId: trace.runId, pixelId: pixelState.pixelId, executionId: trace.executionId,
+          });
+          const availableOutput = capacity.availableTokens - estimatedTokens;
+          if (availableOutput < 1) {
+            throw new BudgetExceededError("Scoped execution has insufficient capacity for this prompt and one output token", capacity.limitingKind);
+          }
+          const requestedOutput = Number.isSafeInteger(request.maxTokens) && Number(request.maxTokens) > 0
+            ? Number(request.maxTokens) : 2000;
+          request.maxTokens = Math.min(requestedOutput, availableOutput);
+          reservationTokens = estimatedTokens + request.maxTokens;
+        }
         this.store.budgets.reserve({
           callId,
           runId: trace.runId,
           pixelId: pixelState.pixelId,
-          estimatedTokens,
+          estimatedTokens: reservationTokens,
+          executionId: trace.executionId ?? null,
+          messageId: message.messageId,
+          bindingId,
+          narrativeRevision,
         });
         this.store.messages.updateStatus(message.messageId, "RESERVED");
       } catch (err: any) {
@@ -175,7 +211,8 @@ export class AgentStepRunner {
           throw err;
         }
         if (err instanceof BudgetExceededError) {
-          const status = err.kind === "PIXEL" ? "WAITING_PIXEL_BUDGET" : "WAITING_RUN_BUDGET";
+          const status = err.kind === "PIXEL" ? "WAITING_PIXEL_BUDGET"
+            : err.kind === "EXECUTION" ? "WAITING_EXECUTION_BUDGET" : "WAITING_RUN_BUDGET";
           this.store.messages.updateStatus(message.messageId, status);
           throw err;
         }
@@ -207,8 +244,11 @@ export class AgentStepRunner {
           this.store.modelCalls.recordModelCall({
             callId,
             runId: trace.runId,
+            executionId: trace.executionId ?? null,
             pixelId: pixelState.pixelId,
             messageId: message.messageId,
+            bindingId,
+            narrativeRevision,
             model: request.model,
             pricingRevision: request.pricingRevision,
             promptHash,
@@ -242,8 +282,11 @@ export class AgentStepRunner {
       this.store.settleAndStoreModelResponse({
         callId,
         runId: trace.runId,
+        executionId: trace.executionId ?? null,
         pixelId: pixelState.pixelId,
         messageId: message.messageId,
+        bindingId,
+        narrativeRevision,
         roundNum: round,
         model: request.model,
         pricingRevision: request.pricingRevision,
@@ -300,6 +343,7 @@ export class AgentStepRunner {
       toolRuntime: this.toolRuntime,
       round,
       runId: trace.runId,
+      executionScope,
       signal,
       modelCallId: callId,
     });
@@ -316,6 +360,107 @@ export class AgentStepRunner {
       usage,
       effects,
       trace,
+    };
+  }
+
+  private resolveExecutionScope(executionId: string, pixelId: string, bindingId: string | null): ExecutionToolScope {
+    const execution = this.store.executions.get(executionId);
+    if (!execution || execution.status !== "running" || !bindingId || !this.store.executions.isParticipant(executionId, bindingId)) {
+      throw Object.assign(new Error("Pixel is not an active participant in this execution"), { code: "EXECUTION_PARTICIPANT_INVALID", phase: "scope" });
+    }
+    const binding = this.store.qianji.getBinding(bindingId);
+    const profile = binding ? this.store.qianji.getProfile(binding.qianjiId) : null;
+    const expectedStatus = execution.kind === "mission" ? "active" : "trial";
+    if (!binding || binding.pixelId !== pixelId || binding.unboundAt !== null || !profile || profile.careerStatus !== expectedStatus) {
+      throw Object.assign(new Error("Qianji career status does not match execution kind"), { code: "EXECUTION_PARTICIPANT_STATUS_INVALID", phase: "scope" });
+    }
+    const members = this.store.executions.listEligibleMembers(executionId)
+      .filter(member => member.careerStatus === expectedStatus);
+    const memberIds = new Set(members.map(member => member.pixelId));
+    const allowedRecipients = getNeighbors6(pixelId).filter(target => memberIds.has(target));
+    const allowedTools = execution.toolsSnapshot.filter(tool =>
+      !["list_private_files", "read_private_file", "inspect_private_image"].includes(tool)
+    );
+    return {
+      executionId,
+      kind: execution.kind,
+      allowedTools: Object.freeze([...allowedTools]),
+      allowedRecipients: Object.freeze(allowedRecipients),
+      inputSnapshot: Object.freeze({ ...execution.inputSnapshot }),
+    };
+  }
+
+  private renderExecutionMandate(scope: ExecutionToolScope, bindingId: string | null): string {
+    const input = scope.inputSnapshot;
+    let fields: Array<[string, unknown]>;
+    if (scope.kind === "mission") {
+      const duties = input.duties && typeof input.duties === "object"
+        ? input.duties as Record<string, unknown> : {};
+      fields = [["任务", input.title], ["目标", input.objective], ["验收标准", input.acceptanceCriteria],
+        ["职责", bindingId ? duties[bindingId] : null]];
+    } else {
+      fields = [["试炼题目", input.challengeText], ["验收标准", input.acceptanceCriteria]];
+    }
+    const lines = fields.filter(([, value]) => typeof value === "string" && value.trim())
+      .map(([label, value]) => `${label}：${String(value).trim()}`);
+    return lines.length ? `[EXECUTION_MANDATE]\n${lines.join("\n")}` : "[EXECUTION_MANDATE] No additional task text.";
+  }
+
+  private resolveIdentitySnapshot(message: AgentStepInput["message"]): {
+    bindingId: string | null;
+    narrativeRevision: number | null;
+    identity: QianjiPromptIdentity | null;
+  } {
+    const bindingId = message.recipientBindingId ?? null;
+    if (!bindingId) {
+      if (message.identitySnapshotCaptured && message.narrativeRevision != null) {
+        throw Object.assign(new Error("Unbound message has a narrative identity revision"), {
+          code: "QIANJI_IDENTITY_SNAPSHOT_INVALID", phase: "identity",
+        });
+      }
+      return { bindingId: null, narrativeRevision: null, identity: null };
+    }
+
+    const binding = this.store.qianji.getBinding(bindingId);
+    const current = this.store.qianji.getCurrentBindingByPixel(message.recipient);
+    const profile = binding ? this.store.qianji.getProfile(binding.qianjiId) : null;
+    if (!binding || binding.pixelId !== message.recipient || binding.unboundAt !== null ||
+        !current || current.bindingId !== binding.bindingId || !profile || profile.careerStatus === "retired") {
+      throw Object.assign(new Error("Message Qianji binding is invalid or no longer current"), {
+        code: "QIANJI_BINDING_INVALID", phase: "identity",
+      });
+    }
+    const revision = message.identitySnapshotCaptured
+      ? message.narrativeRevision
+      : profile.narrativeRevision;
+    if (!Number.isSafeInteger(revision) || Number(revision) < 0) {
+      throw Object.assign(new Error("Message Qianji narrative revision is invalid"), {
+        code: "QIANJI_IDENTITY_SNAPSHOT_INVALID", phase: "identity",
+      });
+    }
+    const narrative = Number(revision) === profile.narrativeRevision
+      ? profile.narrative
+      : this.store.qianji.getNarrativeRevision(profile.qianjiId, Number(revision))?.narrative;
+    if (!narrative) {
+      throw Object.assign(new Error("Message Qianji narrative revision is missing"), {
+        code: "QIANJI_IDENTITY_SNAPSHOT_INVALID", phase: "identity",
+      });
+    }
+    return {
+      bindingId,
+      narrativeRevision: Number(revision),
+      identity: {
+        qianjiId: profile.qianjiId,
+        bindingId,
+        narrativeRevision: Number(revision),
+        displayName: narrative.displayName,
+        title: narrative.title ?? null,
+        roleLabel: narrative.roleLabel ?? null,
+        traits: narrative.traits,
+        behaviorProfile: narrative.behaviorProfile,
+        flaw: narrative.flaw ?? null,
+        careerStatus: profile.careerStatus,
+      },
     };
   }
 

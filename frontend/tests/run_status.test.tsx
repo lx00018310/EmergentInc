@@ -10,7 +10,7 @@ const world: WorldDto = { round: 1, pixels: [], environment_md: '', metrics: { t
 describe('V11 RunStatus costs', () => {
   it('shows unknown without inventing a conversion from tokens', () => {
     render(<RunStatus world={world} runStatus={null} audit={null} />);
-    expect(screen.getByText('EmergentInc V11 商业元胞自动机')).toBeDefined();
+    expect(screen.getByRole('heading', { name: 'EmergentInc 元胞会社' })).toBeDefined();
     expect(screen.getByText('未知')).toBeDefined();
     expect(screen.queryByText('¥15.00')).toBeNull();
   });

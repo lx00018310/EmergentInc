@@ -406,6 +406,19 @@ export async function handleTransferArtifact(
     };
   }
 
+  if (ctx.executionScope && (ctx.executionScope.kind === "trial_candidate" ||
+      !ctx.executionScope.allowedRecipients.includes(targetPixelId))) {
+    return {
+      operation_id: ctx.operationId,
+      tool: "transfer_artifact",
+      status: "FAILED",
+      error_code: "EXECUTION_SCOPE_DENIED",
+      error_message: "Artifact transfer is outside this execution's allowed participant set",
+      duration_ms: 0,
+      truncated: false,
+    };
+  }
+
   const check = validateArtifactFilename(filename);
   if (!check.valid) {
     return {

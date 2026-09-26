@@ -1,8 +1,8 @@
 import { SqliteDatabase } from "../sqlite/db.js";
 
 export class BudgetExceededError extends Error {
-  public readonly kind: "PIXEL" | "RUN";
-  constructor(message: string, kind: "PIXEL" | "RUN" = "PIXEL") {
+  public readonly kind: "PIXEL" | "RUN" | "EXECUTION";
+  constructor(message: string, kind: "PIXEL" | "RUN" | "EXECUTION" = "PIXEL") {
     super(message);
     this.name = "BudgetExceededError";
     this.kind = kind;
@@ -35,8 +35,43 @@ export interface ReservationRecord {
   settledAt?: number | null;
 }
 
+export interface TokenCapacity {
+  availableTokens: number;
+  limitingKind: "PIXEL" | "RUN" | "EXECUTION";
+}
+
 export class BudgetRepository {
   constructor(private db: SqliteDatabase) {}
+
+  /** Current token capacity across every limit that will be enforced by reserve(). */
+  public getAvailableTokenCapacity(params: { runId: string; pixelId: string; executionId?: string | null }): TokenCapacity {
+    const pixel = this.db.prepare(`SELECT energy, refund_deficit_tokens FROM pixel_accounts WHERE pixel_id=?`).get(params.pixelId) as any;
+    if (!pixel) throw new Error(`Pixel ${params.pixelId} not found`);
+    if (Number(pixel.refund_deficit_tokens) > 0) throw new SpendBlockedError(`Pixel ${params.pixelId} spend blocked by refund deficit (${pixel.refund_deficit_tokens} tokens)`);
+    const capacities: Array<TokenCapacity> = [{ availableTokens: Math.max(0, Number(pixel.energy)), limitingKind: "PIXEL" }];
+    const run = this.db.prepare("SELECT run_limit, run_spent, run_reserved, execution_id FROM runs WHERE run_id=?").get(params.runId) as any;
+    if (run) {
+      if ((run.execution_id ?? null) !== (params.executionId ?? null)) throw new Error("EXECUTION_SCOPE_RUN_CONFLICT");
+      capacities.push({ availableTokens: Math.max(0, Number(run.run_limit) - Number(run.run_spent) - Number(run.run_reserved)), limitingKind: "RUN" });
+    } else if (params.executionId) {
+      throw new Error("EXECUTION_RUN_NOT_FOUND");
+    }
+    if (params.executionId) {
+      const execution = this.db.prepare(`SELECT budget_tokens, spent_tokens, reserved_tokens, kind, subject_id
+        FROM executions WHERE execution_id=? AND status='running'`).get(params.executionId) as any;
+      if (!execution) throw new Error("EXECUTION_NOT_RUNNING");
+      capacities.push({ availableTokens: Math.max(0, Number(execution.budget_tokens) - Number(execution.spent_tokens) - Number(execution.reserved_tokens)), limitingKind: "EXECUTION" });
+      if (execution.kind === "trial_candidate") {
+        const trial = this.db.prepare(`SELECT t.total_budget_tokens,
+            COALESCE(SUM(e.spent_tokens + e.reserved_tokens), 0) AS used_tokens
+          FROM trials t LEFT JOIN executions e ON e.kind='trial_candidate' AND e.subject_id=t.trial_id
+          WHERE t.trial_id=? GROUP BY t.trial_id`).get(execution.subject_id) as any;
+        if (!trial) throw new Error("TRIAL_BUDGET_SCOPE_NOT_FOUND");
+        capacities.push({ availableTokens: Math.max(0, Number(trial.total_budget_tokens) - Number(trial.used_tokens)), limitingKind: "EXECUTION" });
+      }
+    }
+    return capacities.reduce((lowest, item) => item.availableTokens < lowest.availableTokens ? item : lowest);
+  }
 
   public ensureGlobalBudget(totalLimit: number = 1000000): GlobalBudgetRecord {
     const now = Date.now() / 1000;
@@ -75,11 +110,35 @@ export class BudgetRepository {
     runId: string;
     pixelId: string;
     estimatedTokens: number;
+    messageId?: string;
+    executionId?: string | null;
+    bindingId?: string | null;
+    narrativeRevision?: number | null;
   }): void {
     const { callId, runId, pixelId, estimatedTokens } = params;
     const now = Date.now() / 1000;
 
     this.db.transaction(() => {
+      if (params.messageId) {
+        const message = this.db.prepare(
+          "SELECT recipient_binding_id, execution_id, narrative_revision, identity_snapshot_captured FROM messages WHERE message_id = ?"
+        ).get(params.messageId) as any;
+        if (!message) throw new Error("IDENTITY_SNAPSHOT_MESSAGE_NOT_FOUND");
+        if ((message.execution_id ?? null) !== (params.executionId ?? null)) throw new Error("EXECUTION_SCOPE_MESSAGE_CONFLICT");
+        if ((message.recipient_binding_id ?? null) !== (params.bindingId ?? null)) {
+          throw new Error("IDENTITY_SNAPSHOT_BINDING_CONFLICT");
+        }
+        if (message.identity_snapshot_captured) {
+          if ((message.narrative_revision == null ? null : Number(message.narrative_revision)) !== (params.narrativeRevision ?? null)) {
+            throw new Error("IDENTITY_SNAPSHOT_REVISION_CONFLICT");
+          }
+        } else {
+          this.db.prepare(
+            "UPDATE messages SET narrative_revision = ?, identity_snapshot_captured = 1 WHERE message_id = ? AND identity_snapshot_captured = 0"
+          ).run(params.narrativeRevision ?? null, params.messageId);
+        }
+      }
+
       // 1. 检查 Pixel 账户与退款赤字
       const pixelStmt = this.db.prepare(`
         SELECT energy, active, refund_deficit_tokens, spend_blocked_reason
@@ -103,10 +162,11 @@ export class BudgetRepository {
 
       // 2. 检查 Run 预算
       const runStmt = this.db.prepare(`
-        SELECT run_limit, run_spent, run_reserved FROM runs WHERE run_id = ?
+        SELECT run_limit, run_spent, run_reserved, execution_id FROM runs WHERE run_id = ?
       `);
       const run = runStmt.get(runId) as any;
       if (run) {
+        if ((run.execution_id ?? null) !== (params.executionId ?? null)) throw new Error("EXECUTION_SCOPE_RUN_CONFLICT");
         if (run.run_spent + run.run_reserved + estimatedTokens > run.run_limit) {
           throw new BudgetExceededError(
             `Run ${runId} budget exceeded: limit=${run.run_limit}, current=${run.run_spent + run.run_reserved}, request=${estimatedTokens}`,
@@ -115,17 +175,39 @@ export class BudgetRepository {
         }
       }
 
+      if (params.executionId) {
+        const execution = this.db.prepare(`SELECT budget_tokens, spent_tokens, reserved_tokens, kind, subject_id
+          FROM executions WHERE execution_id=? AND status='running'`).get(params.executionId) as any;
+        if (!run || !execution) throw new Error("EXECUTION_RUN_SCOPE_INVALID");
+        if (execution.spent_tokens + execution.reserved_tokens + estimatedTokens > execution.budget_tokens) {
+          throw new BudgetExceededError(`Execution ${params.executionId} budget exceeded`, "EXECUTION");
+        }
+        if (execution.kind === "trial_candidate") {
+          const trial = this.db.prepare(`SELECT t.total_budget_tokens,
+              COALESCE(SUM(e.spent_tokens + e.reserved_tokens), 0) AS used_tokens
+            FROM trials t LEFT JOIN executions e ON e.kind='trial_candidate' AND e.subject_id=t.trial_id
+            WHERE t.trial_id=? GROUP BY t.trial_id`).get(execution.subject_id) as any;
+          if (!trial || Number(trial.used_tokens) + estimatedTokens > Number(trial.total_budget_tokens)) {
+            throw new BudgetExceededError(`Trial ${execution.subject_id} shared budget exceeded`, "EXECUTION");
+          }
+        }
+      }
+
       // 3. 写入预留记录
       const resStmt = this.db.prepare(`
-        INSERT INTO reservations (call_id, run_id, pixel_id, amount, status, created_at)
-        VALUES (?, ?, ?, ?, 'OPEN', ?)
+        INSERT INTO reservations (
+          call_id, run_id, pixel_id, amount, execution_id, binding_id, narrative_revision, status, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, 'OPEN', ?)
       `);
-      resStmt.run(callId, runId, pixelId, estimatedTokens, now);
+      resStmt.run(
+        callId, runId, pixelId, estimatedTokens, params.executionId ?? null, params.bindingId ?? null, params.narrativeRevision ?? null, now,
+      );
 
       // 4. 更新 Run 预留量与历史累计统计
       if (run) {
         this.db.prepare(`UPDATE runs SET run_reserved = run_reserved + ? WHERE run_id = ?`).run(estimatedTokens, runId);
       }
+      if (params.executionId) this.db.prepare(`UPDATE executions SET reserved_tokens=reserved_tokens+? WHERE execution_id=?`).run(estimatedTokens, params.executionId);
       this.db.prepare(`UPDATE global_budget SET total_reserved = total_reserved + ?, updated_at = ? WHERE id = 'GLOBAL'`).run(estimatedTokens, now);
     });
   }
@@ -168,6 +250,10 @@ export class BudgetRepository {
         SET run_reserved = MAX(0, run_reserved - ?), run_spent = run_spent + ?
         WHERE run_id = ?
       `).run(reservedAmount, actualTokens, runId);
+      if (res.execution_id) {
+        this.db.prepare(`UPDATE executions SET reserved_tokens=MAX(0, reserved_tokens-?), spent_tokens=spent_tokens+?
+          WHERE execution_id=?`).run(reservedAmount, actualTokens, res.execution_id);
+      }
 
       // 3. 更新历史累计消耗统计（不作为预算上限）
       this.db.prepare(`
@@ -204,6 +290,10 @@ export class BudgetRepository {
         SET run_reserved = MAX(0, run_reserved - ?)
         WHERE run_id = ?
       `).run(reservedAmount, runId);
+      if (res.execution_id) {
+        this.db.prepare("UPDATE executions SET reserved_tokens=MAX(0, reserved_tokens-?) WHERE execution_id=?")
+          .run(reservedAmount, res.execution_id);
+      }
 
       // 释放历史累计预留统计
       this.db.prepare(`

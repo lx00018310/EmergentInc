@@ -553,4 +553,248 @@ describe("Server: API Contract Integration Tests", () => {
     expect(runRecord?.status).toBe("FAILED");
     expect(runRecord?.stop_reason).toBe("INFRASTRUCTURE_FAILURE");
   });
+
+  it("atomically starts scoped Runs and counts task rounds without advancing the world", async () => {
+    const profile = store.qianji.createProfile({ careerStatus: "active" });
+    const binding = store.qianji.createBinding({ qianjiId: profile.qianjiId, pixelId: "0_0_0", incarnation: 1 });
+    store.pixels.upsertPixelAccount({ pixelId: "0_0_0", energy: 1000, active: true, refundDeficitTokens: 0, spendBlockedReason: null });
+    const execution = store.executions.create({ kind: "mission", subjectId: "mission_atomic", budgetTokens: 1000,
+      roundsLimit: 2, inputSnapshot: { title: "测试任务" }, toolsSnapshot: [], bindingIds: [binding.bindingId] });
+    const service = new RunService({
+      workspaceRoot: tmpDir, store,
+      scheduler: { executeRound: async (round: number) => ({ round, messagesProcessed: 0, activePixelsCount: 1, stopReason: "NO_ACTIVE_MESSAGES" }) } as any,
+      isMockMode: true, isModelConfigured: true,
+    });
+
+    await expect(service.start({ rounds: 1, runBudgetTokens: 1000, executionId: execution.executionId,
+      onRunCreated: () => { store.executions.transition(execution.executionId, "ready", "running"); throw new Error("mission startup failed"); } }))
+      .rejects.toThrow("mission startup failed");
+    expect(store.executions.get(execution.executionId)?.status).toBe("ready");
+    expect(store.db.prepare("SELECT COUNT(*) AS count FROM runs WHERE execution_id=?").get(execution.executionId)).toEqual({ count: 0 });
+
+    const started = await service.start({ rounds: 1, runBudgetTokens: 1000, executionId: execution.executionId,
+      onRunCreated: () => { store.executions.transition(execution.executionId, "ready", "running"); } });
+    for (let i = 0; service.getStatus().running && i < 20; i++) await new Promise(resolve => setTimeout(resolve, 10));
+    expect(store.runs.getRun(started.run_id)).toMatchObject({ execution_id: execution.executionId, last_scope_round: 6 });
+    expect(store.executions.get(execution.executionId)).toMatchObject({ status: "awaiting_review", roundsUsed: 1 });
+    expect(service.getWorldRound()).toBe(5);
+  });
+
+  it("blocks an execution when measured usage exceeds its token budget", async () => {
+    const profile = store.qianji.createProfile({ careerStatus: "active" });
+    const binding = store.qianji.createBinding({ qianjiId: profile.qianjiId, pixelId: "0_0_0", incarnation: 1 });
+    store.pixels.upsertPixelAccount({ pixelId: "0_0_0", energy: 500, active: true, refundDeficitTokens: 0, spendBlockedReason: null });
+    const execution = store.executions.create({ kind: "mission", subjectId: "mission_overrun", budgetTokens: 50,
+      roundsLimit: 1, inputSnapshot: {}, toolsSnapshot: [], bindingIds: [binding.bindingId] });
+    const scheduler = {
+      executeRound: async (round: number, runId: string, _signal: AbortSignal, executionId: string) => {
+        const message = store.messages.enqueueMessage({ runId, executionId, roundNum: round, sender: "human",
+          recipient: "0_0_0", content: "synthetic billing record", sourceType: "human" });
+        store.budgets.reserve({ callId: "call_overrun", runId, pixelId: "0_0_0", executionId,
+          messageId: message.messageId, bindingId: binding.bindingId, narrativeRevision: 0, estimatedTokens: 50 });
+        store.budgets.settle({ callId: "call_overrun", actualTokens: 51, costCny: null });
+        return { round, messagesProcessed: 1, activePixelsCount: 1, stopReason: "NO_ACTIVE_MESSAGES" };
+      },
+    };
+    const service = new RunService({ workspaceRoot: tmpDir, store, scheduler: scheduler as any,
+      isMockMode: true, isModelConfigured: true });
+    const started = await service.start({ rounds: 1, runBudgetTokens: 50, executionId: execution.executionId,
+      onRunCreated: () => { store.executions.transition(execution.executionId, "ready", "running"); } });
+    for (let i = 0; service.getStatus().running && i < 20; i++) await new Promise(resolve => setTimeout(resolve, 10));
+    expect(store.executions.get(execution.executionId)).toMatchObject({ status: "blocked", spentTokens: 51, reservedTokens: 0 });
+    expect(store.runs.getRun(started.run_id)?.run_spent).toBe(51);
+  });
+
+  it("lists Qianji identity separately from physical carrier state and edits by revision", async () => {
+    const profile = store.qianji.createProfile();
+    store.qianji.createBinding({ qianjiId: profile.qianjiId, pixelId: "0_0_0", incarnation: 1 });
+    const list = await app.inject({ method: "GET", url: "/api/qianji?careerStatus=candidate" });
+    expect(list.statusCode).toBe(200);
+    expect(list.json().items[0]).toMatchObject({
+      profile: { qianjiId: profile.qianjiId, careerStatus: "candidate" },
+      currentBinding: { pixelId: "0_0_0", incarnation: 1 },
+      physical: { accountExists: false, active: null, energy: null },
+    });
+
+    const narrative = {
+      displayName: "新名字",
+      title: null,
+      roleLabel: null,
+      traits: {},
+      behaviorProfile: [],
+      flaw: null,
+      shortBio: null,
+      appearanceSpec: null,
+      portraitAsset: null,
+      contentRevision: "manual-v1",
+    };
+    const updated = await app.inject({
+      method: "PUT",
+      url: "/api/qianji/" + profile.qianjiId + "/narrative",
+      payload: { expectedRevision: 0, narrative },
+    });
+    expect(updated.statusCode).toBe(200);
+    expect(updated.json().profile).toMatchObject({ qianjiId: profile.qianjiId, narrativeRevision: 1 });
+    const stale = await app.inject({
+      method: "PUT",
+      url: "/api/qianji/" + profile.qianjiId + "/narrative",
+      payload: { expectedRevision: 0, narrative: { ...narrative, displayName: "覆盖" } },
+    });
+    expect(stale.statusCode).toBe(409);
+    const unknownField = await app.inject({
+      method: "PUT",
+      url: "/api/qianji/" + profile.qianjiId + "/narrative",
+      payload: { expectedRevision: 1, narrative: { ...narrative, surprise: "field" } },
+    });
+    expect(unknownField.statusCode).toBe(400);
+
+    store.runs.createRun({
+      run_id: "qianji_edit_block", start_round: 1, run_limit: 1000, run_spent: 0, run_reserved: 0,
+      global_limit: 1000, global_spent: 0, global_reserved: 0, genesis_revision: 1,
+      status: "RUNNING", created_at: Date.now() / 1000,
+    });
+    const blocked = await app.inject({
+      method: "PUT",
+      url: "/api/qianji/" + profile.qianjiId + "/narrative",
+      payload: { expectedRevision: 1, narrative },
+    });
+    expect(blocked.statusCode).toBe(409);
+    store.runs.updateRunStatus("qianji_edit_block", "STOPPED", "USER_STOPPED");
+  });
+
+  it("stores Qianji portraits by content hash and serves only the owned asset", async () => {
+    const profile = store.qianji.createProfile();
+    const image = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/N7sAAAAASUVORK5CYII=", "base64");
+    const upload = await app.inject({
+      method: "POST",
+      url: "/api/qianji/" + profile.qianjiId + "/portrait",
+      payload: { mimeType: "image/png", dataBase64: image.toString("base64"), expectedRevision: 0 },
+    });
+    expect(upload.statusCode).toBe(200);
+    expect(upload.json().assetId).toMatch(/^[a-f0-9]{64}\.png$/);
+    const assetPath = path.join(tmpDir, "assets", "qianji", profile.qianjiId, upload.json().assetId);
+    expect(fs.existsSync(assetPath)).toBe(true);
+    const served = await app.inject({ method: "GET", url: "/api/qianji/" + profile.qianjiId + "/portrait" });
+    expect(served.statusCode).toBe(200);
+    expect(served.headers["content-type"]).toContain("image/png");
+    expect(served.rawPayload.equals(image)).toBe(true);
+
+    const other = store.qianji.createProfile();
+    const forged = await app.inject({
+      method: "PUT",
+      url: "/api/qianji/" + other.qianjiId + "/narrative",
+      payload: {
+        expectedRevision: 0,
+        narrative: {
+          displayName: "另一角色", title: null, roleLabel: null, traits: {}, behaviorProfile: [],
+          flaw: null, shortBio: null, appearanceSpec: null, portraitAsset: upload.json().assetId, contentRevision: null,
+        },
+      },
+    });
+    expect(forged.statusCode).toBe(400);
+
+    const wrongMime = await app.inject({
+      method: "POST",
+      url: "/api/qianji/" + other.qianjiId + "/portrait",
+      payload: { mimeType: "image/jpeg", dataBase64: image.toString("base64"), expectedRevision: 0 },
+    });
+    expect(wrongMime.statusCode).toBe(400);
+    expect(fs.readdirSync(path.dirname(assetPath))).toEqual([upload.json().assetId]);
+  });
+
+  it("paginates facts and updates neutral world presentation with revision checks", async () => {
+    const first = store.qianji.createProfile();
+    store.qianji.createProfile();
+    const events = await app.inject({ method: "GET", url: "/api/world/events?limit=1&offset=1&qianjiId=" + first.qianjiId });
+    expect(events.statusCode).toBe(200);
+    expect(events.json()).toMatchObject({ limit: 1, offset: 1, items: [] });
+    const allEvents = await app.inject({ method: "GET", url: "/api/world/events?limit=1&offset=1" });
+    expect(allEvents.json().items).toHaveLength(1);
+
+    const initial = await app.inject({ method: "GET", url: "/api/world/presentation" });
+    expect(initial.json()).toMatchObject({ hallName: "天机阁", revision: 0 });
+    const changed = await app.inject({
+      method: "PUT",
+      url: "/api/world/presentation",
+      payload: { expectedRevision: 0, organizationName: "EmergentInc", hallName: "天机阁", eventLabels: { QIANJI_PROFILE_CREATED: "新成员" } },
+    });
+    expect(changed.statusCode).toBe(200);
+    expect(changed.json()).toMatchObject({ organizationName: "EmergentInc", revision: 1, eventLabels: { QIANJI_PROFILE_CREATED: "新成员" } });
+    const executableLabel = await app.inject({
+      method: "PUT", url: "/api/world/presentation",
+      payload: { expectedRevision: 1, organizationName: "EmergentInc", hallName: "天机阁", eventLabels: { QIANJI_PROFILE_CREATED: "<script>" } },
+    });
+    expect(executableLabel.statusCode).toBe(400);
+    const conflict = await app.inject({
+      method: "PUT",
+      url: "/api/world/presentation",
+      payload: { expectedRevision: 0, organizationName: "Other", hallName: "Other" },
+    });
+    expect(conflict.statusCode).toBe(409);
+  });
+
+  it("returns identity history and server-resolved archived artifacts", async () => {
+    const profile = store.qianji.createProfile({ createdAt: 1000 });
+    const binding = store.qianji.createBinding({ qianjiId: profile.qianjiId, pixelId: "0_0_0", incarnation: 1, boundAt: 2000 });
+    store.modelCalls.recordModelCall({
+      callId: "history_attributed", runId: "r1", pixelId: "0_0_0", bindingId: binding.bindingId,
+      narrativeRevision: 0, model: "test", promptTokens: 5, completionTokens: 2,
+      cachedTokens: null, actualTokens: 7, costCny: null, outcome: "SUCCESS", createdAt: 2500,
+    });
+    store.modelCalls.recordModelCall({
+      callId: "history_legacy", runId: "r0", pixelId: "0_0_0", model: "test", promptTokens: null,
+      completionTokens: null, cachedTokens: null, actualTokens: null, costCny: null, outcome: "SUCCESS", createdAt: 1500,
+    });
+    const archiveBase = path.join(tmpDir, "live", "history", "0_0_0", "effect_history");
+    fs.mkdirSync(path.join(archiveBase, "pixel"), { recursive: true });
+    fs.mkdirSync(path.join(archiveBase, "artifacts"), { recursive: true });
+    fs.writeFileSync(path.join(archiveBase, "artifacts", "deliverable.txt"), "archived");
+    store.qianji.unbindAndRetire(binding.bindingId, "live/history/0_0_0/effect_history/pixel", "test", 3000);
+
+    const response = await app.inject({ method: "GET", url: `/api/qianji/${profile.qianjiId}/history` });
+    expect(response.statusCode).toBe(200);
+    expect(response.json().attributed.modelCalls.map((item: any) => item.callId)).toEqual(["history_attributed"]);
+    expect(response.json().attributed.modelCalls[0].costCny).toBeNull();
+    expect(response.json().attributed.carrierLegacy.modelCalls.map((item: any) => item.callId)).toEqual(["history_legacy"]);
+    expect(response.json().artifacts.archives[0].files).toMatchObject([{ name: "deliverable.txt", size: 8 }]);
+    const artifact = await app.inject({
+      method: "GET", url: `/api/qianji/${profile.qianjiId}/history/artifacts/${binding.bindingId}/deliverable.txt`,
+    });
+    expect(artifact.statusCode).toBe(200);
+    expect(artifact.rawPayload.toString("utf8")).toBe("archived");
+  });
+
+  it("blocks retirement while a mission is open, archives the binding, and rejects retired chat", async () => {
+    const profile = store.qianji.createProfile({ careerStatus: "active" });
+    const binding = store.qianji.createBinding({ qianjiId: profile.qianjiId, pixelId: "0_0_0", incarnation: 1 });
+    store.pixels.upsertPixelAccount({ pixelId: "0_0_0", energy: 1000, active: true, refundDeficitTokens: 0, spendBlockedReason: null });
+    const pixelDirectory = path.join(tmpDir, "live", "pixels", "0_0_0");
+    const artifactDirectory = path.join(tmpDir, "live", "artifacts", "0_0_0");
+    fs.mkdirSync(pixelDirectory, { recursive: true }); fs.mkdirSync(artifactDirectory, { recursive: true });
+    fs.writeFileSync(path.join(pixelDirectory, "pixel.md"), "test identity");
+    fs.writeFileSync(path.join(artifactDirectory, "result.txt"), "test artifact");
+    const mission = store.missions.createDraft({ title: "Open work", missionType: "test", objective: "Finish it",
+      acceptanceCriteria: "Owner review", budgetTokens: 100, roundsLimit: 1, ownerQianjiId: profile.qianjiId,
+      participants: [{ qianjiId: profile.qianjiId, bindingId: binding.bindingId, duty: null }] });
+    store.missions.transition(mission.missionId, "draft", "issued");
+
+    const payload = { reason: "No longer participating", idempotencyKey: "retire-qianji-once" };
+    const blocked = await app.inject({ method: "POST", url: `/api/qianji/${profile.qianjiId}/retire`, payload });
+    expect(blocked.statusCode).toBe(409);
+    expect(blocked.json().detail).toBe("QIANJI_HAS_OPEN_MISSION");
+    expect(fs.existsSync(pixelDirectory)).toBe(true);
+
+    store.missions.transition(mission.missionId, "issued", "cancelled");
+    const retired = await app.inject({ method: "POST", url: `/api/qianji/${profile.qianjiId}/retire`, payload });
+    expect(retired.statusCode).toBe(200);
+    expect(retired.json().profile.careerStatus).toBe("retired");
+    const archive = path.join(tmpDir, "live", "history", binding.bindingId);
+    expect(fs.readFileSync(path.join(archive, "pixel", "pixel.md"), "utf8")).toBe("test identity");
+    expect(fs.readFileSync(path.join(archive, "artifacts", "result.txt"), "utf8")).toBe("test artifact");
+    const retry = await app.inject({ method: "POST", url: `/api/qianji/${profile.qianjiId}/retire`, payload });
+    expect(retry.statusCode).toBe(200);
+    const chat = await app.inject({ method: "POST", url: `/api/qianji/${profile.qianjiId}/chat`, payload: { content: "Continue work", idempotencyKey: "retired-chat" } });
+    expect(chat.statusCode).toBe(409);
+    expect(chat.json().detail).toBe("QIANJI_RETIRED");
+  });
 });

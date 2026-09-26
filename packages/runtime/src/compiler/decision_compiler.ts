@@ -9,6 +9,7 @@ import {
   TransferEnergyEffect,
   ReproduceEffect,
   RouteMessageEffect,
+  OwnerReplyEffect,
 } from "@emergentinc/protocol";
 
 function sha256(data: any): string {
@@ -151,6 +152,22 @@ export class DecisionCompiler {
         recipient: decision.send_to,
         content: decision.message_md || "",
         hop: currentHop + 1,
+      };
+      effects.push(effect);
+    }
+
+    // OWNER_REPLY is deliberately last so existing Effect order and IDs do not change.
+    if (decision.owner_reply) {
+      const payloadHash = sha256({ owner_reply: decision.owner_reply });
+      const effect: OwnerReplyEffect = {
+        effectId: `eff_${messageId}_${effectIndex}_${payloadHash.substring(0, 8)}`,
+        messageId,
+        effectType: "OWNER_REPLY",
+        effectIndex: effectIndex++,
+        payloadHash,
+        status: "PENDING",
+        pixelId,
+        reply: decision.owner_reply,
       };
       effects.push(effect);
     }

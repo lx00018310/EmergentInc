@@ -7,9 +7,10 @@ export interface RunStatusProps {
   runStatus: RunStatusDto | null;
   audit: WorkspaceAuditDto | null;
   onOpenHelp?: () => void;
+  onBack?: () => void;
 }
 
-export const RunStatus: React.FC<RunStatusProps> = ({ world, runStatus, onOpenHelp }) => {
+export const RunStatus: React.FC<RunStatusProps> = ({ world, runStatus, onOpenHelp, onBack }) => {
   const round = world?.round ?? runStatus?.current_round ?? 0;
   const pixels = world?.pixels ?? [];
   const alivePixels = pixels.filter((p) => p.active).length;
@@ -52,6 +53,7 @@ export const RunStatus: React.FC<RunStatusProps> = ({ world, runStatus, onOpenHe
         <span className="badge" id="run-badge">run: {runId}</span>
       </div>
       <div className="header-metrics">
+        {onBack && <button className="btn btn-xs" type="button" onClick={onBack}>返回天机阁</button>}
         <div className="metric-item">
           <span className="m-label">Round:</span> <span className="m-val">{round}</span>
         </div>

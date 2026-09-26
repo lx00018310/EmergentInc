@@ -8,6 +8,13 @@ import { containedPath, validatePathSegment } from "../services/safe_path.js";
 import { ToolRegistry } from "@emergentinc/tools";
 import { CoreStore } from "@emergentinc/persistence";
 import { OwnerChatService } from "../services/owner_chat_service.js";
+import { registerQianjiRoutes } from "./qianji_routes.js";
+import { MissionService } from "../services/mission_service.js";
+import { registerOrganizationRoutes } from "./organization_routes.js";
+import { TrialService } from "../services/trial_service.js";
+import { registerTrialRoutes } from "./trial_routes.js";
+import { BusinessService } from "../services/business_service.js";
+import { registerBusinessRoutes } from "./business_routes.js";
 
 export interface ApiRoutesOptions {
   worldService: WorldService;
@@ -32,6 +39,30 @@ export async function registerApiRoutes(
     workspaceRoot,
     ownerChatService,
   } = options;
+
+  const enabledToolNames = typeof toolRegistry.listDefinitions === "function"
+    ? toolRegistry.listDefinitions().filter(tool => tool.enabled).map(tool => tool.name)
+    : [];
+  const missionService = new MissionService({
+    store: coreStore,
+    workspaceRoot,
+    runService,
+    enabledTools: enabledToolNames,
+    modelName: process.env.MCL_DECISION_MODEL || process.env.MCL_MODEL || "gpt-4o-mini",
+  });
+  const trialService = new TrialService({
+    store: coreStore,
+    workspaceRoot,
+    runService,
+    enabledTools: enabledToolNames,
+    modelName: process.env.MCL_DECISION_MODEL || process.env.MCL_MODEL || "gpt-4o-mini",
+    captureEvidence: executionId => missionService.captureExecutionEvidence(executionId),
+  });
+  await registerQianjiRoutes(server, { store: coreStore, workspaceRoot, runService, missionService });
+  await registerOrganizationRoutes(server, missionService);
+  await registerTrialRoutes(server, trialService);
+  const businessService = new BusinessService(coreStore, workspaceRoot);
+  await registerBusinessRoutes(server, businessService);
 
   server.addHook("preHandler", async (req, reply) => {
     const pixelId = (req.params as any)?.pixel_id;
@@ -255,6 +286,10 @@ export async function registerApiRoutes(
     if (!fs.existsSync(pixelDir)) {
       return reply.status(404).send({ detail: `Pixel '${pixelId}' not found` });
     }
+    const binding = coreStore.qianji.getCurrentBindingByPixel(pixelId);
+    if (binding && coreStore.executions.getOpenExecutionForBinding(binding.bindingId)) {
+      return reply.status(409).send({ detail: "QIANJI_OCCUPIED_BY_EXECUTION" });
+    }
     const body: any = req.body || {};
     const content = String(body.mandate ?? body.content ?? "");
     const mandatePath = containedPath(pixelDir, "mandate.md");
@@ -271,6 +306,10 @@ export async function registerApiRoutes(
     const pixelId = String(params.pixel_id || "");
     if (pixelId.includes("..") || pixelId.includes("/") || pixelId.includes("\\")) {
       return reply.status(400).send({ detail: "Invalid pixel_id" });
+    }
+    const binding = coreStore.qianji.getCurrentBindingByPixel(pixelId);
+    if (binding && coreStore.executions.getOpenExecutionForBinding(binding.bindingId)) {
+      return reply.status(409).send({ detail: "QIANJI_OCCUPIED_BY_EXECUTION" });
     }
     const mandatePath = containedPath(workspaceRoot, "live", "pixels", pixelId, "mandate.md");
     if (fs.existsSync(mandatePath)) {

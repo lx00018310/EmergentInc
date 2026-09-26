@@ -1,9 +1,9 @@
 # EmergentInc → 天机阁：三阶段执行 Plan（本地代码校准 / Luna max 执行版）
 
-> 修订日期：2026-09-25。基线：本地 HEAD `7da4256`。
+> 修订日期：2026-09-25。Plan 校准基线：本地 HEAD `7da4256`；Stage 1 执行基线：`fc3d4c7`。
 > 来源：[评估天机阁方案](chatgpt-conversation://6ab64d3c-5200-83e8-870e-6b141a4e7604) 的六轮对话，以及用户下载的同名 v2 文件。
 > 原文件 SHA-256：`338b7812659027c1002ce8942e9a50b68485cb80d339a64b4f580fc026bdfef6`。
-> 本次只修订 Plan，未实施下文功能，未迁移真实 workspace，未运行模型或宣称商业闭环完成。
+> Plan 校准阶段只修改了本文；随后按本文执行了 Stage 1。未迁移真实 workspace，未运行真实模型，未宣称商业闭环完成。执行证据见 8.4。
 > 本文继续使用原文件名，正文替代原 v2 中未落到代码的建议。未勾选项目均未完成。
 
 ## 0. 给执行者：先读这一节
@@ -175,8 +175,8 @@ WorldEvent 最小字段：
 
 迁移命令契约：
 
-    npx.cmd pnpm exec tsx scripts/migrate-qianji.ts --workspace <绝对测试workspace> --dry-run
-    npx.cmd pnpm exec tsx scripts/migrate-qianji.ts --workspace <绝对测试workspace> --apply
+    .\node_modules\.bin\tsx.cmd scripts/migrate-qianji.ts --workspace <绝对测试workspace> --dry-run
+    .\node_modules\.bin\tsx.cmd scripts/migrate-qianji.ts --workspace <绝对测试workspace> --apply
 
 1. 脚本默认 dry-run；不导入 server/main.ts，不加载 .env，不调用模型。
 2. dry-run 必须只读打开 DB，不实例化会自动执行 initSchema 的 CoreStore；列出账户、当前载体代次、已有绑定和冲突。
@@ -326,11 +326,11 @@ WorldEvent 最小字段：
 
 技术验收：
 
-- [ ] 身份与绑定持久化；迁移可重复；重生不覆盖旧人历史。
-- [ ] JSON/图片导入无需改代码；人设改名不改 ID。
-- [ ] Prompt 使用自身身份，认知/工具边界仍成立。
-- [ ] 使用测试 Provider 完成“卡牌 → 人物发消息 → Run → owner_reply → 刷新历史”。
-- [ ] 默认大厅，Engine现有操作保留，用户 HeartbeatLightning 改动未覆盖。
+- [x] 身份与绑定持久化；迁移可重复；重生不覆盖旧人历史。
+- [x] JSON/图片导入无需改代码；人设改名不改 ID。
+- [x] Prompt 使用自身身份，认知/工具边界仍成立。
+- [x] 使用测试 Provider 完成“卡牌 → 人物发消息 → Run → owner_reply → 刷新历史”。
+- [x] 默认大厅，Engine现有操作保留，用户 HeartbeatLightning 改动未覆盖。
 - [ ] 第7节列出的相关检查通过；记录未通过项，不能只看后端 build。
 
 用户内容验收（与技术验收分开）：
@@ -341,6 +341,8 @@ WorldEvent 最小字段：
 - [ ] 若授权真实迁移：停服备份后完成，并记录报告。
 
 技术完成但正式素材/真实操作未完成时，报告“Stage 1 技术完成，内容/操作验收待完成”，然后停止。不要进入 Stage 2。
+
+本次执行状态以 8.4 为准：Stage 1 实现已完成，但一项既有自动测试未通过，故技术验收尚未全绿；按停止规则留在 Stage 1。
 
 ## 4. Stage 2：招聘、串行试炼、Mission 和可核查履历
 
@@ -525,13 +527,13 @@ API：
 
 ### S2-08 阶段验收与停止
 
-- [ ] 创建招贤榜与2–3位空白候选；同题同模型同工具同预算串行运行。
-- [ ] Runtime真实链路有scope隔离，预算经过reserve/settle/refund和Recovery。
-- [ ] 裁决录用一次，落选者可查档案。
-- [ ] 获胜者执行Mission，生成不可变证据快照，由Owner验收。
-- [ ] 旧Engine世界运行不消费任务队列，不越过职业准入。
-- [ ] 不触碰现有六邻居、私有artifact隔离、结果未知不自动退款等边界。
-- [ ] 完成模拟Provider全链测试及界面验收。
+- [x] 创建招贤榜与2–3位空白候选；同题同模型同工具同预算串行运行。
+- [x] Runtime真实链路有scope隔离，预算经过reserve/settle/refund和Recovery。
+- [x] 裁决录用一次，落选者可查档案。
+- [x] 获胜者执行Mission，生成不可变证据快照，由Owner验收。
+- [x] 旧Engine世界运行不消费任务队列，不越过职业准入。
+- [x] 不触碰现有六邻居、私有artifact隔离、结果未知不自动退款等边界。
+- [x] 完成模拟Provider全链测试及桌面界面验收（1280×720）。
 - [ ] 用户/Muse提供正式题材后，若授权，在有限预算下跑一次真实试炼和Mission。
 
 上述最后一项没有授权/素材时作为待验证项列出；Stage 2技术完成后停止。
@@ -703,11 +705,11 @@ API：
 
 技术验收：
 
-- [ ] 隔离workspace用测试Provider完成Product → Mission → 证据 → 人工交付确认 → 反馈 → 测试收款 → 部分退款 → 事实导出。
-- [ ] 同一记录贯通Product/Mission/Qianji，核对成本和收入无重复。
-- [ ] Muse样例正文回导只改变叙事表。
-- [ ] 页面显示未知值、测试标识与来源；Engine原有功能仍可使用。
-- [ ] 所有本阶段相关自动检查及UI验收通过，然后停止代码工作。
+- [x] 隔离临时workspace以测试Provider完成Product → Mission → 证据 → Owner验收 → 交付确认 → 反馈 → 测试收款 → 部分退款 → 事实导出。
+- [x] 同一记录贯通Product/Mission/Qianji；归因收入及成本口径测试无重复。
+- [x] Muse样例正文回导只改变叙事表。
+- [x] 页面显示未知成本、试炼候选标记、收款来源与凭据索引；Engine可通过原导航进入。
+- [x] 相关自动检查及桌面UI验收通过（1280×720）；窄屏人工视觉检查未做。
 
 真实商业验证（由用户组织，不能让代码执行者无限追逐）：
 
@@ -729,18 +731,19 @@ API：
 7. 恢复演练先在测试副本进行。回滚代码不能回滚新增业务事实；恢复旧备份会丢失备份后的写入，真实恢复必须明确用户选择。
 8. 迁移本身不创造历史收入、历史人物、已完成Mission或试炼成绩。
 9. Run内发生未知结果时沿用现有Recovery；新业务不能用“取消/重新开始”清空未知费用。
-10. 本文首次修订没有执行上述真实操作。后续执行报告须注明实际做了哪些。
+10. 本次 Stage 1 执行没有对真实 workspace 执行上述操作；只使用隔离测试副本验证迁移。后续若实施真实操作，须注明授权、备份和前后计数。
 
 ## 7. 验证命令与执行顺序
 
-以下为未来实施时的命令，不代表本次修订已运行或已通过。PowerShell使用.cmd，避免脚本执行策略问题。
+使用 PowerShell 和仓库内 `.cmd` 二进制；不通过 `npx.cmd pnpm` 临时下载包管理器。本次实跑结果见 8.4。开始前记录状态与 HEAD，并只在确认生成文件于基线干净时恢复它们。
 
 ~~~powershell
 Set-Location 'D:/00_personalwork/EmergentInc元胞会社'
 git status --short
 git rev-parse --short HEAD
 node --version
-npx.cmd pnpm --version
+.\node_modules\.bin\tsc.cmd --version
+.\node_modules\.bin\vitest.cmd --version
 ~~~
 
 开始S1-01前做一次基线检查并保存结果。依赖已在本地则不重复install，不升级包；缺依赖才依据锁文件安装。
@@ -748,26 +751,26 @@ npx.cmd pnpm --version
 按任务运行相关文件测试，例如：
 
 ~~~powershell
-npx.cmd pnpm exec vitest run packages/model/tests/model.test.ts
-npx.cmd pnpm exec vitest run packages/runtime/tests/v11_historical_economy.test.ts
-npx.cmd pnpm exec vitest run apps/server/tests/server.test.ts
-npx.cmd pnpm --filter emergentinc-frontend test
+.\node_modules\.bin\vitest.cmd run packages/model/tests/model.test.ts
+.\node_modules\.bin\vitest.cmd run packages/runtime/tests/v11_historical_economy.test.ts
+.\node_modules\.bin\vitest.cmd run apps/server/tests/server.test.ts
 ~~~
 
 阶段末完整检查顺序：
 
 ~~~powershell
-npx.cmd pnpm typecheck
-npx.cmd pnpm build
-npx.cmd pnpm --filter emergentinc-frontend typecheck
-npx.cmd pnpm --filter emergentinc-frontend build
-npx.cmd pnpm exec vitest run packages apps tests/parity
-npx.cmd pnpm --filter emergentinc-frontend test
+.\node_modules\.bin\tsc.cmd -b --force
+Push-Location frontend
+.\node_modules\.bin\tsc.cmd -p tsconfig.app.json --noEmit
+$buildOut = Join-Path ([System.IO.Path]::GetTempPath()) ('emergentinc-vite-' + [guid]::NewGuid().ToString('N'))
+.\node_modules\.bin\vite.cmd build --outDir $buildOut
+Pop-Location
+.\node_modules\.bin\vitest.cmd run --reporter=dot
 git diff --check
 git status --short
 ~~~
 
-- 后端/共享包测试使用根vitest.config.ts的包别名；前端测试单独使用frontend配置的jsdom。不把根pnpm test单次结果当完整前端验收。
+- 根 Vitest workspace 已包含 packages、apps、tests/parity 和 frontend；完整验收用不带路径筛选的 `vitest.cmd run --reporter=dot`。带 `packages apps tests/parity` 参数在本仓库只选中了 parity 项目，不能代替全仓测试。
 - 新增功能测试按现有目录：packages/*/tests、apps/server/tests、frontend/tests。至少一个测试同时穿过API→真实Repository→真实Runtime→模拟Provider。
 - fixture的假人设、收入、图片仅放测试目录/临时workspace；测试不发网络请求或访问真实工具凭据。
 - 不为纯展示文字建立机械快照；关键UI覆盖选择、状态、错误、不可点击条件和字段提交。
@@ -794,26 +797,26 @@ git status --short
 
 | 阶段 | 任务 | 状态 |
 |---|---|---|
-| 1 | S1-01 类型/表/Repository | 未开始 |
-| 1 | S1-02 迁移/重生绑定 | 未开始 |
-| 1 | S1-03 人设/图片/API | 未开始 |
-| 1 | S1-04 Prompt/历史归属 | 未开始 |
-| 1 | S1-05 人物聊天往返 | 未开始 |
-| 1 | S1-06 大厅/Engine | 未开始 |
-| 1 | S1-07 验收并停止 | 未开始 |
-| 2 | S2-01 组织状态与表 | 未开始 |
-| 2 | S2-02 Runtime范围隔离 | 未开始 |
-| 2 | S2-03 预算结算 | 未开始 |
-| 2 | S2-04 Mission | 未开始 |
-| 2 | S2-05 招聘/候选载体 | 未开始 |
-| 2 | S2-06 串行试炼 | 未开始 |
-| 2 | S2-07 履历/档案/UI | 未开始 |
-| 2 | S2-08 验收并停止 | 未开始 |
-| 3 | S3-01 产品/反馈/交付 | 未开始 |
-| 3 | S3-02 收款/退款 | 未开始 |
-| 3 | S3-03 统计归因 | 未开始 |
-| 3 | S3-04 Muse导出/回导 | 未开始 |
-| 3 | S3-05 UI/验收并停止 | 未开始 |
+| 1 | S1-01 类型/表/Repository | 已完成 |
+| 1 | S1-02 迁移/重生绑定 | 已完成（仅测试副本） |
+| 1 | S1-03 人设/图片/API | 已完成 |
+| 1 | S1-04 Prompt/历史归属 | 已完成 |
+| 1 | S1-05 人物聊天往返 | 已完成（模拟 Provider） |
+| 1 | S1-06 大厅/Engine | 已完成（自动及视口检查） |
+| 1 | S1-07 验收并停止 | 已执行；1项既有测试失败，正式内容验收待完成 |
+| 2 | S2-01 组织状态与表 | 已完成 |
+| 2 | S2-02 Runtime范围隔离 | 已完成（本地模拟/测试） |
+| 2 | S2-03 预算结算 | 已完成（本地模拟/测试） |
+| 2 | S2-04 Mission | 技术完成（合成运行与Owner验收测试通过） |
+| 2 | S2-05 招聘/候选载体 | 技术完成（隔离workspace） |
+| 2 | S2-06 串行试炼 | 技术完成（同规则串行测试通过） |
+| 2 | S2-07 履历/档案/UI | 技术完成（自动交互测试；未做现场数据验收） |
+| 2 | S2-08 验收并停止 | 技术验收通过；真实题材/模型未验证 |
+| 3 | S3-01 产品/反馈/交付 | 技术完成（隔离测试） |
+| 3 | S3-02 收款/退款 | 技术完成（只验证人工记账逻辑；无真实收款） |
+| 3 | S3-03 统计归因 | 技术完成（含成本未知和区间退款口径） |
+| 3 | S3-04 Muse导出/回导 | 技术完成（隐私白名单、来源校验、幂等） |
+| 3 | S3-05 UI/验收并停止 | 技术完成；真实商业闭环未验证 |
 
 每个任务完成后追加一个短记录：
 
@@ -825,9 +828,9 @@ git status --short
     下一任务：
     真实workspace是否修改：否 / 具体操作与授权
 
-### 8.2 可以直接交给 Luna max 的开始指令
+### 8.2 Luna max 执行提示
 
-> 读取 docs/EmergentInc_TianJiGe_3_Stage_Execution_Plan_v2.md。只执行 Stage 1，按 S1-01 至 S1-07 串行推进。先记录当前 Git 改动与基线检查。每个任务按文件入口核对代码、完成实现和相关测试后再继续。保留 HeartbeatLightning.ts 及其它已有用户改动。不要开 subagent，不自动提交/推送/部署，不运行真实付费模型，不迁移真实 workspace。Muse正式素材缺失时使用明确的中性测试素材。Stage 1技术验收完成后报告完成项、待人工验收项和风险，然后停止；不要进入Stage 2。若遇到需要改变本文业务规则的冲突，在普通聊天中具体说明并等待答复。
+> 先读 8.4 和当前 Git 差异。Stage 1 已完成实现，不能重复迁移或覆盖已有改动。若用户要求继续 Stage 1，先复核既有测试失败是否属于本阶段；不得顺手修改无关功能或断言。Stage 1 验收后停止。未获用户验收并明确要求前，不进入 Stage 2。不要开 subagent，不自动提交/推送/部署，不运行真实付费模型，不迁移真实 workspace。Muse 正式素材缺失时使用中性测试素材，并明确标注。
 
 ### 8.3 后续阶段交接
 
@@ -835,10 +838,130 @@ git status --short
 
 > 继续本Plan的Stage 2（或Stage 3），从该阶段第一个未完成任务开始。先核对前一阶段执行记录和当前代码差异，不重复已完成迁移；按本阶段规则完成并在阶段末停止。没有真实业务证据时明确列为未验证，不制造数据补齐。
 
-## 9. 本次 Plan 修订交付标准
+### 8.4 2026-09-25 Stage 1 执行记录
+
+基线为 `fc3d4c7`，开始实施时代码工作区干净。用户已有的 `frontend/src/features/pixels/HeartbeatLightning.ts` 未修改。Stage 1 修改均留在工作区，未提交；真实 workspace 未迁移，未运行真实模型、部署或外部操作。身份迁移及聊天闭环只在隔离测试副本和模拟 Provider 中验证。
+
+| 任务 | 修改文件 | 验证与结果 |
+|---|---|---|
+| S1-01 类型/表/Repository | 新增 `packages/protocol/src/types/qianji.ts`、`world_event.ts`；`packages/persistence/src/migrations/init_schema.ts`、`core_store.ts`、`repositories/qianji_repository.ts`、`world_event_repository.ts`、`owner_action_repository.ts`；新增 `packages/domain/src/qianji/validation.ts` 与持久层测试 | `qianji_repository.test.ts` 及完整 workspace 测试通过；含 schema 重复迁移、唯一绑定、历史和成本为空值保护。 |
+| S1-02 迁移/重生绑定 | 新增 `apps/server/src/services/qianji_service.ts`、`scripts/migrate-qianji.ts`；调整 `packages/runtime/src/effects/effect_runtime.ts`；新增迁移服务和重生回归测试 | 测试副本 dry-run/apply、重复迁移、归档与失败回滚相关用例通过；真实 workspace 未迁移。 |
+| S1-03 人设/图片/API | 新增 `apps/server/src/routes/qianji_routes.ts`、`world_presentation_service.ts`、`frontend/src/api/qianji.ts`；更新路由注册；新增人设编辑/详情界面和服务测试 | 输入校验、展示配置、人物履历与静态图片路由相关用例通过；未提供正式 Muse 图片/人设。 |
+| S1-04 Prompt/历史归属 | 调整 `packages/model/src/prompt/prompt_builder.ts`、`packages/protocol/src/types/model.ts` / `message.ts`、model-call/message/ledger/budget repositories、`agent_step_runner.ts` 和 `resources/prompts/v9_system_prompt.md`；新增 golden hash fixture | Prompt 身份快照、归属、未知成本和历史隔离用例通过；测试 Provider，无真实模型调用。 |
+| S1-05 人物聊天往返 | 调整 `decision.ts`、`effect.ts`、响应解析/编译、Runtime Effect；新增 `qianji_chat_repository.ts` 与 API 闭环测试 | `qianji_chat.test.ts` 验证排队、幂等、显式启动 Run、模拟 Provider 回复及刷新历史；Runtime 的非聊天回复拒绝用例通过。 |
+| S1-06 大厅/Engine | 更新 `frontend/src/App.tsx`、`features/run/RunStatus.tsx`、`styles/index.css`；新增 EngineView、大厅、人物卡/详情/聊天/编辑组件及 polling hook 和 UI 测试 | 默认大厅、Engine 导航和人物交互测试通过。浏览器实测 1440×900、390×844；无横向溢出，桌面纵向溢出为 0，窄屏内容纵向滚动正常。 |
+| S1-07 验收并停止 | 本执行记录 | Stage 1 实现已结束；有 1 项既有全仓测试失败，未进入 Stage 2。正式素材/用户内容验收、真实模型和真实 workspace 操作待后续授权。 |
+
+全仓验证结果：`tsc.cmd -b --force` 通过；前端 `tsc.cmd -p tsconfig.app.json --noEmit` 通过；`vitest.cmd run --reporter=dot` 共 284 项，283 通过、1 失败（43 个测试文件中 42 通过、1 失败）；Vite 生产构建通过。唯一失败是 `frontend/tests/run_status.test.tsx:13` 仍期待 `EmergentInc V11 商业元胞自动机`，而基线 `fc3d4c7` 的 `RunStatus.tsx` 已显示 `EmergentInc 元胞会社`。这是本阶段开始前已有的断言/文案不一致，本次未改无关断言；因此 S1-07 自动验收项保持未勾选。Vite 另提示现有 bundle 超过 500 kB；构建仍成功。
+
+界面由临时本地 API 与中性测试数据供给，未使用真实 workspace 数据。`tsc -b --force` 生成的三个 tracked `tsconfig.tsbuildinfo` 文件已恢复到基线。执行后 `git diff --check` 通过；未提交。
+
+下一步：停止于 Stage 1。先处理或明确接受上述既有测试失败，并完成正式内容/界面人工验收；用户验收 Stage 1 且明确要求后才进入 Stage 2。真实 workspace 仍未修改。
+
+### 8.5 Stage 2 执行记录（技术实现完成；真实业务验收未做）
+
+#### S2-01 组织类型、状态机和表
+
+- 基线：`fc3d4c7` 加上 8.4 所列 Stage 1 工作区改动。
+- 修改：新增 `mission.ts`、`trial.ts`、`execution.ts` 协议类型；`domain/mission/rules.ts`、`domain/trial/rules.ts`、`domain/execution/rules.ts`、`domain/qianji/lifecycle.ts`；新增 `mission_repository.ts`、`trial_repository.ts`、`execution_repository.ts` 并接入 CoreStore；迁移入口增加组织表和 `organization_schema_version`。
+- 验证：`vitest.cmd run packages/domain/tests/organization_rules.test.ts packages/persistence/tests/organization_repository.test.ts packages/persistence/tests/qianji_repository.test.ts --reporter=dot`，12 项通过；`tsc.cmd -b --force` 通过。
+- 未做/限制：无真实业务数据；服务/API 和 Run scope 尚未接入。
+- 下一任务：S2-02；真实 workspace 未修改。
+
+#### S2-02 Runtime 范围隔离
+
+- 基线：`fc3d4c7` 加 Stage 1、S2-01 工作区改动。
+- 修改：`runs`、`messages`、`reservations`、`model_calls` 增加 nullable `execution_id`；RunService 增加服务端 execution scope 和事务内 `onRunCreated`；MessageRepository 按范围领取、计数、恢复预算等待消息、区分 SELF/environment 去重，并在 binding 失效时记录 `ABANDONED` 原因；RoundScheduler 限定世界/任务成员自然唤醒、队列消费和轮次计数；AgentStepRunner/EffectRuntime/FeedbackFactory 派生消息继承范围；工具目录和 handler 复核已启用工具与 execution 快照交集，任务私有文件工具拒绝执行，artifact 根隔离到 `workspace/evidence/<executionId>/artifacts`；任务路由、能量/产物转移限制在同 execution 六邻居，禁止繁殖；更新 `docs/runtime_invariants.md` 与 `docs/security_boundary.md`。
+- 验证：`tsc.cmd -b --force` 通过；`vitest.cmd run packages/persistence/tests/organization_repository.test.ts packages/persistence/tests/qianji_repository.test.ts packages/runtime/tests/execution_scope.test.ts packages/runtime/tests/scheduler.test.ts packages/runtime/tests/effect_runtime.test.ts apps/server/tests/server.test.ts --reporter=dot`，6 个文件、49 项通过。包括世界/任务队列隔离、绑定失效、SELF 去重、私有工具越界拒绝、产物根隔离、事务回滚及 task round 幂等。
+- 未做/限制：未运行真实模型；未接入 Stage 2 的 execution 预算 reserve/settle；未修改真实 workspace。执行工具权限和输入快照后续由 Mission/Trial 服务创建与冻结。
+- 下一任务：S2-03；真实 workspace 未修改。
+
+#### S2-03 执行预算 reserve / settle / refund
+
+- 基线：S2-02 已通过定向验证的工作区状态。
+- 修改：`BudgetRepository` 在事务内校验 Pixel、Run、Execution 和 Trial 全候选共享额度；reserved token 同步写 execution，settle/refund 与人工恢复同步更新 execution 账目；AgentStepRunner 在最终 PreparedModelRequest 上裁剪 `maxTokens`，scoped reserve 使用输入估算加最终输出上限；新增 `WAITING_EXECUTION_BUDGET` 与预算耗尽停机原因；Run 结束检测实际超支并阻塞 execution。
+- 验证：`tsc.cmd -b --force` 通过；`vitest.cmd run apps/server/tests/server.test.ts packages/persistence/tests/execution_budget.test.ts packages/runtime/tests/execution_budget.test.ts --reporter=dot`，3 个文件、22 项通过。覆盖 Trial 共享预算、reserve/settle/refund、未知调用人工结算、环境变量输出上限、Run/Execution 实际超支如实记录并阻塞。
+- 未做/限制：Trial candidate 数量和 `N×candidateBudget <= totalBudget` 的服务入口校验在 S2-06 招聘/试炼编排中完成；未运行真实模型或真实 workspace。
+- 下一任务：S2-04；真实 workspace 未修改。
+
+#### S2-04 Mission 服务与阁主令输入
+
+- 修改：新增 `mission_service.ts`、`organization_routes.ts`；将 Mission 作用域接入 Run、消息、有效 mandate、任务证据快照、取消与Owner验收；手工改令在任务占用时拒绝；新增 Mission 看板和证据列表 API。修正 Execution 占用查询的 SQL 字段歧义。
+- 验证：`mission_service.test.ts` 覆盖输入冻结、作用域启动、人工验收、断联拒绝和无效证据拒绝；服务、运行隔离及预算测试通过。
+- 未做/限制：仅本地模拟 Provider；没有真实用户任务或真实 workspace。
+- 下一任务：S2-05；真实 workspace 未修改。
+
+#### S2-05 招贤榜与候选载体
+
+- 修改：新增候选人服务/API、正式与试炼人设分离、空白 workspace staging、全局未使用坐标约束、候选初始 `trial_seed` 能量奖励及请求幂等；同一候选不重复奖励。
+- 验证：`trial_service.test.ts` 覆盖安全坐标、重复请求、staging安装失败和残留阻断；类型检查通过。
+- 未做/限制：没有创建任何真实候选人；坐标与workspace均为临时测试数据。
+- 下一任务：S2-06；真实 workspace 未修改。
+
+#### S2-06 串行试炼与Owner裁决
+
+- 修改：新增统一题目/模型/工具快照、2–3人数量与共享预算约束、串行运行、失败/未知费用暂停与恢复、候选证据/成本展示、一次性裁决和落选者退役。
+- 验证：测试校验规则hash一致、候选不并发、阻塞后恢复及Winner/Loser状态；跨服务测试覆盖录用候选执行Mission、保存不可变证据快照并由Owner验收关闭。
+- 未做/限制：真实模型调用、正式题材和用户裁决待实际使用。
+- 下一任务：S2-07；真实 workspace 未修改。
+
+#### S2-07 履历、档案与组织界面
+
+- 修改：增加人物生涯聚合、退役前置检查、活跃绑定像素/产物归档、同幂等键安全重试；任务占用期间保护聊天/人设/手工令。前端增加Mission、招聘/试炼、产品、档案、纪事页面和大厅导航；Mission参与者可选择，档案可下载归档文件。
+- 验证：Server集成测试验证开放Mission阻止退休、关闭后归档及退役人物不可聊天；人物面板、导航和组织台交互测试通过。
+- 未做/限制（当时）：本地浏览器大厅可访问，但API服务未启动，人工桌面/窄屏视觉检查未完成；后续在S3-05用隔离mock服务补做1280×720桌面检查，窄屏仍未人工检查。
+- 下一任务：S2-08；真实 workspace 未修改。
+
+#### S2-08 阶段验收并停止
+
+- 验证：跨服务合成链覆盖候选串行试炼、Winner裁决、Mission执行、SHA-256证据快照和Owner验收；范围隔离、预算结算、Recovery、六邻居、私有artifact、退款赤字及旧Engine回归由现有服务/Runtime测试覆盖。Stage 2技术项完成后按用户明确要求进入Stage 3。
+- 未做/限制：真实题材、真实模型和用户/Muse人工验收未做；不以合成数据替代。
+- 下一任务：S3-01；真实 workspace 未修改。
+
+### 8.6 Stage 3 执行记录（技术实现完成；商业闭环未验证）
+
+#### S3-01 Product、反馈与交付
+
+- 修改：新增Product/Business/Narrative协议类型、增量表与 `BusinessRepository`；实现Product生命周期、Mission关联冻结、私有反馈/公开摘要分离、仅凭已验收Mission证据登记交付及反馈/交付事实事件。
+- 验证：产品状态、Mission关联、证据hash/大小校验、反馈隐私和历史保留由BusinessService测试覆盖。
+- 补充端到端验收：模拟 `ModelProvider` 驱动真实Runtime和 `save_artifact` 工具，经Owner验收后串联产品交付、反馈、测试收款、部分退款和Facts导出；记录只在临时workspace及内存DB。
+- 未做/限制：没有真实客户信息、真实交付或反馈。
+
+#### S3-02 收款与退款
+
+- 修改：复用外部收款/退款表，金额以CNY整数分为准；加入外部交易号、证据索引、幂等键、参与人份额和兼容金额投影；退款不改Token，允许部分退款并在同事务内校验累计上限。
+- 验证：重复/冲突收款、份额归属、部分退款、超额拒绝、旧行不归属、Token余额不变及区间退款日期均有测试。
+- 未做/限制：系统只记录Owner声明，不核验银行；本次没有向业务账本写入测试或真实收款。
+
+#### S3-03 成本、净收入和归因
+
+- 修改：实现组织/Product/Mission/Qianji指标；按Execution/绑定统计模型与工具成本、Owner助手成本单列；未知成本保留null；净收入、整数分摊、ROI和区间收款/退款分别计算。
+- 验证：一分多人稳定分摊、未知成本ROI、成本不重复计数及按交易发生区间统计通过测试。
+- 未做/限制：历史旧行保持待核对，不推测归属。
+
+#### S3-04 Narrative事实导出与回导
+
+- 修改：增加最大31天/2000事件导出、公开事件payload白名单、反馈原文/绝对路径/模型原始响应省略计数、来源ID校验、Chronicle按时间/人物/Mission/Product筛选；Muse草稿纯文本保存，回导用OwnerAction幂等键且只写叙事表。
+- 验证：隐私、范围、来源校验、重复回导、事件过滤和区间收退款统计均有测试。
+- 未做/限制：Muse内容的事实解释准确性需人工审核；没有自动发布。
+
+#### S3-05 产品阁、纪事与阶段验收
+
+- 修改：App增加组织控制台入口；实现Mission、试炼、Product、反馈、交付、人工收退款、退役档案/交付物及Facts/Narrative分区页面；产品成本走Product范围统计；加入响应式样式。
+- 验证：`tsc.cmd -b --force`、前端Vite生产构建通过；导航、Mission参与者、产品记账来源/凭据及未知成本交互测试通过。修正过时的RunStatus标题断言。全仓 `vitest.cmd run --reporter=dot` 为53个文件、318项全部通过。Vite有一个883 kB chunk超过500 kB提示，但构建通过。
+- UI验收：使用不含根目录 `.env` 的临时副本，以 `--mock` 在隔离workspace启动服务；API正常。于1280×720检查天机阁及组织控制台Mission、招贤与试炼、产品、档案、纪事页面，未观察到遮挡或横向溢出。窄屏未人工检查；样式有700px响应断点。
+- 未做/限制：没有真实收款、退款、客户交付、正式Muse内容或外部发布，结论为“技术能力完成，商业闭环未验证”。
+- 后续人工事项：提供真人需求/交付/反馈；确有收款时由Owner录入真实外部交易号与凭据索引；用户将事实导出交给Muse并审核内容。公开发布需单独决定。
+
+#### Stage 2/3 总体验证与工作区边界
+
+- `tsc.cmd -b --force` 与前端生产构建通过；`git diff --check` 通过（仅有Git LF/CRLF提示）。全仓53个文件、318项全部通过；定向服务/Runtime/界面测试通过。
+- 测试使用临时目录、内存DB和模拟Provider；没有迁移真实workspace、运行真实模型、部署、提交或推送。全阶段修改留在工作区待审。
+
+## 9. Plan 校准交付标准（修订阶段）
 
 - 保留三阶段愿景及Engine/Muse/用户的分工。
 - 把未存在的能力明确标为新增，给出当前真实代码入口。
 - 明确人物回复、历史身份、重生、调度隔离、预算结算、证据、收款退款和叙事导出的闭环。
 - 每个任务有输入、范围、实现约定、验证条件；不把关键架构选择留给执行者猜。
-- 不更改业务源码、不运行真实业务、不跨入实施。
+- Plan 校准阶段不更改业务源码、不运行真实业务；后续 Stage 1 实施情况以 8.4 为准。
