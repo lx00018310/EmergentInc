@@ -9,6 +9,7 @@ const apiMocks = vi.hoisted(() => ({
   listRecruitments: vi.fn(async () => []), listNarrativeArtifacts: vi.fn(async () => []), listFeedback: vi.fn(async () => []), listDeliveries: vi.fn(async () => []),
   businessMetrics: vi.fn(async (scope = 'organization', id?: string) => ({ scope, id, knownCostCny: 2, totalCostCny: 2, unknownModelCount: 0, unknownToolCount: 0, confirmedRevenueFen: 5000, refundFen: 0, netRevenueFen: 5000, roi: 24 })),
   createMission: vi.fn(async (body: unknown) => body),
+  createTrial: vi.fn(async (_body: unknown) => ({ trialId: 'trial-new' })),
   createRevenue: vi.fn(async (body: unknown) => body), createRefund: vi.fn(async (_txId: string, body: unknown) => body),
 }));
 
@@ -32,9 +33,35 @@ import { OrganizationDesk } from '../src/features/organization/OrganizationDesk'
 describe('OrganizationDesk product accounting inputs', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    apiMocks.listRecruitments.mockResolvedValue([]);
     vi.spyOn(window, 'setInterval').mockReturnValue(1);
   });
   afterEach(() => vi.restoreAllMocks());
+
+  it('requires a known recruitment before creating a trial', async () => {
+    apiMocks.listRecruitments.mockResolvedValue([{ recruitmentId: 'recruitment-a', roleLabel: '研究招贤榜' }] as any);
+    render(<OrganizationDesk onBack={() => undefined} />);
+    fireEvent.click(screen.getByRole('button', { name: '招贤与试炼' }));
+    await screen.findByRole('option', { name: '研究招贤榜' });
+    const submit = screen.getByRole('button', { name: '创建试炼' }) as HTMLButtonElement;
+    expect(submit.disabled).toBe(true);
+    fireEvent.submit(submit.closest('form')!);
+    expect(apiMocks.createTrial).not.toHaveBeenCalled();
+    fireEvent.change(screen.getByLabelText('统一考题'), { target: { value: '研究题目' } });
+    fireEvent.change(screen.getByLabelText('统一验收标准'), { target: { value: '来源明确' } });
+    fireEvent.change(screen.getByLabelText('招贤榜'), { target: { value: 'recruitment-a' } });
+    expect(submit.disabled).toBe(false);
+    fireEvent.click(submit);
+    await waitFor(() => expect(apiMocks.createTrial).toHaveBeenCalledWith(expect.objectContaining({ recruitmentId: 'recruitment-a' })));
+  });
+
+  it('asks for a recruitment first when none exist', async () => {
+    render(<OrganizationDesk onBack={() => undefined} />);
+    await screen.findByText('Accepted work');
+    fireEvent.click(screen.getByRole('button', { name: '招贤与试炼' }));
+    expect(screen.getByText('请先发布招贤榜，再创建关联试炼。')).toBeTruthy();
+    expect((screen.getByRole('button', { name: '创建试炼' }) as HTMLButtonElement).disabled).toBe(true);
+  });
 
   it('loads product-scoped figures and records the supplied external receipt and refund evidence', async () => {
     render(<OrganizationDesk onBack={() => undefined} />);

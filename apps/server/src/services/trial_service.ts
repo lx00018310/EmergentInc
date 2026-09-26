@@ -6,6 +6,7 @@ import { QianjiNarrativeSpec, Trial, TrialCandidate } from "@emergentinc/protoco
 import { validateQianjiNarrative } from "@emergentinc/domain";
 import { RunService } from "./run_service.js";
 import { containedPath, validatePathSegment } from "./safe_path.js";
+import { InputValidationError } from "./input_validation.js";
 
 const COORDINATE = /^-?(0|[1-9]\d*)_-?(0|[1-9]\d*)_-?(0|[1-9]\d*)$/;
 const DEFAULT_TOOLS = ["save_artifact", "read_artifact", "list_artifacts"];
@@ -101,7 +102,13 @@ export class TrialService {
     if (!Number.isSafeInteger(input.initialEnergyTokens) || input.initialEnergyTokens < 1) throw new Error("CANDIDATE_INITIAL_ENERGY_INVALID");
     const formal = validateQianjiNarrative(input.formalNarrative);
     const test = validateQianjiNarrative(input.testNarrative);
-    if (!formal.valid || !test.valid) throw new Error("CANDIDATE_NARRATIVE_INVALID");
+    if (!formal.valid || !test.valid) {
+      const errors = [
+        ...formal.errors.map(issue => ({ ...issue, path: issue.path.replace(/^narrative/, "formalNarrative") })),
+        ...test.errors.map(issue => ({ ...issue, path: issue.path.replace(/^narrative/, "testNarrative") })),
+      ];
+      throw new InputValidationError("CANDIDATE_NARRATIVE_INVALID", errors);
+    }
     const stageKey = createHash("sha256").update(input.idempotencyKey).digest("hex").slice(0, 24);
     const stagingRoot = containedPath(this.workspaceRoot, "runtime", "trial-candidate-staging");
     const stage = containedPath(stagingRoot, stageKey);

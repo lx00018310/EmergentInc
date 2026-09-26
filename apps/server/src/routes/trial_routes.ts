@@ -1,5 +1,6 @@
 import { FastifyInstance } from "fastify";
 import { TrialService } from "../services/trial_service.js";
+import { InputValidationError, InputValidationIssue } from "../services/input_validation.js";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
@@ -10,6 +11,7 @@ function statusFor(message: string): number {
   return 400;
 }
 function fail(reply: any, error: unknown) {
+  if (error instanceof InputValidationError) return reply.status(400).send({ detail: error.message, code: error.code, errors: error.errors });
   const message = error instanceof Error ? error.message : String(error);
   return reply.status(statusFor(message)).send({ detail: message });
 }
@@ -60,10 +62,18 @@ export async function registerTrialRoutes(server: FastifyInstance, service: Tria
   });
   server.post("/trials/:id/candidates", async (request, reply) => {
     const body = request.body;
-    if (!isRecord(body) || Object.keys(body).some(key => !["formalNarrative", "testNarrative", "pixelId", "initialEnergyTokens", "idempotencyKey"].includes(key)) ||
-        typeof body.pixelId !== "string" || !Number.isSafeInteger(body.initialEnergyTokens) ||
-        typeof body.idempotencyKey !== "string" || !body.idempotencyKey.trim() || body.idempotencyKey.length > 200 ||
-        !isRecord(body.formalNarrative) || !isRecord(body.testNarrative)) return reply.status(400).send({ detail: "TRIAL_CANDIDATE_INPUT_INVALID" });
+    if (!isRecord(body)) return fail(reply, new InputValidationError("TRIAL_CANDIDATE_INPUT_INVALID", [{ path: "body", message: "must be an object" }]));
+    const errors: InputValidationIssue[] = [];
+    for (const field of Object.keys(body)) if (!["formalNarrative", "testNarrative", "pixelId", "initialEnergyTokens", "idempotencyKey"].includes(field)) {
+      errors.push({ path: field, message: "unknown field" });
+    }
+    if (typeof body.pixelId !== "string" || !body.pixelId.trim()) errors.push({ path: "pixelId", message: "must be a non-blank coordinate string" });
+    if (!Number.isSafeInteger(body.initialEnergyTokens) || Number(body.initialEnergyTokens) < 1) errors.push({ path: "initialEnergyTokens", message: "must be a positive safe integer" });
+    if (typeof body.idempotencyKey !== "string" || !body.idempotencyKey.trim() || body.idempotencyKey.length > 200) {
+      errors.push({ path: "idempotencyKey", message: "must be a non-blank string of at most 200 characters" });
+    }
+    for (const field of ["formalNarrative", "testNarrative"]) if (!isRecord(body[field])) errors.push({ path: field, message: "must be an object" });
+    if (errors.length) return fail(reply, new InputValidationError("TRIAL_CANDIDATE_INPUT_INVALID", errors));
     try {
       const candidate = service.createCandidate(String((request.params as any).id ?? ""), body as any);
       return reply.status(201).send(candidate);

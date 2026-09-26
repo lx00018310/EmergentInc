@@ -41,6 +41,12 @@ CoreStore         —— node:sqlite，单事务仓储
 * **文件是人类可读的心智与交付物**：`live/pixels/<id>/{state.json,pixel.md,tips.md,mandate.md}`、`live/artifacts/<id>/`、`live/environment.md`、`live/world_state.json`。
 * `state.json` 的 `energy` 是副本；`/api/world` 读取时以 `pixel_accounts` 覆盖磁盘值。`neighbors` 不落盘，由 `getNeighbors6()` 按坐标实时计算。
 
+## 千机身份存储
+
+当前版本采用 SQLite 存储身份，与 `EmergentInc_TianJiGe_3_Stage_Execution_Plan_v2.md` 的 S1-01 数据契约一致：`qianji_profiles` 保存当前人设和职业状态，`qianji_narrative_revisions` 保存人设版本，`qianji_bindings` 保存人物与载体代次的绑定历史。一次修改在同一事务中更新版本和事件；模型的 Identity 上下文从数据库中对应的绑定与人设 revision 构造。
+
+`identity.json` 不参与当前运行链路，也不是另一份可编辑的身份事实源。`state.json` 的 `incarnation` 只描述载体代次；`pixel.md` 保存心智，不承载人设主档。备份或迁移身份必须包含 `workspace/ledger/v9_core.sqlite3`，不能仅复制 Pixel 文件。
+
 ## 兼容占位
 
 `GET /api/loops` 与 `GET /api/owner/requests` 只返回空结构，用于旧前端容错，背后没有实现，也不再有 `workspace/loops` 目录。

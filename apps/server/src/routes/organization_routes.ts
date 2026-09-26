@@ -1,26 +1,42 @@
 import { FastifyInstance } from "fastify";
 import { MissionDraftInput } from "@emergentinc/persistence";
 import { MissionService } from "../services/mission_service.js";
+import { InputValidationError, InputValidationIssue } from "../services/input_validation.js";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
-function missionInput(value: unknown): MissionDraftInput | null {
-  if (!isRecord(value)) return null;
+function missionInput(value: unknown): MissionDraftInput | InputValidationError {
+  if (!isRecord(value)) return new InputValidationError("MISSION_INPUT_INVALID", [{ path: "body", message: "must be an object" }]);
+  const errors: InputValidationIssue[] = [];
   const allowed = ["title", "missionType", "objective", "acceptanceCriteria", "budgetTokens", "roundsLimit", "deadlineRound", "ownerQianjiId", "participants"];
-  if (Object.keys(value).some(key => !allowed.includes(key))) return null;
-  if (typeof value.title !== "string" || typeof value.missionType !== "string" || typeof value.objective !== "string" ||
-      typeof value.acceptanceCriteria !== "string" || typeof value.ownerQianjiId !== "string" ||
-      !Number.isSafeInteger(value.budgetTokens) || !Number.isSafeInteger(value.roundsLimit) ||
-      (value.deadlineRound !== undefined && value.deadlineRound !== null && !Number.isSafeInteger(value.deadlineRound)) ||
-      !Array.isArray(value.participants) || value.participants.some(p => !isRecord(p) ||
-        typeof p.qianjiId !== "string" || typeof p.bindingId !== "string" ||
-        (p.duty !== undefined && p.duty !== null && typeof p.duty !== "string"))) return null;
+  for (const field of Object.keys(value)) if (!allowed.includes(field)) errors.push({ path: field, message: "unknown field" });
+  for (const field of ["title", "missionType", "objective", "acceptanceCriteria", "ownerQianjiId"]) {
+    if (typeof value[field] !== "string" || !(value[field] as string).trim()) errors.push({ path: field, message: "must be a non-blank string" });
+  }
+  for (const field of ["budgetTokens", "roundsLimit"]) {
+    if (!Number.isSafeInteger(value[field]) || Number(value[field]) < 1) errors.push({ path: field, message: "must be a positive safe integer" });
+  }
+  if (value.deadlineRound != null && (!Number.isSafeInteger(value.deadlineRound) || Number(value.deadlineRound) < 1)) {
+    errors.push({ path: "deadlineRound", message: "must be a positive safe integer or null" });
+  }
+  if (!Array.isArray(value.participants) || value.participants.length < 1) {
+    errors.push({ path: "participants", message: "must contain at least one participant" });
+  } else value.participants.forEach((participant, index) => {
+    const prefix = `participants.${index}`;
+    if (!isRecord(participant)) { errors.push({ path: prefix, message: "must be an object" }); return; }
+    for (const field of ["qianjiId", "bindingId"]) {
+      if (typeof participant[field] !== "string" || !(participant[field] as string).trim()) errors.push({ path: `${prefix}.${field}`, message: "must be a non-blank string" });
+    }
+    if (participant.duty != null && typeof participant.duty !== "string") errors.push({ path: `${prefix}.duty`, message: "must be a string or null" });
+  });
+  if (errors.length) return new InputValidationError("MISSION_INPUT_INVALID", errors);
   return value as unknown as MissionDraftInput;
 }
 
 function sendError(reply: any, error: unknown): any {
+  if (error instanceof InputValidationError) return reply.status(400).send({ detail: error.message, code: error.code, errors: error.errors });
   const message = error instanceof Error ? error.message : String(error);
   const notFound = message === "MISSION_NOT_FOUND";
   const conflict = /CONFLICT|OCCUPIED|NOT_DRAFT|NOT_ISSUED|NOT_RESUMABLE|RECOVERY|UNSETTLED|TERMINAL|DEADLINE|NOT_AWAITING|NOT_STARTABLE|STATE_CHANGED|ALREADY|BUDGET_EXHAUSTED|ROUND_LIMIT/.test(message);
@@ -46,7 +62,7 @@ export async function registerOrganizationRoutes(server: FastifyInstance, missio
 
   server.post("/missions", async (request, reply) => {
     const input = missionInput(request.body);
-    if (!input) return reply.status(400).send({ detail: "MISSION_INPUT_INVALID" });
+    if (input instanceof InputValidationError) return sendError(reply, input);
     try { return reply.status(201).send(missionService.create(input)); }
     catch (error) { return sendError(reply, error); }
   });
@@ -66,7 +82,7 @@ export async function registerOrganizationRoutes(server: FastifyInstance, missio
   server.put("/missions/:id", async (request, reply) => {
     const id = String((request.params as any).id ?? "");
     const input = missionInput(request.body);
-    if (!input) return reply.status(400).send({ detail: "MISSION_INPUT_INVALID" });
+    if (input instanceof InputValidationError) return sendError(reply, input);
     try { return reply.send(missionService.update(id, input)); }
     catch (error) { return sendError(reply, error); }
   });
