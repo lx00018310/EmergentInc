@@ -4,7 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { CoreStore } from "@emergentinc/persistence";
 import { ToolRegistry, ToolRuntime, handleSaveArtifact, handleTransferArtifact } from "@emergentinc/tools";
-import { RoundScheduler } from "../src/index.js";
+import { DecisionCompiler, EffectRuntime, RoundScheduler } from "../src/index.js";
 
 const narrative = (displayName: string) => ({
   displayName, title: null, roleLabel: null, traits: {}, behaviorProfile: [], flaw: null,
@@ -61,6 +61,57 @@ describe("Runtime: execution scope", () => {
 
     await scheduler.executeRound(1, "run-world");
     expect(processed).toEqual([taskA.messageId, worldOnly.messageId]);
+  });
+
+  it("keeps retired carriers out of world wake and message processing after energy credits", async () => {
+    store = new CoreStore(":memory:");
+    workspaceRoot = fs.mkdtempSync(path.join(os.tmpdir(), "retired-scope-"));
+    for (const pixelId of ["0_0_0", "1_0_0", "2_0_0"]) {
+      store.pixels.upsertPixelAccount({ pixelId, energy: 1000, active: true, refundDeficitTokens: 0, spendBlockedReason: null });
+    }
+    const retired = store.qianji.createProfile({ careerStatus: "active" });
+    const oldBinding = store.qianji.createBinding({ qianjiId: retired.qianjiId, pixelId: "1_0_0", incarnation: 1 });
+    store.qianji.unbindAndRetire(oldBinding.bindingId, "live/history/retired/pixel", "retired");
+    store.pixels.setActive("1_0_0", false);
+
+    const transferMessage = store.messages.enqueueMessage({ roundNum: 1, sender: "human", recipient: "0_0_0", content: "transfer" });
+    const effects = new EffectRuntime({ workspaceRoot, store, toolRuntime: new ToolRuntime(new ToolRegistry()), round: 1, runId: null });
+    await effects.applyEffects(DecisionCompiler.compile({ pixelId: "0_0_0", messageId: transferMessage.messageId,
+      currentHop: 0, decision: { energy_transfer: [{ target: "1_0_0", amount: 5 }] } }));
+    store.messages.commitMessage(transferMessage.messageId);
+    expect(store.pixels.getPixelAccount("1_0_0")).toMatchObject({ active: true, energy: 1005 });
+    expect(store.executions.isWorldPixelEligible("1_0_0")).toBe(false);
+    store.pixels.setActive("1_0_0", false);
+    store.applyExternalReward({ pixelId: "1_0_0", amount: 5, idempotencyKey: "retired-reward" });
+    expect(store.pixels.getPixelAccount("1_0_0")).toMatchObject({ active: true, energy: 1010 });
+
+    const processed: string[] = [];
+    const scheduler = new RoundScheduler({ workspaceRoot, store, stepRunner: {
+      async execute(input: any) {
+        processed.push(input.message.messageId);
+        store!.messages.commitMessage(input.message.messageId);
+        return { decision: { send_to: "STOP", operations: [] } };
+      },
+      isReadOnlyTool: () => false,
+    } as any });
+    scheduler.beginRound(10, null);
+    expect(store.messages.listRecentMessages(100).filter(message => message.recipient === "1_0_0")).toEqual([]);
+    const lateMessage = store.messages.enqueueMessage({ roundNum: 10, sender: "human", recipient: "1_0_0", content: "late input" });
+    await scheduler.executeRound(10, "world-retired");
+    expect(processed).not.toContain(lateMessage.messageId);
+    expect(store.messages.getMessage(lateMessage.messageId)?.status).toBe("QUEUED");
+
+    // Historical retirement must not block a new active identity at the same coordinate.
+    const successor = store.qianji.createProfile({ careerStatus: "active" });
+    store.qianji.createBinding({ qianjiId: successor.qianjiId, pixelId: "1_0_0", incarnation: 2 });
+    expect(store.executions.isWorldPixelEligible("1_0_0")).toBe(true);
+    expect(store.executions.isWorldPixelEligible("2_0_0")).toBe(true);
+    const successorMessage = store.messages.enqueueMessage({ roundNum: 11, sender: "human", recipient: "1_0_0", content: "new identity" });
+    const legacyMessage = store.messages.enqueueMessage({ roundNum: 11, sender: "human", recipient: "2_0_0", content: "unbound legacy" });
+    await scheduler.executeRound(11, "world-successor");
+    expect(processed).toContain(successorMessage.messageId);
+    expect(processed).toContain(legacyMessage.messageId);
+    expect(processed).not.toContain(lateMessage.messageId);
   });
 
   it("denies tools outside the snapshot and blocks global private files even if listed", async () => {

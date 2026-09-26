@@ -70,15 +70,17 @@ export class ExecutionRepository {
 
   public isWorldPixelEligible(pixelId: string): boolean {
     const row = this.db.prepare(`SELECT 1 AS eligible
-      WHERE NOT EXISTS (
+      WHERE (NOT EXISTS (
+        SELECT 1 FROM qianji_bindings WHERE pixel_id=?
+      ) OR EXISTS (
         SELECT 1 FROM qianji_bindings b JOIN qianji_profiles q ON q.qianji_id=b.qianji_id
-        WHERE b.pixel_id=? AND b.unbound_at IS NULL AND q.career_status <> 'active'
-      ) AND NOT EXISTS (
+        WHERE b.pixel_id=? AND b.unbound_at IS NULL AND q.career_status = 'active'
+      )) AND NOT EXISTS (
         SELECT 1 FROM execution_participants ep
         JOIN executions e ON e.execution_id=ep.execution_id
         JOIN qianji_bindings b ON b.binding_id=ep.binding_id
         WHERE b.pixel_id=? AND ep.released_at IS NULL AND e.status <> 'closed'
-      )`).get(pixelId, pixelId) as any;
+      )`).get(pixelId, pixelId, pixelId) as any;
     return Boolean(row);
   }
 

@@ -325,7 +325,6 @@ export async function registerQianjiRoutes(server: FastifyInstance, options: Qia
       const previous = store.ownerActions.getPrevious<ReturnType<CoreStore["qianji"]["unbindAndRetire"]>>(
         body.idempotencyKey, `qianji.retire:${id}`, body);
       if (previous) {
-        store.pixels.setActive(previous.pixelId, false);
         return reply.send({ binding: previous, profile: store.qianji.getProfile(id) });
       }
     } catch (error) {

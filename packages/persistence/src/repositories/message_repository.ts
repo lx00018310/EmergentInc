@@ -155,10 +155,12 @@ export class MessageRepository {
                 AND ((e.kind='mission' AND q.career_status='active') OR
                      (e.kind='trial_candidate' AND q.career_status='trial'))
             )`
-          : `m.execution_id IS NULL AND NOT EXISTS (
+          : `m.execution_id IS NULL AND (NOT EXISTS (
+              SELECT 1 FROM qianji_bindings WHERE pixel_id=m.recipient
+            ) OR EXISTS (
               SELECT 1 FROM qianji_bindings b JOIN qianji_profiles p ON p.qianji_id=b.qianji_id
-              WHERE b.pixel_id=m.recipient AND b.unbound_at IS NULL AND p.career_status <> 'active'
-            ) AND NOT EXISTS (
+              WHERE b.pixel_id=m.recipient AND b.unbound_at IS NULL AND p.career_status = 'active'
+            )) AND NOT EXISTS (
               SELECT 1 FROM execution_participants ep
               JOIN executions e ON e.execution_id=ep.execution_id
               JOIN qianji_bindings b ON b.binding_id=ep.binding_id

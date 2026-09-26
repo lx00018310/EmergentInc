@@ -4,7 +4,7 @@ import { createServer } from "../src/app.js";
 import { CoreStore } from "@emergentinc/persistence";
 import { ToolRegistry, registerAllBuiltinTools, ToolRuntime } from "@emergentinc/tools";
 import { PromptBuilder, UsageMeter, ModelProvider } from "@emergentinc/model";
-import { AgentStepRunner, RoundScheduler } from "@emergentinc/runtime";
+import { AgentStepRunner, DecisionCompiler, EffectRuntime, RoundScheduler } from "@emergentinc/runtime";
 import { WorldService } from "../src/services/world_service.js";
 import { RunService } from "../src/services/run_service.js";
 import { PromptService } from "../src/services/prompt_service.js";
@@ -762,6 +762,35 @@ describe("Server: API Contract Integration Tests", () => {
     });
     expect(artifact.statusCode).toBe(200);
     expect(artifact.rawPayload.toString("utf8")).toBe("archived");
+  });
+
+  it("replays retirement without deactivating a new incarnation at the same coordinate", async () => {
+    const profile = store.qianji.createProfile({ careerStatus: "active" });
+    const binding = store.qianji.createBinding({ qianjiId: profile.qianjiId, pixelId: "1_0_0", incarnation: 1 });
+    store.pixels.upsertPixelAccount({ pixelId: "1_0_0", energy: 0, active: false, refundDeficitTokens: 0, spendBlockedReason: null });
+    store.pixels.upsertPixelAccount({ pixelId: "0_0_0", energy: 1000, active: true, refundDeficitTokens: 0, spendBlockedReason: null });
+    const pixelDir = path.join(tmpDir, "live", "pixels", "1_0_0");
+    fs.mkdirSync(pixelDir, { recursive: true });
+    fs.writeFileSync(path.join(pixelDir, "state.json"), JSON.stringify({ incarnation: 1 }));
+    const payload = { reason: "retire old carrier", idempotencyKey: "retire-before-rebirth" };
+    const retired = await app.inject({ method: "POST", url: `/api/qianji/${profile.qianjiId}/retire`, payload });
+    expect(retired.statusCode).toBe(200);
+
+    const message = store.messages.enqueueMessage({ roundNum: 6, sender: "human", recipient: "0_0_0", content: "reproduce" });
+    const runtime = new EffectRuntime({ workspaceRoot: tmpDir, store, toolRuntime: new ToolRuntime(new ToolRegistry()), round: 6, runId: null });
+    await runtime.applyEffects(DecisionCompiler.compile({ pixelId: "0_0_0", messageId: message.messageId,
+      currentHop: 0, decision: { reproduce: { direction: "1_0_0", initial_energy: 150 } } }));
+    const successor = store.qianji.getCurrentBindingByPixel("1_0_0")!;
+    expect(successor).toMatchObject({ incarnation: 2 });
+    expect(successor.qianjiId).not.toBe(profile.qianjiId);
+    const accountBeforeRetry = store.pixels.getPixelAccount("1_0_0");
+    expect(accountBeforeRetry).toMatchObject({ active: true, energy: 150 });
+    const retry = await app.inject({ method: "POST", url: `/api/qianji/${profile.qianjiId}/retire`, payload });
+    expect(retry.statusCode).toBe(200);
+    expect(retry.json().binding).toEqual(retired.json().binding);
+    expect(retry.json().binding.bindingId).toBe(binding.bindingId);
+    expect(store.pixels.getPixelAccount("1_0_0")).toEqual(accountBeforeRetry);
+    expect(store.qianji.getCurrentBindingByPixel("1_0_0")).toEqual(successor);
   });
 
   it("blocks retirement while a mission is open, archives the binding, and rejects retired chat", async () => {
