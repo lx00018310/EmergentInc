@@ -270,12 +270,17 @@ export class EffectRuntime {
       effect.toolCall.args,
       toolCtx
     );
+    const hasObjectOutput = Boolean(result.output && typeof result.output === "object" && !Array.isArray(result.output));
+    const storedOutput = hasObjectOutput ? { ...result.output } : result.output;
+    const visibleOutput = hasObjectOutput ? { ...result.output } : result.output;
+    if (hasObjectOutput) delete visibleOutput.snapshot_relative_path;
+    const storedResult = hasObjectOutput ? { ...result, output: storedOutput } : result;
 
     // 记录工具执行结束
     this.ctx.store.toolExecutions.recordFinished({
       operationId: effect.operationId,
       status: result.status,
-      result: JSON.stringify(result.output || result.error_message || ""),
+      result: JSON.stringify(result.output ? storedOutput : result.error_message || ""),
       finishedAt: Date.now() / 1000,
       costCny: result.costCny,
     });
@@ -287,7 +292,7 @@ export class EffectRuntime {
       effect_index: effect.effectIndex,
       payload_hash: effect.payloadHash,
       status: result.status === "SUCCESS" ? "APPLIED" : "FAILED",
-      details: JSON.stringify(result),
+      details: JSON.stringify(storedResult),
       created_at: Date.now() / 1000,
     });
 
@@ -296,7 +301,7 @@ export class EffectRuntime {
       execution: {
         tool: result.tool,
         status: result.status,
-        outputOrError: result.status === "SUCCESS" ? result.output : result.error_message,
+        outputOrError: result.status === "SUCCESS" ? visibleOutput : result.error_message,
       },
     };
   }

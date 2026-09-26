@@ -36,6 +36,7 @@ export interface PromptInputs {
   pixelFiles?: string[] | null;
   identity?: QianjiPromptIdentity | null;
   toolsCatalog?: string | null;
+  scopedModelName?: string;
 }
 
 export class PromptBuilder {
@@ -95,12 +96,14 @@ export class PromptBuilder {
   } {
     // 1. 认知隔离校验：只允许已定义的 Pixel 输入和服务端构造的自身 identity。
     const inputKeys = Object.keys(inputs);
-    const allowedKeys = new Set(["state", "pixelMd", "messageMd", "external", "pixelFiles", "identity", "toolsCatalog"]);
+    const allowedKeys = new Set(["state", "pixelMd", "messageMd", "external", "pixelFiles", "identity", "toolsCatalog", "scopedModelName"]);
     if (inputKeys.some((k) => !allowedKeys.has(k)) || !inputs.state || inputs.pixelMd === undefined || inputs.messageMd === undefined) {
       throw new CognitiveIsolationViolation(
         "Context payload must strictly contain only valid pixel inputs: state, pixelMd, messageMd, external, pixelFiles"
       );
     }
+    const modelName = inputs.scopedModelName ?? this.modelName;
+    if (typeof modelName !== "string" || !modelName.trim()) throw new CognitiveIsolationViolation("Scoped model name must be a non-empty string");
 
     // 2. 严格五层分离格式组织内容
     const external = inputs.external || {};
@@ -149,12 +152,12 @@ export class PromptBuilder {
     const envMaxTokens = process.env.MCL_MAX_TOKENS ? Number(process.env.MCL_MAX_TOKENS) : undefined;
     if (envMaxTokens && !isNaN(envMaxTokens)) {
       maxTokens = envMaxTokens;
-    } else if (this.modelName.toLowerCase().includes("glm")) {
+    } else if (modelName.toLowerCase().includes("glm")) {
       maxTokens = Math.max(maxTokens, 16384);
     }
 
     const request: PreparedModelRequest = {
-      model: this.modelName,
+      model: modelName,
       messages: [
         { role: "system", content: effectiveSystemPrompt },
         { role: "user", content: userContent },

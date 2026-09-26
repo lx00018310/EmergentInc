@@ -6,6 +6,7 @@ export interface MissionDto {
   budgetTokens: number; roundsLimit: number; deadlineRound: number | null; status: MissionStatus;
   ownerQianjiId: string; acceptanceNote: string | null; createdAt: number; completedAt: number | null;
   executionId: string | null; participants: Array<{ qianjiId: string; bindingId: string; duty: string | null }>;
+  execution?: { status: string; roundsUsed: number; roundsLimit: number; spentTokens: number; reservedTokens: number; budgetTokens: number } | null;
 }
 export interface CandidateDto {
   candidateId: string; qianjiId: string; bindingId: string; executionId: string; ordinal: number;

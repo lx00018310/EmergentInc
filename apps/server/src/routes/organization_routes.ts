@@ -23,11 +23,16 @@ function missionInput(value: unknown): MissionDraftInput | null {
 function sendError(reply: any, error: unknown): any {
   const message = error instanceof Error ? error.message : String(error);
   const notFound = message === "MISSION_NOT_FOUND";
-  const conflict = /CONFLICT|OCCUPIED|NOT_DRAFT|NOT_ISSUED|NOT_RESUMABLE|RECOVERY|UNSETTLED|TERMINAL|DEADLINE|NOT_AWAITING|NOT_STARTABLE|STATE_CHANGED|ALREADY/.test(message);
+  const conflict = /CONFLICT|OCCUPIED|NOT_DRAFT|NOT_ISSUED|NOT_RESUMABLE|RECOVERY|UNSETTLED|TERMINAL|DEADLINE|NOT_AWAITING|NOT_STARTABLE|STATE_CHANGED|ALREADY|BUDGET_EXHAUSTED|ROUND_LIMIT/.test(message);
   return reply.status(notFound ? 404 : conflict ? 409 : 400).send({ detail: message });
 }
 
 export async function registerOrganizationRoutes(server: FastifyInstance, missionService: MissionService): Promise<void> {
+  const withProgress = (mission: NonNullable<ReturnType<MissionService["get"]>>) => ({
+    ...mission,
+    execution: missionService.getExecutionProgress(mission.missionId),
+  });
+
   server.get("/missions", async (request, reply) => {
     const query = request.query as Record<string, unknown>;
     const limit = query.limit === undefined ? 50 : Number(query.limit);
@@ -36,7 +41,7 @@ export async function registerOrganizationRoutes(server: FastifyInstance, missio
     if (status !== undefined && !["draft", "issued", "running", "awaiting_acceptance", "completed", "failed", "cancelled"].includes(status)) {
       return reply.status(400).send({ detail: "MISSION_STATUS_INVALID" });
     }
-    return reply.send({ items: missionService.list({ status, limit }), limit });
+    return reply.send({ items: missionService.list({ status, limit }).map(withProgress), limit });
   });
 
   server.post("/missions", async (request, reply) => {
@@ -49,7 +54,7 @@ export async function registerOrganizationRoutes(server: FastifyInstance, missio
   server.get("/missions/:id", async (request, reply) => {
     const id = String((request.params as any).id ?? "");
     const mission = missionService.get(id);
-    return mission ? reply.send(mission) : reply.status(404).send({ detail: "MISSION_NOT_FOUND" });
+    return mission ? reply.send(withProgress(mission)) : reply.status(404).send({ detail: "MISSION_NOT_FOUND" });
   });
 
   server.get("/missions/:id/evidence", async (request, reply) => {

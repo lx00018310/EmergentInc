@@ -165,6 +165,8 @@ export class AgentStepRunner {
         },
         ...(identitySnapshot.identity ? { identity: identitySnapshot.identity } : {}),
         ...(executionScope ? { toolsCatalog: this.toolRuntime.registry.renderCatalogForPrompt(executionScope.allowedTools) } : {}),
+        ...(executionScope && typeof executionScope.inputSnapshot.modelName === "string"
+          ? { scopedModelName: executionScope.inputSnapshot.modelName } : {}),
         pixelMd: pixelMind,
         messageMd: messageMd || "(no local messages)",
         external: {

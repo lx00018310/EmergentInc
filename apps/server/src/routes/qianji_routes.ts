@@ -324,7 +324,10 @@ export async function registerQianjiRoutes(server: FastifyInstance, options: Qia
     try {
       const previous = store.ownerActions.getPrevious<ReturnType<CoreStore["qianji"]["unbindAndRetire"]>>(
         body.idempotencyKey, `qianji.retire:${id}`, body);
-      if (previous) return reply.send({ binding: previous, profile: store.qianji.getProfile(id) });
+      if (previous) {
+        store.pixels.setActive(previous.pixelId, false);
+        return reply.send({ binding: previous, profile: store.qianji.getProfile(id) });
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       return reply.status(409).send({ detail: message });
@@ -357,7 +360,9 @@ export async function registerQianjiRoutes(server: FastifyInstance, options: Qia
         try {
           if (fs.existsSync(sourcePixel)) { fs.renameSync(sourcePixel, archivePixel); movedPixel = true; }
           if (fs.existsSync(sourceArtifacts)) { fs.renameSync(sourceArtifacts, archiveArtifacts); movedArtifacts = true; }
-          return store.qianji.unbindAndRetire(binding.bindingId, `live/history/${binding.bindingId}/pixel`, retirementReason.trim());
+          const retired = store.qianji.unbindAndRetire(binding.bindingId, `live/history/${binding.bindingId}/pixel`, retirementReason.trim());
+          store.pixels.setActive(binding.pixelId, false);
+          return retired;
         } catch (error) {
           if (movedArtifacts && fs.existsSync(archiveArtifacts)) fs.renameSync(archiveArtifacts, sourceArtifacts);
           if (movedPixel && fs.existsSync(archivePixel)) fs.renameSync(archivePixel, sourcePixel);

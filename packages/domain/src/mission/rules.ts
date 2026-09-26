@@ -4,7 +4,7 @@ const transitions: Record<MissionStatus, readonly MissionStatus[]> = {
   draft: ["issued", "cancelled"],
   issued: ["running", "cancelled"],
   running: ["awaiting_acceptance", "cancelled"],
-  awaiting_acceptance: ["completed", "failed", "cancelled"],
+  awaiting_acceptance: ["running", "completed", "failed", "cancelled"],
   completed: [],
   failed: [],
   cancelled: [],

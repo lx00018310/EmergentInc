@@ -201,10 +201,6 @@ export class TrialService {
         throw new Error("TRIAL_RULE_SNAPSHOT_MISMATCH");
       }
     }
-    this.store.transaction(() => {
-      for (const candidate of trial.candidates) this.store.qianji.transitionCareerStatus(candidate.qianjiId, "candidate", "trial");
-      this.store.trials.transition(trialId, "draft", "running", { candidateCount: trial.candidates.length, rulesHash });
-    });
     return this.launchCandidate(trial, trial.candidates[0], false);
   }
 
@@ -216,13 +212,14 @@ export class TrialService {
     if (!candidate) return this.finishSelection(trialId);
     const execution = this.store.executions.get(candidate.executionId)!;
     if (execution.status === "awaiting_review") return this.finishCandidate(trial, candidate);
-    if (execution.status !== "blocked") throw new Error(`TRIAL_CANDIDATE_NOT_PAUSED:${execution.status}`);
+    if (execution.status !== "blocked" && !(execution.status === "ready" && trial.pauseReason?.startsWith("candidate_start_failed:"))) {
+      throw new Error(`TRIAL_CANDIDATE_NOT_PAUSED:${execution.status}`);
+    }
     if (execution.spentTokens + execution.reservedTokens >= execution.budgetTokens) throw new Error("TRIAL_CANDIDATE_BUDGET_EXHAUSTED");
     if (this.store.getUnfinalizedOperations().hasUnfinalized) throw new Error("TRIAL_RECOVERY_REQUIRED");
     const remaining = execution.roundsLimit - execution.roundsUsed;
     const requested = rounds ?? Math.max(1, remaining);
     if (!Number.isSafeInteger(requested) || requested < 1 || requested > remaining) throw new Error("TRIAL_ROUND_LIMIT_EXCEEDED");
-    this.store.trials.clearPauseReason(trialId);
     return this.launchCandidate(trial, candidate, true, requested);
   }
 
@@ -290,12 +287,23 @@ export class TrialService {
   private async launchCandidate(trial: Trial, candidate: TrialCandidate, resume: boolean, rounds = trial.roundsPerCandidate): Promise<unknown> {
     const execution = this.store.executions.get(candidate.executionId);
     if (!execution) throw new Error("TRIAL_EXECUTION_MISSING");
-    if (execution.status !== (resume ? "blocked" : "ready")) throw new Error(`TRIAL_EXECUTION_NOT_STARTABLE:${execution.status}`);
+    const allowedStatuses = resume ? ["blocked", "ready"] : ["ready"];
+    if (!allowedStatuses.includes(execution.status)) throw new Error(`TRIAL_EXECUTION_NOT_STARTABLE:${execution.status}`);
     const result = await this.runService.start({
       rounds, runBudgetTokens: trial.candidateBudgetTokens, executionId: execution.executionId,
       onRunCreated: () => this.store.transaction(() => {
         const fresh = this.store.executions.get(execution.executionId);
         if (!fresh || fresh.status !== execution.status) throw new Error("TRIAL_EXECUTION_STATE_CHANGED");
+        const currentTrial = this.requireTrial(trial.trialId);
+        if (!resume && candidate.ordinal === 1) {
+          if (currentTrial.status !== "draft") throw new Error("TRIAL_STATE_CHANGED");
+          const rulesHash = String(fresh.inputSnapshot.rulesHash ?? "");
+          for (const item of currentTrial.candidates) this.store.qianji.transitionCareerStatus(item.qianjiId, "candidate", "trial");
+          this.store.trials.transition(trial.trialId, "draft", "running", { candidateCount: currentTrial.candidates.length, rulesHash });
+        } else if (currentTrial.status !== "running") {
+          throw new Error("TRIAL_STATE_CHANGED");
+        }
+        if (resume && currentTrial.pauseReason) this.store.trials.clearPauseReason(trial.trialId);
         this.store.executions.transition(execution.executionId, fresh.status, "running");
         const binding = this.store.qianji.getBinding(candidate.bindingId);
         if (!binding || binding.unboundAt !== null) throw new Error("TRIAL_BINDING_CHANGED");

@@ -109,6 +109,37 @@ export async function handleSaveArtifact(
       };
     }
 
+    let snapshotRelativePath: string | undefined;
+    if (ctx.executionScope) {
+      const executionId = ctx.executionScope.executionId;
+      const snapshotSegments = ["evidence", executionId, "snapshots", ctx.operationId, pixelId, filename];
+      const workspace = path.resolve(ctx.workspaceRoot);
+      let current = workspace;
+      for (const segment of snapshotSegments.slice(0, -1)) {
+        current = path.join(current, segment);
+        if (fs.existsSync(current)) {
+          const stat = fs.lstatSync(current);
+          if (stat.isSymbolicLink() || !stat.isDirectory()) throw new Error("ARTIFACT_SNAPSHOT_PATH_INVALID");
+        } else {
+          fs.mkdirSync(current);
+        }
+      }
+      const snapshotFile = path.resolve(current, filename);
+      const relative = path.relative(workspace, snapshotFile);
+      if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+        throw new Error("ARTIFACT_SNAPSHOT_PATH_INVALID");
+      }
+      const sha256 = crypto.createHash("sha256").update(content, "utf8").digest("hex");
+      if (fs.existsSync(snapshotFile)) {
+        if (fs.lstatSync(snapshotFile).isSymbolicLink() || fs.readFileSync(snapshotFile, "utf8") !== content) {
+          throw new Error("ARTIFACT_SNAPSHOT_OPERATION_CONFLICT");
+        }
+      } else {
+        fs.writeFileSync(snapshotFile, content, { encoding: "utf8", flag: "wx" });
+      }
+      snapshotRelativePath = snapshotSegments.join("/");
+    }
+
     fs.writeFileSync(targetFile, content, "utf-8");
     const sha256 = crypto.createHash("sha256").update(content, "utf8").digest("hex");
     const sizeBytes = Buffer.byteLength(content, "utf-8");
@@ -122,6 +153,7 @@ export async function handleSaveArtifact(
         filename,
         size_bytes: sizeBytes,
         sha256,
+        ...(snapshotRelativePath ? { snapshot_relative_path: snapshotRelativePath } : {}),
       },
       duration_ms: 0,
       truncated: false,

@@ -66,6 +66,19 @@ export class MissionService {
     return this.store.missions.list(options);
   }
 
+  public getExecutionProgress(missionId: string) {
+    const mission = this.requireMission(missionId);
+    const execution = mission.executionId ? this.store.executions.get(mission.executionId) : null;
+    return execution ? {
+      status: execution.status,
+      roundsUsed: execution.roundsUsed,
+      roundsLimit: execution.roundsLimit,
+      spentTokens: execution.spentTokens,
+      reservedTokens: execution.reservedTokens,
+      budgetTokens: execution.budgetTokens,
+    } : null;
+  }
+
   public issue(missionId: string): Mission {
     return this.store.transaction(() => {
       const mission = this.requireMission(missionId);
@@ -116,18 +129,30 @@ export class MissionService {
 
   private async startOrResume(missionId: string, rounds: number, resume: boolean): Promise<unknown> {
     const mission = this.requireMission(missionId);
-    const expectedMissionStatus = resume ? "running" : "issued";
-    if (mission.status !== expectedMissionStatus) throw new Error(resume ? "MISSION_NOT_RESUMABLE" : "MISSION_NOT_ISSUED");
+    const expectedMissionStatuses = resume ? ["running", "awaiting_acceptance"] : ["issued"];
+    if (!expectedMissionStatuses.includes(mission.status)) throw new Error(resume ? "MISSION_NOT_RESUMABLE" : "MISSION_NOT_ISSUED");
     if (!Number.isSafeInteger(rounds) || rounds < 1) throw new Error("MISSION_ROUNDS_INVALID");
     const execution = mission.executionId ? this.store.executions.get(mission.executionId) : null;
     if (!execution || execution.kind !== "mission" || execution.subjectId !== missionId) throw new Error("MISSION_EXECUTION_MISSING");
-    if (execution.status === "blocked") throw new Error("MISSION_RECOVERY_REQUIRED");
-    if (execution.status !== "ready" && execution.status !== "awaiting_review") throw new Error(`MISSION_EXECUTION_NOT_STARTABLE:${execution.status}`);
+    if (resume && execution.status === "blocked") {
+      if (this.store.getUnfinalizedOperations().hasUnfinalized || execution.reservedTokens !== 0) {
+        throw new Error("MISSION_RECOVERY_REQUIRED");
+      }
+      const unresolved = this.store.db.prepare(`SELECT
+          (SELECT COUNT(*) FROM reservations WHERE execution_id=? AND status='OPEN') +
+          (SELECT COUNT(*) FROM messages WHERE execution_id=? AND status IN ('PROCESSING','RESERVED','CALLING','CALL_OUTCOME_UNKNOWN','AWAITING_SETTLEMENT')) AS count`)
+        .get(execution.executionId, execution.executionId) as any;
+      if (Number(unresolved.count) > 0) throw new Error("MISSION_RECOVERY_REQUIRED");
+    }
+    if (execution.status !== "ready" && execution.status !== "awaiting_review" && !(resume && execution.status === "blocked")) {
+      throw new Error(`MISSION_EXECUTION_NOT_STARTABLE:${execution.status}`);
+    }
+    if (execution.spentTokens + execution.reservedTokens >= execution.budgetTokens) throw new Error("MISSION_BUDGET_EXHAUSTED");
+    if (rounds > execution.roundsLimit - execution.roundsUsed) throw new Error("MISSION_ROUND_LIMIT_EXCEEDED");
     const currentRound = this.runService.getWorldRound();
     const nextRound = currentRound + execution.roundsUsed + 1;
     if (mission.deadlineRound !== null && nextRound + rounds - 1 > mission.deadlineRound) throw new Error("MISSION_DEADLINE_EXCEEDED");
 
-    const initialStart = !resume;
     const result = await this.runService.start({
       rounds,
       runBudgetTokens: mission.budgetTokens,
@@ -135,11 +160,15 @@ export class MissionService {
       onRunCreated: () => this.store.transaction(() => {
         const freshMission = this.requireMission(missionId);
         const freshExecution = this.store.executions.get(execution.executionId);
-        if (!freshExecution || freshExecution.status !== (initialStart ? "ready" : "awaiting_review")) {
+        if (!freshExecution || freshExecution.status !== execution.status) {
           throw new Error("MISSION_EXECUTION_STATE_CHANGED");
         }
         this.store.executions.transition(execution.executionId, freshExecution.status, "running");
-        if (initialStart) this.store.missions.transition(missionId, "issued", "running", { executionId: execution.executionId });
+        if (freshMission.status === "issued" || freshMission.status === "awaiting_acceptance") {
+          this.store.missions.transition(missionId, freshMission.status, "running", { executionId: execution.executionId });
+        } else if (freshMission.status !== "running") {
+          throw new Error("MISSION_STATE_CHANGED");
+        }
         for (const participant of freshMission.participants) {
           const binding = this.store.qianji.getBinding(participant.bindingId);
           if (!binding || binding.unboundAt !== null) throw new Error("MISSION_BINDING_CHANGED");
@@ -229,7 +258,7 @@ export class MissionService {
           (SELECT COUNT(*) FROM reservations WHERE execution_id=? AND status='OPEN') +
           (SELECT COUNT(*) FROM messages WHERE execution_id=? AND status IN ('PROCESSING','RESERVED','CALLING','CALL_OUTCOME_UNKNOWN','AWAITING_SETTLEMENT')) AS count`)
         .get(execution.executionId, execution.executionId) as any;
-      if (Number(unresolved.count) > 0 || currentExecution.reservedTokens !== 0 || currentExecution.status === "blocked") {
+      if (Number(unresolved.count) > 0 || currentExecution.reservedTokens !== 0) {
         throw new Error("MISSION_RECOVERY_REQUIRED");
       }
       this.store.db.prepare(`UPDATE messages SET status='ABANDONED', abandoned_reason='Mission cancelled by Owner', updated_at=?
@@ -272,6 +301,13 @@ export class MissionService {
       JOIN qianji_bindings b ON b.binding_id=ep.binding_id AND b.pixel_id=te.pixel_id
       WHERE m.execution_id=? AND te.tool='save_artifact' AND te.status='SUCCESS'
       ORDER BY te.started_at, te.operation_id`).all(executionId) as any[];
+    const latestLegacyOperation = new Map<string, string>();
+    for (const row of rows) {
+      const receipt = JSON.parse(String(row.result ?? "{}")) as Record<string, unknown>;
+      if (typeof receipt.filename === "string") {
+        latestLegacyOperation.set(`${row.pixelId}\0${receipt.filename}`, String(row.operationId));
+      }
+    }
     for (const row of rows) {
       if (byOperation.has(String(row.operationId))) continue;
       const receipt = JSON.parse(String(row.result ?? "{}")) as Record<string, unknown>;
@@ -280,15 +316,37 @@ export class MissionService {
       if (!/^[a-f0-9]{64}$/.test(String(receipt.sha256 ?? "")) || !Number.isSafeInteger(receipt.size_bytes)) {
         throw new Error(`EVIDENCE_RECEIPT_INVALID:${row.operationId}`);
       }
-      const source = containedPath(this.workspaceRoot, "evidence", executionId, "artifacts", String(row.pixelId), filename);
+      const evidenceId = `evidence_${randomUUID()}`;
+      const immutableRelativePath = typeof receipt.snapshot_relative_path === "string"
+        ? receipt.snapshot_relative_path : null;
+      let destinationRelative: string;
+      let destination: string;
+      let source: string;
+      if (immutableRelativePath) {
+        const segments = immutableRelativePath.split("/");
+        const expected = ["evidence", executionId, "snapshots", String(row.operationId), String(row.pixelId), filename];
+        if (segments.length !== expected.length || segments.some((segment, index) => segment !== expected[index])) {
+          throw new Error(`EVIDENCE_SNAPSHOT_PATH_INVALID:${row.operationId}`);
+        }
+        destinationRelative = immutableRelativePath;
+        destination = containedPath(this.workspaceRoot, ...segments);
+        source = destination;
+      } else {
+        // Older receipts have no per-operation snapshot. Only the latest save
+        // of a filename can still be verified against the mutable artifact.
+        const key = `${row.pixelId}\0${filename}`;
+        if (latestLegacyOperation.get(key) !== String(row.operationId)) continue;
+        source = containedPath(this.workspaceRoot, "evidence", executionId, "artifacts", String(row.pixelId), filename);
+        destinationRelative = path.posix.join("evidence", executionId, "snapshots", evidenceId, filename);
+        destination = containedPath(this.workspaceRoot, ...destinationRelative.split("/"));
+      }
       if (!fs.existsSync(source) || !fs.statSync(source).isFile()) throw new Error(`EVIDENCE_SOURCE_MISSING:${filename}`);
       const bytes = fs.readFileSync(source);
       if (digest(bytes) !== receipt.sha256 || bytes.length !== Number(receipt.size_bytes)) throw new Error(`EVIDENCE_SOURCE_CHANGED:${filename}`);
-      const evidenceId = `evidence_${randomUUID()}`;
-      const destinationRelative = path.posix.join("evidence", executionId, "snapshots", evidenceId, filename);
-      const destination = containedPath(this.workspaceRoot, ...destinationRelative.split("/"));
-      fs.mkdirSync(path.dirname(destination), { recursive: true });
-      fs.writeFileSync(destination, bytes, { flag: "wx" });
+      if (!immutableRelativePath) {
+        fs.mkdirSync(path.dirname(destination), { recursive: true });
+        fs.writeFileSync(destination, bytes, { flag: "wx" });
+      }
       const saved = fs.readFileSync(destination);
       if (digest(saved) !== String(receipt.sha256) || saved.length !== bytes.length) {
         throw new Error(`EVIDENCE_SNAPSHOT_VERIFY_FAILED:${filename}`);

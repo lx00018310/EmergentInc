@@ -107,8 +107,12 @@ function MissionBoard(props: { missions: MissionDto[]; members: QianjiListItemDt
       <div className="org-actions">
         {mission.status === 'draft' && <button className="btn btn-xs" onClick={() => void props.run(() => api.issueMission(mission.missionId))}>发布阁主令</button>}
         {mission.status === 'issued' && <button className="btn btn-xs btn-primary" onClick={() => void props.run(() => api.startMission(mission.missionId))}>开始 1 轮</button>}
-        {mission.status === 'running' && <button className="btn btn-xs btn-primary" onClick={() => void props.run(() => api.resumeMission(mission.missionId))}>继续 1 轮</button>}
-        {mission.status === 'running' && <small>执行中或等待恢复；只有 Run 完全结束后才可验收。</small>}
+        {(['running', 'awaiting_acceptance'].includes(mission.status) && mission.execution &&
+          mission.execution.status !== 'running' && ['ready', 'blocked', 'awaiting_review'].includes(mission.execution.status) &&
+          mission.execution.roundsUsed < mission.execution.roundsLimit &&
+          mission.execution.spentTokens + mission.execution.reservedTokens < mission.execution.budgetTokens) &&
+          <button className="btn btn-xs btn-primary" onClick={() => void props.run(() => api.resumeMission(mission.missionId))}>继续 1 轮</button>}
+        {mission.execution?.status === 'running' && <small>执行中；Run 结束后可继续任务或验收。</small>}
         {mission.status === 'awaiting_acceptance' && <>
           <button className="btn btn-xs" onClick={() => void props.run(async () => { const evidence = await api.missionEvidence(mission.missionId); props.setEvidenceByMission(current => ({ ...current, [mission.missionId]: evidence })); })}>读取证据</button>
           <input aria-label={`${mission.title} 证据 ID`} placeholder="证据 ID，逗号分隔；无文件型交付可留空" value={evidenceInput[mission.missionId] ?? ''} onChange={e => setEvidenceInput(current => ({ ...current, [mission.missionId]: e.target.value }))} />
@@ -203,7 +207,7 @@ function ArchiveHall({ items }: { items: QianjiListItemDto[] }) {
   }, [selectedId]);
   return <section className="org-panel"><div className="org-panel-title"><div><p className="qj-eyebrow">档案殿</p><h2>退役人物</h2></div><span>{items.length} 位</span></div>
     {items.map(item => <article className="org-card" key={item.profile.qianjiId}><div className="org-card-head"><div><h3>{item.profile.narrative.displayName}</h3><small>{item.profile.qianjiId} · 人设 revision {item.profile.narrativeRevision}</small></div><b>{item.profile.retiredAt ? new Date(item.profile.retiredAt * 1000).toLocaleString() : '时间未知'}</b></div><p>退役原因：{item.profile.retiredReason || '未记录'}</p><p className="org-muted">绑定历史 {item.bindingHistory.length} 条</p><button className="btn btn-xs" type="button" onClick={() => setSelectedId(item.profile.qianjiId)}>{selectedId === item.profile.qianjiId ? '刷新履历' : '查看履历和归档'}</button></article>)}
-    {error && <p className="org-error-text" role="alert">{error}</p>}{history && <div className="org-archive-history"><h3>{history.profile.narrative.displayName} · 履历与归档</h3><p>人物成本 {history.attributed.costSummary.totalCostCny === null ? `未知（已知 ${history.attributed.costSummary.knownCostCny.toFixed(4)} CNY）` : `${history.attributed.costSummary.totalCostCny.toFixed(4)} CNY`}</p>{history.artifacts.archives.map(archive => <section key={archive.bindingId}><h4>{archive.pixelId} · {archive.files.length} 个归档文件</h4>{archive.files.map(file => <p className="org-row" key={`${archive.bindingId}-${file.name}`}><a href={qianjiArtifactUrl(selectedId, archive.bindingId, file.name)} download>{file.name}</a><small>{file.size} bytes</small></p>)}</section>)}</div>}
+    {error && <p className="org-error-text" role="alert">{error}</p>}{history && <div className="org-archive-history"><h3>{items.find(item => item.profile.qianjiId === selectedId)?.profile.narrative.displayName ?? selectedId} · 履历与归档</h3><p>人物成本 {history.attributed.costSummary.totalCostCny === null ? `未知（已知 ${history.attributed.costSummary.knownCostCny.toFixed(4)} CNY）` : `${history.attributed.costSummary.totalCostCny.toFixed(4)} CNY`}</p>{history.artifacts.archives.map(archive => <section key={archive.bindingId}><h4>{archive.pixelId} · {archive.files.length} 个归档文件</h4>{archive.files.map(file => <p className="org-row" key={`${archive.bindingId}-${file.name}`}><a href={qianjiArtifactUrl(selectedId, archive.bindingId, file.name)} download>{file.name}</a><small>{file.size} bytes</small></p>)}</section>)}</div>}
     {items.length === 0 && <p className="org-muted">目前没有退役人物。</p>}</section>;
 }
 
