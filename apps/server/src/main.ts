@@ -18,6 +18,7 @@ import { WorldService } from "./services/world_service.js";
 import { RunService } from "./services/run_service.js";
 import { PromptService } from "./services/prompt_service.js";
 import { OwnerChatService } from "./services/owner_chat_service.js";
+import { OpenAICompatibleImageProvider } from "./services/gacha_image.js";
 
 async function bootstrap() {
   const projectRoot = path.resolve(import.meta.dirname, "../../..");
@@ -160,6 +161,12 @@ async function bootstrap() {
     usageMeter, modelName, isModelConfigured,
   });
 
+  const imageModel = process.env.GACHA_IMAGE_MODEL;
+  const imageKey = process.env.GACHA_IMAGE_API_KEY;
+  const imageProvider = imageModel && imageKey
+    ? new OpenAICompatibleImageProvider(imageModel, process.env.GACHA_IMAGE_BASE_URL || "https://api.openai.com/v1", imageKey)
+    : undefined;
+
   // 5. 创建 Fastify 服务器
   const app = await createServer({
     worldService,
@@ -169,6 +176,10 @@ async function bootstrap() {
     coreStore: store,
     workspaceRoot,
     ownerChatService,
+    gachaProvider: isModelConfigured ? provider : undefined,
+    gachaUsageMeter: usageMeter,
+    gachaModelName: modelName,
+    gachaImageProvider: imageProvider,
     frontendDistDir,
     development: process.env.EMERGENT_DEV === "1",
     allowedOrigins: (process.env.EMERGENT_ALLOWED_ORIGINS || "")

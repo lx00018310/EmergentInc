@@ -248,6 +248,56 @@ export function initSchema(db: SqliteDatabase): void {
           retired_reason TEXT
       );
 
+      CREATE TABLE IF NOT EXISTS qianji_draws (
+          qianji_id TEXT PRIMARY KEY REFERENCES qianji_profiles(qianji_id),
+          draw_json TEXT NOT NULL,
+          draw_fingerprint TEXT NOT NULL UNIQUE,
+          requested_origin TEXT NOT NULL,
+          origin TEXT NOT NULL,
+          lineage_json TEXT NOT NULL DEFAULT '[]',
+          skill_tags_json TEXT NOT NULL DEFAULT '[]',
+          lineage_evidence_json TEXT NOT NULL DEFAULT '[]',
+          fallback_reason TEXT,
+          generation_status TEXT NOT NULL CHECK(generation_status IN ('pending', 'ready', 'failed')),
+          generation_input_json TEXT,
+          generation_error TEXT,
+          card_prompt TEXT,
+          prompt_fingerprint TEXT UNIQUE,
+          prompt_narrative_revision INTEGER,
+          created_at REAL NOT NULL,
+          updated_at REAL NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS gacha_pity (
+          channel TEXT PRIMARY KEY CHECK(channel = 'owner'),
+          misses INTEGER NOT NULL CHECK(misses BETWEEN 0 AND 9)
+      );
+
+      INSERT OR IGNORE INTO gacha_pity(channel, misses) VALUES ('owner', 0);
+
+      CREATE TABLE IF NOT EXISTS gacha_model_calls (
+          call_id TEXT PRIMARY KEY,
+          qianji_id TEXT NOT NULL REFERENCES qianji_profiles(qianji_id),
+          model TEXT NOT NULL,
+          prompt_hash TEXT NOT NULL,
+          prompt_tokens INTEGER,
+          completion_tokens INTEGER,
+          actual_tokens INTEGER,
+          cost_cny REAL,
+          raw_response TEXT,
+          outcome TEXT NOT NULL,
+          created_at REAL NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS gacha_images (
+          qianji_id TEXT PRIMARY KEY REFERENCES qianji_profiles(qianji_id),
+          status TEXT NOT NULL CHECK(status IN ('generating', 'ready', 'failed')),
+          model TEXT NOT NULL,
+          error TEXT,
+          asset_id TEXT,
+          updated_at REAL NOT NULL
+      );
+
       CREATE TABLE IF NOT EXISTS qianji_bindings (
           binding_id TEXT PRIMARY KEY,
           qianji_id TEXT NOT NULL REFERENCES qianji_profiles(qianji_id),

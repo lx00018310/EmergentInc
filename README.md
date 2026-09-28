@@ -145,6 +145,8 @@ npx pnpm --filter @emergentinc/server start
 
 服务监听 `http://127.0.0.1:8765`，同时托管前端。模型配置读取根目录 `.env`（`MCL_API_KEY` 等）；上游支持 SSE 时可配置 `MCL_STREAM=1`，中断仍保留为结果未知，不自动重试。缺少有效 key 时服务以保护模式启动，Run 请求会被拒绝。
 
+观星台支持随机单抽／十连、钦点和 GitHub 访贤，抽出的未绑定人物可加入试炼。人物卡可导入本地 PNG/JPEG/WebP 图片，或粘贴公开网络图片 URL；图片上限 2 MiB，网络地址不能指向内网。画像生成为可选功能：在 `.env` 中配置 `GACHA_IMAGE_API_KEY`、`GACHA_IMAGE_MODEL` 和可选的 `GACHA_IMAGE_BASE_URL` 后，用户点击“生成画像”才会调用图片接口；失败可在原卡重试，不重新抽卡。
+
 ### 3.4 测试与类型检查
 
 ```bash

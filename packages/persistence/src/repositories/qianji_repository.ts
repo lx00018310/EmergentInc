@@ -5,6 +5,7 @@ import {
   QianjiNarrativeRevision,
   QianjiNarrativeSpec,
   QianjiProfile,
+  QianjiDraw,
 } from "@emergentinc/protocol";
 import { SqliteDatabase } from "../sqlite/db.js";
 import { WorldEventRepository } from "./world_event_repository.js";
@@ -404,6 +405,20 @@ export class QianjiRepository {
   }
 
   private mapProfile(row: any): QianjiProfile {
+    const drawRow = this.db.prepare("SELECT * FROM qianji_draws WHERE qianji_id=?").get(String(row.qianji_id)) as any;
+    const imageRow = drawRow ? this.db.prepare("SELECT status,error FROM gacha_images WHERE qianji_id=?").get(String(row.qianji_id)) as any : null;
+    const draw: QianjiDraw | null = drawRow ? {
+      ...JSON.parse(String(drawRow.draw_json)), qianjiId: String(row.qianji_id),
+      requestedOrigin: drawRow.requested_origin, origin: drawRow.origin,
+      lineage: JSON.parse(String(drawRow.lineage_json)),
+      skillTags: JSON.parse(String(drawRow.skill_tags_json)),
+      lineageEvidence: JSON.parse(String(drawRow.lineage_evidence_json)), fallbackReason: drawRow.fallback_reason ?? null,
+      generationStatus: drawRow.generation_status, cardPrompt: drawRow.card_prompt ?? null,
+      promptFingerprint: drawRow.prompt_fingerprint ?? null,
+      promptNarrativeRevision: drawRow.prompt_narrative_revision == null ? null : Number(drawRow.prompt_narrative_revision),
+      imageStatus: imageRow?.status ?? "pending", imageError: imageRow?.error ?? null,
+      createdAt: Number(drawRow.created_at),
+    } : null;
     return {
       qianjiId: String(row.qianji_id),
       careerStatus: row.career_status,
@@ -412,6 +427,7 @@ export class QianjiRepository {
       createdAt: Number(row.created_at),
       retiredAt: row.retired_at == null ? null : Number(row.retired_at),
       retiredReason: row.retired_reason ?? null,
+      draw,
     };
   }
 

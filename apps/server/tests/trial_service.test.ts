@@ -7,6 +7,7 @@ import { TrialService, TrialCandidateInput } from "../src/services/trial_service
 import { MissionService } from "../src/services/mission_service.js";
 import { BusinessService } from "../src/services/business_service.js";
 import { createHash } from "node:crypto";
+import { GachaService } from "../src/services/gacha_service.js";
 
 describe("TrialService", () => {
   let root: string | null = null;
@@ -94,6 +95,20 @@ describe("TrialService", () => {
       .toThrow("CANDIDATE_COORDINATE_INVALID");
   });
 
+  it("binds an existing drawn identity once without rerolling its attributes", () => {
+    const { service } = setup();
+    const gacha = new GachaService({ store: store! });
+    const profile = gacha.draw({ mode: "random", count: 1, idempotencyKey: "draw-for-trial" })[0]!.profile!;
+    const trial = createTrial(service);
+    const first = service.createCandidate(trial.trialId, { qianjiId: profile.qianjiId, pixelId: "0_0_0",
+      initialEnergyTokens: 1200, idempotencyKey: "bind-drawn-card" });
+    expect(first.qianjiId).toBe(profile.qianjiId);
+    expect(store!.qianji.getProfile(profile.qianjiId)?.draw?.attributes).toEqual(profile.draw?.attributes);
+    expect(store!.db.prepare("SELECT COUNT(*) AS count FROM qianji_draws").get()).toEqual({ count: 1 });
+    expect(() => service.createCandidate(trial.trialId, { qianjiId: profile.qianjiId, pixelId: "1_0_0",
+      initialEnergyTokens: 1200, idempotencyKey: "duplicate-drawn-card" })).toThrow("CANDIDATE_DRAW_NOT_AVAILABLE");
+  });
+
   it("rolls back identity and energy when safe directory installation fails and blocks retry over staging residue", () => {
     const { service } = setup();
     const trial = createTrial(service);
@@ -138,6 +153,10 @@ describe("TrialService", () => {
     expect(store!.qianji.getProfile(first.qianjiId)?.careerStatus).toBe("active");
     expect(store!.qianji.getProfile(first.qianjiId)?.narrative.displayName).toBe("A formal");
     expect(store!.qianji.getProfile(second.qianjiId)?.careerStatus).toBe("retired");
+    expect(store!.qianji.getCurrentBindingByQianji(second.qianjiId)).toBeNull();
+    expect(fs.existsSync(path.join(root!, "live", "pixels", "1_0_0"))).toBe(false);
+    expect(fs.existsSync(path.join(root!, "live", "history", second.bindingId, "pixel", "state.json"))).toBe(true);
+    expect(fs.existsSync(path.join(root!, "live", "history", second.bindingId, "artifacts"))).toBe(true);
   });
 
   it("runs a selected candidate through a Mission and Owner evidence acceptance", async () => {

@@ -462,6 +462,8 @@ export class AgentStepRunner {
         behaviorProfile: narrative.behaviorProfile,
         flaw: narrative.flaw ?? null,
         careerStatus: profile.careerStatus,
+        attributes: profile.draw?.attributes ?? null,
+        rarity: profile.draw?.rarity ?? null,
       },
     };
   }

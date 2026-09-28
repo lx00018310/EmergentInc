@@ -2,9 +2,10 @@ import React, { useState } from 'react';
 import { TianJiHall } from './features/hall/TianJiHall';
 import { EngineView } from './features/engine/EngineView';
 import { OrganizationDesk } from './features/organization/OrganizationDesk';
+import { GachaView } from './features/gacha/GachaView';
 
 export const App: React.FC = () => {
-  const [view, setView] = useState<'hall' | 'engine' | 'organization'>('hall');
+  const [view, setView] = useState<'hall' | 'engine' | 'organization' | 'gacha'>('hall');
   const [selectedQianjiId, setSelectedQianjiId] = useState<string | null>(null);
   const [selectedPixelId, setSelectedPixelId] = useState<string | null>(null);
 
@@ -12,6 +13,8 @@ export const App: React.FC = () => {
     return <EngineView onBack={() => setView('hall')} initialPixelId={selectedPixelId} onSelectedPixelChange={setSelectedPixelId} />;
   }
   if (view === 'organization') return <OrganizationDesk onBack={() => setView('hall')} />;
+  if (view === 'gacha') return <GachaView onBack={() => setView('hall')} />;
   return <TianJiHall selectedQianjiId={selectedQianjiId} onSelectedQianji={setSelectedQianjiId}
-    onSelectedPixel={setSelectedPixelId} onOpenEngine={() => setView('engine')} onOpenOrganization={() => setView('organization')} />;
+    onSelectedPixel={setSelectedPixelId} onOpenEngine={() => setView('engine')} onOpenOrganization={() => setView('organization')}
+    onOpenGacha={() => setView('gacha')} />;
 };

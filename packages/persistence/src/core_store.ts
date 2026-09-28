@@ -17,6 +17,7 @@ import { MissionRepository } from "./repositories/mission_repository.js";
 import { TrialRepository } from "./repositories/trial_repository.js";
 import { ExecutionRepository } from "./repositories/execution_repository.js";
 import { BusinessRepository } from "./repositories/business_repository.js";
+import { GachaRepository } from "./repositories/gacha_repository.js";
 
 /**
  * CoreStore：单一事务事实源门面
@@ -39,6 +40,7 @@ export class CoreStore {
   public readonly trials: TrialRepository;
   public readonly executions: ExecutionRepository;
   public readonly business: BusinessRepository;
+  public readonly gacha: GachaRepository;
 
   constructor(dbPath: string = ":memory:") {
     this.db = new SqliteDatabase(dbPath);
@@ -60,6 +62,7 @@ export class CoreStore {
     this.trials = new TrialRepository(this.db, this.worldEvents);
     this.executions = new ExecutionRepository(this.db);
     this.business = new BusinessRepository(this.db);
+    this.gacha = new GachaRepository(this.db);
 
     // 确保全局预算记录存在
     this.budgets.ensureGlobalBudget();

@@ -64,7 +64,7 @@ export async function registerTrialRoutes(server: FastifyInstance, service: Tria
     const body = request.body;
     if (!isRecord(body)) return fail(reply, new InputValidationError("TRIAL_CANDIDATE_INPUT_INVALID", [{ path: "body", message: "must be an object" }]));
     const errors: InputValidationIssue[] = [];
-    for (const field of Object.keys(body)) if (!["formalNarrative", "testNarrative", "pixelId", "initialEnergyTokens", "idempotencyKey"].includes(field)) {
+    for (const field of Object.keys(body)) if (!["formalNarrative", "testNarrative", "qianjiId", "pixelId", "initialEnergyTokens", "idempotencyKey"].includes(field)) {
       errors.push({ path: field, message: "unknown field" });
     }
     if (typeof body.pixelId !== "string" || !body.pixelId.trim()) errors.push({ path: "pixelId", message: "must be a non-blank coordinate string" });
@@ -72,7 +72,11 @@ export async function registerTrialRoutes(server: FastifyInstance, service: Tria
     if (typeof body.idempotencyKey !== "string" || !body.idempotencyKey.trim() || body.idempotencyKey.length > 200) {
       errors.push({ path: "idempotencyKey", message: "must be a non-blank string of at most 200 characters" });
     }
-    for (const field of ["formalNarrative", "testNarrative"]) if (!isRecord(body[field])) errors.push({ path: field, message: "must be an object" });
+    if (body.qianjiId === undefined) {
+      for (const field of ["formalNarrative", "testNarrative"]) if (!isRecord(body[field])) errors.push({ path: field, message: "must be an object" });
+    } else if (typeof body.qianjiId !== "string" || !body.qianjiId.trim() || body.formalNarrative !== undefined || body.testNarrative !== undefined) {
+      errors.push({ path: "qianjiId", message: "must identify one drawn candidate without narrative fields" });
+    }
     if (errors.length) return fail(reply, new InputValidationError("TRIAL_CANDIDATE_INPUT_INVALID", errors));
     try {
       const candidate = service.createCandidate(String((request.params as any).id ?? ""), body as any);

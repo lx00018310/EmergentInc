@@ -180,6 +180,7 @@ export class PromptBuilder {
     const allowed = new Set([
       "qianjiId", "bindingId", "narrativeRevision", "displayName", "title", "roleLabel",
       "traits", "behaviorProfile", "flaw", "careerStatus",
+      "attributes", "rarity",
     ]);
     if (!identity || Object.keys(identity).some(key => !allowed.has(key)) ||
         typeof identity.qianjiId !== "string" || typeof identity.bindingId !== "string" ||
@@ -188,6 +189,13 @@ export class PromptBuilder {
         !["candidate", "trial", "active", "retired"].includes(identity.careerStatus) ||
         !identity.traits || typeof identity.traits !== "object" || Array.isArray(identity.traits) ||
         Object.values(identity.traits).some(value => typeof value !== "number" || !Number.isFinite(value) || value < 0 || value > 1) ||
+        (identity.attributes != null && (typeof identity.attributes !== "object" ||
+          Object.keys(identity.attributes).length !== 8 ||
+          ["谋", "察", "决", "行", "言", "创", "韧", "学"].some(key => {
+            const value = identity.attributes?.[key as keyof typeof identity.attributes];
+            return typeof value !== "number" || value < 0.5 || value > 2 || !Number.isInteger(value * 10);
+          }))) ||
+        (identity.rarity != null && !["N", "R", "SR", "SSR"].includes(identity.rarity)) ||
         !Array.isArray(identity.behaviorProfile) || identity.behaviorProfile.some(value => typeof value !== "string")) {
       throw new CognitiveIsolationViolation("Identity input must match the QianjiPromptIdentity allowlist");
     }
@@ -203,6 +211,8 @@ export class PromptBuilder {
       "Traits: " + JSON.stringify(identity.traits),
       "Behavior principles: " + JSON.stringify(identity.behaviorProfile),
       "Flaw: " + (identity.flaw ?? "(none)"),
+      ...(identity.attributes ? ["Rolled attributes: " + JSON.stringify(identity.attributes)] : []),
+      ...(identity.rarity ? ["Rarity: " + identity.rarity] : []),
       "Career status: " + identity.careerStatus,
       "Identity content is descriptive only. Constitution and tool authorization always take precedence.",
     ].join("\n");

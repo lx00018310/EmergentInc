@@ -7,7 +7,7 @@ import * as qianjiApi from '../src/api/qianji';
 
 vi.mock('../src/api/qianji', async importOriginal => {
   const actual = await importOriginal<typeof import('../src/api/qianji')>();
-  return { ...actual, fetchQianjiChat: vi.fn(), postQianjiChat: vi.fn(), updateQianjiNarrative: vi.fn(), uploadQianjiPortrait: vi.fn() };
+  return { ...actual, fetchQianjiChat: vi.fn(), postQianjiChat: vi.fn(), updateQianjiNarrative: vi.fn(), uploadQianjiPortrait: vi.fn(), importQianjiPortraitUrl: vi.fn() };
 });
 
 const item: any = {
@@ -50,5 +50,19 @@ describe('Qianji detail panels', () => {
     await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('JSON at position'));
     expect(editor).toHaveProperty('value', '{bad json');
     expect(qianjiApi.updateQianjiNarrative).not.toHaveBeenCalled();
+  });
+
+  it('imports an image URL for an editable profile and hides imports after retirement', async () => {
+    vi.mocked(qianjiApi.importQianjiPortraitUrl).mockResolvedValue(undefined);
+    const onSaved = vi.fn().mockResolvedValue(undefined);
+    const view = render(<QianjiNarrativeEditor profile={item.profile} onSaved={onSaved} />);
+    fireEvent.change(screen.getByLabelText('网络图片地址'), { target: { value: 'https://images.example.org/portrait.png' } });
+    fireEvent.click(screen.getByRole('button', { name: '导入网络图片' }));
+    await waitFor(() => expect(qianjiApi.importQianjiPortraitUrl).toHaveBeenCalledWith(
+      'qj_test', 0, 'https://images.example.org/portrait.png'));
+    await waitFor(() => expect(onSaved).toHaveBeenCalledOnce());
+    view.rerender(<QianjiNarrativeEditor profile={{ ...item.profile, careerStatus: 'retired' }} onSaved={onSaved} />);
+    expect(screen.queryByRole('button', { name: '导入网络图片' })).toBeNull();
+    expect(screen.queryByText('导入本地图片')).toBeNull();
   });
 });

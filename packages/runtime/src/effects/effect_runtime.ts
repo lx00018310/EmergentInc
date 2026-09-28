@@ -1,5 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { createHash } from "node:crypto";
 import {
   Effect,
   UpdateMindEffect,
@@ -21,6 +22,9 @@ import {
   validateMessageRouting,
   isHopLimitReached,
   getNeighbors6,
+  rollGacha,
+  randomQianjiNarrative,
+  buildGachaPrompt,
 } from "@emergentinc/domain";
 import { ToolRuntime, ToolContext, ExecutionToolScope } from "@emergentinc/tools";
 import { FeedbackFactory } from "../feedback/feedback_factory.js";
@@ -551,22 +555,20 @@ export class EffectRuntime {
           const archiveRelativePath = path.relative(this.ctx.workspaceRoot, archivedPixelDir).split(path.sep).join("/");
           this.ctx.store.qianji.unbindAndRetire(previousBinding.bindingId, archiveRelativePath, "body_replaced", now);
         }
+        const seed = createHash("sha256").update(effect.effectId).digest().readUInt32LE(0);
+        const rolled = rollGacha(seed, "reproduction");
         const newborn = this.ctx.store.qianji.createProfile({
           careerStatus: "candidate",
           createdAt: now,
-          narrative: {
-            displayName: `未命名千机 ${childPixelId}`,
-            title: null,
-            roleLabel: null,
-            traits: {},
-            behaviorProfile: [],
-            flaw: null,
-            shortBio: null,
-            appearanceSpec: null,
-            portraitAsset: null,
-            contentRevision: null,
-          },
+          narrative: randomQianjiNarrative(seed),
         });
+          const drawFingerprint = createHash("sha256").update(JSON.stringify({ qianjiId: newborn.qianjiId, seed, attributes: rolled.attributes,
+          mode: "reproduction", effectId: effect.effectId })).digest("hex");
+          const draw = this.ctx.store.gacha.create({ ...rolled, qianjiId: newborn.qianjiId, drawFingerprint,
+          requestedOrigin: "random", origin: "random", lineage: [], skillTags: [], lineageEvidence: [],
+          fallbackReason: null, generationStatus: "ready" });
+          const cardPrompt = buildGachaPrompt(draw, newborn.narrative, newborn.narrativeRevision);
+          this.ctx.store.gacha.setPrompt(newborn.qianjiId, cardPrompt.prompt, cardPrompt.fingerprint, newborn.narrativeRevision);
         this.ctx.store.qianji.createBinding({
           qianjiId: newborn.qianjiId,
           pixelId: childPixelId,

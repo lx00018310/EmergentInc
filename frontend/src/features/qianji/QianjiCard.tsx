@@ -25,13 +25,14 @@ export const QianjiCard: React.FC<QianjiCardProps> = ({ item, selected, onSelect
       <div className="qj-card-portrait">
         {profile.narrative.portraitAsset && !imageFailed
           ? <img src={qianjiPortraitUrl(profile.qianjiId)} alt={`${profile.narrative.displayName} 角色画像`} onError={() => setImageFailed(true)} />
-          : <span aria-label="暂无角色图片">未设画像</span>}
+          : <span aria-label="暂无角色图片">{profile.draw ? '待绘' : '未设画像'}</span>}
       </div>
       <div className="qj-card-copy">
         <strong>{profile.narrative.displayName}</strong>
         <span>{profile.narrative.title || profile.narrative.roleLabel || '未设置称号'}</span>
         <div className="qj-card-badges">
           <span>{careerLabels[profile.careerStatus] || profile.careerStatus}</span>
+          {profile.draw && <span>{profile.draw.rarity}</span>}
           <span>{physical?.active ? '载体活跃' : currentBinding ? '载体失活' : '未绑定 Pixel'}</span>
         </div>
         <small>{currentBinding ? `${currentBinding.pixelId} · 第 ${currentBinding.incarnation} 代` : profile.qianjiId}</small>

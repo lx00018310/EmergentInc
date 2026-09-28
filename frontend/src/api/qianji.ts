@@ -1,6 +1,15 @@
 import { apiRequest } from './client';
 
 export type QianjiCareerStatus = 'candidate' | 'trial' | 'active' | 'retired';
+export type GachaRarity = 'N' | 'R' | 'SR' | 'SSR';
+export type GachaMode = 'appointed' | 'github' | 'random';
+export interface QianjiDrawDto {
+  qianjiId: string; seed: number; attributes: Record<string, number>; rarity: GachaRarity;
+  traitTags: string[]; requestedOrigin: GachaMode; origin: GachaMode; lineage: string[];
+  skillTags: string[]; fallbackReason: string | null; generationStatus: 'pending' | 'ready' | 'failed';
+  imageStatus: 'pending' | 'generating' | 'ready' | 'failed'; imageError: string | null;
+  cardPrompt: string | null; promptFingerprint: string | null; createdAt: number;
+}
 
 export interface QianjiNarrativeDto {
   displayName: string;
@@ -23,6 +32,7 @@ export interface QianjiProfileDto {
   createdAt: number;
   retiredAt: number | null;
   retiredReason: string | null;
+  draw?: QianjiDrawDto | null;
 }
 
 export interface QianjiBindingDto {
@@ -156,6 +166,12 @@ export async function updateQianjiNarrative(qianjiId: string, expectedRevision: 
 export async function uploadQianjiPortrait(qianjiId: string, expectedRevision: number, mimeType: string, dataBase64: string): Promise<void> {
   await apiRequest(`/api/qianji/${encodeURIComponent(qianjiId)}/portrait`, {
     method: 'POST', body: JSON.stringify({ expectedRevision, mimeType, dataBase64 }),
+  });
+}
+
+export async function importQianjiPortraitUrl(qianjiId: string, expectedRevision: number, url: string): Promise<void> {
+  await apiRequest(`/api/qianji/${encodeURIComponent(qianjiId)}/portrait/import-url`, {
+    method: 'POST', body: JSON.stringify({ expectedRevision, url }),
   });
 }
 

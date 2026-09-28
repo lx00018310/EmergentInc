@@ -11,6 +11,8 @@ import { PromptService } from "../src/services/prompt_service.js";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
+import { requestPublicImage } from "@emergentinc/tools";
+import { GachaService } from "../src/services/gacha_service.js";
 
 class MockProvider implements ModelProvider {
   async call() {
@@ -26,6 +28,7 @@ describe("Server: API Contract Integration Tests", () => {
   let tmpDir: string;
   let store: CoreStore;
   let runService: RunService;
+  let portraitDownload: ReturnType<typeof vi.fn>;
 
   beforeEach(async () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "server_api_test_"));
@@ -79,6 +82,7 @@ describe("Server: API Contract Integration Tests", () => {
       isModelConfigured: true,
     });
     const promptService = new PromptService(runtimeDir);
+    portraitDownload = vi.fn(async (_url: string) => { throw new Error("UNEXPECTED_PORTRAIT_DOWNLOAD"); });
 
     app = await createServer({
       worldService,
@@ -87,6 +91,7 @@ describe("Server: API Contract Integration Tests", () => {
       toolRegistry,
       coreStore: store,
       workspaceRoot: tmpDir,
+      downloadPortraitUrl: url => portraitDownload(url),
     });
   });
 
@@ -663,7 +668,7 @@ describe("Server: API Contract Integration Tests", () => {
   });
 
   it("stores Qianji portraits by content hash and serves only the owned asset", async () => {
-    const profile = store.qianji.createProfile();
+    const profile = new GachaService({ store }).draw({ mode: "random", count: 1, idempotencyKey: "portrait-local-card" })[0]!.profile!;
     const image = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/N7sAAAAASUVORK5CYII=", "base64");
     const upload = await app.inject({
       method: "POST",
@@ -672,6 +677,7 @@ describe("Server: API Contract Integration Tests", () => {
     });
     expect(upload.statusCode).toBe(200);
     expect(upload.json().assetId).toMatch(/^[a-f0-9]{64}\.png$/);
+    expect(store.qianji.getProfile(profile.qianjiId)?.draw?.imageStatus).toBe("ready");
     const assetPath = path.join(tmpDir, "assets", "qianji", profile.qianjiId, upload.json().assetId);
     expect(fs.existsSync(assetPath)).toBe(true);
     const served = await app.inject({ method: "GET", url: "/api/qianji/" + profile.qianjiId + "/portrait" });
@@ -700,6 +706,39 @@ describe("Server: API Contract Integration Tests", () => {
     });
     expect(wrongMime.statusCode).toBe(400);
     expect(fs.readdirSync(path.dirname(assetPath))).toEqual([upload.json().assetId]);
+  });
+
+  it("imports a public image URL through the portrait asset path and keeps revision checks", async () => {
+    const profile = new GachaService({ store }).draw({ mode: "random", count: 1, idempotencyKey: "portrait-url-card" })[0]!.profile!;
+    const image = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/N7sAAAAASUVORK5CYII=", "base64");
+    portraitDownload.mockResolvedValue({ contentType: "image/png", body: image });
+    const url = "https://images.example.org/portrait.png";
+    const imported = await app.inject({ method: "POST", url: `/api/qianji/${profile.qianjiId}/portrait/import-url`,
+      payload: { url, expectedRevision: 0 } });
+    expect(imported.statusCode).toBe(200);
+    expect(portraitDownload).toHaveBeenCalledWith(url);
+    expect(imported.json().assetId).toMatch(/^[a-f0-9]{64}\.png$/);
+    expect(store.qianji.getProfile(profile.qianjiId)?.draw?.imageStatus).toBe("ready");
+    const served = await app.inject({ method: "GET", url: `/api/qianji/${profile.qianjiId}/portrait` });
+    expect(served.rawPayload).toEqual(image);
+    const stale = await app.inject({ method: "POST", url: `/api/qianji/${profile.qianjiId}/portrait/import-url`,
+      payload: { url, expectedRevision: 0 } });
+    expect(stale.statusCode).toBe(409);
+    portraitDownload.mockResolvedValue({ contentType: "image/jpeg", body: image });
+    const wrongFormat = await app.inject({ method: "POST", url: `/api/qianji/${profile.qianjiId}/portrait/import-url`,
+      payload: { url, expectedRevision: 1 } });
+    expect(wrongFormat.statusCode).toBe(400);
+    const drawing = new GachaService({ store }).draw({ mode: "random", count: 1, idempotencyKey: "portrait-import-while-generating" })[0]!.profile!;
+    store.gacha.beginImage(drawing.qianjiId, "test-image-model");
+    const previousCalls = portraitDownload.mock.calls.length;
+    const busy = await app.inject({ method: "POST", url: `/api/qianji/${drawing.qianjiId}/portrait/import-url`,
+      payload: { url, expectedRevision: 0 } });
+    expect(busy.statusCode).toBe(409);
+    expect(portraitDownload).toHaveBeenCalledTimes(previousCalls);
+  });
+
+  it("rejects local network addresses before downloading an image", async () => {
+    await expect(requestPublicImage("http://127.0.0.1/private.png")).rejects.toMatchObject({ code: "PRIVATE_ADDRESS" });
   });
 
   it("paginates facts and updates neutral world presentation with revision checks", async () => {

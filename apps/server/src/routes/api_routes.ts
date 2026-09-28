@@ -15,6 +15,10 @@ import { TrialService } from "../services/trial_service.js";
 import { registerTrialRoutes } from "./trial_routes.js";
 import { BusinessService } from "../services/business_service.js";
 import { registerBusinessRoutes } from "./business_routes.js";
+import { ModelProvider, UsageMeter } from "@emergentinc/model";
+import { GachaService } from "../services/gacha_service.js";
+import { registerGachaRoutes } from "./gacha_routes.js";
+import { GachaImageProvider, GachaImageService } from "../services/gacha_image.js";
 
 export interface ApiRoutesOptions {
   worldService: WorldService;
@@ -24,6 +28,11 @@ export interface ApiRoutesOptions {
   coreStore: CoreStore;
   workspaceRoot: string;
   ownerChatService?: OwnerChatService;
+  gachaProvider?: ModelProvider;
+  gachaUsageMeter?: UsageMeter;
+  gachaModelName?: string;
+  gachaImageProvider?: GachaImageProvider;
+  downloadPortraitUrl?: (url: string) => Promise<{ contentType: string; body: Buffer }>;
 }
 
 export async function registerApiRoutes(
@@ -38,6 +47,11 @@ export async function registerApiRoutes(
     coreStore,
     workspaceRoot,
     ownerChatService,
+    gachaProvider,
+    gachaUsageMeter,
+    gachaModelName,
+    gachaImageProvider,
+    downloadPortraitUrl,
   } = options;
 
   const enabledToolNames = typeof toolRegistry.listDefinitions === "function"
@@ -58,9 +72,12 @@ export async function registerApiRoutes(
     modelName: process.env.MCL_DECISION_MODEL || process.env.MCL_MODEL || "gpt-4o-mini",
     captureEvidence: executionId => missionService.captureExecutionEvidence(executionId),
   });
-  await registerQianjiRoutes(server, { store: coreStore, workspaceRoot, runService, missionService });
+  await registerQianjiRoutes(server, { store: coreStore, workspaceRoot, runService, missionService, downloadPortraitUrl });
   await registerOrganizationRoutes(server, missionService);
   await registerTrialRoutes(server, trialService);
+  await registerGachaRoutes(server, new GachaService({ store: coreStore, provider: gachaProvider,
+    usageMeter: gachaUsageMeter, modelName: gachaModelName }), coreStore,
+    new GachaImageService(coreStore, workspaceRoot, gachaImageProvider));
   const businessService = new BusinessService(coreStore, workspaceRoot);
   await registerBusinessRoutes(server, businessService);
 

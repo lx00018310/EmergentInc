@@ -16,4 +16,5 @@ export * from "./repositories/mission_repository.js";
 export * from "./repositories/trial_repository.js";
 export * from "./repositories/execution_repository.js";
 export * from "./repositories/business_repository.js";
+export * from "./repositories/gacha_repository.js";
 export * from "./core_store.js";

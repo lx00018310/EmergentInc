@@ -31,6 +31,12 @@ export interface PublicHttpResponse {
   truncated: boolean;
 }
 
+export interface PublicImageResponse {
+  url: string;
+  contentType: "image/png" | "image/jpeg" | "image/webp";
+  body: Buffer;
+}
+
 async function resolveSyntheticDns(hostname: string, type: "A" | "AAAA"): Promise<{ address: string; family: 4 | 6 }[]> {
   const url = new URL("https://cloudflare-dns.com/dns-query");
   url.searchParams.set("name", hostname);
@@ -169,6 +175,28 @@ export async function requestPublicText(
       throw new PublicHttpError("UNSUPPORTED_CONTENT_TYPE", `Unsupported content type: ${contentType || "unknown"}`);
     }
     return { url: url.href, status: response.status, contentType, body: response.body.toString("utf-8"), truncated: response.truncated };
+  }
+  throw new PublicHttpError("TOO_MANY_REDIRECTS", "More than three redirects");
+}
+
+export async function requestPublicImage(rawUrl: string, maxBytes = 2 * 1024 * 1024): Promise<PublicImageResponse> {
+  let url = parsePublicUrl(rawUrl);
+  for (let redirect = 0; redirect <= 3; redirect++) {
+    const address = await publicAddress(url.hostname);
+    const response = await requestOnce(url, address, { Accept: "image/png,image/jpeg,image/webp" }, maxBytes);
+    if (response.status >= 300 && response.status < 400) {
+      const location = response.headers.location;
+      if (!location || Array.isArray(location)) throw new PublicHttpError("HTTP_REDIRECT", "Redirect has no usable location");
+      url = parsePublicUrl(new URL(location, url).href);
+      continue;
+    }
+    if (response.status < 200 || response.status >= 300) throw new PublicHttpError("HTTP_STATUS", `HTTP ${response.status}`);
+    if (response.truncated || response.body.length === 0) throw new PublicHttpError("IMAGE_SIZE_INVALID", "Image is empty or exceeds 2 MiB");
+    const contentType = String(response.headers["content-type"] || "").split(";")[0].trim().toLowerCase();
+    if (!["image/png", "image/jpeg", "image/webp"].includes(contentType)) {
+      throw new PublicHttpError("UNSUPPORTED_CONTENT_TYPE", "Only PNG, JPEG, and WebP are supported");
+    }
+    return { url: url.href, contentType: contentType as PublicImageResponse["contentType"], body: response.body };
   }
   throw new PublicHttpError("TOO_MANY_REDIRECTS", "More than three redirects");
 }

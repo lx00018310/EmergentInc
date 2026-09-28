@@ -1,9 +1,9 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { createHash, randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { CoreStore, TrialDraftInput } from "@emergentinc/persistence";
 import { QianjiNarrativeSpec, Trial, TrialCandidate } from "@emergentinc/protocol";
-import { validateQianjiNarrative } from "@emergentinc/domain";
+import { buildGachaPrompt, rollGacha, validateQianjiNarrative } from "@emergentinc/domain";
 import { RunService } from "./run_service.js";
 import { containedPath, validatePathSegment } from "./safe_path.js";
 import { InputValidationError } from "./input_validation.js";
@@ -22,8 +22,9 @@ export interface TrialServiceOptions {
 }
 
 export interface TrialCandidateInput {
-  formalNarrative: QianjiNarrativeSpec;
-  testNarrative: QianjiNarrativeSpec;
+  formalNarrative?: QianjiNarrativeSpec;
+  testNarrative?: QianjiNarrativeSpec;
+  qianjiId?: string;
   pixelId: string;
   initialEnergyTokens: number;
   idempotencyKey: string;
@@ -100,9 +101,11 @@ export class TrialService {
     if (!COORDINATE.test(input.pixelId) || input.pixelId.split("_").length !== 3) throw new Error("CANDIDATE_COORDINATE_INVALID");
     for (const coordinate of input.pixelId.split("_")) if (!Number.isSafeInteger(Number(coordinate))) throw new Error("CANDIDATE_COORDINATE_INVALID");
     if (!Number.isSafeInteger(input.initialEnergyTokens) || input.initialEnergyTokens < 1) throw new Error("CANDIDATE_INITIAL_ENERGY_INVALID");
-    const formal = validateQianjiNarrative(input.formalNarrative);
-    const test = validateQianjiNarrative(input.testNarrative);
-    if (!formal.valid || !test.valid) {
+    const fromDraw = typeof input.qianjiId === "string";
+    if (fromDraw && (input.formalNarrative !== undefined || input.testNarrative !== undefined)) throw new Error("CANDIDATE_INPUT_MODES_CONFLICT");
+    const formal = fromDraw ? null : validateQianjiNarrative(input.formalNarrative);
+    const test = fromDraw ? null : validateQianjiNarrative(input.testNarrative);
+    if (formal && test && (!formal.valid || !test.valid)) {
       const errors = [
         ...formal.errors.map(issue => ({ ...issue, path: issue.path.replace(/^narrative/, "formalNarrative") })),
         ...test.errors.map(issue => ({ ...issue, path: issue.path.replace(/^narrative/, "testNarrative") })),
@@ -138,7 +141,14 @@ export class TrialService {
       if (fs.existsSync(stage)) throw new Error("CANDIDATE_STAGING_REMAINS");
 
       const candidateId = `candidate_${randomUUID()}`;
-      const qianjiId = `qj_${randomUUID()}`;
+      const qianjiId = input.qianjiId ?? `qj_${randomUUID()}`;
+      const existingProfile = input.qianjiId ? this.store.qianji.getProfile(input.qianjiId) : null;
+      if (input.qianjiId && (!existingProfile || existingProfile.careerStatus !== "candidate" ||
+          !existingProfile.draw || existingProfile.draw.generationStatus !== "ready" ||
+          this.store.qianji.getCurrentBindingByQianji(input.qianjiId))) throw new Error("CANDIDATE_DRAW_NOT_AVAILABLE");
+      const formalNarrative = existingProfile?.narrative ?? (formal && formal.valid ? formal.value : null);
+      const testNarrative = existingProfile?.narrative ?? (test && test.valid ? test.value : null);
+      if (!formalNarrative || !testNarrative) throw new Error("CANDIDATE_NARRATIVE_INVALID");
       const bindingId = `binding_${randomUUID()}`;
       const executionId = `execution_${randomUUID()}`;
       const rules = this.rulesSnapshot(trial);
@@ -163,7 +173,18 @@ export class TrialService {
         this.store.transaction(() => {
           this.store.pixels.upsertPixelAccount({ pixelId: input.pixelId, energy: 0, active: true,
             refundDeficitTokens: 0, spendBlockedReason: null });
-          const profile = this.store.qianji.createProfile({ qianjiId, careerStatus: "candidate", narrative: test.value });
+          const profile = existingProfile ?? this.store.qianji.createProfile({ qianjiId, careerStatus: "candidate", narrative: formalNarrative });
+          if (!existingProfile) {
+            const seed = randomBytes(4).readUInt32LE();
+            const rolled = rollGacha(seed, "legacy_trial");
+            const drawFingerprint = createHash("sha256").update(JSON.stringify({ qianjiId, seed, attributes: rolled.attributes,
+              mode: "legacy_trial", name: formalNarrative.displayName })).digest("hex");
+            const draw = this.store.gacha.create({ ...rolled, qianjiId, drawFingerprint, requestedOrigin: "random", origin: "random",
+              lineage: [], skillTags: [], lineageEvidence: [], fallbackReason: null, generationStatus: "ready" });
+            const prompt = buildGachaPrompt(draw, formalNarrative, 0);
+            this.store.gacha.setPrompt(qianjiId, prompt.prompt, prompt.fingerprint, 0);
+            this.store.qianji.updateNarrative(qianjiId, 0, testNarrative);
+          }
           const binding = this.store.qianji.createBinding({ bindingId, qianjiId, pixelId: input.pixelId, incarnation: 1 });
           this.store.applyExternalReward({ pixelId: input.pixelId, amount: input.initialEnergyTokens,
             idempotencyKey: `trial_seed:${input.idempotencyKey}`, source: "trial_seed", reason: `Trial candidate ${trialId}` });
@@ -172,7 +193,7 @@ export class TrialService {
             inputSnapshot: snapshot, toolsSnapshot: trial.allowedTools, bindingIds: [binding.bindingId] });
           const candidate = this.store.trials.addCandidate({ trialId, qianjiId: profile.qianjiId,
             bindingId: binding.bindingId, executionId: execution.executionId, ordinal: count + 1,
-            formalNarrative: formal.value }, candidateId);
+            formalNarrative }, candidateId);
           fs.mkdirSync(path.dirname(pixelDestination), { recursive: true });
           fs.mkdirSync(path.dirname(artifactDestination), { recursive: true });
           fs.renameSync(stagedPixel, pixelDestination); installedPixel = true;
@@ -232,26 +253,50 @@ export class TrialService {
 
   public select(input: { trialId: string; winnerQianjiId: string | null; reason: string; evidenceIds: string[]; idempotencyKey: string }): Trial {
     if (!input.reason.trim() || input.reason.length > 4000 || new Set(input.evidenceIds).size !== input.evidenceIds.length) throw new Error("TRIAL_DECISION_INPUT_INVALID");
-    return this.store.ownerActions.execute(input.idempotencyKey, `trial.select:${input.trialId}`, input, () => this.store.transaction(() => {
-      const trial = this.requireTrial(input.trialId);
-      if (trial.status !== "awaiting_selection") throw new Error("TRIAL_NOT_AWAITING_SELECTION");
-      if (this.runService.getStatus().running || this.store.getUnfinalizedOperations().hasUnfinalized) throw new Error("TRIAL_RUN_OR_RECOVERY_ACTIVE");
-      if (input.winnerQianjiId && !trial.candidates.some(candidate => candidate.qianjiId === input.winnerQianjiId)) throw new Error("TRIAL_WINNER_NOT_CANDIDATE");
-      const knownEvidence = new Set(trial.candidates.flatMap(candidate =>
-        Array.isArray(candidate.evidence) ? candidate.evidence.flatMap((item: any) => typeof item?.evidenceId === "string" ? [item.evidenceId] : []) : []));
-      for (const id of input.evidenceIds) if (!knownEvidence.has(id)) throw new Error(`TRIAL_EVIDENCE_NOT_FOUND:${id}`);
-      for (const candidate of trial.candidates) {
-        const profile = this.store.qianji.getProfile(candidate.qianjiId);
-        if (!profile || profile.careerStatus !== "trial") throw new Error("TRIAL_CANDIDATE_STATUS_INVALID");
-        if (candidate.qianjiId === input.winnerQianjiId) {
-          if (candidate.formalNarrative) this.store.qianji.updateNarrative(profile.qianjiId, profile.narrativeRevision, candidate.formalNarrative);
-          this.store.qianji.transitionCareerStatus(profile.qianjiId, "trial", "active");
-        } else {
-          this.store.qianji.transitionCareerStatus(profile.qianjiId, "trial", "retired", `未被招录：${input.reason.trim()}`);
-        }
-      }
-      return this.store.trials.decide(input.trialId, input.winnerQianjiId, input.reason.trim());
-    }));
+    const moved: Array<{ source: string; destination: string }> = [];
+    try {
+      return this.store.ownerActions.execute(input.idempotencyKey, `trial.select:${input.trialId}`, input, () => {
+        const trial = this.requireTrial(input.trialId);
+        if (trial.status !== "awaiting_selection") throw new Error("TRIAL_NOT_AWAITING_SELECTION");
+        if (this.runService.getStatus().running || this.store.getUnfinalizedOperations().hasUnfinalized) throw new Error("TRIAL_RUN_OR_RECOVERY_ACTIVE");
+        if (input.winnerQianjiId && !trial.candidates.some(candidate => candidate.qianjiId === input.winnerQianjiId)) throw new Error("TRIAL_WINNER_NOT_CANDIDATE");
+        const knownEvidence = new Set(trial.candidates.flatMap(candidate =>
+          Array.isArray(candidate.evidence) ? candidate.evidence.flatMap((item: any) => typeof item?.evidenceId === "string" ? [item.evidenceId] : []) : []));
+        for (const id of input.evidenceIds) if (!knownEvidence.has(id)) throw new Error(`TRIAL_EVIDENCE_NOT_FOUND:${id}`);
+        return this.store.transaction(() => {
+          for (const candidate of trial.candidates) {
+            const profile = this.store.qianji.getProfile(candidate.qianjiId);
+            if (!profile || profile.careerStatus !== "trial") throw new Error("TRIAL_CANDIDATE_STATUS_INVALID");
+            if (candidate.qianjiId === input.winnerQianjiId) {
+              if (candidate.formalNarrative) this.store.qianji.updateNarrative(profile.qianjiId, profile.narrativeRevision, candidate.formalNarrative);
+              this.store.qianji.transitionCareerStatus(profile.qianjiId, "trial", "active");
+              continue;
+            }
+            const binding = this.store.qianji.getBinding(candidate.bindingId);
+            if (!binding || binding.unboundAt !== null) throw new Error("TRIAL_CANDIDATE_BINDING_INVALID");
+            const base = containedPath(this.workspaceRoot, "live", "history", binding.bindingId);
+            for (const [kind, source] of [
+              ["pixel", containedPath(this.workspaceRoot, "live", "pixels", binding.pixelId)],
+              ["artifacts", containedPath(this.workspaceRoot, "live", "artifacts", binding.pixelId)],
+            ] as const) {
+              const destination = containedPath(base, kind);
+              if (fs.existsSync(destination)) throw new Error("TRIAL_ARCHIVE_DESTINATION_EXISTS");
+              if (!fs.existsSync(source)) continue;
+              if (fs.lstatSync(source).isSymbolicLink()) throw new Error("TRIAL_ARCHIVE_SYMLINK_FORBIDDEN");
+              fs.mkdirSync(base, { recursive: true });
+              fs.renameSync(source, destination);
+              moved.push({ source, destination });
+            }
+            this.store.qianji.unbindAndRetire(binding.bindingId, `live/history/${binding.bindingId}/pixel`, `未被招录：${input.reason.trim()}`);
+            this.store.pixels.setActive(binding.pixelId, false);
+          }
+          return this.store.trials.decide(input.trialId, input.winnerQianjiId, input.reason.trim());
+        });
+      });
+    } catch (error) {
+      for (const item of moved.reverse()) if (fs.existsSync(item.destination)) fs.renameSync(item.destination, item.source);
+      throw error;
+    }
   }
 
   public async cancel(trialId: string, reason: string): Promise<Trial> {

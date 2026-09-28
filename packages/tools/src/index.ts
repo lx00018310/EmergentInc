@@ -7,3 +7,4 @@ export * from "./builtin/private_files.js";
 export * from "./builtin/vps.js";
 export * from "./builtin/webfetch.js";
 export * from "./builtin/github.js";
+export { requestPublicImage } from "./builtin/public_http.js";

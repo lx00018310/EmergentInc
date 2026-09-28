@@ -19,9 +19,10 @@ export interface TianJiHallProps {
   onSelectedPixel: (id: string | null) => void;
   onOpenEngine: () => void;
   onOpenOrganization: () => void;
+  onOpenGacha?: () => void;
 }
 
-export const TianJiHall: React.FC<TianJiHallProps> = ({ selectedQianjiId, onSelectedQianji, onSelectedPixel, onOpenEngine, onOpenOrganization }) => {
+export const TianJiHall: React.FC<TianJiHallProps> = ({ selectedQianjiId, onSelectedQianji, onSelectedPixel, onOpenEngine, onOpenOrganization, onOpenGacha }) => {
   const { items, events, presentation, error: qianjiError, loading, refresh } = useQianjiPolling();
   const { world, runStatus, error: worldError, refreshImmediately } = useWorldPolling();
   const [rounds, setRounds] = useState(1);
@@ -71,7 +72,7 @@ export const TianJiHall: React.FC<TianJiHallProps> = ({ selectedQianjiId, onSele
       <header className="hall-header">
         <div className="hall-brand"><span className="hall-mark">天</span><div><h1>{presentation?.hallName ?? '天机阁'}</h1><p>{presentation?.organizationName ?? 'EmergentInc 元胞会社'}</p></div></div>
         <div className="hall-run-summary"><span>第 {world?.round ?? runStatus?.current_round ?? 0} 轮</span><span className={runStatus?.running ? 'is-running' : recoveryRequired ? 'is-error' : ''}>{runState}</span></div>
-        <div className="hall-navigation"><button className="btn btn-sm" type="button" onClick={onOpenOrganization}>组织控制台</button><button className="btn btn-sm" type="button" onClick={onOpenEngine}>进入 {presentation?.sectionLabels?.engine ?? 'Engine'}</button></div>
+        <div className="hall-navigation">{onOpenGacha && <button className="btn btn-sm btn-primary" type="button" onClick={onOpenGacha}>观星台点将</button>}<button className="btn btn-sm" type="button" onClick={onOpenOrganization}>组织控制台</button><button className="btn btn-sm" type="button" onClick={onOpenEngine}>进入 {presentation?.sectionLabels?.engine ?? 'Engine'}</button></div>
       </header>
 
       {(qianjiError || worldError || runError) && <div className="hall-error" role="alert">{qianjiError || worldError || runError}</div>}

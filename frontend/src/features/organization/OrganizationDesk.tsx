@@ -1,10 +1,10 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { fetchQianjiHistory, fetchQianjiList, qianjiArtifactUrl, type QianjiHistoryDto, type QianjiListItemDto } from '../../api/qianji';
+import { fetchQianjiHistory, fetchQianjiList, qianjiArtifactUrl, qianjiPortraitUrl, type QianjiHistoryDto, type QianjiListItemDto } from '../../api/qianji';
 import type { ChronicleDto, ChronicleEventDto, MissionDto, ProductDto, RevenueDto, TrialDto } from '../../api/organization';
 import * as api from '../../api/organization';
+import { drawGacha } from '../../api/gacha';
 
 type DeskTab = 'missions' | 'trials' | 'products' | 'archive' | 'chronicle';
-const EMPTY_NARRATIVE = (displayName: string) => ({ displayName, title: null, roleLabel: null, traits: {}, behaviorProfile: [], flaw: null, shortBio: null, appearanceSpec: null, portraitAsset: null, contentRevision: null });
 const key = () => globalThis.crypto?.randomUUID?.() ?? `action-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 const textOf = (error: unknown) => error instanceof Error ? error.message : String(error);
 
@@ -65,7 +65,7 @@ export const OrganizationDesk: React.FC<{ onBack: () => void }> = ({ onBack }) =
       <button className="btn btn-sm" type="button" onClick={onBack}>返回天机阁</button>
     </header>
     <nav className="org-tabs" aria-label="组织页面">
-      {([['missions', 'Mission'], ['trials', '招贤与试炼'], ['products', '产品与商业'], ['archive', '人物档案'], ['chronicle', '纪事与 Muse']] as Array<[DeskTab, string]>).map(([id, label]) =>
+      {([['missions', 'Mission'], ['trials', '招贤与试炼'], ['products', '产品与商业'], ['archive', '英灵殿'], ['chronicle', '纪事与 Muse']] as Array<[DeskTab, string]>).map(([id, label]) =>
         <button key={id} className={tab === id ? 'is-selected' : ''} type="button" onClick={() => setTab(id)}>{label}</button>)}
     </nav>
     {error && <p className="org-error" role="alert">{error}</p>}
@@ -131,8 +131,9 @@ function MissionBoard(props: { missions: MissionDto[]; members: QianjiListItemDt
 function TrialArena(props: { trials: TrialDto[]; recruitments: any[]; members: QianjiListItemDto[]; selectedTrialId: string; setSelectedTrialId: (id: string) => void; run: (fn: () => Promise<unknown>) => Promise<void> }) {
   const [roleLabel, setRoleLabel] = useState('研究助理'); const [jd, setJd] = useState(''); const [recruitmentId, setRecruitmentId] = useState('');
   const [challenge, setChallenge] = useState(''); const [criteria, setCriteria] = useState(''); const [candidateBudget, setCandidateBudget] = useState(5000); const [totalBudget, setTotalBudget] = useState(10000); const [trialRounds, setTrialRounds] = useState(3);
-  const [pixelId, setPixelId] = useState(''); const [displayName, setDisplayName] = useState(''); const [initialEnergy, setInitialEnergy] = useState(5000);
+  const [pixelId, setPixelId] = useState(''); const [drawnQianjiId, setDrawnQianjiId] = useState(''); const [initialEnergy, setInitialEnergy] = useState(5000);
   const [winner, setWinner] = useState(''); const [decisionReason, setDecisionReason] = useState(''); const selected = props.trials.find(item => item.trialId === props.selectedTrialId) ?? props.trials[0];
+  const availableDraws = props.members.filter(item => item.profile.careerStatus === 'candidate' && !item.currentBinding && item.profile.draw?.generationStatus === 'ready');
   return <section className="org-panel">
     <div className="org-panel-title"><div><p className="qj-eyebrow">招贤榜</p><h2>同规则串行试炼</h2></div><span>最多 3 位候选</span></div>
     <form className="org-form" onSubmit={event => { event.preventDefault(); void props.run(() => api.createRecruitment({ roleLabel, jd })); }}>
@@ -146,8 +147,9 @@ function TrialArena(props: { trials: TrialDto[]; recruitments: any[]; members: Q
       <div className="org-card-head"><div><span className={`org-status status-${selected.status}`}>{selected.status}{selected.pauseReason ? ` · ${selected.pauseReason}` : ''}</span><h3>统一规则</h3><small>{selected.modelName} · {selected.roundsPerCandidate} 轮/人 · {selected.candidateBudgetTokens} Token/人 · 总预算 {selected.totalBudgetTokens} Token</small></div>
         <select aria-label="选择试炼" value={selected.trialId} onChange={e => props.setSelectedTrialId(e.target.value)}>{props.trials.map(trial => <option key={trial.trialId} value={trial.trialId}>{trial.trialId}</option>)}</select></div>
       <p>{selected.challengeText}</p><p className="org-muted">验收：{selected.acceptanceCriteria} · 工具：{selected.allowedTools.join(', ')}</p>
-      {selected.status === 'draft' && <form className="org-inline-form" onSubmit={event => { event.preventDefault(); void props.run(() => api.addTrialCandidate(selected.trialId, { pixelId, initialEnergyTokens: initialEnergy, idempotencyKey: key(), formalNarrative: EMPTY_NARRATIVE(displayName || `候选 ${pixelId}`), testNarrative: EMPTY_NARRATIVE(`${displayName || `候选 ${pixelId}`}（试炼人设）`) })); }}>
-        <label>未使用坐标<input placeholder="x_y_z" value={pixelId} onChange={e => setPixelId(e.target.value)} required /></label><label>候选称呼<input value={displayName} onChange={e => setDisplayName(e.target.value)} required /></label><label>初始 Token<input type="number" min={selected.candidateBudgetTokens} value={initialEnergy} onChange={e => setInitialEnergy(Number(e.target.value))} /></label><button className="btn btn-xs">创建空白候选</button>
+      {selected.status === 'draft' && <div className="org-inline-form"><button className="btn btn-xs" type="button" onClick={() => void props.run(() => drawGacha({ mode: 'random', count: 1, idempotencyKey: key() }))}>随机抽一人</button><span className="org-muted">也可在观星台抽取钦点或访贤人物。</span></div>}
+      {selected.status === 'draft' && <form className="org-inline-form" onSubmit={event => { event.preventDefault(); if (!drawnQianjiId) return; void props.run(() => api.addTrialCandidate(selected.trialId, { qianjiId: drawnQianjiId, pixelId, initialEnergyTokens: initialEnergy, idempotencyKey: key() })); }}>
+        <label>已抽人物<select value={drawnQianjiId} onChange={e => setDrawnQianjiId(e.target.value)} required><option value="">选择未绑定人物</option>{availableDraws.map(item => <option key={item.profile.qianjiId} value={item.profile.qianjiId}>{item.profile.narrative.displayName} · {item.profile.draw?.rarity}</option>)}</select></label><label>未使用坐标<input placeholder="x_y_z" value={pixelId} onChange={e => setPixelId(e.target.value)} required /></label><label>初始 Token<input type="number" min={selected.candidateBudgetTokens} value={initialEnergy} onChange={e => setInitialEnergy(Number(e.target.value))} /></label><button className="btn btn-xs">加入试炼</button>
       </form>}
       <div className="org-candidate-grid">{selected.candidates.map(candidate => <article className="org-candidate" key={candidate.candidateId}><b>候选 {candidate.ordinal} · {candidate.qianjiId}</b><span>{candidate.execution?.status ?? '就绪'} · 实耗 {candidate.execution?.spentTokens ?? 0} Token / {selected.candidateBudgetTokens}</span><span>已知成本 {candidate.execution?.knownCostCny.toFixed(4) ?? '未知'} CNY{candidate.execution?.totalCostCny === null ? ' · 总成本未知' : ''}</span><span>轮次 {candidate.execution?.roundsUsed ?? 0}/{candidate.execution?.roundsLimit ?? selected.roundsPerCandidate}</span>{candidate.execution?.errorSummary && <span className="org-error-text">{candidate.execution.errorSummary}</span>}{candidate.execution?.evidence.map(item => <small key={item.evidenceId}>{item.evidenceId} · {item.sha256 ?? 'hash 未知'}</small>)}</article>)}</div>
       <div className="org-actions">{selected.status === 'draft' && <button className="btn btn-xs btn-primary" disabled={selected.candidates.length < 2} onClick={() => void props.run(() => api.startTrial(selected.trialId))}>按序开始</button>}{selected.status === 'running' && selected.pauseReason && <button className="btn btn-xs btn-primary" onClick={() => void props.run(() => api.resumeTrial(selected.trialId))}>恢复当前候选</button>}{selected.status === 'running' && <button className="btn btn-xs" onClick={() => void props.run(() => api.cancelTrial(selected.trialId, 'Owner 取消试炼'))}>取消</button>}</div>
@@ -206,8 +208,14 @@ function ArchiveHall({ items }: { items: QianjiListItemDto[] }) {
       .catch(err => { if (!controller.signal.aborted) setError(textOf(err)); });
     return () => controller.abort();
   }, [selectedId]);
-  return <section className="org-panel"><div className="org-panel-title"><div><p className="qj-eyebrow">档案殿</p><h2>退役人物</h2></div><span>{items.length} 位</span></div>
-    {items.map(item => <article className="org-card" key={item.profile.qianjiId}><div className="org-card-head"><div><h3>{item.profile.narrative.displayName}</h3><small>{item.profile.qianjiId} · 人设 revision {item.profile.narrativeRevision}</small></div><b>{item.profile.retiredAt ? new Date(item.profile.retiredAt * 1000).toLocaleString() : '时间未知'}</b></div><p>退役原因：{item.profile.retiredReason || '未记录'}</p><p className="org-muted">绑定历史 {item.bindingHistory.length} 条</p><button className="btn btn-xs" type="button" onClick={() => setSelectedId(item.profile.qianjiId)}>{selectedId === item.profile.qianjiId ? '刷新履历' : '查看履历和归档'}</button></article>)}
+  return <section className="org-panel"><div className="org-panel-title"><div><p className="qj-eyebrow">英灵殿</p><h2>退役与落选人物</h2></div><span>{items.length} 位</span></div>
+    {items.map(item => <article className="org-card" key={item.profile.qianjiId}><div className="org-card-head"><div><h3>{item.profile.narrative.displayName}</h3><small>{item.profile.qianjiId} · 人设 revision {item.profile.narrativeRevision}</small></div><b>{item.profile.retiredAt ? new Date(item.profile.retiredAt * 1000).toLocaleString() : '时间未知'}</b></div>
+      {item.profile.narrative.portraitAsset && <img className="org-archive-portrait" src={qianjiPortraitUrl(item.profile.qianjiId)} alt={`${item.profile.narrative.displayName}画像`} />}
+      {item.profile.draw && <><p>{item.profile.draw.rarity} · {Object.entries(item.profile.draw.attributes).map(([name, value]) => `${name}${value}`).join(' / ')} · {item.profile.draw.traitTags.join('、')}</p>
+        <p>来源：{item.profile.draw.origin}{item.profile.draw.requestedOrigin !== item.profile.draw.origin ? `（原请求 ${item.profile.draw.requestedOrigin}；${item.profile.draw.fallbackReason}）` : ''}</p>
+        {item.profile.draw.lineage.length > 0 && <p>师承：{item.profile.draw.lineage.join('、')}</p>}
+        {item.profile.draw.cardPrompt && <details><summary>存档卡面 prompt</summary><pre className="gacha-prompt">{item.profile.draw.cardPrompt}</pre></details>}</>}
+      <p>退役原因：{item.profile.retiredReason || '未记录'}</p><p className="org-muted">绑定历史 {item.bindingHistory.length} 条</p><button className="btn btn-xs" type="button" onClick={() => setSelectedId(item.profile.qianjiId)}>{selectedId === item.profile.qianjiId ? '刷新履历' : '查看履历和归档'}</button></article>)}
     {error && <p className="org-error-text" role="alert">{error}</p>}{history && <div className="org-archive-history"><h3>{items.find(item => item.profile.qianjiId === selectedId)?.profile.narrative.displayName ?? selectedId} · 履历与归档</h3><p>人物成本 {history.attributed.costSummary.totalCostCny === null ? `未知（已知 ${history.attributed.costSummary.knownCostCny.toFixed(4)} CNY）` : `${history.attributed.costSummary.totalCostCny.toFixed(4)} CNY`}</p>{history.artifacts.archives.map(archive => <section key={archive.bindingId}><h4>{archive.pixelId} · {archive.files.length} 个归档文件</h4>{archive.files.map(file => <p className="org-row" key={`${archive.bindingId}-${file.name}`}><a href={qianjiArtifactUrl(selectedId, archive.bindingId, file.name)} download>{file.name}</a><small>{file.size} bytes</small></p>)}</section>)}</div>}
     {items.length === 0 && <p className="org-muted">目前没有退役人物。</p>}</section>;
 }

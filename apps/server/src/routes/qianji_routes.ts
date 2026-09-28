@@ -10,6 +10,7 @@ import { containedPath, validatePathSegment } from "../services/safe_path.js";
 import { RunService } from "../services/run_service.js";
 import { WorldPresentationService } from "../services/world_presentation_service.js";
 import { MissionService } from "../services/mission_service.js";
+import { requestPublicImage } from "@emergentinc/tools";
 
 const MAX_PORTRAIT_BYTES = 2 * 1024 * 1024;
 const MIME_EXTENSIONS: Record<string, string> = {
@@ -23,6 +24,7 @@ export interface QianjiRouteOptions {
   workspaceRoot: string;
   runService: RunService;
   missionService?: MissionService;
+  downloadPortraitUrl?: (url: string) => Promise<{ contentType: string; body: Buffer }>;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -92,6 +94,34 @@ function getAssetPath(workspaceRoot: string, qianjiId: string, assetId: string):
   return containedPath(workspaceRoot, "assets", "qianji", qianjiId, assetId);
 }
 
+function savePortrait(store: CoreStore, workspaceRoot: string, id: string, expectedRevision: number,
+  mimeType: string, bytes: Buffer, source: "local" | "url"): { profile: QianjiProfile; assetId: string } {
+  const profile = store.qianji.getProfile(id);
+  if (!profile) throw new Error("Qianji not found");
+  if (profile.careerStatus === "retired") throw new Error("QIANJI_ARCHIVED_IMMUTABLE");
+  if (profile.draw?.imageStatus === "generating") throw new Error("GACHA_IMAGE_IN_PROGRESS");
+  if (bytes.length === 0 || bytes.length > MAX_PORTRAIT_BYTES) throw new Error("PORTRAIT_SIZE_INVALID");
+  const extension = validateImageHeader(mimeType, bytes);
+  if (!extension) throw new Error("PORTRAIT_FORMAT_INVALID");
+  const assetId = createHash("sha256").update(bytes).digest("hex") + "." + extension;
+  const directory = containedPath(workspaceRoot, "assets", "qianji", id);
+  fs.mkdirSync(directory, { recursive: true });
+  const assetPath = containedPath(workspaceRoot, "assets", "qianji", id, assetId);
+  let created = false;
+  try {
+    if (!fs.existsSync(assetPath)) { fs.writeFileSync(assetPath, bytes, { flag: "wx" }); created = true; }
+    const updated = store.transaction(() => {
+      const result = store.qianji.updateNarrative(id, expectedRevision, { ...profile.narrative, portraitAsset: assetId });
+      if (profile.draw) store.gacha.recordImportedImage(id, assetId, source);
+      return result;
+    });
+    return { profile: updated, assetId };
+  } catch (error) {
+    if (created) fs.rmSync(assetPath, { force: true });
+    throw error;
+  }
+}
+
 function listArtifactFiles(directory: string): Array<{ name: string; size: number; modifiedAt: number }> {
   if (!fs.existsSync(directory) || !fs.statSync(directory).isDirectory()) return [];
   return fs.readdirSync(directory, { withFileTypes: true })
@@ -140,6 +170,7 @@ function bindingArtifactHistory(workspaceRoot: string, bindings: ReturnType<Core
 function routeError(reply: any, error: unknown): any {
   const message = error instanceof Error ? error.message : String(error);
   if (message === "REVISION_CONFLICT") return reply.status(409).send({ detail: message });
+  if (message === "GACHA_IMAGE_IN_PROGRESS" || message === "QIANJI_ARCHIVED_IMMUTABLE") return reply.status(409).send({ detail: message });
   if (message === "Qianji not found") return reply.status(404).send({ detail: message });
   return reply.status(400).send({ detail: message });
 }
@@ -150,6 +181,7 @@ function isRunInProgress(store: CoreStore, runService: RunService): boolean {
 
 export async function registerQianjiRoutes(server: FastifyInstance, options: QianjiRouteOptions): Promise<void> {
   const { store, workspaceRoot, runService, missionService } = options;
+  const downloadPortraitUrl = options.downloadPortraitUrl ?? requestPublicImage;
   const presentationService = new WorldPresentationService(workspaceRoot);
 
   server.get("/qianji/:id/effective-mandate", async (request, reply) => {
@@ -296,6 +328,7 @@ export async function registerQianjiRoutes(server: FastifyInstance, options: Qia
     if (!validation.valid) return reply.status(400).send({ detail: "NARRATIVE_INVALID", errors: validation.errors });
     const profile = store.qianji.getProfile(id);
     if (!profile) return reply.status(404).send({ detail: "Qianji not found" });
+    if (profile.careerStatus === "retired") return reply.status(409).send({ detail: "QIANJI_ARCHIVED_IMMUTABLE" });
     const binding = store.qianji.getCurrentBindingByQianji(id);
     if (binding && store.executions.getOpenExecutionForBinding(binding.bindingId)) return reply.status(409).send({ detail: "QIANJI_OCCUPIED_BY_EXECUTION" });
     if (validation.value.portraitAsset) {
@@ -381,6 +414,8 @@ export async function registerQianjiRoutes(server: FastifyInstance, options: Qia
     if (isRunInProgress(store, runService)) return reply.status(409).send({ detail: "RUN_IN_PROGRESS" });
     const profile = store.qianji.getProfile(id);
     if (!profile) return reply.status(404).send({ detail: "Qianji not found" });
+    if (profile.careerStatus === "retired") return reply.status(409).send({ detail: "QIANJI_ARCHIVED_IMMUTABLE" });
+    if (profile.draw?.imageStatus === "generating") return reply.status(409).send({ detail: "GACHA_IMAGE_IN_PROGRESS" });
     const body = request.body;
     if (!isRecord(body) || !hasOnlyKeys(body, ["mimeType", "dataBase64", "expectedRevision"]) ||
         typeof body.mimeType !== "string" || typeof body.dataBase64 !== "string" ||
@@ -395,33 +430,32 @@ export async function registerQianjiRoutes(server: FastifyInstance, options: Qia
     if (bytes.length === 0 || bytes.length > MAX_PORTRAIT_BYTES || bytes.toString("base64") !== body.dataBase64) {
       return reply.status(400).send({ detail: "Decoded portrait must be at most 2 MiB" });
     }
-    const extension = validateImageHeader(body.mimeType, bytes);
-    if (!extension) return reply.status(400).send({ detail: "Image header does not match MIME type or file structure" });
-
-    const assetId = createHash("sha256").update(bytes).digest("hex") + "." + extension;
-    let assetPath: string;
-    let created = false;
     try {
-      const directory = containedPath(workspaceRoot, "assets", "qianji", id);
-      fs.mkdirSync(directory, { recursive: true });
-      assetPath = containedPath(workspaceRoot, "assets", "qianji", id, assetId);
-      if (!fs.existsSync(assetPath)) {
-        fs.writeFileSync(assetPath, bytes, { flag: "wx" });
-        created = true;
-      }
+      return reply.send(savePortrait(store, workspaceRoot, id, Number(body.expectedRevision), body.mimeType, bytes, "local"));
     } catch (error) {
-      return reply.status(400).send({ detail: error instanceof Error ? error.message : String(error) });
-    }
-    try {
-      const narrative = { ...profile.narrative, portraitAsset: assetId };
-      const updated = store.qianji.updateNarrative(id, Number(body.expectedRevision), narrative);
-      return reply.send({ profile: updated, assetId });
-    } catch (error) {
-      if (created) {
-        try { fs.rmSync(assetPath!, { force: true }); } catch {}
-      }
       return routeError(reply, error);
     }
+  });
+
+  server.post("/qianji/:id/portrait/import-url", async (request, reply) => {
+    const id = String((request.params as any).id ?? "");
+    try { validatePathSegment(id); } catch { return reply.status(400).send({ detail: "Invalid qianji id" }); }
+    if (isRunInProgress(store, runService)) return reply.status(409).send({ detail: "RUN_IN_PROGRESS" });
+    const profile = store.qianji.getProfile(id);
+    if (!profile) return reply.status(404).send({ detail: "Qianji not found" });
+    if (profile.careerStatus === "retired") return reply.status(409).send({ detail: "QIANJI_ARCHIVED_IMMUTABLE" });
+    if (profile.draw?.imageStatus === "generating") return reply.status(409).send({ detail: "GACHA_IMAGE_IN_PROGRESS" });
+    const body = request.body;
+    if (!isRecord(body) || !hasOnlyKeys(body, ["url", "expectedRevision"]) ||
+        typeof body.url !== "string" || body.url.length > 2048 ||
+        !Number.isSafeInteger(body.expectedRevision) || Number(body.expectedRevision) < 0) {
+      return reply.status(400).send({ detail: "PORTRAIT_URL_INPUT_INVALID" });
+    }
+    try {
+      const downloaded = await downloadPortraitUrl(body.url);
+      if (isRunInProgress(store, runService)) return reply.status(409).send({ detail: "RUN_IN_PROGRESS" });
+      return reply.send(savePortrait(store, workspaceRoot, id, Number(body.expectedRevision), downloaded.contentType, downloaded.body, "url"));
+    } catch (error) { return routeError(reply, error); }
   });
 
   server.get("/qianji/:id/portrait", async (request, reply) => {
