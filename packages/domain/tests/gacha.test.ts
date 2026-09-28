@@ -1,8 +1,14 @@
 import { describe, expect, it } from "vitest";
 import { GACHA_ATTRIBUTE_KEYS } from "@emergentinc/protocol";
-import { nextGachaPity, rarityFromAttributes, rollGacha, topGachaAttributes } from "../src/qianji/gacha.js";
+import { nextGachaPity, randomQianjiNarrative, rarityFromAttributes, rollGacha, topGachaAttributes } from "../src/qianji/gacha.js";
 
 describe("gacha roll", () => {
+  it("gives random characters deterministic and varied visual details", () => {
+    const first = randomQianjiNarrative(0);
+    expect(randomQianjiNarrative(0).appearanceSpec).toBe(first.appearanceSpec);
+    expect(first.appearanceSpec).toContain("，");
+    expect(randomQianjiNarrative(1 << 18).appearanceSpec).not.toBe(first.appearanceSpec);
+  });
   it("keeps a versioned golden result for cross-platform replay", () => {
     expect(rollGacha(42, "owner", 0)).toMatchObject({ algorithmVersion: 1, rarity: "R", guaranteed: false,
       attributes: { 谋: 1.2, 察: 0.9, 决: 1.1, 行: 1.3, 言: 1.7, 创: 1.3, 韧: 0.9, 学: 1.2 }, traitTags: [] });

@@ -5,6 +5,14 @@ const GIVEN = ["观星", "无咎", "知微", "明烛", "玄策", "长庚", "见�
 const ROLES = ["军师", "跑商", "工匠", "说客", "账房", "斥候", "医官", "司晨"];
 const PAST = ["边城行商", "山中学徒", "旧书楼守卷人", "远道旅人"];
 const NOW = ["于天机阁重寻方向", "在观星台领命", "为新纪元效力", "从一张空白命书开始"];
+const FACE = ["清瘦的青年", "眉眼凌厉的青年", "面容温和的中年人", "神情沉稳的中年人",
+  "带风霜痕迹的旅人", "眼角有细纹的学者", "轮廓分明的青年", "面容冷峻的成年人"];
+const HAIR = ["乌发高束", "银灰长发半束", "短发以铜簪固定", "长发编入细辫",
+  "墨发披肩", "发髻插木簪", "黑发束成低马尾", "额前垂一缕白发"];
+const MARK = ["左眉有浅疤", "腕上系旧红绳", "戴单片青玉耳坠", "肩披磨旧的短斗篷",
+  "袖口绣星轨", "指节留有墨痕", "腰间悬铜铃", "颈边有一枚墨色小痣"];
+const POSE = ["侧身回望", "俯身检视手中物", "立于风中抬眼", "倚栏沉思",
+  "向前迈步", "双手拢袖静立", "抬手指向远处", "坐在灯下低头思索"];
 
 function seededChoice<T>(values: T[], seed: number, shift: number): T {
   return values[(seed >>> shift) % values.length]!;
@@ -14,7 +22,8 @@ export function randomQianjiNarrative(seed: number, role?: string): QianjiNarrat
   return { displayName: seededChoice(SURNAMES, seed, 0) + seededChoice(GIVEN, seed, 3),
     title: null, roleLabel: role ?? seededChoice(ROLES, seed, 6), traits: {}, behaviorProfile: [],
     flaw: null, shortBio: `曾是${seededChoice(PAST, seed, 9)}，如今${seededChoice(NOW, seed, 12)}。`,
-    appearanceSpec: null, portraitAsset: null, contentRevision: null };
+    appearanceSpec: `${seededChoice(FACE, seed, 15)}，${seededChoice(HAIR, seed, 18)}，${seededChoice(MARK, seed, 21)}，${seededChoice(POSE, seed, 24)}`,
+    portraitAsset: null, contentRevision: null };
 }
 
 export interface RolledGacha {

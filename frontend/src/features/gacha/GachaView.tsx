@@ -11,12 +11,12 @@ function Radar({ values }: { values: Record<string, number> }) {
   const point = (index: number, value: number) => {
     const angle = -Math.PI / 2 + (index * Math.PI) / 4;
     const radius = 12 + (Math.max(0.5, Math.min(2, value)) - 0.5) * 37;
-    return `${(60 + Math.cos(angle) * radius).toFixed(1)},${(60 + Math.sin(angle) * radius).toFixed(1)}`;
+    return [(60 + Math.cos(angle) * radius).toFixed(1), (60 + Math.sin(angle) * radius).toFixed(1)] as const;
   };
   return <svg className="gacha-radar" viewBox="0 0 120 120" role="img" aria-label={keys.map(key => `${key} ${values[key]}`).join('、')}>
-    {[0.5, 1, 1.5, 2].map(level => <polygon key={level} points={keys.map((_, index) => point(index, level)).join(' ')} fill="none" stroke="rgba(140,170,204,.24)" />)}
-    <polygon points={keys.map((key, index) => point(index, values[key] ?? 0.5)).join(' ')} fill="rgba(98,190,220,.22)" stroke="#88d9ed" strokeWidth="1.5" />
-    {keys.map((key, index) => { const [x, y] = point(index, 2); return <text key={key} x={Number(x)} y={Number(y)} textAnchor="middle" fill="#f4ddb2" fontSize="9">{key}</text>; })}
+    {[0.5, 1, 1.5, 2].map(level => <polygon key={level} points={keys.map((_, index) => point(index, level).join(',')).join(' ')} fill="none" stroke="rgba(140,170,204,.24)" />)}
+    <polygon points={keys.map((key, index) => point(index, values[key] ?? 0.5).join(',')).join(' ')} fill="rgba(98,190,220,.22)" stroke="#88d9ed" strokeWidth="1.5" />
+    {keys.map((key, index) => { const [x, y] = point(index, 2); return <text key={key} x={x} y={y} textAnchor="middle" fill="#f4ddb2" fontSize="9">{key}</text>; })}
   </svg>;
 }
 
@@ -116,6 +116,7 @@ export function GachaView({ onBack }: { onBack: () => void }) {
           <span>{item.profile.draw.traitTags.join(' · ') || '暂无极值词条'}</span>
           {item.profile.draw.lineage.length > 0 && <span>师承：{item.profile.draw.lineage.join('、')}</span>}
           {item.profile.draw.cardPrompt && <details><summary>卡面 prompt</summary><pre className="gacha-prompt">{item.profile.draw.cardPrompt}</pre></details>}</>}
+        <button className="btn btn-xs" type="button" onClick={() => { setCards([item]); setRevealed(true); setTab('draw'); }}>打开卡片{item.profile.draw?.generationStatus === 'failed' ? '并重试人设' : ''}</button>
         <small>{item.profile.draw ? new Date(item.profile.draw.createdAt * 1000).toLocaleString() : ''}</small>
       </article>)}</div>
       {historyPage?.nextCursor && <button className="btn" onClick={() => void listGachaHistory(historyPage.nextCursor).then(page => { setHistory(current => [...current, ...page.items]); setHistoryPage(page); }).catch(err => setError(String(err)))}>加载更多</button>}

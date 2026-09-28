@@ -15,7 +15,7 @@ export class OpenAICompatibleImageProvider implements GachaImageProvider {
     const response = await fetch(`${this.baseUrl.replace(/\/$/, "")}/images/generations`, {
       method: "POST",
       headers: { Authorization: `Bearer ${this.apiKey}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ model: this.model, prompt, size: "1024x1536" }),
+      body: JSON.stringify({ model: this.model, prompt, size: "1080x1920" }),
       signal: AbortSignal.timeout(120_000),
     });
     if (!response.ok) throw new Error(`GACHA_IMAGE_HTTP_${response.status}`);

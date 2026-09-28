@@ -24,8 +24,16 @@ if %errorlevel% equ 0 (
     exit /b 1
 )
 
-rem Build the frontend so the UI always matches current source code.
-rem (Stale bundles previously showed outdated controls - e.g. the removed one-click reconcile.)
+rem Build both backend and frontend so the UI and API match current source code.
+echo Building backend...
+call npm run build
+if %errorlevel% neq 0 (
+    echo.
+    echo [BUILD FAILED] Backend build error - NOT starting server with stale code.
+    pause
+    exit /b 1
+)
+
 echo Building frontend UI...
 pushd frontend
 call npm run build
