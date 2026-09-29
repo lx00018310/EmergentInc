@@ -43,7 +43,7 @@ CoreStore         —— node:sqlite，单事务仓储
 
 ## 千机身份存储
 
-当前版本采用 SQLite 存储身份，与 `EmergentInc_TianJiGe_3_Stage_Execution_Plan_v2.md` 的 S1-01 数据契约一致：`qianji_profiles` 保存当前人设和职业状态，`qianji_narrative_revisions` 保存人设版本，`qianji_bindings` 保存人物与载体代次的绑定历史。一次修改在同一事务中更新版本和事件；模型的 Identity 上下文从数据库中对应的绑定与人设 revision 构造。
+当前版本采用 SQLite 存储身份，与 `EmergentInc_QianJiGe_3_Stage_Execution_Plan_v2.md` 的 S1-01 数据契约一致：`qianji_profiles` 保存当前人设和职业状态，`qianji_narrative_revisions` 保存人设版本，`qianji_bindings` 保存人物与载体代次的绑定历史。一次修改在同一事务中更新版本和事件；模型的 Identity 上下文从数据库中对应的绑定与人设 revision 构造。
 
 `identity.json` 不参与当前运行链路，也不是另一份可编辑的身份事实源。`state.json` 的 `incarnation` 只描述载体代次；`pixel.md` 保存心智，不承载人设主档。备份或迁移身份必须包含 `workspace/ledger/v9_core.sqlite3`，不能仅复制 Pixel 文件。
 

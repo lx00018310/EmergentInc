@@ -8,7 +8,7 @@ import { ApprovalPanel } from './ApprovalPanel';
 
 const chatRunRequest = { rounds: 1, run_budget_tokens: 100000 };
 
-export interface TianJiHallProps {
+export interface QianJiHallProps {
   selectedQianjiId: string | null;
   onSelectedQianji: (id: string | null) => void;
   onSelectedPixel: (id: string | null) => void;
@@ -17,7 +17,7 @@ export interface TianJiHallProps {
   onOpenMeeting?: () => void;
 }
 
-export const TianJiHall: React.FC<TianJiHallProps> = ({ selectedQianjiId, onSelectedQianji, onSelectedPixel, onOpenEngine, onOpenGacha, onOpenMeeting }) => {
+export const QianJiHall: React.FC<QianJiHallProps> = ({ selectedQianjiId, onSelectedQianji, onSelectedPixel, onOpenEngine, onOpenGacha, onOpenMeeting }) => {
   const { items, presentation, error: qianjiError, loading, refresh } = useQianjiPolling();
   const { world, runStatus, error: worldError, refreshImmediately } = useWorldPolling();
   const [runError, setRunError] = useState<string | null>(null);
@@ -77,7 +77,7 @@ export const TianJiHall: React.FC<TianJiHallProps> = ({ selectedQianjiId, onSele
     : recoveryRequired ? '需要恢复处理' : runStatus?.result_status === 'FAILED' ? '上次运行失败' : '空闲';
 
   return (
-    <div className="tianji-hall" data-testid="tianji-hall">
+    <div className="qianji-hall" data-testid="qianji-hall">
       <header className="hall-header">
         <div className="hall-brand"><span className="hall-mark">千</span><div><h1>{presentation?.hallName ?? '千机阁'}</h1><p>{presentation?.organizationName ?? 'EmergentInc 元胞会社'}</p></div></div>
         <div className="hall-run-summary"><span>第 {world?.round ?? runStatus?.current_round ?? 0} 轮</span><span className={runStatus?.running ? 'is-running' : recoveryRequired ? 'is-error' : ''}>{runState}</span></div>

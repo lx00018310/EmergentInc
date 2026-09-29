@@ -1,7 +1,7 @@
-# EmergentInc → 天机阁：三阶段执行 Plan（本地代码校准 / Luna max 执行版）
+# EmergentInc → 千机阁：三阶段执行 Plan（本地代码校准 / Luna max 执行版）
 
 > 修订日期：2026-09-25。Plan 校准基线：本地 HEAD `7da4256`；Stage 1 执行基线：`fc3d4c7`。
-> 来源：[评估天机阁方案](chatgpt-conversation://6ab64d3c-5200-83e8-870e-6b141a4e7604) 的六轮对话，以及用户下载的同名 v2 文件。
+> 来源：[评估千机阁方案](chatgpt-conversation://6ab64d3c-5200-83e8-870e-6b141a4e7604) 的六轮对话，以及用户下载的同名 v2 文件。
 > 原文件 SHA-256：`338b7812659027c1002ce8942e9a50b68485cb80d339a64b4f580fc026bdfef6`。
 > Plan 校准阶段只修改了本文；随后按本文执行了 Stage 1。未迁移真实 workspace，未运行真实模型，未宣称商业闭环完成。执行证据见 8.4。
 > 本文继续使用原文件名，正文替代原 v2 中未落到代码的建议。未勾选项目均未完成。
@@ -107,7 +107,7 @@ WorldEvent 最小字段：
 - source_key 固定由动作/来源 ID 派生，例如 qianji:<id>:created、narrative:<id>:<revision>；重放不重复事件。
 - 不存强制故事标题。前端默认用中性中文标签；用户可提供 eventType → label 的纯文本映射。
 - Stage 1 把组织标题、栏目标签、事件标签放在 `workspace/runtime/world_presentation.json`，通过 GET/PUT /api/world/presentation 整体读写并严格校验。
-- 此配置只有 plain text labels；不接受 HTML、JS、模板表达式、数据库字段路径或可执行内容。默认“天机阁”只是显示文字。
+- 此配置只有 plain text labels；不接受 HTML、JS、模板表达式、数据库字段路径或可执行内容。默认“千机阁”只是显示文字。
 - 没有 Muse 文案时直接展示事实，不能让模型代写事实源。
 
 事件类型按阶段扩展，不使用自由输入的事件名：
@@ -120,7 +120,7 @@ WorldEvent 最小字段：
 
 ## 3. Stage 1：身份、人物卡、真实对话、Engine 入口
 
-完成形态：默认打开天机阁大厅；已有 Pixel 有独立人物身份；可以导入人设和静态图、查看经历、向人物发消息并看到真实运行回复；Engine 完整保留。
+完成形态：默认打开千机阁大厅；已有 Pixel 有独立人物身份；可以导入人设和静态图、查看经历、向人物发消息并看到真实运行回复；Engine 完整保留。
 
 ### S1-01 类型、表和最小 Repository
 
@@ -299,7 +299,7 @@ WorldEvent 最小字段：
 **修改/新增**：
 
 - 从 App.tsx 抽出 `frontend/src/features/engine/EngineView.tsx`；现有控制/弹窗回调按需要传 props，勿复制两套状态。
-- 新增 hall/TianJiHall.tsx；qianji/QianjiCard.tsx、QianjiProfilePanel.tsx、QianjiChatPanel.tsx、QianjiNarrativeEditor.tsx。
+- 新增 hall/QianJiHall.tsx；qianji/QianjiCard.tsx、QianjiProfilePanel.tsx、QianjiChatPanel.tsx、QianjiNarrativeEditor.tsx。
 - 新增 `frontend/src/hooks/useQianjiPolling.ts` 与 qianji API DTO；保留 useWorldPolling 的既有数据契约。
 - 样式增量写入现有 index.css 的新作用域，避免改坏 Engine 样式。
 
@@ -949,7 +949,7 @@ git status --short
 
 - 修改：App增加组织控制台入口；实现Mission、试炼、Product、反馈、交付、人工收退款、退役档案/交付物及Facts/Narrative分区页面；产品成本走Product范围统计；加入响应式样式。
 - 验证：`tsc.cmd -b --force`、前端Vite生产构建通过；导航、Mission参与者、产品记账来源/凭据及未知成本交互测试通过。修正过时的RunStatus标题断言。全仓 `vitest.cmd run --reporter=dot` 为53个文件、318项全部通过。Vite有一个883 kB chunk超过500 kB提示，但构建通过。
-- UI验收：使用不含根目录 `.env` 的临时副本，以 `--mock` 在隔离workspace启动服务；API正常。于1280×720检查天机阁及组织控制台Mission、招贤与试炼、产品、档案、纪事页面，未观察到遮挡或横向溢出。窄屏未人工检查；样式有700px响应断点。
+- UI验收：使用不含根目录 `.env` 的临时副本，以 `--mock` 在隔离workspace启动服务；API正常。于1280×720检查千机阁及组织控制台Mission、招贤与试炼、产品、档案、纪事页面，未观察到遮挡或横向溢出。窄屏未人工检查；样式有700px响应断点。
 - 未做/限制：没有真实收款、退款、客户交付、正式Muse内容或外部发布，结论为“技术能力完成，商业闭环未验证”。
 - 后续人工事项：提供真人需求/交付/反馈；确有收款时由Owner录入真实外部交易号与凭据索引；用户将事实导出交给Muse并审核内容。公开发布需单独决定。
 

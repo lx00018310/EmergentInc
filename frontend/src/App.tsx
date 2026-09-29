@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { TianJiHall } from './features/hall/TianJiHall';
+import { QianJiHall } from './features/hall/QianJiHall';
 import { EngineView } from './features/engine/EngineView';
 import { GachaView } from './features/gacha/GachaView';
 import { MeetingView } from './features/meetings/MeetingView';
@@ -38,7 +38,7 @@ export const App: React.FC = () => {
   if (aux === 'gacha') return <GachaView onBack={() => setAux(null)}
     onOpenPerson={id => { setSelectedQianjiId(id); setAux(null); }} />;
   if (aux === 'meeting') return <MeetingView onBack={() => setAux(null)} />;
-  return <TianJiHall selectedQianjiId={selectedQianjiId} onSelectedQianji={setSelectedQianjiId}
+  return <QianJiHall selectedQianjiId={selectedQianjiId} onSelectedQianji={setSelectedQianjiId}
     onSelectedPixel={setSelectedPixelId} onOpenEngine={() => openRoute('engine')}
     onOpenGacha={() => setAux('gacha')} onOpenMeeting={() => setAux('meeting')} />;
 };

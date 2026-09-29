@@ -2,9 +2,9 @@ import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen } from '@testing-library/react';
 
-vi.mock('../src/features/hall/TianJiHall', async () => {
+vi.mock('../src/features/hall/QianJiHall', async () => {
   const ReactModule = await import('react');
-  return { TianJiHall: (props: any) => ReactModule.createElement('div', { 'data-testid': 'hall' },
+  return { QianJiHall: (props: any) => ReactModule.createElement('div', { 'data-testid': 'hall' },
     ReactModule.createElement('button', { onClick: () => props.onSelectedPixel('0_0_0') }, '选中绑定载体'),
     ReactModule.createElement('button', { onClick: props.onOpenEngine }, '打开 Engine'),
     ReactModule.createElement('button', { onClick: props.onOpenGacha }, '招募人物'),

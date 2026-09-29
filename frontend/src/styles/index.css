@@ -1597,152 +1597,173 @@ select:focus {
 }
 .axis-gizmo .gizmo-z-label { fill: #ffd98a; }
 /* ==========================================================================
-   千机阁与千机系统：瑞士平面极简（Swiss Typographic Minimalism）
-   充裕留白 (85%) · 墨黑骨架 (10%) · 小比例跳跃与精密发丝流光 (5%)
+/* ==========================================================================
+   千机阁与千机系统：【昆仑先锋 · 极地琉璃机能】(Glacial Iridescent & Pastel Techwear)
+   纯净冰原白 (75%) · 天青冷雾与彩虹琉璃色散 (15%) · 双筒白金陶瓷嵌边 (10%)
    ========================================================================== */
 :root {
-  /* 纯净瑞士白底与留白空间材质 */
-  --tj-bg-canvas: #ffffff;           /* 纯净白底，充裕留白空间 */
-  --tj-bg-surface: #ffffff;          /* 纯净白板面板，摒弃浑浊毛玻璃 */
-  --tj-bg-card: #ffffff;             /* 纯粹卡片白底 */
-  --tj-bg-card-hover: #fafafa;
-  --tj-bg-subtle: #f4f4f5;           /* 极淡中性灰底 */
-  --tj-bg-muted: #e4e4e7;
+  /* 极地冰川雪原底色与高透光贝母材质 */
+  --tj-bg-canvas: #f4f7fb;           /* 极寒冰原通透雪白 */
+  --tj-bg-surface: rgba(255, 255, 255, 0.92); /* 高分子陶瓷贝母白 */
+  --tj-bg-card: #ffffff;             /* 纯净机能卡片 */
+  --tj-bg-card-hover: #ffffff;
+  --tj-bg-subtle: #f0f6fa;           /* 冰晶天青霜灰 */
+  --tj-bg-muted: #e1edf6;
 
-  /* 严谨精密极细边框（瑞士工业几何感） */
-  --tj-border: #e4e4e7;              /* 1px 精细分界线 */
-  --tj-border-soft: #f4f4f5;
-  --tj-border-focus: #18181b;        /* 聚焦纯黑线 */
-  --tj-line: #e4e4e7;
-  --tj-line-soft: #f4f4f5;
-  --tj-tint: #fafafa;
+  /* 双筒机能白金细嵌边（图3特征）与全息蓝图工程细线 */
+  --tj-border: rgba(14, 165, 233, 0.25);       /* 天青冷冽分界线 */
+  --tj-border-soft: rgba(14, 165, 233, 0.12);
+  --tj-border-focus: #0284c7;                  /* 天青激光聚焦线 */
+  --tj-border-gold: rgba(217, 119, 6, 0.55);   /* 双筒机能纯金嵌边 (1.5px) */
+  --tj-line: rgba(14, 165, 233, 0.2);
+  --tj-line-soft: rgba(14, 165, 233, 0.08);
+  --tj-tint: #f5f9fc;
   --tj-surface: #ffffff;
 
-  /* 高对比墨黑排版骨架 (Typography) */
-  --tj-text-title: #09090b;          /* 极深墨黑，锋利挺拔 */
-  --tj-text-main: #18181b;           /* 沉稳正文阅读色 */
-  --tj-text-dim: #71717a;            /* 瑞士冷中性中灰 */
-  --tj-text-faint: #a1a1aa;          /* 辅助微标 */
+  /* 深黛墨青冷夜排版骨架 (High-Contrast Crisp Typography) */
+  --tj-text-title: #09192f;          /* 极深冷夜墨青，冷冽且极具可读性 */
+  --tj-text-main: #1e293b;           /* 沉稳高对比正文色 */
+  --tj-text-dim: #64748b;            /* 冰原冷灰 */
+  --tj-text-faint: #94a3b8;          /* 蓝图技术小字标 */
 
-  /* 5% 小比例跳跃色标 (Pops & Accents) */
-  --tj-accent: #4f46e5;              /* 焦点紫霄：电光深紫 */
-  --tj-accent-bright: #6366f1;
-  --tj-cyan: #059669;                /* 青玉灵息：纯正翠青 */
-  --tj-cyan-pop: #00e599;            /* 灵气脉冲高亮点 */
-  --tj-pink: #e11d48;                /* 动爻/警示朱砂红 */
-  --tj-gold: #b45309;                /* 乾坤金箓 */
+  /* 核心意象色标（图3雪莲与天青目镜） */
+  --tj-accent: #0284c7;              /* 天青镜片蓝 */
+  --tj-accent-bright: #00e5ff;       /* 电光天青激光高亮 */
+  --tj-cyan: #0284c7;                /* 灵流天青 */
+  --tj-cyan-pop: #00e5ff;            /* 灵气脉冲激光点 */
+  --tj-pink: #f43f5e;                /* 动爻/异变朱砂警示 */
+  --tj-pink-soft: #fbcfe8;           /* 浅樱粉太空服 */
+  --tj-gold: #d97706;                /* 纯金卡扣嵌边 */
+  --tj-gold-light: #fef08a;
 
-  /* 精密流光发丝线（Hairline Prismatic Streamer） */
-  --tj-holo-streamer: linear-gradient(90deg, #6366f1 0%, #00e599 33%, #06b6d4 66%, #f43f5e 100%);
-  --tj-shimmer-border: linear-gradient(90deg, rgba(99,102,241,0.5), rgba(0,229,153,0.6), rgba(244,63,94,0.5), rgba(99,102,241,0.5));
+  /* 图3巨型琉璃雪莲全息彩虹色散流光 (Iridescent Holographic Lotus) */
+  --tj-holo-streamer: linear-gradient(90deg, #00e5ff 0%, #38bdf8 25%, #f472b6 50%, #ffd700 75%, #00e5ff 100%);
+  --tj-shimmer-border: linear-gradient(135deg, rgba(0,229,255,0.4), rgba(244,114,182,0.4), rgba(255,215,0,0.45));
 }
 
-/* 极简流光与脉冲微动效 */
+/* 全息彩虹流光与脉冲微动效 */
 @keyframes tj-streamer-slide {
   0% { background-position: 0% 50%; }
   100% { background-position: 200% 50%; }
 }
 
 @keyframes tj-dot-pulse {
-  0%, 100% { opacity: 1; transform: scale(1); }
-  50% { opacity: 0.45; transform: scale(0.85); }
+  0%, 100% { opacity: 1; transform: scale(1); filter: drop-shadow(0 0 5px #00e5ff); }
+  50% { opacity: 0.45; transform: scale(0.85); filter: none; }
 }
 
-/* 千机阁大厅画布：瑞士极简纯白留白 × 几何隐形网格 */
-.tianji-hall {
+/* 千机阁大厅画布：极地冰川雪原 × 晴空天青冷雾 × 全息经纬微网格 */
+.qianji-hall {
   width: 100%;
   height: 100vh;
   overflow: auto;
   background-color: var(--tj-bg-canvas);
   background-image:
-    linear-gradient(to right, rgba(0, 0, 0, 0.02) 1px, transparent 1px),
-    linear-gradient(to bottom, rgba(0, 0, 0, 0.02) 1px, transparent 1px);
-  background-size: 32px 32px;
+    radial-gradient(ellipse at 50% -10%, rgba(186, 230, 253, 0.5) 0%, rgba(244, 114, 182, 0.08) 50%, transparent 80%),
+    linear-gradient(to right, rgba(14, 165, 233, 0.045) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(14, 165, 233, 0.045) 1px, transparent 1px);
+  background-size: 100% 100%, 32px 32px, 32px 32px;
   color: var(--tj-text-main);
   position: relative;
 }
 
-.tianji-hall ::-webkit-scrollbar {
+.qianji-hall ::-webkit-scrollbar {
   width: 5px;
   height: 5px;
 }
-.tianji-hall ::-webkit-scrollbar-track {
+.qianji-hall ::-webkit-scrollbar-track {
   background: transparent;
 }
-.tianji-hall ::-webkit-scrollbar-thumb {
-  background: #d4d4d8;
+.qianji-hall ::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
   border-radius: 2px;
 }
-.tianji-hall ::-webkit-scrollbar-thumb:hover {
-  background: #a1a1aa;
+.qianji-hall ::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
 }
 
-/* 顶部导航台：极简黑白秩序 × 1.5px 发丝全息彩线 */
+/* 顶部千机站：双筒机能白金外壳 × 天青镜片指示器 */
 .hall-header {
-  min-height: 60px;
+  min-height: 64px;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  padding: 8px 32px;
-  border-bottom: 1px solid var(--tj-border);
-  background: #ffffff;
+  padding: 8px 36px;
+  border-bottom: 1.5px solid var(--border-blue);
+  background: rgba(255, 255, 255, 0.94);
+  backdrop-filter: blur(16px);
   position: sticky;
   top: 0;
   z-index: 20;
+  box-shadow: 0 4px 20px rgba(14, 165, 233, 0.06);
 }
 .hall-header::after {
   content: '';
   position: absolute;
-  bottom: -1px;
+  bottom: -2px;
   left: 0;
   right: 0;
-  height: 1.5px;
+  height: 2px;
   background: var(--tj-holo-streamer);
   background-size: 200% 100%;
-  animation: tj-streamer-slide 10s linear infinite;
-  opacity: 0.85;
+  animation: tj-streamer-slide 8s linear infinite;
+  box-shadow: 0 0 10px rgba(0, 229, 255, 0.4);
 }
 .hall-brand {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 16px;
   min-width: 0;
 }
 .hall-mark {
-  width: 36px;
-  height: 36px;
+  width: 42px;
+  height: 42px;
   display: grid;
   place-items: center;
   flex: 0 0 auto;
-  border: 1.5px solid var(--tj-text-title);
-  border-radius: 4px;
+  border: 1.5px solid var(--tj-gold);
+  border-radius: 8px;
   background: #ffffff;
   color: var(--tj-text-title);
-  font: 700 18px var(--font-display);
+  font: 800 22px var(--font-display);
   position: relative;
+  box-shadow: 0 2px 10px rgba(217, 119, 6, 0.2), inset 0 0 0 1.5px rgba(255, 255, 255, 0.95);
+}
+.hall-mark::before {
+  content: '';
+  position: absolute;
+  top: -3px;
+  left: -3px;
+  right: -3px;
+  bottom: -3px;
+  border-radius: 10px;
+  border: 1px solid rgba(14, 165, 233, 0.35);
+  pointer-events: none;
 }
 .hall-mark::after {
   content: '';
   position: absolute;
-  top: 2px;
-  right: 2px;
-  width: 4px;
-  height: 4px;
+  top: 4px;
+  right: 4px;
+  width: 5px;
+  height: 5px;
   border-radius: 50%;
   background: var(--tj-cyan-pop);
+  box-shadow: 0 0 8px var(--tj-cyan-pop);
 }
 .hall-brand h1 {
   color: var(--tj-text-title);
-  font: 600 18px var(--font-display);
-  letter-spacing: 0.02em;
+  font: 700 19px var(--font-display);
+  letter-spacing: 0.06em;
 }
 .hall-brand p {
-  color: var(--tj-text-dim);
+  color: var(--tj-accent);
   font-size: 11px;
-  margin-top: 1px;
+  margin-top: 2px;
   font-family: var(--font-mono);
-  letter-spacing: 0.04em;
+  letter-spacing: 0.08em;
+  font-weight: 600;
 }
 .hall-run-summary {
   display: flex;
@@ -1751,10 +1772,21 @@ select:focus {
   color: var(--tj-text-main);
   font-family: var(--font-mono);
   font-size: 11px;
-  background: var(--tj-bg-subtle);
-  padding: 4px 12px;
-  border-radius: 9999px;
-  border: 1px solid var(--tj-border);
+  background: #ffffff;
+  padding: 6px 16px;
+  border-radius: 6px;
+  border: 1.5px solid var(--tj-border);
+  box-shadow: 0 2px 8px rgba(14, 165, 233, 0.08);
+  position: relative;
+}
+.hall-run-summary::before {
+  content: '+';
+  position: absolute;
+  left: -5px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 10px;
+  color: var(--tj-accent);
 }
 .is-running {
   color: var(--tj-cyan) !important;
@@ -1779,7 +1811,7 @@ select:focus {
   display: flex;
   gap: 8px;
 }
-.tianji-hall .hall-navigation .btn {
+.qianji-hall .hall-navigation .btn {
   background: #ffffff;
   border: 1px solid var(--tj-text-title);
   color: var(--tj-text-title);
@@ -1789,7 +1821,7 @@ select:focus {
   padding: 4px 12px;
   transition: all 0.15s ease;
 }
-.tianji-hall .hall-navigation .btn:hover {
+.qianji-hall .hall-navigation .btn:hover {
   background: var(--tj-text-title);
   color: #ffffff;
 }
@@ -1807,73 +1839,92 @@ select:focus {
 .qj-profile-panel,
 .hall-side-panel,
 .qj-panel-placeholder {
-  background: #ffffff;
+  background: var(--tj-bg-surface);
+  backdrop-filter: blur(12px);
   border: 1px solid var(--tj-border);
   border-radius: 6px;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.02);
+  box-shadow: 0 2px 12px rgba(14, 165, 233, 0.05);
+  position: relative;
 }
 .hall-roster {
-  padding: 18px;
+  padding: 20px;
 }
 .hall-section-heading {
   display: flex;
   justify-content: space-between;
   align-items: baseline;
   gap: 12px;
-  margin-bottom: 16px;
-  padding-bottom: 10px;
+  margin-bottom: 18px;
+  padding-bottom: 12px;
   border-bottom: 1px solid var(--tj-border);
+  position: relative;
+}
+.hall-section-heading::after {
+  content: 'SCHEMATIC // 01';
+  position: absolute;
+  right: 0;
+  top: -8px;
+  font: 8px var(--font-mono);
+  color: var(--tj-text-faint);
+  letter-spacing: 0.1em;
 }
 .hall-section-heading h2 {
   color: var(--tj-text-title);
   font: 600 16px var(--font-display);
-  letter-spacing: 0.02em;
+  letter-spacing: 0.04em;
 }
 .hall-section-heading > span {
-  color: var(--tj-text-dim);
+  color: var(--tj-cyan);
   font-family: var(--font-mono);
   font-size: 11px;
+  font-weight: 600;
+  background: rgba(14, 165, 233, 0.08);
+  padding: 1px 6px;
+  border-radius: 3px;
+  border: 1px solid rgba(14, 165, 233, 0.2);
 }
 .qj-eyebrow {
-  color: var(--tj-text-dim);
+  color: var(--tj-cyan);
   text-transform: uppercase;
-  letter-spacing: 0.16em;
+  letter-spacing: 0.18em;
   font-size: 9px;
   font-family: var(--font-mono);
-  font-weight: 600;
+  font-weight: 700;
   margin-bottom: 3px;
 }
 .qj-roster-list {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 10px;
 }
 
-/* 千机卡片：瑞士结构卡片 × 卦象排版 */
+/* 千机卡片：双筒白金机能陶瓷外壳 × 冰晶光纤爻线 */
 .qj-card {
   width: 100%;
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 12px;
+  gap: 14px;
+  padding: 14px 16px;
   text-align: left;
   color: var(--tj-text-main);
   background: #ffffff;
-  border: 1px solid var(--tj-border);
-  border-radius: 4px;
+  border: 1.5px solid var(--tj-border);
+  border-radius: 8px;
   cursor: pointer;
-  transition: all 0.15s ease;
+  transition: all 0.22s cubic-bezier(0.16, 1, 0.3, 1);
   position: relative;
+  box-shadow: 0 2px 8px rgba(14, 165, 233, 0.04);
 }
 .qj-card:hover {
-  border-color: #a1a1aa;
-  background: #fafafa;
+  border-color: var(--tj-accent);
+  transform: translateY(-2px);
+  box-shadow: 0 8px 24px rgba(14, 165, 233, 0.12), 0 0 12px rgba(244, 114, 182, 0.15);
 }
 .qj-card-row.selected .qj-card,
 .qj-card.selected {
-  border-color: var(--tj-text-title);
+  border-color: var(--tj-gold);
   background: #ffffff;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+  box-shadow: 0 8px 24px rgba(217, 119, 6, 0.18), 0 0 0 1px var(--tj-gold);
 }
 .qj-card-row.selected .qj-card::before,
 .qj-card.selected::before {
@@ -1882,38 +1933,75 @@ select:focus {
   left: 0;
   top: 0;
   bottom: 0;
-  width: 3px;
-  background: var(--tj-holo-streamer);
+  width: 4px;
+  border-radius: 8px 0 0 8px;
+  background: var(--tj-gold);
+  box-shadow: 0 0 10px rgba(217, 119, 6, 0.5);
 }
 .qj-card-portrait {
-  width: 60px;
-  height: 72px;
+  width: 64px;
+  height: 76px;
   flex: 0 0 auto;
   display: grid;
   place-items: center;
   overflow: hidden;
-  border-radius: 3px;
-  background: var(--tj-bg-subtle);
-  border: 1px solid var(--tj-border);
+  border-radius: 6px;
+  background: #09192f;
+  border: 1.5px solid var(--tj-gold);
   color: var(--tj-text-faint);
   font-size: 10px;
+  position: relative;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+}
+.qj-card-portrait::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border: 1px solid rgba(255, 255, 255, 0.4);
+  border-radius: 4px;
+  pointer-events: none;
 }
 .qj-card-portrait img {
   width: 100%;
   height: 100%;
   object-fit: cover;
 }
+.qj-tech-avatar {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #09192f;
+}
+.qj-tech-avatar svg {
+  width: 100%;
+  height: 100%;
+}
 .qj-card-copy {
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: 4px;
 }
 .qj-card-copy strong {
   color: var(--tj-text-title);
-  font: 600 14px var(--font-display);
+  font: 700 15px var(--font-display);
   overflow-wrap: anywhere;
-  letter-spacing: 0.02em;
+  letter-spacing: 0.04em;
+}
+.qj-hexagram-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--tj-accent);
+  font: 11px var(--font-mono);
+  font-weight: 600;
+  background: rgba(14, 165, 233, 0.08);
+  padding: 2px 7px;
+  border-radius: 4px;
+  border: 1px solid rgba(14, 165, 233, 0.25);
+  width: fit-content;
 }
 .qj-card-copy > span {
   color: var(--tj-text-dim);
@@ -1929,23 +2017,23 @@ select:focus {
 .qj-card-badges {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px;
+  gap: 5px;
   margin-top: 3px;
 }
 .qj-card-badges span {
-  padding: 1px 6px;
+  padding: 2px 7px;
   color: var(--tj-text-title);
-  background: var(--tj-bg-subtle);
+  background: #f1f5f9;
   border: 1px solid var(--tj-border);
   border-radius: 3px;
   font-size: 10px;
   font-family: var(--font-mono);
-  font-weight: 500;
+  font-weight: 600;
 }
 .qj-card-row {
   display: flex;
   align-items: stretch;
-  gap: 4px;
+  gap: 6px;
 }
 .qj-card-row .qj-card {
   flex: 1;
@@ -1956,7 +2044,7 @@ select:focus {
   position: relative;
   flex: 0 0 auto;
   display: flex;
-  align-items: flex-start;
+  align-items: center;
 }
 .qj-card-more {
   width: 28px;
@@ -1973,9 +2061,10 @@ select:focus {
   transition: all 0.15s ease;
 }
 .qj-card-more:hover {
-  border-color: var(--tj-text-title);
-  color: var(--tj-text-title);
+  border-color: var(--tj-accent-bright);
+  color: var(--tj-accent);
   background: var(--tj-bg-subtle);
+  box-shadow: 0 0 8px rgba(14, 165, 233, 0.15);
 }
 .qj-menu-popover {
   position: absolute;
@@ -1986,60 +2075,65 @@ select:focus {
   display: flex;
   flex-direction: column;
   gap: 2px;
-  padding: 4px;
-  background: #ffffff;
+  padding: 5px;
+  background: rgba(255, 255, 255, 0.98);
+  backdrop-filter: blur(16px);
   border: 1px solid var(--tj-border);
-  border-radius: 4px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.08);
+  border-radius: 5px;
+  box-shadow: 0 10px 30px rgba(14, 165, 233, 0.12), 0 2px 8px rgba(0, 0, 0, 0.04);
 }
 .qj-menu-popover button[role="menuitem"] {
   text-align: left;
   border: 0;
   background: transparent;
   color: var(--tj-text-main);
-  padding: 7px 10px;
+  padding: 7px 12px;
   border-radius: 3px;
   cursor: pointer;
   font: inherit;
   font-size: 11px;
-  transition: all 0.1s ease;
+  transition: all 0.12s ease;
 }
 .qj-menu-popover button[role="menuitem"]:hover {
-  background: var(--tj-text-title);
+  background: var(--tj-accent);
   color: #ffffff;
 }
 .qj-roster-add {
   position: relative;
   display: flex;
   justify-content: center;
-  padding: 10px;
+  padding: 12px;
   border: 1px dashed var(--tj-border);
-  border-radius: 4px;
-  background: transparent;
-  transition: all 0.15s ease;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.6);
+  transition: all 0.2s ease;
 }
 .qj-roster-add:hover {
-  border-color: var(--tj-text-title);
-  background: var(--tj-bg-subtle);
+  border-color: var(--tj-accent);
+  background: #ffffff;
+  box-shadow: 0 2px 10px rgba(14, 165, 233, 0.08);
 }
 .qj-add-button {
   width: 32px;
   height: 32px;
   display: grid;
   place-items: center;
-  border: 1px solid var(--tj-border);
+  border: 1.5px solid var(--tj-border-gold);
   border-radius: 50%;
   background: #ffffff;
-  color: var(--tj-text-title);
+  color: var(--tj-gold);
   font-size: 18px;
   line-height: 1;
   cursor: pointer;
-  transition: all 0.15s ease;
+  transition: all 0.2s ease;
+  box-shadow: 0 2px 6px rgba(217, 119, 6, 0.15);
 }
 .qj-add-button:hover {
-  background: var(--tj-text-title);
-  border-color: var(--tj-text-title);
-  color: #ffffff;
+  background: var(--tj-gold-chrome);
+  border-color: var(--tj-gold);
+  color: #000000;
+  transform: scale(1.05);
+  box-shadow: 0 0 12px rgba(255, 215, 0, 0.4);
 }
 .qj-add-popover {
   left: 50%;
@@ -2047,7 +2141,7 @@ select:focus {
   transform: translateX(-50%);
 }
 
-/* 详情展台：高反差留白 × 瑞士对话志 */
+/* 详情展台：高反差留白 × 昆仑全息蓝图志 */
 .hall-detail-column {
   min-width: 0;
 }
@@ -2061,40 +2155,55 @@ select:focus {
   gap: 16px;
   padding: 24px 28px;
   border-bottom: 1px solid var(--tj-border);
-  background: #ffffff;
+  background: linear-gradient(180deg, #ffffff 0%, rgba(240, 247, 251, 0.6) 100%);
+  position: relative;
+}
+.qj-profile-header::after {
+  content: 'SPEC // 02';
+  position: absolute;
+  right: 28px;
+  top: 10px;
+  font: 8px var(--font-mono);
+  color: var(--tj-text-faint);
+  letter-spacing: 0.1em;
 }
 .qj-profile-header h2 {
   color: var(--tj-text-title);
   font: 600 28px var(--font-display);
   overflow-wrap: anywhere;
-  letter-spacing: 0.02em;
+  letter-spacing: 0.03em;
 }
 .qj-profile-header p:not(.qj-eyebrow) {
   color: var(--tj-text-dim);
-  margin-top: 4px;
+  margin-top: 6px;
   font-size: 12px;
   font-family: var(--font-mono);
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
 .qj-physical-state {
   display: flex;
   flex-direction: column;
   justify-content: center;
   text-align: right;
-  gap: 4px;
+  gap: 5px;
 }
 .qj-physical-state b {
   font-size: 11px;
   font-family: var(--font-mono);
   color: var(--tj-cyan);
-  background: rgba(5, 150, 105, 0.08);
-  padding: 3px 8px;
-  border-radius: 3px;
-  border: 1px solid rgba(5, 150, 105, 0.2);
+  background: rgba(14, 165, 233, 0.08);
+  padding: 4px 10px;
+  border-radius: 4px;
+  border: 1px solid rgba(14, 165, 233, 0.25);
+  box-shadow: 0 1px 4px rgba(14, 165, 233, 0.08);
 }
 .qj-physical-state small {
   color: var(--tj-text-dim);
   font-family: var(--font-mono);
   font-size: 10px;
+  letter-spacing: 0.02em;
 }
 .qj-chat-panel,
 .qj-editor,
@@ -2131,17 +2240,20 @@ select:focus {
   padding: 8px 0 16px;
 }
 .qj-chat-turn {
-  padding: 12px 16px;
+  padding: 14px 18px;
   border: 1px solid var(--tj-border);
-  border-left: 3px solid var(--tj-border);
+  border-left: 3px solid var(--tj-accent);
   border-radius: 4px;
   background: #ffffff;
   overflow-wrap: anywhere;
   white-space: pre-wrap;
-  transition: border-color 0.15s ease;
+  transition: all 0.2s ease;
+  box-shadow: 0 1px 4px rgba(14, 165, 233, 0.03);
 }
 .qj-chat-turn:hover {
-  border-left-color: var(--tj-text-title);
+  border-color: rgba(14, 165, 233, 0.4);
+  border-left-color: var(--tj-accent-bright);
+  box-shadow: 0 3px 12px rgba(14, 165, 233, 0.08);
 }
 .qj-chat-question,
 .qj-chat-reply {
@@ -2156,14 +2268,15 @@ select:focus {
   font-size: 11px;
   font-family: var(--font-mono);
   font-weight: 700;
-  padding: 1px 6px;
+  padding: 2px 7px;
   background: var(--tj-bg-subtle);
-  border-radius: 2px;
+  border-radius: 3px;
+  border: 1px solid var(--tj-border);
 }
 .qj-chat-reply {
   margin-top: 10px;
   padding-top: 10px;
-  border-top: 1px solid var(--tj-border);
+  border-top: 1px solid var(--tj-border-soft);
 }
 .qj-chat-reply b {
   display: inline-block;
@@ -2172,9 +2285,10 @@ select:focus {
   font-size: 11px;
   font-family: var(--font-mono);
   font-weight: 700;
-  padding: 1px 6px;
-  background: rgba(5, 150, 105, 0.08);
-  border-radius: 2px;
+  padding: 2px 7px;
+  background: rgba(14, 165, 233, 0.08);
+  border-radius: 3px;
+  border: 1px solid rgba(14, 165, 233, 0.2);
 }
 .qj-chat-state {
   color: var(--tj-text-dim);
@@ -2354,7 +2468,7 @@ select:focus {
 }
 
 /* 主操作按钮：瑞士纯黑高对比 + 微流光高光点缀 */
-.tianji-hall .btn-primary,
+.qianji-hall .btn-primary,
 .gacha-view .btn-primary {
   background: #18181b !important;
   border: 1px solid #18181b !important;
@@ -2368,7 +2482,7 @@ select:focus {
   position: relative;
   overflow: hidden;
 }
-.tianji-hall .btn-primary::after,
+.qianji-hall .btn-primary::after,
 .gacha-view .btn-primary::after {
   content: '';
   position: absolute;
@@ -2378,14 +2492,14 @@ select:focus {
   height: 1.5px;
   background: var(--tj-holo-streamer);
 }
-.tianji-hall .btn-primary:hover:not(:disabled),
+.qianji-hall .btn-primary:hover:not(:disabled),
 .gacha-view .btn-primary:hover:not(:disabled) {
   background: #09090b !important;
   border-color: #09090b !important;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12) !important;
   color: #ffffff !important;
 }
-.tianji-hall .btn,
+.qianji-hall .btn,
 .gacha-view .btn {
   background: #ffffff;
   border: 1px solid var(--tj-border);
@@ -2393,7 +2507,7 @@ select:focus {
   border-radius: 4px;
   transition: all 0.15s ease;
 }
-.tianji-hall .btn:hover:not(:disabled),
+.qianji-hall .btn:hover:not(:disabled),
 .gacha-view .btn:hover:not(:disabled) {
   background: var(--tj-bg-subtle);
   border-color: var(--tj-text-title);
@@ -2401,38 +2515,38 @@ select:focus {
 }
 
 /* 瑞士极简弹窗 */
-.tianji-hall .modal-overlay {
+.qianji-hall .modal-overlay {
   background: rgba(9, 9, 11, 0.3) !important;
   backdrop-filter: blur(4px);
   -webkit-backdrop-filter: blur(4px);
 }
-.tianji-hall .modal-content {
+.qianji-hall .modal-content {
   background: #ffffff !important;
   border: 1px solid var(--tj-border) !important;
   border-radius: 6px !important;
   box-shadow: 0 20px 50px rgba(0, 0, 0, 0.12) !important;
   color: var(--tj-text-main) !important;
 }
-.tianji-hall .modal-header {
+.qianji-hall .modal-header {
   background: #ffffff !important;
   border-bottom: 1px solid var(--tj-border) !important;
   padding: 14px 20px !important;
 }
-.tianji-hall .modal-header h3 {
+.qianji-hall .modal-header h3 {
   color: var(--tj-text-title) !important;
   font-family: var(--font-display);
   font-size: 16px;
   font-weight: 600;
 }
-.tianji-hall .modal-footer {
+.qianji-hall .modal-footer {
   background: #fafafa !important;
   border-top: 1px solid var(--tj-border) !important;
   padding: 12px 20px !important;
 }
-.tianji-hall .btn-close {
+.qianji-hall .btn-close {
   color: var(--tj-text-dim);
 }
-.tianji-hall .btn-close:hover {
+.qianji-hall .btn-close:hover {
   color: var(--tj-text-title);
 }
 
@@ -3089,9 +3203,9 @@ select:focus {
 .qj-retire-modal-content {
   width: min(560px, 92vw);
 }
-.tianji-hall textarea,
-.tianji-hall input,
-.tianji-hall select,
+.qianji-hall textarea,
+.qianji-hall input,
+.qianji-hall select,
 .gacha-view textarea,
 .gacha-view input,
 .gacha-view select {
@@ -3099,14 +3213,14 @@ select:focus {
   border: 1px solid var(--tj-border) !important;
   color: var(--tj-text-title) !important;
 }
-.tianji-hall ::placeholder,
+.qianji-hall ::placeholder,
 .gacha-view ::placeholder {
   color: var(--tj-text-dim) !important;
   opacity: 1;
 }
-.tianji-hall textarea:focus,
-.tianji-hall input:focus,
-.tianji-hall select:focus,
+.qianji-hall textarea:focus,
+.qianji-hall input:focus,
+.qianji-hall select:focus,
 .gacha-view textarea:focus,
 .gacha-view input:focus,
 .gacha-view select:focus {

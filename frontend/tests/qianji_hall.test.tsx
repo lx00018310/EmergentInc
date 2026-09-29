@@ -18,7 +18,7 @@ vi.mock('../src/features/qianji/QianjiProfilePanel', async () => {
     ReactModule.createElement('button', { type: 'button', onClick: () => void onSent() }, '模拟发送')) };
 });
 
-import { TianJiHall } from '../src/features/hall/TianJiHall';
+import { QianJiHall } from '../src/features/hall/QianJiHall';
 import { startRun } from '../src/api/run';
 
 const member = {
@@ -37,7 +37,7 @@ const candidate = {
     narrative: { ...member.profile.narrative, displayName: '未名者' } },
 };
 
-describe('TianJiHall', () => {
+describe('QianJiHall', () => {
   const onSelectedQianji = vi.fn();
   const onSelectedPixel = vi.fn();
   const onOpenEngine = vi.fn();
@@ -45,7 +45,7 @@ describe('TianJiHall', () => {
   const onOpenMeeting = vi.fn();
 
   const renderHall = () => render(
-    <TianJiHall selectedQianjiId="qj_test" onSelectedQianji={onSelectedQianji} onSelectedPixel={onSelectedPixel}
+    <QianJiHall selectedQianjiId="qj_test" onSelectedQianji={onSelectedQianji} onSelectedPixel={onSelectedPixel}
       onOpenEngine={onOpenEngine} onOpenGacha={onOpenGacha} onOpenMeeting={onOpenMeeting} />);
 
   beforeEach(() => {
@@ -71,7 +71,7 @@ describe('TianJiHall', () => {
   });
 
   it('passes the selected stable Qianji ID and exposes only the Engine entry', () => {
-    render(<TianJiHall selectedQianjiId={null} onSelectedQianji={onSelectedQianji} onSelectedPixel={onSelectedPixel} onOpenEngine={onOpenEngine} onOpenGacha={onOpenGacha} onOpenMeeting={onOpenMeeting} />);
+    render(<QianJiHall selectedQianjiId={null} onSelectedQianji={onSelectedQianji} onSelectedPixel={onSelectedPixel} onOpenEngine={onOpenEngine} onOpenGacha={onOpenGacha} onOpenMeeting={onOpenMeeting} />);
     fireEvent.click(screen.getByRole('button', { name: /守序者.*正式成员/ }));
     expect(onSelectedQianji).toHaveBeenCalledWith('qj_test');
     expect(onOpenEngine).not.toHaveBeenCalled();
