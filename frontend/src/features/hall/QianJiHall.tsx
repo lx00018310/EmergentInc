@@ -5,6 +5,7 @@ import { startRun } from '../../api/run';
 import { QianjiCard, type QianjiMenuAction } from '../qianji/QianjiCard';
 import { QianjiProfilePanel, type QianjiProfileModal } from '../qianji/QianjiProfilePanel';
 import { ApprovalPanel } from './ApprovalPanel';
+import { RecoveryOperations } from '../run/RecoveryOperations';
 
 const chatRunRequest = { rounds: 1, run_budget_tokens: 100000 };
 
@@ -23,6 +24,7 @@ export const QianJiHall: React.FC<QianJiHallProps> = ({ selectedQianjiId, onSele
   const [runError, setRunError] = useState<string | null>(null);
   const [modalRequest, setModalRequest] = useState<{ modal: QianjiProfileModal; nonce: number } | null>(null);
   const [addMenuOpen, setAddMenuOpen] = useState(false);
+  const [isRecoveryOpen, setIsRecoveryOpen] = useState(false);
   const addMenuRef = useRef<HTMLDivElement | null>(null);
   const selected = items.find(item => item.profile.qianjiId === selectedQianjiId) ?? null;
   const recoveryRequired = Boolean(runStatus?.unfinalized_operations?.hasUnfinalized);
@@ -109,7 +111,58 @@ export const QianJiHall: React.FC<QianJiHallProps> = ({ selectedQianjiId, onSele
       </header>
 
       {(qianjiError || worldError || runError) && <div className="hall-error" role="alert">{qianjiError || worldError || runError}</div>}
-      {recoveryRequired && <p className="hall-warning">存在未决操作。请进入 Engine 的 Recovery 面板处理后再运行。</p>}
+      {recoveryRequired && (
+        <div
+          className="hall-warning-bar"
+          role="alert"
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: '12px',
+            background: 'rgba(239, 68, 68, 0.12)',
+            border: '1px solid rgba(239, 68, 68, 0.35)',
+            borderRadius: '8px',
+            padding: '10px 16px',
+            margin: '0 0 16px 0',
+            backdropFilter: 'blur(8px)',
+          }}
+        >
+          <p className="hall-warning" style={{ margin: 0, color: '#f87171', fontSize: '13px', lineHeight: 1.5 }}>
+            存在未决操作。请进入 Engine 的 Recovery 面板处理后再运行。
+          </p>
+          <div style={{ display: 'flex', gap: '8px', flexShrink: 0 }}>
+            <button
+              type="button"
+              className="btn btn-sm btn-primary"
+              style={{
+                background: 'linear-gradient(135deg, #ef4444, #dc2626)',
+                borderColor: '#ef4444',
+                color: '#fff',
+                fontSize: '12px',
+                padding: '4px 12px',
+                boxShadow: '0 2px 8px rgba(239, 68, 68, 0.35)',
+                cursor: 'pointer',
+              }}
+              onClick={() => setIsRecoveryOpen(true)}
+            >
+              立即在此对账决策
+            </button>
+            <button
+              type="button"
+              className="btn btn-sm"
+              style={{
+                fontSize: '12px',
+                padding: '4px 10px',
+                cursor: 'pointer',
+              }}
+              onClick={onOpenEngine}
+            >
+              进入 Engine
+            </button>
+          </div>
+        </div>
+      )}
 
       <main className="hall-grid">
         <section className="hall-roster" aria-label="人物列表">
@@ -142,6 +195,17 @@ export const QianJiHall: React.FC<QianJiHallProps> = ({ selectedQianjiId, onSele
           <ApprovalPanel />
         </aside>
       </main>
+
+      {isRecoveryOpen && runStatus && (
+        <RecoveryOperations
+          status={runStatus}
+          onRefresh={async () => {
+            await refreshImmediately();
+            await refresh();
+          }}
+          onClose={() => setIsRecoveryOpen(false)}
+        />
+      )}
     </div>
   );
 };

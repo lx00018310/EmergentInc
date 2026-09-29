@@ -5,6 +5,7 @@ import { RunControls } from '../../features/run/RunControls';
 import { ConsolePanel, ConsoleMessage } from '../../features/run/ConsolePanel';
 import { PromptEditor } from '../../features/prompts/PromptEditor';
 import { OwnerChat } from '../../features/owner/OwnerChat';
+import { RecoveryOperations } from '../../features/run/RecoveryOperations';
 import { Modal } from '../../components/Modal';
 import { HelpModal } from '../../components/HelpModal';
 import { EnvironmentEditor } from '../../features/environment/EnvironmentEditor';
@@ -131,6 +132,14 @@ export const EngineView: React.FC<{ onBack: () => void; initialPixelId?: string 
   }, [loadPrompts]);
 
   const isRunning = Boolean(runStatus?.running);
+  const recoveryRequired = Boolean(runStatus?.unfinalized_operations?.hasUnfinalized);
+  const [isRecoveryModalOpen, setIsRecoveryModalOpen] = useState<boolean>(false);
+
+  useEffect(() => {
+    if (recoveryRequired && !isRunning) {
+      setIsRecoveryModalOpen(true);
+    }
+  }, [recoveryRequired, isRunning]);
 
   // 弹窗状态管理
   const [isEnvModalOpen, setIsEnvModalOpen] = useState<boolean>(false);
@@ -242,13 +251,15 @@ export const EngineView: React.FC<{ onBack: () => void; initialPixelId?: string 
             onOpenTemporaryPrompt={() => setActivePromptModal('temp')}
             onLogMessage={addLogMessage}
             onRefresh={refreshImmediately}
+            onReconcile={async () => { setIsRecoveryModalOpen(true); }}
           />
 
           <ConsolePanel
             messages={messages}
             audit={audit}
             runStatus={runStatus}
-            hideRecoveryAlert={Boolean(!isRunning && runStatus?.unfinalized_operations)}
+            onReconcile={async () => { setIsRecoveryModalOpen(true); }}
+            hideRecoveryAlert={false}
           />
 
         </section>
@@ -293,6 +304,14 @@ export const EngineView: React.FC<{ onBack: () => void; initialPixelId?: string 
       />
 
       <HelpModal isOpen={isHelpModalOpen} onClose={() => setIsHelpModalOpen(false)} />
+
+      {isRecoveryModalOpen && runStatus && (
+        <RecoveryOperations
+          status={runStatus}
+          onRefresh={refreshImmediately}
+          onClose={() => setIsRecoveryModalOpen(false)}
+        />
+      )}
 
       <ToolCatalog
         isOpen={isToolsModalOpen}

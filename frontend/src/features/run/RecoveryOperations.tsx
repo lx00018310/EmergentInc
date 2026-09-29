@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import type { RunStatusDto } from '../../api/types';
 import { fetchRunStatus, resolveRecovery, type RecoveryKind, type RecoveryDecision } from '../../api/run';
 import { displayStopReason } from './runStatusLabels';
@@ -31,9 +32,14 @@ export function RecoveryOperations({
   onRefresh: () => Promise<void>;
   onClose?: () => void;
 }) {
+  const [mounted, setMounted] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [reason, setReason] = useState('');
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   const ops = status.unfinalized_operations;
 
@@ -155,23 +161,25 @@ export function RecoveryOperations({
     errorReasonText = status.error_summary;
   }
 
-  return (
+  const content = (
     <div
       role="dialog"
+      aria-modal="true"
       aria-label="逐项恢复决策"
       style={{
-        position: 'absolute',
+        position: 'fixed',
+        inset: 0,
         top: 0,
         left: 0,
-        right: 0,
-        bottom: 0,
-        background: 'rgba(15, 23, 42, 0.45)',
-        backdropFilter: 'blur(3px)',
-        WebkitBackdropFilter: 'blur(3px)',
+        width: '100vw',
+        height: '100vh',
+        background: 'rgba(9, 25, 47, 0.65)',
+        backdropFilter: 'blur(8px)',
+        WebkitBackdropFilter: 'blur(8px)',
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
-        zIndex: 100,
+        zIndex: 10000,
         padding: '16px',
         pointerEvents: 'auto',
       }}
@@ -184,15 +192,16 @@ export function RecoveryOperations({
       <div
         className="alert-box"
         style={{
-          width: '640px',
+          width: '680px',
           maxWidth: '96%',
-          maxHeight: '92%',
+          maxHeight: '90vh',
           overflowY: 'auto',
-          background: 'var(--bg-card)',
+          background: 'var(--bg-card, #ffffff)',
+          color: 'var(--text-main, #1e293b)',
           borderRadius: '8px',
-          boxShadow: '0 16px 40px rgba(0, 0, 0, 0.28), 0 0 0 1px rgba(207, 34, 46, 0.3)',
-          borderLeft: '5px solid var(--accent-red)',
-          padding: '16px 18px',
+          boxShadow: '0 24px 60px rgba(0, 0, 0, 0.35), 0 0 0 1.5px rgba(225, 29, 72, 0.4)',
+          borderLeft: '5px solid var(--accent-red, #e11d48)',
+          padding: '20px 24px',
         }}
         onClick={(e) => e.stopPropagation()}
       >
@@ -469,11 +478,45 @@ export function RecoveryOperations({
             })}
           </ul>
         ) : (
-          <p style={{ fontSize: '12px', color: 'var(--text-main)' }}>
-            未提供可决策操作 ID；请保留现场并检查未决消息。
-          </p>
+          <div style={{ padding: '20px 16px', textAlign: 'center', background: '#f8fafc', borderRadius: '6px', border: '1px dashed #cbd5e1' }}>
+            <p style={{ fontSize: '13px', color: '#334155', marginBottom: '12px', lineHeight: 1.6 }}>
+              当前系统标记存在未决悬挂状态，但暂未发现需要人工干预的具体任务 ID（可能已结案或属于前序运行遗留锁）。
+            </p>
+            <div style={{ display: 'flex', gap: '10px', justifyContent: 'center' }}>
+              <button
+                type="button"
+                className="btn btn-primary"
+                disabled={busy}
+                onClick={async () => {
+                  setBusy(true);
+                  setError('');
+                  try {
+                    await onRefresh();
+                    if (onClose) onClose();
+                  } catch (err) {
+                    setError(err instanceof Error ? err.message : String(err));
+                  } finally {
+                    setBusy(false);
+                  }
+                }}
+              >
+                {busy ? '正在核对…' : '刷新并确认结案'}
+              </button>
+              {onClose && (
+                <button type="button" className="btn btn-sm" onClick={onClose}>
+                  关闭此弹窗
+                </button>
+              )}
+            </div>
+          </div>
         )}
       </div>
     </div>
   );
+
+  if (typeof document === 'undefined' || !mounted) {
+    return content;
+  }
+
+  return createPortal(content, document.body);
 }
