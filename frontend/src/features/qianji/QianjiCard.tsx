@@ -83,7 +83,7 @@ export const QianjiCard: React.FC<QianjiCardProps> = ({ item, selected, onSelect
             <button type="button" role="menuitem" onClick={() => fire('history')}>经历</button>
             <button type="button" role="menuitem" onClick={() => fire('narrative')}>出生</button>
             {showMeetingAction && <button type="button" role="menuitem" onClick={() => fire('meeting')}>发起会议</button>}
-            {profile.careerStatus === 'active' && <button type="button" role="menuitem" onClick={() => fire('retire')}>办理退役</button>}
+            {profile.careerStatus !== 'retired' && <button type="button" role="menuitem" onClick={() => fire('retire')}>办理退役</button>}
           </div>
         )}
       </div>

@@ -8,7 +8,7 @@ import * as qianjiApi from '../src/api/qianji';
 
 vi.mock('../src/api/qianji', async importOriginal => {
   const actual = await importOriginal<typeof import('../src/api/qianji')>();
-  return { ...actual, fetchQianjiChat: vi.fn(), postQianjiChat: vi.fn(), updateQianjiNarrative: vi.fn(), uploadQianjiPortrait: vi.fn(), importQianjiPortraitUrl: vi.fn(), fetchQianjiHistory: vi.fn(), retireQianji: vi.fn() };
+  return { ...actual, fetchQianjiChat: vi.fn(), postQianjiChat: vi.fn(), updateQianjiNarrative: vi.fn(), uploadQianjiPortrait: vi.fn(), importQianjiPortraitUrl: vi.fn(), fetchQianjiHistory: vi.fn(), retireQianji: vi.fn(), markQianjiConclusion: vi.fn() };
 });
 
 const item: any = {
@@ -18,33 +18,54 @@ const item: any = {
   physical: { active: true, refundDeficitTokens: 0 },
 };
 
+const historyDto: any = {
+  conclusions: [], events: [], artifacts: { current: null, archives: [] },
+  attributed: { modelCalls: [], toolExecutions: [], ledgerEntries: [], messages: [],
+    costSummary: { totalCostCny: null, knownCostCny: 0, unknownModelCount: 0, unknownToolCount: 0 } },
+};
+
 describe('Qianji detail panels', () => {
   beforeEach(() => { vi.clearAllMocks(); vi.mocked(qianjiApi.fetchQianjiChat).mockResolvedValue([]); });
 
-  it('preserves a chat draft when queue submission fails', async () => {
+  it('preserves a chat draft when sending fails', async () => {
     vi.mocked(qianjiApi.postQianjiChat)
       .mockRejectedValueOnce(new Error('Network timeout'))
       .mockResolvedValueOnce({ turn: { turnId: 'turn_1' } } as any);
-    const onQueued = vi.fn();
-    render(<QianjiChatPanel item={item} onQueued={onQueued} />);
+    const onSent = vi.fn();
+    render(<QianjiChatPanel item={item} onSent={onSent} />);
     const input = screen.getByLabelText('发送给 守序者');
     fireEvent.change(input, { target: { value: '请解释你的原则' } });
-    fireEvent.click(screen.getByRole('button', { name: '排队发送' }));
+    fireEvent.click(screen.getByRole('button', { name: '发送' }));
     await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('Network timeout'));
     expect(input).toHaveProperty('value', '请解释你的原则');
-    expect(onQueued).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole('button', { name: '排队发送' }));
-    await waitFor(() => expect(onQueued).toHaveBeenCalledOnce());
+    expect(onSent).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: '发送' }));
+    await waitFor(() => expect(onSent).toHaveBeenCalledOnce());
     const keys = vi.mocked(qianjiApi.postQianjiChat).mock.calls.map((call: any[]) => call[2]);
     expect(keys).toHaveLength(2);
     expect(keys[1]).toBe(keys[0]);
     expect(input).toHaveProperty('value', '');
   });
 
+  it('keeps the dialog column free of non-chat actions', async () => {
+    vi.mocked(qianjiApi.fetchQianjiChat).mockResolvedValue([
+      { turnId: 'turn_1', question: '你的原则是什么', reply: '先校验，再行动。', status: 'replied', isMilestone: false },
+    ] as any);
+    render(<QianjiChatPanel item={item} onSent={vi.fn()} />);
+    await waitFor(() => expect(screen.getByText('先校验，再行动。')).toBeTruthy());
+    expect(screen.queryByRole('button', { name: /记入经历/ })).toBeNull();
+  });
+
+  it('waits for the running round before another send', () => {
+    render(<QianjiChatPanel item={item} onSent={vi.fn()} sendBlocked="Run 进行中，等本轮结束后可继续发送。" />);
+    expect(screen.getByLabelText('发送给 守序者')).toHaveProperty('disabled', true);
+    expect(screen.getByRole('button', { name: '发送' })).toHaveProperty('disabled', true);
+  });
+
   it('keeps the detail column chat-only and runs retirement through a dialog', async () => {
     vi.mocked(qianjiApi.retireQianji).mockResolvedValue(undefined as any);
     const onRefresh = vi.fn().mockResolvedValue(undefined);
-    render(<QianjiProfilePanel item={item} onRefresh={onRefresh} onQueued={vi.fn()} modalRequest={{ modal: 'retire', nonce: 1 }} />);
+    render(<QianjiProfilePanel item={item} onRefresh={onRefresh} onSent={vi.fn()} modalRequest={{ modal: 'retire', nonce: 1 }} />);
     expect(screen.queryByRole('tab')).toBeNull();
     expect(screen.getByLabelText('发送给 守序者')).toBeTruthy();
     expect(screen.getByRole('heading', { name: '办理退役 · 守序者' })).toBeTruthy();
@@ -56,17 +77,26 @@ describe('Qianji detail panels', () => {
   });
 
   it('reads the history only when the history dialog opens', async () => {
-    vi.mocked(qianjiApi.fetchQianjiHistory).mockResolvedValue({
-      conclusions: [], events: [], artifacts: { current: null, archives: [] },
-      attributed: { modelCalls: [], toolExecutions: [], ledgerEntries: [], messages: [],
-        costSummary: { totalCostCny: null, knownCostCny: 0, unknownModelCount: 0, unknownToolCount: 0 } },
-    } as any);
-    const props = { item, onRefresh: vi.fn().mockResolvedValue(undefined), onQueued: vi.fn() };
+    vi.mocked(qianjiApi.fetchQianjiHistory).mockResolvedValue(historyDto);
+    const props = { item, onRefresh: vi.fn().mockResolvedValue(undefined), onSent: vi.fn() };
     const view = render(<QianjiProfilePanel {...props} />);
     expect(qianjiApi.fetchQianjiHistory).not.toHaveBeenCalled();
     view.rerender(<QianjiProfilePanel {...props} modalRequest={{ modal: 'history', nonce: 2 }} />);
     await waitFor(() => expect(qianjiApi.fetchQianjiHistory).toHaveBeenCalledWith('qj_test', expect.any(AbortSignal)));
     expect(screen.getByText('暂无交付物。')).toBeTruthy();
+  });
+
+  it('marks a replied turn as experience from inside the history dialog', async () => {
+    let marked = false;
+    vi.mocked(qianjiApi.fetchQianjiHistory).mockResolvedValue(historyDto);
+    vi.mocked(qianjiApi.fetchQianjiChat).mockImplementation(async () => [
+      { turnId: 'turn_1', question: '你的原则是什么', reply: '先校验，再行动。', status: 'replied', isMilestone: marked },
+    ] as any);
+    vi.mocked(qianjiApi.markQianjiConclusion).mockImplementation(async () => { marked = true; });
+    render(<QianjiProfilePanel item={item} onRefresh={vi.fn().mockResolvedValue(undefined)} onSent={vi.fn()} modalRequest={{ modal: 'history', nonce: 1 }} />);
+    fireEvent.click(await screen.findByRole('button', { name: '记入经历' }));
+    await waitFor(() => expect(qianjiApi.markQianjiConclusion).toHaveBeenCalledWith('qj_test', 'turn_1'));
+    await waitFor(() => expect(screen.getByRole('button', { name: '已记入经历' })).toBeTruthy());
   });
 
   it('keeps malformed or rejected narrative edits in the editor for correction', async () => {

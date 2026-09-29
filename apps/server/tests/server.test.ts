@@ -864,4 +864,22 @@ describe("Server: API Contract Integration Tests", () => {
     expect(chat.statusCode).toBe(409);
     expect(chat.json().detail).toBe("QIANJI_RETIRED");
   });
+
+  it("retires a candidate that never became active and rejects a second retirement", async () => {
+    const profile = store.qianji.createProfile({ careerStatus: "candidate" });
+    store.qianji.createBinding({ qianjiId: profile.qianjiId, pixelId: "2_0_0", incarnation: 1 });
+    store.pixels.upsertPixelAccount({ pixelId: "2_0_0", energy: 500, active: true, refundDeficitTokens: 0, spendBlockedReason: null });
+
+    const retired = await app.inject({ method: "POST", url: `/api/qianji/${profile.qianjiId}/retire`,
+      payload: { reason: "候选期即转任他处", idempotencyKey: "retire-candidate" } });
+    expect(retired.statusCode).toBe(200);
+    expect(retired.json().profile.careerStatus).toBe("retired");
+    expect(store.qianji.getCurrentBindingByPixel("2_0_0")).toBeNull();
+    expect(store.pixels.getPixelAccount("2_0_0")?.active).toBe(false);
+
+    const again = await app.inject({ method: "POST", url: `/api/qianji/${profile.qianjiId}/retire`,
+      payload: { reason: "再次退役", idempotencyKey: "retire-candidate-twice" } });
+    expect(again.statusCode).toBe(409);
+    expect(again.json().detail).toBe("QIANJI_ALREADY_RETIRED");
+  });
 });

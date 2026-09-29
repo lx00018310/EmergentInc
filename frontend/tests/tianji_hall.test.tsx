@@ -13,9 +13,9 @@ vi.mock('../src/api/run', () => ({ startRun: vi.fn().mockResolvedValue({}) }));
 vi.mock('../src/api/meetings', () => ({ listApprovals: vi.fn().mockResolvedValue([]), decideApproval: vi.fn().mockResolvedValue(undefined) }));
 vi.mock('../src/features/qianji/QianjiProfilePanel', async () => {
   const ReactModule = await import('react');
-  return { QianjiProfilePanel: ({ item, modalRequest, onQueued }: any) => ReactModule.createElement('div', { 'aria-label': '人物详情', 'data-modal-request': modalRequest ? `${modalRequest.modal}:${modalRequest.nonce}` : '' },
+  return { QianjiProfilePanel: ({ item, modalRequest, onSent, sendBlocked }: any) => ReactModule.createElement('div', { 'aria-label': '人物详情', 'data-modal-request': modalRequest ? `${modalRequest.modal}:${modalRequest.nonce}` : '', 'data-send-blocked': sendBlocked ?? '' },
     item.profile.narrative.displayName,
-    ReactModule.createElement('button', { type: 'button', onClick: () => void onQueued() }, '模拟排队发送')) };
+    ReactModule.createElement('button', { type: 'button', onClick: () => void onSent() }, '模拟发送')) };
 });
 
 import { TianJiHall } from '../src/features/hall/TianJiHall';
@@ -29,6 +29,12 @@ const member = {
   currentBinding: { bindingId: 'binding_test', pixelId: '0_0_0', incarnation: 2 },
   bindingHistory: [],
   physical: { active: true, energy: 1000, refundDeficitTokens: 0, bindingConsistent: true },
+};
+
+const candidate = {
+  ...member,
+  profile: { ...member.profile, qianjiId: 'qj_candidate', careerStatus: 'candidate',
+    narrative: { ...member.profile.narrative, displayName: '未名者' } },
 };
 
 describe('TianJiHall', () => {
@@ -91,6 +97,14 @@ describe('TianJiHall', () => {
     expect(onOpenMeeting).toHaveBeenCalledOnce();
   });
 
+  it('offers 办理退役 before a person has been activated', () => {
+    state.qianji = { ...state.qianji, items: [member, candidate] };
+    renderHall();
+    fireEvent.click(screen.getByRole('button', { name: '未名者更多操作' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: '办理退役' }));
+    expect(screen.getByLabelText('人物详情').getAttribute('data-modal-request')).toMatch(/^retire:/);
+  });
+
   it('always offers a + slot with recruit and meeting commands', () => {
     renderHall();
     fireEvent.click(screen.getByRole('button', { name: '新建人物位' }));
@@ -111,18 +125,19 @@ describe('TianJiHall', () => {
     expect(screen.queryByRole('spinbutton')).toBeNull();
   });
 
-  it('starts a run as soon as a message is queued', async () => {
+  it('starts a run as soon as a message is sent', async () => {
     renderHall();
-    fireEvent.click(screen.getByRole('button', { name: '模拟排队发送' }));
+    fireEvent.click(screen.getByRole('button', { name: '模拟发送' }));
     await vi.waitFor(() => expect(startRun).toHaveBeenCalledWith({ rounds: 1, run_budget_tokens: 100000 }));
     expect(state.qianji.refresh).toHaveBeenCalledOnce();
     expect(state.world.refreshImmediately).toHaveBeenCalled();
   });
 
-  it('leaves an active run to consume the queue without starting another', async () => {
+  it('tells the composer to wait and skips a second run while one is active', async () => {
     state.world = { ...state.world, runStatus: { running: true, completed_rounds: 1, requested_rounds: 3 } };
     renderHall();
-    fireEvent.click(screen.getByRole('button', { name: '模拟排队发送' }));
+    expect(screen.getByLabelText('人物详情').getAttribute('data-send-blocked')).toContain('Run 进行中');
+    fireEvent.click(screen.getByRole('button', { name: '模拟发送' }));
     await vi.waitFor(() => expect(state.qianji.refresh).toHaveBeenCalledOnce());
     expect(startRun).not.toHaveBeenCalled();
   });
@@ -133,11 +148,12 @@ describe('TianJiHall', () => {
     expect(screen.getByRole('alert').textContent).toContain('人物接口读取失败');
   });
 
-  it('blocks the auto run while unfinalized operations need recovery', async () => {
+  it('still queues messages but skips the auto run while recovery is unresolved', async () => {
     state.world = { ...state.world, runStatus: { running: false, unfinalized_operations: { hasUnfinalized: true } } };
     renderHall();
+    expect(screen.getByLabelText('人物详情').getAttribute('data-send-blocked')).toBe('');
     expect(screen.getByText(/存在未决操作。请进入 Engine 的 Recovery 面板处理后再运行。/)).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: '模拟排队发送' }));
+    fireEvent.click(screen.getByRole('button', { name: '模拟发送' }));
     await vi.waitFor(() => expect(state.qianji.refresh).toHaveBeenCalledOnce());
     expect(startRun).not.toHaveBeenCalled();
   });

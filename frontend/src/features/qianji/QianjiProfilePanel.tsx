@@ -1,40 +1,57 @@
-import React, { useEffect, useState } from 'react';
-import { fetchQianjiHistory, qianjiArtifactUrl, retireQianji } from '../../api/qianji';
-import type { QianjiHistoryDto, QianjiListItemDto } from '../../api/qianji';
+import React, { useCallback, useEffect, useState } from 'react';
+import { fetchQianjiChat, fetchQianjiHistory, markQianjiConclusion, qianjiArtifactUrl, retireQianji } from '../../api/qianji';
+import type { QianjiChatTurnDto, QianjiHistoryDto, QianjiListItemDto } from '../../api/qianji';
 import { Modal } from '../../components/Modal';
 import { QianjiChatPanel } from './QianjiChatPanel';
 import { QianjiNarrativeEditor } from './QianjiNarrativeEditor';
 
 export type QianjiProfileModal = 'history' | 'narrative' | 'retire';
 
+const reasonText = (reason: unknown) => reason instanceof Error ? reason.message : String(reason);
+const isAbort = (reason: unknown) => reason instanceof DOMException && reason.name === 'AbortError';
+
 export const QianjiProfilePanel: React.FC<{
   item: QianjiListItemDto;
   onRefresh: () => Promise<void>;
-  onQueued: () => Promise<void>;
+  onSent: () => Promise<void>;
+  sendBlocked?: string | null;
   modalRequest?: { modal: QianjiProfileModal; nonce: number } | null;
-}> = ({ item, onRefresh, onQueued, modalRequest }) => {
+}> = ({ item, onRefresh, onSent, sendBlocked, modalRequest }) => {
+  const qianjiId = item.profile.qianjiId;
   const [openModal, setOpenModal] = useState<QianjiProfileModal | null>(null);
   const [history, setHistory] = useState<QianjiHistoryDto | null>(null);
+  const [turns, setTurns] = useState<QianjiChatTurnDto[]>([]);
   const [historyError, setHistoryError] = useState<string | null>(null);
   const [historyLoading, setHistoryLoading] = useState(false);
+  const [marking, setMarking] = useState<string | null>(null);
   const [retireReason, setRetireReason] = useState('');
   const [retireError, setRetireError] = useState<string | null>(null);
   const [retiring, setRetiring] = useState(false);
 
   useEffect(() => {
-    setOpenModal(null); setHistory(null); setHistoryError(null); setRetireReason(''); setRetireError(null);
-  }, [item.profile.qianjiId]);
+    setOpenModal(null); setHistory(null); setTurns([]); setHistoryError(null); setRetireReason(''); setRetireError(null);
+  }, [qianjiId]);
   useEffect(() => { if (modalRequest) setOpenModal(modalRequest.modal); }, [modalRequest?.nonce]);
+
+  const reloadHistory = useCallback(async (signal?: AbortSignal) => {
+    const [nextHistory, nextTurns] = await Promise.allSettled([
+      fetchQianjiHistory(qianjiId, signal),
+      fetchQianjiChat(qianjiId, signal),
+    ]);
+    if (signal?.aborted) return;
+    setHistoryLoading(false);
+    if (nextHistory.status === 'fulfilled') { setHistory(nextHistory.value); setHistoryError(null); }
+    else if (!isAbort(nextHistory.reason)) setHistoryError(reasonText(nextHistory.reason));
+    if (nextTurns.status === 'fulfilled') setTurns(nextTurns.value);
+  }, [qianjiId]);
+
   useEffect(() => {
     if (openModal !== 'history') return;
     const controller = new AbortController();
     setHistoryLoading(true);
-    fetchQianjiHistory(item.profile.qianjiId, controller.signal)
-      .then(result => { setHistory(result); setHistoryError(null); })
-      .catch(err => { if (!(err instanceof DOMException && err.name === 'AbortError')) setHistoryError(err instanceof Error ? err.message : String(err)); })
-      .finally(() => { if (!controller.signal.aborted) setHistoryLoading(false); });
+    void reloadHistory(controller.signal);
     return () => controller.abort();
-  }, [openModal, item.profile.qianjiId]);
+  }, [openModal, reloadHistory]);
 
   const physicalText = !item.currentBinding ? '未绑定 Pixel'
     : item.physical?.active ? `载体活跃 · ${item.physical.energy ?? '未知'} Token`
@@ -46,11 +63,20 @@ export const QianjiProfilePanel: React.FC<{
     setRetiring(true); setRetireError(null);
     try {
       const key = globalThis.crypto?.randomUUID?.() ?? `retire-${Date.now()}`;
-      await retireQianji(item.profile.qianjiId, retireReason.trim(), key);
+      await retireQianji(qianjiId, retireReason.trim(), key);
       setOpenModal(null); setRetireReason(''); await onRefresh();
-    } catch (error) { setRetireError(error instanceof Error ? error.message : String(error)); }
+    } catch (error) { setRetireError(reasonText(error)); }
     finally { setRetiring(false); }
   };
+
+  const markConclusion = async (turnId: string) => {
+    setMarking(turnId);
+    try { await markQianjiConclusion(qianjiId, turnId); await reloadHistory(); }
+    catch (reason) { if (!isAbort(reason)) setHistoryError(reasonText(reason)); }
+    finally { setMarking(null); }
+  };
+
+  const repliedTurns = turns.filter(turn => turn.status === 'replied' && turn.reply !== null);
 
   return (
     <section className="qj-profile-panel" aria-label="人物详情">
@@ -59,7 +85,7 @@ export const QianjiProfilePanel: React.FC<{
           ? `${item.profile.birthIdentity.primaryHexagram} → ${item.profile.birthIdentity.changedHexagram}` : '旧人物'}</p></div>
         <div className="qj-physical-state"><b>{physicalText}</b>{item.currentBinding && <small>{item.currentBinding.pixelId} · 第 {item.currentBinding.incarnation} 代</small>}</div>
       </header>
-      <QianjiChatPanel item={item} onQueued={onQueued} />
+      <QianjiChatPanel item={item} onSent={onSent} sendBlocked={sendBlocked} />
 
       <Modal isOpen={openModal === 'history'} title="经历" contentClassName="doc-modal-content" onClose={() => setOpenModal(null)}>
         <section className="qj-history-panel">
@@ -74,12 +100,19 @@ export const QianjiProfilePanel: React.FC<{
                 {event.eventType === 'MISSION_COMPLETED' ? '完成任务' : event.eventType === 'TRIAL_COMPLETED' ? '完成试炼' :
                   event.eventType === 'QIANJI_RECRUITED' ? '正式加入' : '交付状态更新'} · {new Date(event.createdAt * 1000).toLocaleString()}
               </p>)}
+            <h3>可记入的对话</h3>
+            {repliedTurns.length === 0 && <p className="qj-empty">还没有可直接记入的回复。</p>}
+            {repliedTurns.map(turn => <p className="qj-history-row" key={turn.turnId}>
+              {turn.reply}
+              <button className="btn btn-xs" type="button" disabled={Boolean(turn.isMilestone) || marking === turn.turnId}
+                onClick={() => void markConclusion(turn.turnId)}>{turn.isMilestone ? '已记入经历' : '记入经历'}</button>
+            </p>)}
             <h3>交付物</h3>
             {history.artifacts.current?.files.map(file => <p className="qj-history-row" key={file.name}>
-              <a href={qianjiArtifactUrl(item.profile.qianjiId, history.artifacts.current!.bindingId, file.name)} download>{file.name}</a>
+              <a href={qianjiArtifactUrl(qianjiId, history.artifacts.current!.bindingId, file.name)} download>{file.name}</a>
             </p>)}
             {history.artifacts.archives.flatMap(archive => archive.files.map(file => <p className="qj-history-row"
-              key={`${archive.bindingId}-${file.name}`}><a href={qianjiArtifactUrl(item.profile.qianjiId, archive.bindingId, file.name)} download>{file.name}</a></p>))}
+              key={`${archive.bindingId}-${file.name}`}><a href={qianjiArtifactUrl(qianjiId, archive.bindingId, file.name)} download>{file.name}</a></p>))}
             {!history.artifacts.current?.files.length && !history.artifacts.archives.some(archive => archive.files.length) &&
               <p className="qj-empty">暂无交付物。</p>}
             <p>已知模型与工具成本：{history.attributed.costSummary.knownCostCny.toFixed(4)} CNY

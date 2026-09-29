@@ -54,7 +54,7 @@ export const TianJiHall: React.FC<TianJiHallProps> = ({ selectedQianjiId, onSele
     setModalRequest(previous => ({ modal: action, nonce: (previous?.nonce ?? 0) + 1 }));
   };
 
-  const handleQueued = async () => {
+  const handleSent = async () => {
     await refresh();
     if (runStatus?.running || recoveryRequired) { await refreshImmediately(); return; }
     setRunError(null);
@@ -62,6 +62,8 @@ export const TianJiHall: React.FC<TianJiHallProps> = ({ selectedQianjiId, onSele
     catch (err) { setRunError(err instanceof Error ? err.message : String(err)); }
     await refreshImmediately();
   };
+
+  const sendBlocked = runStatus?.running ? 'Run 进行中，等本轮结束后可继续发送。' : null;
 
   useEffect(() => {
     if (!selectedQianjiId && items.length > 0 && items[0]) onSelectedQianji(items[0].profile.qianjiId);
@@ -107,7 +109,7 @@ export const TianJiHall: React.FC<TianJiHallProps> = ({ selectedQianjiId, onSele
         </section>
 
         <section className="hall-detail-column">
-          {selected ? <QianjiProfilePanel item={selected} modalRequest={modalRequest} onQueued={handleQueued}
+          {selected ? <QianjiProfilePanel item={selected} modalRequest={modalRequest} onSent={handleSent} sendBlocked={sendBlocked}
             onRefresh={async () => { await refresh(); await refreshImmediately(); }} />
             : <div className="qj-panel-placeholder">选择一位人物查看详情。</div>}
         </section>

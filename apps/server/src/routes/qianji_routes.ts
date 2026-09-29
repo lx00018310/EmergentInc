@@ -392,7 +392,7 @@ export async function registerQianjiRoutes(server: FastifyInstance, options: Qia
     }
     const profile = store.qianji.getProfile(id);
     if (!profile) return reply.status(404).send({ detail: "Qianji not found" });
-    if (profile.careerStatus !== "active") return reply.status(409).send({ detail: "QIANJI_NOT_ACTIVE" });
+    if (profile.careerStatus === "retired") return reply.status(409).send({ detail: "QIANJI_ALREADY_RETIRED" });
     if (runService.getStatus().running || store.getUnfinalizedOperations().hasUnfinalized) return reply.status(409).send({ detail: "RUN_OR_RECOVERY_ACTIVE" });
     const binding = store.qianji.getCurrentBindingByQianji(id);
     if (!binding) return reply.status(409).send({ detail: "QIANJI_NOT_BOUND" });
