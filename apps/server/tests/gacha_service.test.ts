@@ -3,6 +3,7 @@ import { CoreStore } from "@emergentinc/persistence";
 import { GachaService } from "../src/services/gacha_service.js";
 import { GachaImageService, OpenAICompatibleImageProvider } from "../src/services/gacha_image.js";
 import { buildGachaPrompt, gachaMotifCount } from "@emergentinc/domain";
+import { ModelProvider } from "@emergentinc/model";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -13,15 +14,16 @@ const generated = JSON.stringify({ title: "明察", shortBio: "曾远行四方�
   behaviorProfile: ["先核实资料再行动"], appearanceSpec: "青年，沉静" , skillTags: ["research", "typescript", "automation"] });
 
 describe("GachaService", () => {
-  it("recruits an immediately bound person without a draw and keeps the birth immutable", () => {
+  it("recruits an immediately bound person without a draw and keeps the birth immutable", async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "qianji-recruit-"));
     const store = new CoreStore();
     try {
       const service = new GachaService({ store, workspaceRoot: root });
-      const first = service.recruit("recruit-once");
-      expect(service.recruit("recruit-once").qianjiId).toBe(first.qianjiId);
+      const first = await service.recruit("recruit-once");
+      expect((await service.recruit("recruit-once")).qianjiId).toBe(first.qianjiId);
       expect(first.birthIdentity?.primaryHexagram).toBeTruthy();
       expect(first.draw).toBeNull();
+      expect(first.narrative.displayName).toMatch(/^未名·/);
       const binding = store.qianji.getCurrentBindingByQianji(first.qianjiId);
       expect(binding?.pixelId).toBe("0_0_0");
       expect(store.pixels.getPixelAccount("0_0_0")?.energy).toBe(100000);
@@ -32,6 +34,60 @@ describe("GachaService", () => {
         .run("{}", first.qianjiId)).toThrow("QIANJI_BIRTH_IMMUTABLE");
       expect(store.qianji.updateNarrative(first.qianjiId, 0,
         { ...first.narrative, displayName: "知微" }).narrative.displayName).toBe("知微");
+    } finally {
+      store.close();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("lets a new person name itself and write its own bio and portrait prompt at birth", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "qianji-recruit-named-"));
+    const store = new CoreStore();
+    const prompts: string[] = [];
+    const provider: ModelProvider = {
+      async call(request) {
+        prompts.push(JSON.stringify(request.messages));
+        return { rawText: JSON.stringify({ displayName: "观复", shortBio: "蹇卦之后，我先看清路径再动。",
+          appearanceSpec: "青年，素色深衣，手持铜灯，眼神沉静，半身像，冷色调" }), usage: { promptTokens: 40, completionTokens: 60 } };
+      },
+    };
+    try {
+      const service = new GachaService({ store, workspaceRoot: root, provider, modelName: "test-model" });
+      const profile = await service.recruit("recruit-named");
+      expect(profile.narrative.displayName).toBe("观复");
+      expect(profile.narrative.shortBio).toContain("蹇卦");
+      expect(profile.narrative.appearanceSpec).toContain("铜灯");
+      expect(prompts[0]).toContain(profile.birthIdentity!.primaryHexagram);
+      expect(prompts[0]).toContain(profile.birthIdentity!.birthText);
+      expect(store.db.prepare("SELECT outcome,raw_response FROM gacha_model_calls WHERE qianji_id=?")
+        .get(profile.qianjiId)).toMatchObject({ outcome: "SUCCESS" });
+      await service.recruit("recruit-named");
+      expect(prompts).toHaveLength(1);
+    } finally {
+      store.close();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("still recruits when the model cannot give a usable identity", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "qianji-recruit-fallback-"));
+    const store = new CoreStore();
+    try {
+      const broken = new GachaService({ store, workspaceRoot: root, modelName: "test-model",
+        provider: { async call() { return { rawText: "我想叫自己一个很长很长无法用于命名的中文句子，并且不是 JSON。" }; } } });
+      const invalid = await broken.recruit("recruit-invalid");
+      expect(invalid.narrative.displayName).toMatch(/^未名·/);
+      expect(invalid.narrative.shortBio).toBeNull();
+      expect(store.db.prepare("SELECT outcome FROM gacha_model_calls WHERE qianji_id=?")
+        .get(invalid.qianjiId)).toEqual({ outcome: "INVALID_RESPONSE" });
+
+      const failing = new GachaService({ store, workspaceRoot: root, modelName: "test-model",
+        provider: { async call() { throw new Error("model offline"); } } });
+      const failed = await failing.recruit("recruit-model-failed");
+      expect(failed.narrative.displayName).toMatch(/^未名·/);
+      expect(failed.birthIdentity?.primaryHexagram).toBeTruthy();
+      expect(store.db.prepare("SELECT outcome FROM gacha_model_calls WHERE qianji_id=?")
+        .get(failed.qianjiId)).toEqual({ outcome: "FAILED" });
     } finally {
       store.close();
       fs.rmSync(root, { recursive: true, force: true });

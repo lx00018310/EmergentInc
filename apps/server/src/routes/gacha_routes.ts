@@ -43,7 +43,7 @@ export async function registerGachaRoutes(server: FastifyInstance, service: Gach
     if (!record(body) || !validText(body.idempotencyKey, 200) || Object.keys(body).length !== 1) {
       return reply.status(400).send({ detail: "RECRUIT_INPUT_INVALID" });
     }
-    try { return reply.status(201).send({ profile: service.recruit(body.idempotencyKey) }); }
+    try { return reply.status(201).send({ profile: await service.recruit(body.idempotencyKey) }); }
     catch (error) { return fail(reply, error); }
   });
   server.post("/gacha/draw", async (request, reply) => {

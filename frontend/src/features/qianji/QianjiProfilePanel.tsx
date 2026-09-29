@@ -126,7 +126,8 @@ export const QianjiProfilePanel: React.FC<{
         <QianjiNarrativeEditor profile={item.profile} onSaved={onRefresh} />
       </Modal>
 
-      <Modal isOpen={openModal === 'retire'} title={`办理退役 · ${item.profile.narrative.displayName}`} onClose={() => setOpenModal(null)}>
+      <Modal isOpen={openModal === 'retire'} title={`办理退役 · ${item.profile.narrative.displayName}`}
+        contentClassName="qj-retire-modal-content" onClose={() => setOpenModal(null)}>
         <form className="qj-retire-form" onSubmit={submitRetirement}>
           <label>退役原因<textarea value={retireReason} onChange={event => setRetireReason(event.target.value)} maxLength={1000} rows={4} required /></label>
           <div className="qj-form-footer">

@@ -1,8 +1,7 @@
 import { useState } from 'react';
-import { recruitQianji, type QianjiProfileDto } from '../../api/qianji';
+import { recruitQianji } from '../../api/qianji';
 
 export function GachaView({ onBack, onOpenPerson }: { onBack: () => void; onOpenPerson?: (id: string) => void }) {
-  const [profile, setProfile] = useState<QianjiProfileDto | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const recruit = async () => {
@@ -10,7 +9,8 @@ export function GachaView({ onBack, onOpenPerson }: { onBack: () => void; onOpen
     setBusy(true);
     setError(null);
     try {
-      setProfile(await recruitQianji(globalThis.crypto.randomUUID()));
+      const profile = await recruitQianji(globalThis.crypto.randomUUID());
+      if (onOpenPerson) onOpenPerson(profile.qianjiId); else onBack();
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
     } finally {
@@ -24,21 +24,15 @@ export function GachaView({ onBack, onOpenPerson }: { onBack: () => void; onOpen
     <main className="gacha-layout">
       <section className="org-panel gacha-controls">
         <div className="org-panel-title"><h2>新人物</h2></div>
-        <p>招募后自动创建并绑定运行载体，可立即开始对话。</p>
+        <p>招募时人物会读自己的命核，给自己取名、写简介、给出画像提示词，随后直接进入对话。</p>
         <button className="btn btn-primary" type="button" disabled={busy} onClick={() => void recruit()}>
-          {busy ? '招募中…' : '招募一位人物'}</button>
+          {busy ? '正在招募…新人物正在取名' : '招募一位人物'}</button>
         {error && <p role="alert" className="org-error-text">{error}</p>}
       </section>
       <section className="gacha-results" aria-label="招募结果">
-        {!profile && <div className="qj-panel-placeholder">点击招募，认识一位新人物。</div>}
-        {profile?.birthIdentity && <article className="org-card">
-          <h2>{profile.narrative.displayName}</h2>
-          <p>{profile.birthIdentity.primaryHexagram} → {profile.birthIdentity.changedHexagram}</p>
-          <p>动爻：第 {profile.birthIdentity.movingLine} 爻</p>
-          <p>{profile.birthIdentity.birthText}</p>
-          {onOpenPerson && <button className="btn btn-primary" type="button"
-            onClick={() => onOpenPerson(profile.qianjiId)}>开始对话</button>}
-        </article>}
+        <div className="qj-panel-placeholder">
+          {busy ? '新人物正在取名，请稍候…' : '点击招募，认识一位新人物。'}
+        </div>
       </section>
     </main>
   </div>;

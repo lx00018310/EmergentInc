@@ -131,6 +131,8 @@ export async function fetchQianjiList(signal?: AbortSignal, careerStatus?: Qianj
 export async function recruitQianji(idempotencyKey: string): Promise<QianjiProfileDto> {
   const response = await apiRequest<{ profile: QianjiProfileDto }>('/api/qianji/recruit', {
     method: 'POST', body: JSON.stringify({ idempotencyKey }),
+    // 招募时人物会调用大模型给自己定名，等待时间远长于普通请求。
+    timeoutMs: 180000,
   });
   return response.profile;
 }

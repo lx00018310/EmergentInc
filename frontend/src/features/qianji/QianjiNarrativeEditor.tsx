@@ -72,13 +72,18 @@ export const QianjiNarrativeEditor: React.FC<{ profile: QianjiProfileDto; onSave
     const birth = profile.birthIdentity;
     return <section className="qj-editor">
       <div className="qj-panel-heading"><h3>出生</h3><span>命核只读</span></div>
-      <dl>
-        <dt>出生时间</dt><dd>{new Date(profile.createdAt * 1000).toLocaleString()}</dd>
-        <dt>本卦</dt><dd>{birth.primaryHexagram}</dd>
-        <dt>动爻</dt><dd>第 {birth.movingLine} 爻</dd>
-        <dt>变卦</dt><dd>{birth.changedHexagram}</dd>
-        <dt>命核</dt><dd>{birth.birthText}</dd>
-      </dl>
+      <div className="qj-narrative-preview">
+        <dl>
+          <dt>出生时间</dt><dd>{new Date(profile.createdAt * 1000).toLocaleString()}</dd>
+          <dt>本卦</dt><dd>{birth.primaryHexagram}</dd>
+          <dt>动爻</dt><dd>第 {birth.movingLine} 爻</dd>
+          <dt>变卦</dt><dd>{birth.changedHexagram}</dd>
+          <dt>命核</dt><dd>{birth.birthText}</dd>
+          <dt>姓名</dt><dd>{profile.narrative.displayName}</dd>
+          <dt>简介</dt><dd>{profile.narrative.shortBio || '未生成'}</dd>
+          <dt>画像提示词</dt><dd>{profile.narrative.appearanceSpec || '未生成'}</dd>
+        </dl>
+      </div>
       {profile.narrative.portraitAsset && <img className="org-archive-portrait"
         src={qianjiPortraitUrl(profile.qianjiId)} alt={`${profile.narrative.displayName}画像`} />}
       {profile.careerStatus !== 'retired' && <>
