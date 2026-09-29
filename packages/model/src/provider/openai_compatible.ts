@@ -14,14 +14,23 @@ export interface OpenAICompatibleProviderConfig {
 
 // Consume SSE through its terminal marker before exposing any model decision.
 // A disconnected stream remains outcome-unknown, even if it contains partial JSON.
-async function readStream(response: Response): Promise<any> {
+async function readStream(response: Response, signal?: AbortSignal): Promise<any> {
   if (!response.body) throw new Error("MODEL_STREAM_BODY_MISSING");
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "", content = "";
   let usage: any, model: string | undefined, finishReason: string | null = null;
+
+  const onAbort = () => {
+    reader.cancel().catch(() => {});
+  };
+  signal?.addEventListener("abort", onAbort, { once: true });
+
   try {
     while (true) {
+      if (signal?.aborted) {
+        throw new Error(signal.reason?.message || "ABORTED");
+      }
       const chunk = await reader.read();
       buffer += decoder.decode(chunk.value, { stream: !chunk.done });
       let boundary: RegExpExecArray | null;
@@ -45,6 +54,7 @@ async function readStream(response: Response): Promise<any> {
       if (chunk.done) throw new Error("MODEL_STREAM_TRUNCATED");
     }
   } finally {
+    signal?.removeEventListener("abort", onAbort);
     await reader.cancel().catch(() => {});
     reader.releaseLock();
   }
@@ -137,7 +147,7 @@ export class OpenAICompatibleProvider implements ModelProvider {
       }
 
       phase = "response_body";
-      const data: any = this.stream ? await readStream(response) : await response.json();
+      const data: any = this.stream ? await readStream(response, controller.signal) : await response.json();
 
       const choice = data?.choices?.[0];
       const rawText = typeof choice?.message?.content === "string" ? choice.message.content : "";

@@ -125,7 +125,7 @@ export async function registerApiRoutes(
 
   server.post("/run/recovery/resolve", async (req, reply) => {
     const body: any = req.body || {};
-    if (runService.getStatus().running) return reply.status(409).send({ detail: "Run in progress" });
+    if (runService.getStatus().running) return reply.status(409).send({ detail: "Run in progress: 当前任务正在执行中，请先停止运行后再进行安全审计决策" });
     if (!["model", "tool", "run", "message"].includes(body.kind) || typeof body.id !== "string" || !body.id ||
         !["confirm_not_billed", "settle_billed", "settle_reserved", "abandon", "acknowledge"].includes(body.decision)) {
       return reply.status(400).send({ detail: "Operation and explicit decision are required" });

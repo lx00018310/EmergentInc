@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { RunStatusDto } from '../../api/types';
-import { fetchRunStatus, resolveRecovery, type RecoveryKind, type RecoveryDecision } from '../../api/run';
+import { fetchRunStatus, resolveRecovery, stopRun, type RecoveryKind, type RecoveryDecision } from '../../api/run';
 import { displayStopReason } from './runStatusLabels';
 
 type RecoveryItem = { kind: RecoveryKind; id: string; status?: string };
@@ -100,15 +100,43 @@ export function RecoveryOperations({
     });
   };
 
+  const handleForceStop = async () => {
+    if (busy) return;
+    setBusy(true);
+    setError('');
+    try {
+      await stopRun();
+      for (let i = 0; i < 5; i++) {
+        await new Promise(r => setTimeout(r, 400));
+        const s = await fetchRunStatus();
+        if (!s.running) break;
+      }
+      await onRefresh();
+    } catch (err: any) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const handleResolveSingle = async (kind: RecoveryKind, id: string, action: 'approve' | 'reject') => {
     if (busy) return;
+    if (status.running) {
+      setError('当前系统正在运行中 (Run in progress)，无法直接决议未决项。请先点击上方的“强制停止当前运行”，待停机后再执行对账。');
+      return;
+    }
     setBusy(true);
     setError('');
     try {
       await resolveItem(items.get(`${kind}:${id}`) ?? { kind, id }, action);
       await onRefresh();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+    } catch (err: any) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg.includes('Run in progress') || msg.includes('409')) {
+        setError('操作受阻：系统当前仍有任务在运行中 (Run in progress)。请点击上方的“强制停止当前运行”，停机后再试。');
+      } else {
+        setError(msg);
+      }
     } finally {
       setBusy(false);
     }
@@ -117,17 +145,32 @@ export function RecoveryOperations({
   // 全部通过 / 全部拒绝
   const handleResolveAll = async (action: 'approve' | 'reject') => {
     if (busy || items.size === 0) return;
+    if (status.running) {
+      setError('当前系统正在运行中 (Run in progress)，无法直接决议未决项。请先点击上方的“强制停止当前运行”，待停机后再执行对账。');
+      return;
+    }
     setBusy(true);
     setError('');
     try {
       for (const item of items.values()) {
-        const current = findPendingItem(await fetchRunStatus(), item);
+        const latestStatus = await fetchRunStatus();
+        if (latestStatus.running) {
+          setError('当前系统正在运行中 (Run in progress)，无法直接决议未决项。请先点击上方的“强制停止当前运行”，待停机后再执行对账。');
+          setBusy(false);
+          return;
+        }
+        const current = findPendingItem(latestStatus, item);
         if (current) await resolveItem(current, action);
       }
       await onRefresh();
       setReason('');
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+    } catch (err: any) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg.includes('Run in progress') || msg.includes('409')) {
+        setError('操作受阻：系统当前仍有任务在运行中 (Run in progress)。请点击上方的“强制停止当前运行”，停机后再试。');
+      } else {
+        setError(msg);
+      }
       try {
         await onRefresh();
       } catch {
@@ -350,6 +393,35 @@ export function RecoveryOperations({
         </div>
 
         {/* 4. 顶部一键快捷操作 */}
+        {status.running && (
+          <div
+            style={{
+              background: 'rgba(234, 179, 8, 0.12)',
+              border: '1px solid rgba(234, 179, 8, 0.35)',
+              borderRadius: '6px',
+              padding: '8px 12px',
+              marginBottom: '10px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: '10px',
+            }}
+          >
+            <span style={{ fontSize: '12px', color: '#b45309' }}>
+              ⚠️ 当前任务正在执行中 (Run in progress)，需先停止运行才能进行审计决策。
+            </span>
+            <button
+              type="button"
+              className="btn btn-sm btn-danger"
+              disabled={busy}
+              onClick={() => void handleForceStop()}
+              style={{ flexShrink: 0 }}
+            >
+              {busy ? '正在停止…' : '强制停止当前运行'}
+            </button>
+          </div>
+        )}
+
         {items.size > 0 && (
           <div
             style={{
@@ -365,7 +437,8 @@ export function RecoveryOperations({
             <button
               type="button"
               className="btn btn-sm btn-primary"
-              disabled={busy}
+              disabled={busy || status.running}
+              title={status.running ? '任务运行中，请先强制停止运行' : undefined}
               onClick={() => void handleResolveAll('approve')}
             >
               全部通过
@@ -373,13 +446,14 @@ export function RecoveryOperations({
             <button
               type="button"
               className="btn btn-sm btn-danger"
-              disabled={busy}
+              disabled={busy || status.running}
+              title={status.running ? '任务运行中，请先强制停止运行' : undefined}
               onClick={() => void handleResolveAll('reject')}
             >
               全部拒绝
             </button>
             <span style={{ fontSize: '11px', color: 'var(--text-dim)' }}>
-              (点击“全部通过”将退还额度并重试未决项)
+              {status.running ? '(任务运行中，请先强制停止后再审批)' : '(点击“全部通过”将退还额度并重试未决项)'}
             </span>
           </div>
         )}
@@ -459,7 +533,8 @@ export function RecoveryOperations({
                     <button
                       type="button"
                       className="btn btn-xs btn-primary"
-                      disabled={busy || (kind === 'message' && itemStatus === 'AWAITING_SETTLEMENT')}
+                      disabled={busy || status.running || (kind === 'message' && itemStatus === 'AWAITING_SETTLEMENT')}
+                      title={status.running ? '任务运行中，请先强制停止' : undefined}
                       onClick={() => void handleResolveSingle(kind, id, 'approve')}
                     >
                       通过
@@ -467,7 +542,8 @@ export function RecoveryOperations({
                     <button
                       type="button"
                       className="btn btn-xs btn-danger"
-                      disabled={busy}
+                      disabled={busy || status.running}
+                      title={status.running ? '任务运行中，请先强制停止' : undefined}
                       onClick={() => void handleResolveSingle(kind, id, 'reject')}
                     >
                       拒绝

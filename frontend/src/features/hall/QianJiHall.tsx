@@ -27,7 +27,7 @@ export const QianJiHall: React.FC<QianJiHallProps> = ({ selectedQianjiId, onSele
   const [isRecoveryOpen, setIsRecoveryOpen] = useState(false);
   const addMenuRef = useRef<HTMLDivElement | null>(null);
   const selected = items.find(item => item.profile.qianjiId === selectedQianjiId) ?? null;
-  const recoveryRequired = Boolean(runStatus?.unfinalized_operations?.hasUnfinalized);
+  const recoveryRequired = Boolean(runStatus?.unfinalized_operations?.hasUnfinalized && !runStatus?.running);
 
   useEffect(() => {
     if (!addMenuOpen) return;
