@@ -1,9 +1,10 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { fetchQianjiChat, fetchQianjiHistory, markQianjiConclusion, qianjiArtifactUrl, retireQianji } from '../../api/qianji';
+import { fetchQianjiChat, fetchQianjiHistory, markQianjiConclusion, qianjiArtifactUrl, qianjiPortraitUrl, retireQianji } from '../../api/qianji';
 import type { QianjiChatTurnDto, QianjiHistoryDto, QianjiListItemDto } from '../../api/qianji';
 import { Modal } from '../../components/Modal';
 import { QianjiChatPanel } from './QianjiChatPanel';
 import { QianjiNarrativeEditor } from './QianjiNarrativeEditor';
+import { TechGoggleAvatar } from './TechGoggleAvatar';
 
 export type QianjiProfileModal = 'history' | 'narrative' | 'retire';
 
@@ -27,11 +28,13 @@ export const QianjiProfilePanel: React.FC<{
   const [retireReason, setRetireReason] = useState('');
   const [retireError, setRetireError] = useState<string | null>(null);
   const [retiring, setRetiring] = useState(false);
+  const [imageFailed, setImageFailed] = useState(false);
 
   useEffect(() => {
-    setOpenModal(null); setHistory(null); setTurns([]); setHistoryError(null); setRetireReason(''); setRetireError(null);
+    setOpenModal(null); setHistory(null); setTurns([]); setHistoryError(null); setRetireReason(''); setRetireError(null); setImageFailed(false);
   }, [qianjiId]);
   useEffect(() => { if (modalRequest) setOpenModal(modalRequest.modal); }, [modalRequest?.nonce]);
+
 
   const reloadHistory = useCallback(async (signal?: AbortSignal) => {
     const [nextHistory, nextTurns] = await Promise.allSettled([
@@ -80,11 +83,73 @@ export const QianjiProfilePanel: React.FC<{
 
   return (
     <section className="qj-profile-panel" aria-label="人物详情">
-      <header className="qj-profile-header">
-        <div><p className="qj-eyebrow">{item.profile.careerStatus === 'active' ? '可对话' : item.profile.careerStatus}</p><h2>{item.profile.narrative.displayName}</h2><p>{item.profile.birthIdentity
-          ? `${item.profile.birthIdentity.primaryHexagram} → ${item.profile.birthIdentity.changedHexagram}` : '旧人物'}</p></div>
-        <div className="qj-physical-state"><b>{physicalText}</b>{item.currentBinding && <small>{item.currentBinding.pixelId} · 第 {item.currentBinding.incarnation} 代</small>}</div>
-      </header>
+      <div className="qj-hero-stage">
+        <div className="qj-hero-portrait-frame">
+          {item.profile.narrative.portraitAsset && !imageFailed ? (
+            <img
+              src={qianjiPortraitUrl(qianjiId)}
+              alt={item.profile.narrative.displayName}
+              onError={() => setImageFailed(true)}
+            />
+          ) : (
+            <TechGoggleAvatar variant="hero" />
+          )}
+          <div className="qj-lens-reticle" aria-hidden="true" />
+        </div>
+
+        <div className="qj-hero-content">
+          <div className="qj-hero-title-row">
+            <div>
+              <p className="qj-eyebrow">
+                {item.profile.careerStatus === 'active' ? '● 活跃服役中' : item.profile.careerStatus === 'trial' ? '◇ 试炼考核中' : item.profile.careerStatus === 'candidate' ? '○ 候选整备' : '已退役'}
+              </p>
+              <h2>{item.profile.narrative.displayName}</h2>
+              {item.profile.birthIdentity ? (
+                <div className="qj-hexagram-tag hero-tag">
+                  <span className="qj-hex-symbol">☯</span>
+                  <span>本卦 · {item.profile.birthIdentity.primaryHexagram}</span>
+                  <span className="qj-hex-arrow">→</span>
+                  <span>变卦 · {item.profile.birthIdentity.changedHexagram}</span>
+                </div>
+              ) : (
+                <span className="qj-hexagram-tag hero-tag">旧人物载体</span>
+              )}
+            </div>
+
+            <div className="qj-hero-actions">
+              <button className="btn btn-xs" type="button" onClick={() => setOpenModal('history')}>查阅经历</button>
+              <button className="btn btn-xs" type="button" onClick={() => setOpenModal('narrative')}>
+                {item.profile.birthIdentity ? '出生生辰' : '编辑人设'}
+              </button>
+              {item.profile.careerStatus !== 'retired' && (
+                <button className="btn btn-xs btn-outline-danger" type="button" onClick={() => setOpenModal('retire')}>办理退役</button>
+              )}
+            </div>
+          </div>
+
+          <div className="qj-ortho-specs">
+            <div className="qj-ortho-header">
+              <span>正交机能规格 // SCHEMATIC SPECS</span>
+              <span className="qj-ortho-code">{item.currentBinding ? `${item.currentBinding.pixelId} · 第 ${item.currentBinding.incarnation} 代` : '未绑定 PIXEL'}</span>
+            </div>
+            <div className="qj-ortho-grid">
+              <div className="qj-ortho-cell">
+                <small>载体运行状态</small>
+                <strong>{physicalText}</strong>
+              </div>
+              <div className="qj-ortho-cell">
+                <small>剩余机能能元</small>
+                <strong>{item.physical?.energy != null ? `${item.physical.energy.toLocaleString()} T` : '未知'}</strong>
+              </div>
+              <div className="qj-ortho-cell">
+                <small>亏损补偿状态</small>
+                <strong>{(item.physical?.refundDeficitTokens ?? 0) === 0 ? 'NOMINAL · 正常' : `DEFICIT · ${item.physical?.refundDeficitTokens}`}</strong>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <QianjiChatPanel item={item} onSent={onSent} sendBlocked={sendBlocked} />
 
       <Modal isOpen={openModal === 'history'} title="经历" contentClassName="doc-modal-content" onClose={() => setOpenModal(null)}>

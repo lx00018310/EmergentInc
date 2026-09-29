@@ -16,6 +16,9 @@ export interface QianjiCardProps {
   showMeetingAction?: boolean;
 }
 
+import { TechGoggleAvatar } from './TechGoggleAvatar';
+
+
 export const QianjiCard: React.FC<QianjiCardProps> = ({ item, selected, onSelect, onMenuAction, showMeetingAction }) => {
   const { profile, currentBinding, physical } = item;
   const [imageFailed, setImageFailed] = React.useState(false);
@@ -55,16 +58,21 @@ export const QianjiCard: React.FC<QianjiCardProps> = ({ item, selected, onSelect
         <div className="qj-card-portrait">
           {profile.narrative.portraitAsset && !imageFailed
             ? <img src={qianjiPortraitUrl(profile.qianjiId)} alt={`${profile.narrative.displayName} 角色画像`} onError={() => setImageFailed(true)} />
-            : <span aria-label="暂无角色图片">未设画像</span>}
+            : <TechGoggleAvatar />}
         </div>
         <div className="qj-card-copy">
           <strong>{profile.narrative.displayName}</strong>
-          <span>{profile.birthIdentity
-            ? `${profile.birthIdentity.primaryHexagram} → ${profile.birthIdentity.changedHexagram}`
-            : '旧人物'}</span>
+          <span className="qj-hexagram-tag">
+            <span style={{ color: 'var(--tj-gold)', marginRight: 2 }}>☰</span>
+            {profile.birthIdentity
+              ? `${profile.birthIdentity.primaryHexagram} → ${profile.birthIdentity.changedHexagram}`
+              : '极地机巧推演中'}
+          </span>
           <div className="qj-card-badges">
             <span>{careerLabels[profile.careerStatus] || profile.careerStatus}</span>
-            <span>{physical?.active ? '载体活跃' : currentBinding ? '载体失活' : '未绑定 Pixel'}</span>
+            <span style={{ color: physical?.active ? 'var(--tj-accent)' : 'var(--tj-text-dim)' }}>
+              {physical?.active ? '● 载体活跃' : currentBinding ? '○ 载体失活' : '未绑定 Pixel'}
+            </span>
           </div>
           <small>{new Date(profile.createdAt * 1000).toLocaleDateString()}</small>
         </div>

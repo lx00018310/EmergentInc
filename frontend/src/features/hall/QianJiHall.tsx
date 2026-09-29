@@ -78,6 +78,30 @@ export const QianJiHall: React.FC<QianJiHallProps> = ({ selectedQianjiId, onSele
 
   return (
     <div className="qianji-hall" data-testid="qianji-hall">
+      {/* 极地全息琉璃雪莲与光纤经脉微光背景 (图3意象) */}
+      <div className="qianji-lotus-bg" aria-hidden="true">
+        <svg viewBox="0 0 600 600" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <defs>
+            <linearGradient id="lotusGlow" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0%" stopColor="#00e5ff" stopOpacity="0.22" />
+              <stop offset="45%" stopColor="#f472b6" stopOpacity="0.18" />
+              <stop offset="80%" stopColor="#ffd700" stopOpacity="0.2" />
+              <stop offset="100%" stopColor="#38bdf8" stopOpacity="0.15" />
+            </linearGradient>
+            <radialGradient id="lotusCenter" cx="50%" cy="50%" r="50%">
+              <stop offset="0%" stopColor="#00e5ff" stopOpacity="0.25" />
+              <stop offset="100%" stopColor="#00e5ff" stopOpacity="0" />
+            </radialGradient>
+          </defs>
+          <path d="M300 600 C300 450, 290 380, 300 300" stroke="#00e5ff" strokeWidth="1.5" strokeDasharray="6 4" strokeOpacity="0.35" />
+          <circle cx="300" cy="300" r="140" fill="url(#lotusCenter)" />
+          <path d="M300 120 C240 200, 260 280, 300 300 C340 280, 360 200, 300 120 Z" fill="url(#lotusGlow)" stroke="#00e5ff" strokeWidth="1" strokeOpacity="0.45" />
+          <path d="M300 140 C200 190, 210 270, 300 300 C390 270, 400 190, 300 140 Z" fill="url(#lotusGlow)" stroke="#f472b6" strokeWidth="1" strokeOpacity="0.4" />
+          <path d="M300 160 C160 210, 180 290, 300 300 C420 290, 440 210, 300 160 Z" fill="url(#lotusGlow)" stroke="#ffd700" strokeWidth="1" strokeOpacity="0.35" />
+          <circle cx="300" cy="280" r="160" stroke="#0284c7" strokeWidth="0.6" strokeDasharray="4 8" strokeOpacity="0.3" />
+        </svg>
+      </div>
+
       <header className="hall-header">
         <div className="hall-brand"><span className="hall-mark">千</span><div><h1>{presentation?.hallName ?? '千机阁'}</h1><p>{presentation?.organizationName ?? 'EmergentInc 元胞会社'}</p></div></div>
         <div className="hall-run-summary"><span>第 {world?.round ?? runStatus?.current_round ?? 0} 轮</span><span className={runStatus?.running ? 'is-running' : recoveryRequired ? 'is-error' : ''}>{runState}</span></div>
