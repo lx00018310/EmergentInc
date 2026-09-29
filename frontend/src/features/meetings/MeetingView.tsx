@@ -36,9 +36,9 @@ export function MeetingView({ onBack }: { onBack: () => void }) {
     finally { setBusy(false); }
   };
   return <div className="gacha-view">
-    <header className="org-header"><div><p className="qj-eyebrow">天机阁</p><h1>多人会议</h1>
+    <header className="org-header"><div><p className="qj-eyebrow">千机阁</p><h1>多人会议</h1>
       <span>每位人物依次发言，单次不超过 150 字。</span></div>
-      <button className="btn btn-sm" onClick={onBack}>返回天机阁</button></header>
+      <button className="btn btn-sm" onClick={onBack}>返回千机阁</button></header>
     <main className="gacha-layout">
       <section className="org-panel gacha-controls">
         <h2>发起会议</h2>

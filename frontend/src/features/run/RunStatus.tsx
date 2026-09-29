@@ -53,7 +53,7 @@ export const RunStatus: React.FC<RunStatusProps> = ({ world, runStatus, onOpenHe
         <span className="badge" id="run-badge">run: {runId}</span>
       </div>
       <div className="header-metrics">
-        {onBack && <button className="btn btn-xs" type="button" onClick={onBack}>返回天机阁</button>}
+        {onBack && <button className="btn btn-xs" type="button" onClick={onBack}>返回千机阁</button>}
         <div className="metric-item">
           <span className="m-label">Round:</span> <span className="m-val">{round}</span>
         </div>

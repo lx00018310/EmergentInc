@@ -40,7 +40,7 @@ export function buildGachaPrompt(draw: QianjiDraw, narrative: QianjiNarrativeSpe
   const lowest = [...GACHA_ATTRIBUTE_KEYS].sort((a, b) => draw.attributes[a] - draw.attributes[b])[0]!;
   const expression = draw.attributes[lowest] <= 0.6 ? EXPRESSIONS[lowest] : `眼神带有${highest}的锋芒`;
   const attire = ATTIRE[narrative.roleLabel ?? ""] ?? "新中式长袍";
-  const experience = (narrative.shortBio ?? "初入天机阁").replace(/\s+/g, " ").slice(0, 250);
+  const experience = (narrative.shortBio ?? "初入千机阁").replace(/\s+/g, " ").slice(0, 250);
   const appearance = (narrative.appearanceSpec ?? "成年的古风人物").replace(/\s+/g, " ").slice(0, 500);
   const personality = (narrative.behaviorProfile[0] ?? narrative.flaw ?? "").replace(/\s+/g, " ").slice(0, 150);
   const [colorChinese, colorEnglish] = COLORS[highest];
@@ -48,7 +48,7 @@ export function buildGachaPrompt(draw: QianjiDraw, narrative: QianjiNarrativeSpe
     `人物外观：${appearance}；服饰参考${attire}，若与人物外观冲突，以人物外观为准。` +
     `动作与神情：手持${PROPS[highest]}，${expression}${personality ? `，体现${personality}` : ""}。` +
     `独有经历：${experience}。视觉主题：${highest}与${second}交织成${motif}，${lowest}的短板以克制的细节表现；${draw.traitTags.join("、") || "尚在成长"}。` +
-    `场景为暗色天机阁，${colorChinese}主色，${FRAMES[draw.rarity]}。主体完整可见，面部清晰，背景不抢人物。` +
+    `场景为暗色千机阁，${colorChinese}主色，${FRAMES[draw.rarity]}。主体完整可见，面部清晰，背景不抢人物。` +
     `画布严格为竖版宽高比9:16，目标分辨率1080x1920像素。画面内不要文字、数字、Logo、水印、界面或第二个人。`;
   const english = `${STYLE}; unique appearance: ${appearance}; role: ${narrative.roleLabel ?? "Qianji"}; prop: ${PROPS[highest]}; scene motif: ${motif}; color palette: ${colorEnglish}; full body, face visible, one person, no text or watermark; vertical aspect ratio 9:16, target resolution 1080x1920 pixels, --ar 9:16`;
   const prompt = `${chinese}\n\n${english}`;

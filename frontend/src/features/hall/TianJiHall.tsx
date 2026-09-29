@@ -79,7 +79,7 @@ export const TianJiHall: React.FC<TianJiHallProps> = ({ selectedQianjiId, onSele
   return (
     <div className="tianji-hall" data-testid="tianji-hall">
       <header className="hall-header">
-        <div className="hall-brand"><span className="hall-mark">天</span><div><h1>{presentation?.hallName ?? '天机阁'}</h1><p>{presentation?.organizationName ?? 'EmergentInc 元胞会社'}</p></div></div>
+        <div className="hall-brand"><span className="hall-mark">千</span><div><h1>{presentation?.hallName ?? '千机阁'}</h1><p>{presentation?.organizationName ?? 'EmergentInc 元胞会社'}</p></div></div>
         <div className="hall-run-summary"><span>第 {world?.round ?? runStatus?.current_round ?? 0} 轮</span><span className={runStatus?.running ? 'is-running' : recoveryRequired ? 'is-error' : ''}>{runState}</span></div>
         <div className="hall-navigation"><button className="btn btn-sm" type="button" onClick={onOpenEngine}>进入 {presentation?.sectionLabels?.engine ?? 'Engine'}</button></div>
       </header>

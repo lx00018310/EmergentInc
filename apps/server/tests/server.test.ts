@@ -751,17 +751,17 @@ describe("Server: API Contract Integration Tests", () => {
     expect(allEvents.json().items).toHaveLength(1);
 
     const initial = await app.inject({ method: "GET", url: "/api/world/presentation" });
-    expect(initial.json()).toMatchObject({ hallName: "天机阁", revision: 0 });
+    expect(initial.json()).toMatchObject({ hallName: "千机阁", revision: 0 });
     const changed = await app.inject({
       method: "PUT",
       url: "/api/world/presentation",
-      payload: { expectedRevision: 0, organizationName: "EmergentInc", hallName: "天机阁", eventLabels: { QIANJI_PROFILE_CREATED: "新成员" } },
+      payload: { expectedRevision: 0, organizationName: "EmergentInc", hallName: "千机阁", eventLabels: { QIANJI_PROFILE_CREATED: "新成员" } },
     });
     expect(changed.statusCode).toBe(200);
     expect(changed.json()).toMatchObject({ organizationName: "EmergentInc", revision: 1, eventLabels: { QIANJI_PROFILE_CREATED: "新成员" } });
     const executableLabel = await app.inject({
       method: "PUT", url: "/api/world/presentation",
-      payload: { expectedRevision: 1, organizationName: "EmergentInc", hallName: "天机阁", eventLabels: { QIANJI_PROFILE_CREATED: "<script>" } },
+      payload: { expectedRevision: 1, organizationName: "EmergentInc", hallName: "千机阁", eventLabels: { QIANJI_PROFILE_CREATED: "<script>" } },
     });
     expect(executableLabel.statusCode).toBe(400);
     const conflict = await app.inject({

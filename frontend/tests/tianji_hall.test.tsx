@@ -55,14 +55,14 @@ describe('TianJiHall', () => {
       runStatus: null, error: null, refreshImmediately: vi.fn().mockResolvedValue(undefined),
     };
     state.qianji = {
-      items: [member], events: [], presentation: { hallName: '天机阁', organizationName: 'EmergentInc', revision: 0 },
+      items: [member], events: [], presentation: { hallName: '千机阁', organizationName: 'EmergentInc', revision: 0 },
       error: null, loading: false, refresh: vi.fn().mockResolvedValue(undefined),
     };
   });
 
   it('opens as a usable hall with a chat column and a missing-image state', () => {
     renderHall();
-    expect(screen.getByRole('heading', { name: '天机阁' })).toBeTruthy();
+    expect(screen.getByRole('heading', { name: '千机阁' })).toBeTruthy();
     expect(screen.getByText('EmergentInc')).toBeTruthy();
     expect(screen.getByText('未设画像')).toBeTruthy();
     expect(screen.getByLabelText('人物详情')).toBeTruthy();

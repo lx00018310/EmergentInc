@@ -7,7 +7,7 @@ import { MeetingView } from './features/meetings/MeetingView';
 const HALL_PATH = '/QIAN';
 const ENGINE_PATH = '/YUAN';
 
-// 招募与会议是天机阁内的临时视图，不占用独立路径。
+// 招募与会议是千机阁内的临时视图，不占用独立路径。
 const viewFromPath = (pathname: string): 'hall' | 'engine' =>
   (pathname.split('/')[1]?.toLowerCase() ?? '') === 'yuan' ? 'engine' : 'hall';
 

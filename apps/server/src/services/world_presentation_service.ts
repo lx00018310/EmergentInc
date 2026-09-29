@@ -27,7 +27,7 @@ const DEFAULT_EVENT_LABELS = {
 
 const DEFAULT_PRESENTATION: WorldPresentation = {
   organizationName: "EmergentInc 元胞会社",
-  hallName: "天机阁",
+  hallName: "千机阁",
   sectionLabels: DEFAULT_SECTION_LABELS,
   eventLabels: DEFAULT_EVENT_LABELS,
   revision: 0,

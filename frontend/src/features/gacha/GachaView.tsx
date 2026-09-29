@@ -18,9 +18,9 @@ export function GachaView({ onBack, onOpenPerson }: { onBack: () => void; onOpen
     }
   };
   return <div className="gacha-view">
-    <header className="org-header"><div><p className="qj-eyebrow">天机阁</p><h1>招募人物</h1>
+    <header className="org-header"><div><p className="qj-eyebrow">千机阁</p><h1>招募人物</h1>
       <span>出生只留下一个起点，之后由对话和经历决定。</span></div>
-      <button className="btn btn-sm" onClick={onBack}>返回天机阁</button></header>
+      <button className="btn btn-sm" onClick={onBack}>返回千机阁</button></header>
     <main className="gacha-layout">
       <section className="org-panel gacha-controls">
         <div className="org-panel-title"><h2>新人物</h2></div>
