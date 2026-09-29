@@ -60,6 +60,26 @@ describe('App view navigation', () => {
     expect(screen.getByTestId('hall')).toBeTruthy();
   });
 
+  it('renders Engine at /YUAN and moves back to the hall at /QIAN', () => {
+    window.history.pushState(null, '', '/YUAN');
+    render(<App />);
+    expect(screen.getByTestId('engine')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: '返回天机阁' }));
+    expect(screen.getByTestId('hall')).toBeTruthy();
+    expect(window.location.pathname).toBe('/QIAN');
+  });
+
+  it('rewrites the address bar when opening Engine from the hall', () => {
+    window.history.pushState(null, '', '/QIAN');
+    render(<App />);
+    fireEvent.click(screen.getByRole('button', { name: '打开 Engine' }));
+    expect(window.location.pathname).toBe('/YUAN');
+    fireEvent.click(screen.getByRole('button', { name: '返回天机阁' }));
+    fireEvent.click(screen.getByRole('button', { name: '招募人物' }));
+    expect(screen.getByTestId('gacha')).toBeTruthy();
+    expect(window.location.pathname).toBe('/QIAN');
+  });
+
   it('no longer exposes the removed organization desk', () => {
     render(<App />);
     expect(screen.queryByRole('button', { name: '打开组织控制台' })).toBeNull();
