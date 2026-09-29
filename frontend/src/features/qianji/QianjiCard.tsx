@@ -58,7 +58,10 @@ export const QianjiCard: React.FC<QianjiCardProps> = ({ item, selected, onSelect
         <div className="qj-card-portrait">
           {profile.narrative.portraitAsset && !imageFailed
             ? <img src={qianjiPortraitUrl(profile.qianjiId)} alt={`${profile.narrative.displayName} 角色画像`} onError={() => setImageFailed(true)} />
-            : <TechGoggleAvatar />}
+            : <>
+                <TechGoggleAvatar />
+                <span className="sr-only">未设画像</span>
+              </>}
         </div>
         <div className="qj-card-copy">
           <strong>{profile.narrative.displayName}</strong>

@@ -1,4 +1,5 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 
 export interface ModalProps {
   isOpen: boolean;
@@ -7,6 +8,7 @@ export interface ModalProps {
   children: React.ReactNode;
   footer?: React.ReactNode;
   contentClassName?: string;
+  overlayClassName?: string;
   keepMounted?: boolean;
 }
 
@@ -17,8 +19,15 @@ export const Modal: React.FC<ModalProps> = ({
   children,
   footer,
   contentClassName = '',
+  overlayClassName = '',
   keepMounted = false,
 }) => {
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
   useEffect(() => {
     if (!isOpen) return;
 
@@ -34,10 +43,16 @@ export const Modal: React.FC<ModalProps> = ({
 
   if (!isOpen && !keepMounted) return null;
 
-  return (
-    <div className="modal-overlay" onClick={onClose} role="dialog" aria-modal="true" style={isOpen ? undefined : { display: 'none' }}>
+  const content = (
+    <div
+      className={`modal-overlay ${overlayClassName}`.trim()}
+      onClick={onClose}
+      role="dialog"
+      aria-modal="true"
+      style={isOpen ? undefined : { display: 'none' }}
+    >
       <div
-        className={`modal-content ${contentClassName}`}
+        className={`modal-content ${contentClassName}`.trim()}
         onClick={(e) => e.stopPropagation()}
       >
         <div className="modal-header">
@@ -51,4 +66,10 @@ export const Modal: React.FC<ModalProps> = ({
       </div>
     </div>
   );
+
+  if (typeof document === 'undefined' || !mounted) {
+    return content;
+  }
+
+  return createPortal(content, document.body);
 };

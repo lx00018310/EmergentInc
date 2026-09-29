@@ -152,7 +152,7 @@ export const QianjiProfilePanel: React.FC<{
 
       <QianjiChatPanel item={item} onSent={onSent} sendBlocked={sendBlocked} />
 
-      <Modal isOpen={openModal === 'history'} title="经历" contentClassName="doc-modal-content" onClose={() => setOpenModal(null)}>
+      <Modal isOpen={openModal === 'history'} title="经历" contentClassName="doc-modal-content" overlayClassName="qj-modal-overlay" onClose={() => setOpenModal(null)}>
         <section className="qj-history-panel">
           {historyLoading && <p>正在读取履历…</p>}
           {historyError && <p className="qj-inline-error" role="alert">{historyError}</p>}
@@ -187,12 +187,12 @@ export const QianjiProfilePanel: React.FC<{
       </Modal>
 
       <Modal isOpen={openModal === 'narrative'} title={item.profile.birthIdentity ? '出生' : '人设'}
-        contentClassName="doc-modal-content" onClose={() => setOpenModal(null)}>
+        contentClassName="doc-modal-content" overlayClassName="qj-modal-overlay" onClose={() => setOpenModal(null)}>
         <QianjiNarrativeEditor profile={item.profile} onSaved={onRefresh} />
       </Modal>
 
       <Modal isOpen={openModal === 'retire'} title={`办理退役 · ${item.profile.narrative.displayName}`}
-        contentClassName="qj-retire-modal-content" onClose={() => setOpenModal(null)}>
+        contentClassName="qj-retire-modal-content" overlayClassName="qj-modal-overlay" onClose={() => setOpenModal(null)}>
         <form className="qj-retire-form" onSubmit={submitRetirement}>
           <label>退役原因<textarea value={retireReason} onChange={event => setRetireReason(event.target.value)} maxLength={1000} rows={4} required /></label>
           <div className="qj-form-footer">
