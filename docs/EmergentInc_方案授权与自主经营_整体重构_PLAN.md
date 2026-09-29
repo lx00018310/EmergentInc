@@ -1,6 +1,6 @@
 # EmergentInc 方案授权与自主经营整体重构 Plan
 
-日期：2026-09-29。状态：待审阅的设计与实施计划，尚未执行重构。
+日期：2026-09-29。状态：Owner 已授权执行，重构进行中。设计基线保留；逐项实现、验证与剩余工作见 [V21 实施记录](./EmergentInc_V21_实施记录.md)，不将局部工程验证视为整份计划完成。
 
 代码基线：`main@3f7992c28f9ad6c570ceaff6adf9c5d68f11a0f3`；本次通过 `git ls-remote origin refs/heads/main` 确认本地与远端 main 一致。参考旧案：[Linux 自演化营收闭环整改 Plan](./EmergentInc_Linux_自演化营收闭环整改_PLAN.md)。发生冲突时，以本次 Owner 已确认的产品目标和方案级授权为准。
 

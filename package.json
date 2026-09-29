@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "build": "tsc -b",
-    "test": "vitest run",
+    "test": "tsc -b && vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc -b && tsc -p frontend/tsconfig.app.json --noEmit"
   },

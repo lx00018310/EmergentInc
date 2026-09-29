@@ -90,6 +90,6 @@ curl http://127.0.0.1:8765/api/tools             # 所有工具及有效 enabled
 ## 8. 不要做的事
 
 1. 不手工改 SQLite 账本来"救活"某个 Pixel；能量只能通过 reward 或模型侧转账变化。
-2. 不为历史数据保留归档、备份或快照目录（`recovery_backups` / `loops` / `runs` / `ui_state` 已按清理计划删除，别再建回来）。
+2. 不恢复旧的运行归档产品（`loops` / `runs` / `ui_state`）。方案授权重构允许必要的 SQLite 一致性备份、发布恢复点和有限版本保留，按 [业务模式指南](./BUSINESS_GUIDE.md) 执行；正常版本回退不能用旧数据库抹去新经营事实。
 3. 不把 `workspace/`、`.env`、任何凭据提交 Git。
 4. 不替 Pixel 写 `pixel.md`：心智必须是模型自己写出的产物。

@@ -1,0 +1,27 @@
+[Unit]
+Description=EmergentInc business service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=emergentinc
+Group=emergentinc
+WorkingDirectory=/srv/emergentinc/current
+EnvironmentFile=/etc/emergentinc/environment
+Environment=NODE_ENV=production
+Environment=EMERGENTINC_RUNTIME_MODE=business
+Environment=EMERGENTINC_WORKSPACE_ROOT=/var/lib/emergentinc/workspace
+ExecStart=/usr/bin/node /srv/emergentinc/current/apps/server/dist/main.js
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=150
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/emergentinc/workspace
+
+[Install]
+WantedBy=multi-user.target

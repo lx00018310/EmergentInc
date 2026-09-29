@@ -1,7 +1,10 @@
 import * as path from "node:path";
 import * as fs from "node:fs";
 import { createServer } from "./app.js";
-import { CoreStore } from "@emergentinc/persistence";
+import { CoreStore, BusinessStore } from "@emergentinc/persistence";
+import { BusinessService } from "./services/business_service.js";
+import { BusinessConnections } from "./services/business_connections.js";
+import { runtimeConfig, acquireWorkspaceLock } from "./runtime_config.js";
 import {
   ToolRegistry,
   registerAllBuiltinTools,
@@ -22,11 +25,6 @@ import { OpenAICompatibleImageProvider } from "./services/gacha_image.js";
 
 async function bootstrap() {
   const projectRoot = path.resolve(import.meta.dirname, "../../..");
-  const workspaceRoot = path.resolve(projectRoot, "workspace");
-  const liveDir = path.resolve(workspaceRoot, "live");
-  const runtimeDir = path.resolve(workspaceRoot, "runtime");
-  const ledgerDir = path.resolve(workspaceRoot, "ledger");
-  const privateDir = path.resolve(workspaceRoot, "private");
   const frontendDistDir = path.resolve(projectRoot, "frontend", "dist");
 
   // 自动安全加载根目录 .env 环境变量配置 (如果存在)
@@ -47,6 +45,37 @@ async function bootstrap() {
         }
       }
     } catch {}
+  }
+
+  const config = runtimeConfig(projectRoot);
+  const { workspaceRoot } = config;
+  const liveDir = path.resolve(workspaceRoot, "live");
+  const runtimeDir = path.resolve(workspaceRoot, "runtime");
+  const ledgerDir = path.resolve(workspaceRoot, "ledger");
+  const privateDir = path.resolve(workspaceRoot, "private");
+  const releaseLock = acquireWorkspaceLock(workspaceRoot);
+  process.once("exit", releaseLock);
+
+  if (config.mode === "business") {
+    const store = new BusinessStore(path.join(ledgerDir, "business.sqlite3"));
+    const model = process.env.MCL_DECISION_MODEL || process.env.MCL_MODEL;
+    const apiKey = process.env.MCL_API_KEY;
+    const pricingFile = path.join(privateDir, "business_model_pricing.json");
+    const prices = fs.existsSync(pricingFile) ? JSON.parse(fs.readFileSync(pricingFile, "utf8")) : { models: {} };
+    // Business calls require a named model's explicit currency and price, never a default estimate.
+    const service = new BusinessService(store, apiKey && model ? new OpenAICompatibleProvider({
+      baseUrl: process.env.MCL_BASE_URL || "https://api.openai.com/v1", apiKey, timeoutMs: 120000,
+    }) : undefined, model, model ? prices.models?.[model] : undefined,
+      new BusinessConnections(store, path.join(privateDir, "business-connections")));
+    const app = await createServer({ workspaceRoot, frontendDistDir, runtimeMode: "business", businessService: service,
+      ownerAuth: config.ownerAuth, trustLoopbackProxy: config.trustLoopbackProxy, development: process.env.EMERGENT_DEV === "1",
+      allowedOrigins: (process.env.EMERGENT_ALLOWED_ORIGINS || "").split(",").filter(Boolean) });
+    service.start({ exclusiveWorkspaceLockHeld: true });
+    app.addHook("onClose", async () => { await service.stop(); store.close(); releaseLock(); });
+    for (const signal of ["SIGINT", "SIGTERM"] as const) process.once(signal, () => { void app.close(); });
+    await app.listen({ port: Number(process.env.PORT || 8765), host: config.host });
+    console.log(`[EmergentInc] business mode listening on port ${process.env.PORT || 8765}`);
+    return;
   }
 
   // 确保工作区目录存在
@@ -169,6 +198,9 @@ async function bootstrap() {
 
   // 5. 创建 Fastify 服务器
   const app = await createServer({
+    ownerAuth: config.ownerAuth,
+    trustLoopbackProxy: config.trustLoopbackProxy,
+    runtimeMode: "legacy",
     worldService,
     runService,
     promptService,
@@ -194,6 +226,8 @@ async function bootstrap() {
   const host = process.env.HOST || "127.0.0.1";
 
   await app.listen({ port, host });
+  app.addHook("onClose", async () => { store.db.close(); releaseLock(); });
+  for (const signal of ["SIGINT", "SIGTERM"] as const) process.once(signal, () => { void app.close(); });
   console.log(`[EmergentInc V10 Server] Listening on http://${host}:${port}`);
 }
 

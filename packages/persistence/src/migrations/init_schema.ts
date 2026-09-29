@@ -5,6 +5,13 @@ import { SqliteDatabase } from "../sqlite/db.js";
  */
 export function initSchema(db: SqliteDatabase): void {
   db.transaction(() => {
+    const hasMeta = db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='schema_meta'").get();
+    if (hasMeta) {
+      for (const [key, maximum] of [["qianji_schema_version", 3], ["organization_schema_version", 1]] as const) {
+        const row = db.prepare("SELECT value FROM schema_meta WHERE key=?").get(key) as { value: string } | undefined;
+        if (row && (!/^\d+$/.test(row.value) || Number(row.value) > maximum)) throw new Error("UNSUPPORTED_LEGACY_SCHEMA_VERSION");
+      }
+    }
     db.exec(`
       CREATE TABLE IF NOT EXISTS schema_meta (
           key TEXT PRIMARY KEY,

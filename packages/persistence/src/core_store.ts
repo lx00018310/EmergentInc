@@ -38,7 +38,7 @@ export class CoreStore {
 
   constructor(dbPath: string = ":memory:") {
     this.db = new SqliteDatabase(dbPath);
-    initSchema(this.db);
+    try { initSchema(this.db); } catch (error) { this.db.close(); throw error; }
 
     this.runs = new RunRepository(this.db);
     this.pixels = new PixelRepository(this.db);

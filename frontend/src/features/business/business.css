@@ -1,0 +1,19 @@
+.business-shell { width: 100%; max-width: 1060px; height: 100%; overflow-y: auto; margin: auto; padding: 36px 24px 80px; color: #e6e9ee; font-family: system-ui, sans-serif; line-height: 1.6; }
+.business-shell header,.business-title { display: flex; align-items: center; justify-content: space-between; gap: 20px; }
+.business-shell h1 { font-size: 30px; margin: 8px 0; }.business-shell h2 { font-size: 20px; margin: 0 0 16px; }
+.business-shell p { color: #b9c3cf; }.business-shell small { color: #98a8ba; }
+.business-shell nav { display: flex; gap: 8px; margin: 28px 0; }
+.business-shell section,.business-shell details { background: #18202c; border: 1px solid #354253; border-radius: 12px; padding: 24px; margin: 16px 0; }
+.business-shell details details { padding: 12px; }.business-shell summary { cursor: pointer; }
+.business-shell button { cursor: pointer; border: 1px solid #53647a; background: #253244; color: #e6e9ee; border-radius: 8px; padding: 10px 16px; font: inherit; }
+.business-shell button.primary,.business-shell nav button[aria-current=page] { background: #a2ebce; color: #10382b; border-color: #a2ebce; }
+.business-shell button:disabled { cursor: wait; opacity: .5; }.business-shell button:focus-visible,.business-shell input:focus-visible,.business-shell textarea:focus-visible { outline: 2px solid #a2ebce; outline-offset: 3px; }
+.business-shell label { display: block; margin: 12px 0; }.business-shell input,.business-shell textarea { display: block; box-sizing: border-box; width: 100%; margin-top: 8px; background: #101822; color: #e6e9ee; border: 1px solid #53647a; border-radius: 6px; padding: 10px; font: inherit; }
+.business-shell textarea { min-height: 110px; resize: vertical; }.business-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.business-shell select { display: block; width: 100%; margin-top: 8px; padding: 10px; background: #101822; color: #e6e9ee; border: 1px solid #53647a; border-radius: 6px; font: inherit; }
+.business-metrics { display: flex; gap: 60px; }.business-metrics strong { display: block; font-size: 26px; }
+.business-shell .business-error { color: #ffd8c0; background: #4a2925; padding: 16px; border-radius: 8px; }
+.business-shell dl { display: grid; grid-template-columns: 100px 1fr; gap: 14px; }.business-shell dd { margin: 0; }.business-shell dt { color: #98a8ba; }
+.business-actions { display: flex; flex-wrap: wrap; gap: 10px; }.business-task { border-top: 1px solid #354253; padding: 16px 0; }
+.business-shell table { width: 100%; border-collapse: collapse; margin: 12px 0; }.business-shell th,.business-shell td { text-align: left; padding: 8px; border-bottom: 1px solid #354253; }
+@media(max-width: 600px) { .business-shell { padding: 20px 12px; }.business-grid { grid-template-columns: 1fr; }.business-metrics { gap: 20px; flex-wrap: wrap; }.business-shell dl { grid-template-columns: 1fr; gap: 4px; }.business-title { align-items: start; flex-direction: column; } }

@@ -1,5 +1,7 @@
 # Emergent Inc 元胞会社
 
+> **V21 重构实施中：**默认入口为需要 Owner 登录的 `business` 模式，已接通方案审批、后台资料报告、限定仓库的 GitHub 议题、定时反馈复盘和策略恢复；订单及收款凭据由 Owner 手工确认。真实经营效果、Linux 部署与代码自修改尚未验收，不能按完整营收闭环交付。启动与操作见 [业务模式指南](docs/guides/BUSINESS_GUIDE.md)，实际进度见 [实施记录](docs/EmergentInc_V21_实施记录.md)。下文的三维世界、1 元首发和 Run 操作属于历史 `legacy` 主线，使用时须显式选择该模式。
+
 ![EmergentInc 概念图](Imag_EmergentInc.png)
 
 ## AI 创业矩阵
