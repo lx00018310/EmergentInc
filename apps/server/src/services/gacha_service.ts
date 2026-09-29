@@ -1,5 +1,9 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { rollGacha, nextGachaPity, randomQianjiNarrative, buildGachaPrompt } from "@emergentinc/domain";
+import { createBirthSeed, deriveBirthIdentity } from "@emergentinc/domain";
+import * as fs from "node:fs";
+import * as path from "node:path";
+import { containedPath } from "./safe_path.js";
 import { CoreStore } from "@emergentinc/persistence";
 import { extractJsonString, ModelProvider, UsageMeter } from "@emergentinc/model";
 import { GachaOrigin, QianjiNarrativeSpec } from "@emergentinc/protocol";
@@ -44,6 +48,7 @@ function parseGeneratedNarrative(raw: string, role: string): Pick<QianjiNarrativ
 
 export interface GachaServiceOptions {
   store: CoreStore;
+  workspaceRoot?: string;
   provider?: ModelProvider;
   usageMeter?: UsageMeter;
   modelName?: string;
@@ -53,6 +58,57 @@ export interface GachaServiceOptions {
 export class GachaService {
   private readonly inFlight = new Set<string>();
   constructor(private readonly options: GachaServiceOptions) {}
+
+  public recruit(idempotencyKey: string) {
+    const { store, workspaceRoot } = this.options;
+    if (!workspaceRoot) throw new Error("RECRUIT_WORKSPACE_NOT_CONFIGURED");
+    if (!idempotencyKey.trim() || idempotencyKey.length > 200) throw new Error("RECRUIT_KEY_INVALID");
+    const qianjiId = store.ownerActions.execute(idempotencyKey, "qianji.recruit", {}, () => {
+      const birth = deriveBirthIdentity(createBirthSeed());
+      const { primaryBits: _primaryBits, changedBits: _changedBits, ...birthIdentity } = birth;
+      let ordinal = 0;
+      let pixelId = "";
+      let pixelDir = "";
+      let artifactDir = "";
+      while (ordinal < 100000) {
+        pixelId = `${ordinal}_0_0`;
+        pixelDir = containedPath(workspaceRoot, "live", "pixels", pixelId);
+        artifactDir = containedPath(workspaceRoot, "live", "artifacts", pixelId);
+        const history = store.db.prepare("SELECT 1 AS used FROM qianji_bindings WHERE pixel_id=? LIMIT 1").get(pixelId);
+        if (!history && !store.pixels.getPixelAccount(pixelId) && !fs.existsSync(pixelDir) && !fs.existsSync(artifactDir)) break;
+        ordinal++;
+      }
+      if (ordinal >= 100000) throw new Error("RECRUIT_COORDINATES_EXHAUSTED");
+      const name = `未名·${birth.birthSeed.slice(-6)}`;
+      const energy = 100000;
+      fs.mkdirSync(path.dirname(pixelDir), { recursive: true });
+      fs.mkdirSync(path.dirname(artifactDir), { recursive: true });
+      fs.mkdirSync(pixelDir);
+      try {
+        fs.mkdirSync(artifactDir);
+        fs.writeFileSync(path.join(pixelDir, "pixel.md"), "", "utf8");
+        fs.writeFileSync(path.join(pixelDir, "tips.md"), "", "utf8");
+        fs.writeFileSync(path.join(pixelDir, "mandate.md"), "", "utf8");
+        fs.writeFileSync(path.join(pixelDir, "state.json"), JSON.stringify({
+          id: pixelId, pixel_id: pixelId, energy, active: true, incarnation: 1,
+          generation: ordinal === 0 ? 0 : 1, born_round: 0, last_active_round: 0,
+        }, null, 2), "utf8");
+        const profile = store.qianji.createProfile({ careerStatus: "active", birthIdentity,
+          narrative: { displayName: name, title: null, roleLabel: null, traits: {}, behaviorProfile: [],
+            flaw: null, shortBio: null, appearanceSpec: null, portraitAsset: null, contentRevision: null } });
+        store.pixels.upsertPixelAccount({ pixelId, energy: 0, active: true, refundDeficitTokens: 0, spendBlockedReason: null });
+        store.qianji.createBinding({ qianjiId: profile.qianjiId, pixelId, incarnation: 1 });
+        store.applyExternalReward({ pixelId, amount: energy, idempotencyKey: `recruit_seed:${idempotencyKey}`,
+          source: "recruit_seed", reason: "Initial recruit energy" });
+        return profile.qianjiId;
+      } catch (error) {
+        if (fs.existsSync(pixelDir)) fs.rmSync(pixelDir, { recursive: true, force: true });
+        if (fs.existsSync(artifactDir)) fs.rmSync(artifactDir, { recursive: true, force: true });
+        throw error;
+      }
+    });
+    return store.qianji.getProfile(qianjiId)!;
+  }
 
   public draw(request: DrawRequest): Array<{ profile: ReturnType<CoreStore["qianji"]["getProfile"]>; error: string | null }> {
     const { store } = this.options;

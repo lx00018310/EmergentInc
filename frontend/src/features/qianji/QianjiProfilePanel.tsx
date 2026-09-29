@@ -4,10 +4,10 @@ import type { QianjiHistoryDto, QianjiListItemDto } from '../../api/qianji';
 import { QianjiChatPanel } from './QianjiChatPanel';
 import { QianjiNarrativeEditor } from './QianjiNarrativeEditor';
 
-type ProfileTab = 'chat' | 'history' | 'narrative';
+export type QianjiProfileTab = 'chat' | 'history' | 'narrative';
 
-export const QianjiProfilePanel: React.FC<{ item: QianjiListItemDto; onRefresh: () => Promise<void> }> = ({ item, onRefresh }) => {
-  const [tab, setTab] = useState<ProfileTab>('chat');
+export const QianjiProfilePanel: React.FC<{ item: QianjiListItemDto; onRefresh: () => Promise<void>; tabRequest?: { tab: QianjiProfileTab; nonce: number } | null; retireRequestNonce?: number }> = ({ item, onRefresh, tabRequest, retireRequestNonce }) => {
+  const [tab, setTab] = useState<QianjiProfileTab>('chat');
   const [history, setHistory] = useState<QianjiHistoryDto | null>(null);
   const [historyError, setHistoryError] = useState<string | null>(null);
   const [historyLoading, setHistoryLoading] = useState(false);
@@ -16,7 +16,9 @@ export const QianjiProfilePanel: React.FC<{ item: QianjiListItemDto; onRefresh: 
   const [retireError, setRetireError] = useState<string | null>(null);
   const [retiring, setRetiring] = useState(false);
 
-  useEffect(() => { setTab('chat'); setHistory(null); setHistoryError(null); }, [item.profile.qianjiId]);
+  useEffect(() => { setTab('chat'); setHistory(null); setHistoryError(null); setRetireOpen(false); setRetireReason(''); }, [item.profile.qianjiId]);
+  useEffect(() => { if (tabRequest) setTab(tabRequest.tab); }, [tabRequest?.nonce]);
+  useEffect(() => { if (retireRequestNonce) setRetireOpen(true); }, [retireRequestNonce]);
   useEffect(() => {
     if (tab !== 'history') return;
     const controller = new AbortController();
@@ -35,7 +37,8 @@ export const QianjiProfilePanel: React.FC<{ item: QianjiListItemDto; onRefresh: 
   return (
     <section className="qj-profile-panel" aria-label="人物详情">
       <header className="qj-profile-header">
-        <div><p className="qj-eyebrow">{item.profile.careerStatus === 'active' ? '正式成员' : item.profile.careerStatus}</p><h2>{item.profile.narrative.displayName}</h2><p>{item.profile.narrative.title || item.profile.narrative.roleLabel || '尚未设置称号'}</p></div>
+        <div><p className="qj-eyebrow">{item.profile.careerStatus === 'active' ? '可对话' : item.profile.careerStatus}</p><h2>{item.profile.narrative.displayName}</h2><p>{item.profile.birthIdentity
+          ? `${item.profile.birthIdentity.primaryHexagram} → ${item.profile.birthIdentity.changedHexagram}` : '旧人物'}</p></div>
         <div className="qj-physical-state"><b>{physicalText}</b>{item.currentBinding && <small>{item.currentBinding.pixelId} · 第 {item.currentBinding.incarnation} 代</small>}</div>
       </header>
       {item.profile.careerStatus === 'active' && <div className="qj-retirement-control">
@@ -57,8 +60,8 @@ export const QianjiProfilePanel: React.FC<{ item: QianjiListItemDto; onRefresh: 
       </div>}
       <div className="qj-tabs" role="tablist" aria-label="人物栏目">
         <button type="button" role="tab" aria-selected={tab === 'chat'} onClick={() => setTab('chat')}>对话</button>
-        <button type="button" role="tab" aria-selected={tab === 'history'} onClick={() => setTab('history')}>经历与交付物</button>
-        <button type="button" role="tab" aria-selected={tab === 'narrative'} onClick={() => setTab('narrative')}>人设与图片</button>
+        <button type="button" role="tab" aria-selected={tab === 'history'} onClick={() => setTab('history')}>经历</button>
+        <button type="button" role="tab" aria-selected={tab === 'narrative'} onClick={() => setTab('narrative')}>出生</button>
       </div>
       {tab === 'chat' && <QianjiChatPanel item={item} onQueued={onRefresh} />}
       {tab === 'narrative' && <QianjiNarrativeEditor profile={item.profile} onSaved={onRefresh} />}
@@ -67,23 +70,24 @@ export const QianjiProfilePanel: React.FC<{ item: QianjiListItemDto; onRefresh: 
           {historyLoading && <p>正在读取履历…</p>}
           {historyError && <p className="qj-inline-error" role="alert">{historyError}</p>}
           {history && <>
-            <h3>身份建立后的归属记录</h3>
-            {history.career && <><h3>生涯统计</h3>
-              <p>模型调用 {history.career.modelCallCount} 次 · 实际 Token {history.career.actualTokens} · 工具记录 {history.career.toolExecutionCount} · 试炼 {history.career.trialCount} 次</p>
-              <p>任务完成 {history.career.completedMissionCount} · 失败 {history.career.failedMissionCount} · 成功率 {history.career.successRate === null ? '暂无样本' : `${(history.career.successRate * 100).toFixed(1)}%`}</p>
-              {history.career.acceptedByMissionType.map(group => <p className="qj-history-row" key={group.missionType}>已验收「{group.missionType}」{group.count} 项 · 证据 {group.evidenceIds.length ? group.evidenceIds.join('、') : '无'}</p>)}
-            </>}
-            <p>模型调用 {history.attributed.modelCalls.length} 次 · 工具 {history.attributed.toolExecutions.length} 次 · 能量账本 {history.attributed.ledgerEntries.length} 条</p>
-            <p>人物归属成本：{history.attributed.costSummary.totalCostCny === null ? `未知（已知小计 ${history.attributed.costSummary.knownCostCny.toFixed(4)} CNY）` : `${history.attributed.costSummary.totalCostCny.toFixed(4)} CNY`}</p>
-            {history.attributed.modelCalls.map(call => <p className="qj-history-row" key={call.callId}>模型调用 · {String(call.outcome)} · {call.costCny === null ? '成本未知' : `${call.costCny} CNY`} · {call.callId}</p>)}
-            <h3>当前载体交付物</h3>
-            {history.artifacts.current?.files.map(file => <p className="qj-history-row" key={file.name}><a href={qianjiArtifactUrl(item.profile.qianjiId, history.artifacts.current!.bindingId, file.name)} download>{file.name}</a> · {file.size} bytes</p>)}
-            {history.artifacts.current?.files.length === 0 && <p className="qj-empty">当前载体没有交付物。</p>}
-            {history.artifacts.archives.map(archive => <div key={archive.bindingId}><h3>归档载体 · {archive.pixelId}</h3>{archive.files.map(file => <p className="qj-history-row" key={`${archive.bindingId}-${file.name}`}><a href={qianjiArtifactUrl(item.profile.qianjiId, archive.bindingId, file.name)} download>{file.name}</a> · {file.size} bytes</p>)}</div>)}
-            <h3>载体旧记录（未归属，仅供参考）</h3>
-            <p>模型调用 {history.attributed.carrierLegacy.modelCalls.length} 次 · 工具 {history.attributed.carrierLegacy.toolExecutions.length} 次 · 账本 {history.attributed.carrierLegacy.ledgerEntries.length} 条；不计入人物归属。</p>
-            <p>旧记录已知成本小计 {history.attributed.carrierLegacy.costSummary.knownCostCny.toFixed(4)} CNY{history.attributed.carrierLegacy.costSummary.totalCostCny === null ? ` · 完整成本未知（模型 ${history.attributed.carrierLegacy.costSummary.unknownModelCount}、工具 ${history.attributed.carrierLegacy.costSummary.unknownToolCount} 项）` : ''}</p>
-            {history.attributed.carrierLegacy.modelCalls.map(call => <p className="qj-history-row" key={call.callId}>旧模型调用 · {call.costCny === null ? '成本未知' : `${call.costCny} CNY`} · {call.callId}</p>)}
+            <h3>关键经历</h3>
+            {history.conclusions?.map(conclusion => <p className="qj-history-row" key={conclusion.turnId}>
+              对话结论 · {conclusion.summary}</p>)}
+            {history.events.filter(event => ['MISSION_COMPLETED', 'TRIAL_COMPLETED', 'QIANJI_RECRUITED', 'DELIVERY_STATUS_CHANGED'].includes(event.eventType))
+              .map(event => <p className="qj-history-row" key={event.eventId}>
+                {event.eventType === 'MISSION_COMPLETED' ? '完成任务' : event.eventType === 'TRIAL_COMPLETED' ? '完成试炼' :
+                  event.eventType === 'QIANJI_RECRUITED' ? '正式加入' : '交付状态更新'} · {new Date(event.createdAt * 1000).toLocaleString()}
+              </p>)}
+            <h3>交付物</h3>
+            {history.artifacts.current?.files.map(file => <p className="qj-history-row" key={file.name}>
+              <a href={qianjiArtifactUrl(item.profile.qianjiId, history.artifacts.current!.bindingId, file.name)} download>{file.name}</a>
+            </p>)}
+            {history.artifacts.archives.flatMap(archive => archive.files.map(file => <p className="qj-history-row"
+              key={`${archive.bindingId}-${file.name}`}><a href={qianjiArtifactUrl(item.profile.qianjiId, archive.bindingId, file.name)} download>{file.name}</a></p>))}
+            {!history.artifacts.current?.files.length && !history.artifacts.archives.some(archive => archive.files.length) &&
+              <p className="qj-empty">暂无交付物。</p>}
+            <p>已知模型与工具成本：{history.attributed.costSummary.knownCostCny.toFixed(4)} CNY
+              {history.attributed.costSummary.totalCostCny === null ? '（完整成本未知）' : ''}</p>
           </>}
         </section>
       )}

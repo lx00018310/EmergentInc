@@ -9,16 +9,12 @@ import { ToolRegistry } from "@emergentinc/tools";
 import { CoreStore } from "@emergentinc/persistence";
 import { OwnerChatService } from "../services/owner_chat_service.js";
 import { registerQianjiRoutes } from "./qianji_routes.js";
-import { MissionService } from "../services/mission_service.js";
-import { registerOrganizationRoutes } from "./organization_routes.js";
-import { TrialService } from "../services/trial_service.js";
-import { registerTrialRoutes } from "./trial_routes.js";
-import { BusinessService } from "../services/business_service.js";
-import { registerBusinessRoutes } from "./business_routes.js";
 import { ModelProvider, UsageMeter } from "@emergentinc/model";
 import { GachaService } from "../services/gacha_service.js";
 import { registerGachaRoutes } from "./gacha_routes.js";
 import { GachaImageProvider, GachaImageService } from "../services/gacha_image.js";
+import { MeetingService } from "../services/meeting_service.js";
+import { registerMeetingRoutes } from "./meeting_routes.js";
 
 export interface ApiRoutesOptions {
   worldService: WorldService;
@@ -54,32 +50,12 @@ export async function registerApiRoutes(
     downloadPortraitUrl,
   } = options;
 
-  const enabledToolNames = typeof toolRegistry.listDefinitions === "function"
-    ? toolRegistry.listDefinitions().filter(tool => tool.enabled).map(tool => tool.name)
-    : [];
-  const missionService = new MissionService({
-    store: coreStore,
-    workspaceRoot,
-    runService,
-    enabledTools: enabledToolNames,
-    modelName: process.env.MCL_DECISION_MODEL || process.env.MCL_MODEL || "gpt-4o-mini",
-  });
-  const trialService = new TrialService({
-    store: coreStore,
-    workspaceRoot,
-    runService,
-    enabledTools: enabledToolNames,
-    modelName: process.env.MCL_DECISION_MODEL || process.env.MCL_MODEL || "gpt-4o-mini",
-    captureEvidence: executionId => missionService.captureExecutionEvidence(executionId),
-  });
-  await registerQianjiRoutes(server, { store: coreStore, workspaceRoot, runService, missionService, downloadPortraitUrl });
-  await registerOrganizationRoutes(server, missionService);
-  await registerTrialRoutes(server, trialService);
-  await registerGachaRoutes(server, new GachaService({ store: coreStore, provider: gachaProvider,
+  await registerQianjiRoutes(server, { store: coreStore, workspaceRoot, runService, downloadPortraitUrl });
+  await registerGachaRoutes(server, new GachaService({ store: coreStore, workspaceRoot, provider: gachaProvider,
     usageMeter: gachaUsageMeter, modelName: gachaModelName }), coreStore,
     new GachaImageService(coreStore, workspaceRoot, gachaImageProvider));
-  const businessService = new BusinessService(coreStore, workspaceRoot);
-  await registerBusinessRoutes(server, businessService);
+  await registerMeetingRoutes(server,
+    new MeetingService(coreStore, runService, gachaProvider, gachaUsageMeter, gachaModelName), coreStore);
 
   server.addHook("preHandler", async (req, reply) => {
     const pixelId = (req.params as any)?.pixel_id;

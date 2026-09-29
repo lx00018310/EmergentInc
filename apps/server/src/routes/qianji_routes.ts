@@ -9,7 +9,6 @@ import { validateQianjiNarrative } from "@emergentinc/domain";
 import { containedPath, validatePathSegment } from "../services/safe_path.js";
 import { RunService } from "../services/run_service.js";
 import { WorldPresentationService } from "../services/world_presentation_service.js";
-import { MissionService } from "../services/mission_service.js";
 import { requestPublicImage } from "@emergentinc/tools";
 
 const MAX_PORTRAIT_BYTES = 2 * 1024 * 1024;
@@ -23,7 +22,6 @@ export interface QianjiRouteOptions {
   store: CoreStore;
   workspaceRoot: string;
   runService: RunService;
-  missionService?: MissionService;
   downloadPortraitUrl?: (url: string) => Promise<{ contentType: string; body: Buffer }>;
 }
 
@@ -180,17 +178,9 @@ function isRunInProgress(store: CoreStore, runService: RunService): boolean {
 }
 
 export async function registerQianjiRoutes(server: FastifyInstance, options: QianjiRouteOptions): Promise<void> {
-  const { store, workspaceRoot, runService, missionService } = options;
+  const { store, workspaceRoot, runService } = options;
   const downloadPortraitUrl = options.downloadPortraitUrl ?? requestPublicImage;
   const presentationService = new WorldPresentationService(workspaceRoot);
-
-  server.get("/qianji/:id/effective-mandate", async (request, reply) => {
-    const id = String((request.params as any).id ?? "");
-    try { validatePathSegment(id); } catch { return reply.status(400).send({ detail: "Invalid qianji id" }); }
-    if (!store.qianji.getProfile(id)) return reply.status(404).send({ detail: "Qianji not found" });
-    if (!missionService) return reply.status(503).send({ detail: "MISSION_SERVICE_UNAVAILABLE" });
-    return reply.send(missionService.getEffectiveMandate(id));
-  });
 
   server.get("/qianji", async (request, reply) => {
     const query = (request.query ?? {}) as Record<string, unknown>;
@@ -223,9 +213,10 @@ export async function registerQianjiRoutes(server: FastifyInstance, options: Qia
     return reply.send({
       qianjiId: id,
       attributed: store.qianji.getHistory(id, limit),
-      career: store.qianji.getCareerSummary(id),
       events: store.worldEvents.listRecent({ qianjiId: id, limit }),
       artifacts: bindingArtifactHistory(workspaceRoot, store.qianji.listBindings(id)),
+      conclusions: (store.db.prepare(`SELECT turn_id AS turnId,summary,created_at AS createdAt
+        FROM qianji_conclusions WHERE qianji_id=? ORDER BY created_at DESC LIMIT ?`).all(id, limit)),
       costSemantics: "Model and tool costs remain nullable; carrierLegacy is reference-only and excluded from attributed totals.",
     });
   });
@@ -309,9 +300,24 @@ export async function registerQianjiRoutes(server: FastifyInstance, options: Qia
         status = turn.messageStatus === "QUEUED" ? "queued" : "processing";
       } else status = "failed";
       const { messageStatus: _messageStatus, modelOutcome, ...publicTurn } = turn;
-      return { ...publicTurn, status, modelOutcome };
+      const marked = store.db.prepare("SELECT 1 AS marked FROM qianji_conclusions WHERE turn_id=?").get(turn.turnId);
+      return { ...publicTurn, status, modelOutcome, isMilestone: Boolean(marked) };
     });
     return reply.send({ items, limit, offset, nextOffset: items.length === limit ? offset + items.length : null });
+  });
+
+  server.post("/qianji/:id/conclusions", async (request, reply) => {
+    const id = String((request.params as any).id ?? "");
+    try { validatePathSegment(id); } catch { return reply.status(400).send({ detail: "Invalid qianji id" }); }
+    const body = request.body;
+    if (!isRecord(body) || !hasOnlyKeys(body, ["turnId"]) || typeof body.turnId !== "string") {
+      return reply.status(400).send({ detail: "QIANJI_CONCLUSION_INPUT_INVALID" });
+    }
+    const turn = store.qianjiChat.getTurn(body.turnId);
+    if (!turn || turn.qianjiId !== id || !turn.reply) return reply.status(404).send({ detail: "REPLIED_TURN_NOT_FOUND" });
+    store.db.prepare(`INSERT OR IGNORE INTO qianji_conclusions(turn_id,qianji_id,summary,created_at)
+      VALUES(?,?,?,?)`).run(turn.turnId, id, Array.from(turn.reply).slice(0, 300).join(""), Date.now() / 1000);
+    return reply.send({ turnId: turn.turnId, marked: true });
   });
 
   server.put("/qianji/:id/narrative", async (request, reply) => {
@@ -345,6 +351,26 @@ export async function registerQianjiRoutes(server: FastifyInstance, options: Qia
     }
   });
 
+  server.put("/qianji/:id/name", async (request, reply) => {
+    const id = String((request.params as any).id ?? "");
+    try { validatePathSegment(id); } catch { return reply.status(400).send({ detail: "Invalid qianji id" }); }
+    const body = request.body;
+    if (!isRecord(body) || !hasOnlyKeys(body, ["expectedRevision", "displayName"]) ||
+        !Number.isSafeInteger(body.expectedRevision) || typeof body.displayName !== "string" ||
+        !body.displayName.trim() || Array.from(body.displayName.trim()).length > 80) {
+      return reply.status(400).send({ detail: "QIANJI_NAME_INPUT_INVALID" });
+    }
+    if (isRunInProgress(store, runService)) return reply.status(409).send({ detail: "RUN_IN_PROGRESS" });
+    const profile = store.qianji.getProfile(id);
+    if (!profile) return reply.status(404).send({ detail: "Qianji not found" });
+    if (profile.careerStatus === "retired") return reply.status(409).send({ detail: "QIANJI_ARCHIVED_IMMUTABLE" });
+    const binding = store.qianji.getCurrentBindingByQianji(id);
+    if (binding && store.executions.getOpenExecutionForBinding(binding.bindingId)) return reply.status(409).send({ detail: "QIANJI_OCCUPIED_BY_EXECUTION" });
+    try { return reply.send({ profile: store.qianji.updateNarrative(id, Number(body.expectedRevision),
+      { ...profile.narrative, displayName: body.displayName.trim() }) }); }
+    catch (error) { return routeError(reply, error); }
+  });
+
   server.post("/qianji/:id/retire", async (request, reply) => {
     const id = String((request.params as any).id ?? "");
     try { validatePathSegment(id); } catch { return reply.status(400).send({ detail: "Invalid qianji id" }); }
@@ -371,9 +397,6 @@ export async function registerQianjiRoutes(server: FastifyInstance, options: Qia
     const binding = store.qianji.getCurrentBindingByQianji(id);
     if (!binding) return reply.status(409).send({ detail: "QIANJI_NOT_BOUND" });
     if (store.executions.getOpenExecutionForBinding(binding.bindingId)) return reply.status(409).send({ detail: "QIANJI_OCCUPIED_BY_EXECUTION" });
-    const openMission = store.db.prepare(`SELECT 1 FROM mission_participants mp JOIN missions m ON m.mission_id=mp.mission_id
-      WHERE mp.binding_id=? AND m.status IN ('issued','running','awaiting_acceptance') LIMIT 1`).get(binding.bindingId);
-    if (openMission) return reply.status(409).send({ detail: "QIANJI_HAS_OPEN_MISSION" });
 
     const sourcePixel = containedPath(workspaceRoot, "live", "pixels", binding.pixelId);
     const sourceArtifacts = containedPath(workspaceRoot, "live", "artifacts", binding.pixelId);

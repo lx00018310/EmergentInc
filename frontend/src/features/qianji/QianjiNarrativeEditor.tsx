@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { importQianjiPortraitUrl, updateQianjiNarrative, uploadQianjiPortrait } from '../../api/qianji';
+import { importQianjiPortraitUrl, qianjiPortraitUrl, renameQianji, updateQianjiNarrative, uploadQianjiPortrait } from '../../api/qianji';
 import type { QianjiProfileDto } from '../../api/qianji';
 
 export const QianjiNarrativeEditor: React.FC<{ profile: QianjiProfileDto; onSaved: () => Promise<void> }> = ({ profile, onSaved }) => {
@@ -9,6 +9,7 @@ export const QianjiNarrativeEditor: React.FC<{ profile: QianjiProfileDto; onSave
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [portraitUrl, setPortraitUrl] = useState('');
+  const [displayName, setDisplayName] = useState(profile.narrative.displayName);
 
   useEffect(() => {
     if (!editing && draftRevision !== profile.narrativeRevision) {
@@ -16,6 +17,7 @@ export const QianjiNarrativeEditor: React.FC<{ profile: QianjiProfileDto; onSave
       setDraftRevision(profile.narrativeRevision);
     }
   }, [editing, draftRevision, profile.narrative, profile.narrativeRevision]);
+  useEffect(() => { setDisplayName(profile.narrative.displayName); }, [profile.qianjiId, profile.narrative.displayName]);
 
   const save = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -65,6 +67,42 @@ export const QianjiNarrativeEditor: React.FC<{ profile: QianjiProfileDto; onSave
     } catch (err) { setError(err instanceof Error ? err.message : String(err)); }
     finally { setSaving(false); }
   };
+
+  if (profile.birthIdentity) {
+    const birth = profile.birthIdentity;
+    return <section className="qj-editor">
+      <div className="qj-panel-heading"><h3>出生</h3><span>命核只读</span></div>
+      <dl>
+        <dt>出生时间</dt><dd>{new Date(profile.createdAt * 1000).toLocaleString()}</dd>
+        <dt>本卦</dt><dd>{birth.primaryHexagram}</dd>
+        <dt>动爻</dt><dd>第 {birth.movingLine} 爻</dd>
+        <dt>变卦</dt><dd>{birth.changedHexagram}</dd>
+        <dt>命核</dt><dd>{birth.birthText}</dd>
+      </dl>
+      {profile.narrative.portraitAsset && <img className="org-archive-portrait"
+        src={qianjiPortraitUrl(profile.qianjiId)} alt={`${profile.narrative.displayName}画像`} />}
+      {profile.careerStatus !== 'retired' && <>
+        <form onSubmit={async event => {
+          event.preventDefault(); setSaving(true); setError(null);
+          try { await renameQianji(profile.qianjiId, profile.narrativeRevision, displayName.trim()); await onSaved(); }
+          catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
+          finally { setSaving(false); }
+        }}>
+          <label>姓名<input value={displayName} onChange={event => setDisplayName(event.target.value)}
+            maxLength={80} required /></label>
+          <button className="btn" type="submit" disabled={saving || !displayName.trim() ||
+            displayName.trim() === profile.narrative.displayName}>保存姓名</button>
+        </form>
+        <label className="btn qj-upload-button">导入本地图片<input type="file"
+          accept="image/png,image/jpeg,image/webp" onChange={upload} disabled={saving} /></label>
+        <form className="gacha-import" onSubmit={importUrl}><label>网络图片地址
+          <input type="url" value={portraitUrl} onChange={event => setPortraitUrl(event.target.value)}
+            placeholder="https://…/portrait.png" maxLength={2048} required /></label>
+          <button className="btn" disabled={saving || !portraitUrl.trim()}>导入网络图片</button></form>
+      </>}
+      {error && <p role="alert" className="qj-inline-error">{error}</p>}
+    </section>;
+  }
 
   return (
     <section className="qj-editor">

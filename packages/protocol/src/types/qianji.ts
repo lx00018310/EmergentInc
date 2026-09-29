@@ -47,6 +47,15 @@ export interface QianjiNarrativeSpec {
   contentRevision?: string | null;
 }
 
+export interface QianjiBirthIdentity {
+  birthSeed: string;
+  birthAlgorithmVersion: 1;
+  primaryHexagram: string;
+  movingLine: number;
+  changedHexagram: string;
+  birthText: string;
+}
+
 export interface QianjiProfile {
   qianjiId: string;
   careerStatus: QianjiCareerStatus;
@@ -56,6 +65,8 @@ export interface QianjiProfile {
   retiredAt: number | null;
   retiredReason: string | null;
   draw?: QianjiDraw | null;
+  birthIdentity?: QianjiBirthIdentity | null;
+  legacyIdentity?: boolean;
 }
 
 export interface QianjiPromptIdentity {
@@ -71,6 +82,7 @@ export interface QianjiPromptIdentity {
   careerStatus: QianjiCareerStatus;
   attributes?: GachaAttributes | null;
   rarity?: GachaRarity | null;
+  birthIdentity?: QianjiBirthIdentity | null;
 }
 
 export interface QianjiBinding {

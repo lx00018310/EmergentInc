@@ -13,10 +13,7 @@ import { QianjiRepository } from "./repositories/qianji_repository.js";
 import { WorldEventRepository } from "./repositories/world_event_repository.js";
 import { OwnerActionRepository } from "./repositories/owner_action_repository.js";
 import { QianjiChatRepository } from "./repositories/qianji_chat_repository.js";
-import { MissionRepository } from "./repositories/mission_repository.js";
-import { TrialRepository } from "./repositories/trial_repository.js";
 import { ExecutionRepository } from "./repositories/execution_repository.js";
-import { BusinessRepository } from "./repositories/business_repository.js";
 import { GachaRepository } from "./repositories/gacha_repository.js";
 
 /**
@@ -36,10 +33,7 @@ export class CoreStore {
   public readonly worldEvents: WorldEventRepository;
   public readonly ownerActions: OwnerActionRepository;
   public readonly qianjiChat: QianjiChatRepository;
-  public readonly missions: MissionRepository;
-  public readonly trials: TrialRepository;
   public readonly executions: ExecutionRepository;
-  public readonly business: BusinessRepository;
   public readonly gacha: GachaRepository;
 
   constructor(dbPath: string = ":memory:") {
@@ -58,10 +52,7 @@ export class CoreStore {
     this.qianji = new QianjiRepository(this.db, this.worldEvents);
     this.ownerActions = new OwnerActionRepository(this.db);
     this.qianjiChat = new QianjiChatRepository(this.db, this.messages);
-    this.missions = new MissionRepository(this.db, this.worldEvents);
-    this.trials = new TrialRepository(this.db, this.worldEvents);
     this.executions = new ExecutionRepository(this.db);
-    this.business = new BusinessRepository(this.db);
     this.gacha = new GachaRepository(this.db);
 
     // 确保全局预算记录存在

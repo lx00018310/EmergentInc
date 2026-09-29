@@ -33,6 +33,11 @@ export interface QianjiProfileDto {
   retiredAt: number | null;
   retiredReason: string | null;
   draw?: QianjiDrawDto | null;
+  birthIdentity?: {
+    birthSeed: string; birthAlgorithmVersion: 1; primaryHexagram: string;
+    movingLine: number; changedHexagram: string; birthText: string;
+  } | null;
+  legacyIdentity?: boolean;
 }
 
 export interface QianjiBindingDto {
@@ -92,14 +97,10 @@ export interface QianjiChatTurnDto {
   createdAt: number;
   repliedAt: number | null;
   status: 'queued' | 'processing' | 'replied' | 'no_reply' | 'blocked' | 'failed';
+  isMilestone?: boolean;
 }
 
 export interface QianjiHistoryDto {
-  career?: {
-    modelCallCount: number; actualTokens: number; toolExecutionCount: number; trialCount: number;
-    completedMissionCount: number; failedMissionCount: number; successRate: number | null;
-    acceptedByMissionType: Array<{ missionType: string; count: number; evidenceIds: string[] }>;
-  };
   attributed: {
     modelCalls: Array<{ callId: string; costCny: number | null; [key: string]: unknown }>;
     toolExecutions: Array<{ operationId: string; costCny: number | null; [key: string]: unknown }>;
@@ -115,6 +116,7 @@ export interface QianjiHistoryDto {
     };
   };
   events: WorldEventDto[];
+  conclusions: Array<{ turnId: string; summary: string; createdAt: number }>;
   artifacts: {
     current: { bindingId: string; pixelId: string; files: Array<{ name: string; size: number }> } | null;
     archives: Array<{ bindingId: string; pixelId: string; files: Array<{ name: string; size: number }>; archivedPixelDirectoryExists: boolean }>;
@@ -124,6 +126,20 @@ export interface QianjiHistoryDto {
 export async function fetchQianjiList(signal?: AbortSignal, careerStatus?: QianjiCareerStatus): Promise<QianjiListItemDto[]> {
   const response = await apiRequest<{ items: QianjiListItemDto[] }>(`/api/qianji${careerStatus ? `?careerStatus=${careerStatus}` : ''}`, { signal });
   return response.items;
+}
+
+export async function recruitQianji(idempotencyKey: string): Promise<QianjiProfileDto> {
+  const response = await apiRequest<{ profile: QianjiProfileDto }>('/api/qianji/recruit', {
+    method: 'POST', body: JSON.stringify({ idempotencyKey }),
+  });
+  return response.profile;
+}
+
+export async function renameQianji(qianjiId: string, expectedRevision: number, displayName: string): Promise<QianjiProfileDto> {
+  const response = await apiRequest<{ profile: QianjiProfileDto }>(`/api/qianji/${encodeURIComponent(qianjiId)}/name`, {
+    method: 'PUT', body: JSON.stringify({ expectedRevision, displayName }),
+  });
+  return response.profile;
 }
 
 export async function fetchWorldEvents(signal?: AbortSignal): Promise<WorldEventDto[]> {
@@ -153,6 +169,12 @@ export async function fetchQianjiChat(qianjiId: string, signal?: AbortSignal): P
 export async function postQianjiChat(qianjiId: string, content: string, idempotencyKey: string): Promise<{ turn: QianjiChatTurnDto; created: boolean }> {
   return apiRequest(`/api/qianji/${encodeURIComponent(qianjiId)}/chat`, {
     method: 'POST', body: JSON.stringify({ content, idempotencyKey }),
+  });
+}
+
+export async function markQianjiConclusion(qianjiId: string, turnId: string): Promise<void> {
+  await apiRequest(`/api/qianji/${encodeURIComponent(qianjiId)}/conclusions`, {
+    method: 'POST', body: JSON.stringify({ turnId }),
   });
 }
 

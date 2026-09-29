@@ -243,10 +243,54 @@ export function initSchema(db: SqliteDatabase): void {
           career_status TEXT NOT NULL CHECK(career_status IN ('candidate', 'trial', 'active', 'retired')),
           narrative_json TEXT NOT NULL,
           narrative_revision INTEGER NOT NULL DEFAULT 0 CHECK(narrative_revision >= 0),
+          birth_identity_json TEXT,
           created_at REAL NOT NULL,
           retired_at REAL,
           retired_reason TEXT
       );
+
+      CREATE TABLE IF NOT EXISTS qianji_meetings (
+          meeting_id TEXT PRIMARY KEY,
+          topic TEXT NOT NULL,
+          created_at REAL NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS qianji_meeting_participants (
+          meeting_id TEXT NOT NULL REFERENCES qianji_meetings(meeting_id),
+          qianji_id TEXT NOT NULL REFERENCES qianji_profiles(qianji_id),
+          ordinal INTEGER NOT NULL,
+          PRIMARY KEY(meeting_id, qianji_id),
+          UNIQUE(meeting_id, ordinal)
+      );
+      CREATE TABLE IF NOT EXISTS qianji_meeting_messages (
+          message_id TEXT PRIMARY KEY,
+          meeting_id TEXT NOT NULL REFERENCES qianji_meetings(meeting_id),
+          qianji_id TEXT,
+          speaker TEXT NOT NULL,
+          content TEXT NOT NULL,
+          model TEXT,
+          prompt_tokens INTEGER,
+          completion_tokens INTEGER,
+          cost_cny REAL,
+          created_at REAL NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_qianji_meeting_messages ON qianji_meeting_messages(meeting_id, created_at, message_id);
+      CREATE TABLE IF NOT EXISTS qianji_approval_requests (
+          request_id TEXT PRIMARY KEY,
+          qianji_id TEXT,
+          pixel_id TEXT NOT NULL,
+          capability TEXT NOT NULL,
+          status TEXT NOT NULL CHECK(status IN ('pending', 'approved', 'rejected')),
+          decision_reason TEXT,
+          created_at REAL NOT NULL,
+          decided_at REAL
+      );
+      CREATE TABLE IF NOT EXISTS qianji_conclusions (
+          turn_id TEXT PRIMARY KEY REFERENCES qianji_chat_turns(turn_id),
+          qianji_id TEXT NOT NULL REFERENCES qianji_profiles(qianji_id),
+          summary TEXT NOT NULL,
+          created_at REAL NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_qianji_conclusions_person ON qianji_conclusions(qianji_id, created_at DESC);
 
       CREATE TABLE IF NOT EXISTS qianji_draws (
           qianji_id TEXT PRIMARY KEY REFERENCES qianji_profiles(qianji_id),
@@ -528,6 +572,13 @@ export function initSchema(db: SqliteDatabase): void {
     if (!messageColumns.some(c => c.name === "identity_snapshot_captured")) db.exec("ALTER TABLE messages ADD COLUMN identity_snapshot_captured INTEGER NOT NULL DEFAULT 0");
     if (!messageColumns.some(c => c.name === "execution_id")) db.exec("ALTER TABLE messages ADD COLUMN execution_id TEXT");
     if (!messageColumns.some(c => c.name === "abandoned_reason")) db.exec("ALTER TABLE messages ADD COLUMN abandoned_reason TEXT");
+
+    const qianjiColumns = db.prepare("PRAGMA table_info(qianji_profiles)").all() as any[];
+    if (!qianjiColumns.some(c => c.name === "birth_identity_json")) db.exec("ALTER TABLE qianji_profiles ADD COLUMN birth_identity_json TEXT");
+    db.exec(`CREATE TRIGGER IF NOT EXISTS qianji_birth_immutable
+      BEFORE UPDATE OF birth_identity_json ON qianji_profiles
+      WHEN OLD.birth_identity_json IS NOT NEW.birth_identity_json
+      BEGIN SELECT RAISE(ABORT, 'QIANJI_BIRTH_IMMUTABLE'); END;`);
 
     const ledgerColumns = db.prepare("PRAGMA table_info(ledger_entries)").all() as any[];
     if (!ledgerColumns.some(c => c.name === "binding_id")) db.exec("ALTER TABLE ledger_entries ADD COLUMN binding_id TEXT");

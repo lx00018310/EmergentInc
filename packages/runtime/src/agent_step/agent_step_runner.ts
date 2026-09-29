@@ -464,6 +464,7 @@ export class AgentStepRunner {
         careerStatus: profile.careerStatus,
         attributes: profile.draw?.attributes ?? null,
         rarity: profile.draw?.rarity ?? null,
+        birthIdentity: profile.birthIdentity ?? null,
       },
     };
   }

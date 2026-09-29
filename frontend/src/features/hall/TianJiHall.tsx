@@ -1,9 +1,10 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useWorldPolling } from '../../hooks/useWorldPolling';
 import { useQianjiPolling } from '../../hooks/useQianjiPolling';
 import { startRun, stopRun } from '../../api/run';
-import { QianjiCard } from '../qianji/QianjiCard';
-import { QianjiProfilePanel } from '../qianji/QianjiProfilePanel';
+import { QianjiCard, type QianjiMenuAction } from '../qianji/QianjiCard';
+import { QianjiProfilePanel, type QianjiProfileTab } from '../qianji/QianjiProfilePanel';
+import { ApprovalPanel } from './ApprovalPanel';
 
 const neutralEventLabels: Record<string, string> = {
   QIANJI_PROFILE_CREATED: '人物建立',
@@ -18,19 +19,59 @@ export interface TianJiHallProps {
   onSelectedQianji: (id: string | null) => void;
   onSelectedPixel: (id: string | null) => void;
   onOpenEngine: () => void;
-  onOpenOrganization: () => void;
   onOpenGacha?: () => void;
+  onOpenMeeting?: () => void;
 }
 
-export const TianJiHall: React.FC<TianJiHallProps> = ({ selectedQianjiId, onSelectedQianji, onSelectedPixel, onOpenEngine, onOpenOrganization, onOpenGacha }) => {
+export const TianJiHall: React.FC<TianJiHallProps> = ({ selectedQianjiId, onSelectedQianji, onSelectedPixel, onOpenEngine, onOpenGacha, onOpenMeeting }) => {
   const { items, events, presentation, error: qianjiError, loading, refresh } = useQianjiPolling();
   const { world, runStatus, error: worldError, refreshImmediately } = useWorldPolling();
   const [rounds, setRounds] = useState(1);
   const [budget, setBudget] = useState(100000);
   const [runError, setRunError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [profileTabRequest, setProfileTabRequest] = useState<{ tab: QianjiProfileTab; nonce: number } | null>(null);
+  const [retireRequestNonce, setRetireRequestNonce] = useState(0);
+  const [addMenuOpen, setAddMenuOpen] = useState(false);
+  const addMenuRef = useRef<HTMLDivElement | null>(null);
   const selected = items.find(item => item.profile.qianjiId === selectedQianjiId) ?? null;
   const recoveryRequired = Boolean(runStatus?.unfinalized_operations?.hasUnfinalized);
+
+  useEffect(() => {
+    if (!addMenuOpen) return;
+    const onPointerDown = (event: PointerEvent) => {
+      if (addMenuRef.current && !addMenuRef.current.contains(event.target as Node)) setAddMenuOpen(false);
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setAddMenuOpen(false);
+    };
+    document.addEventListener('pointerdown', onPointerDown);
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown);
+      document.removeEventListener('keydown', onKeyDown);
+    };
+  }, [addMenuOpen]);
+
+  const selectPerson = (id: string) => {
+    onSelectedQianji(id);
+    onSelectedPixel(items.find(entry => entry.profile.qianjiId === id)?.currentBinding?.pixelId ?? null);
+  };
+
+  const handleMenuAction = (id: string, action: QianjiMenuAction) => {
+    if (action === 'meeting') {
+      selectPerson(id);
+      onOpenMeeting?.();
+      return;
+    }
+    if (action === 'retire') {
+      selectPerson(id);
+      setRetireRequestNonce(nonce => nonce + 1);
+      return;
+    }
+    selectPerson(id);
+    setProfileTabRequest(previous => ({ tab: action, nonce: (previous?.nonce ?? 0) + 1 }));
+  };
 
   useEffect(() => {
     if (!selectedQianjiId && items.length > 0 && items[0]) onSelectedQianji(items[0].profile.qianjiId);
@@ -72,7 +113,7 @@ export const TianJiHall: React.FC<TianJiHallProps> = ({ selectedQianjiId, onSele
       <header className="hall-header">
         <div className="hall-brand"><span className="hall-mark">天</span><div><h1>{presentation?.hallName ?? '天机阁'}</h1><p>{presentation?.organizationName ?? 'EmergentInc 元胞会社'}</p></div></div>
         <div className="hall-run-summary"><span>第 {world?.round ?? runStatus?.current_round ?? 0} 轮</span><span className={runStatus?.running ? 'is-running' : recoveryRequired ? 'is-error' : ''}>{runState}</span></div>
-        <div className="hall-navigation">{onOpenGacha && <button className="btn btn-sm btn-primary" type="button" onClick={onOpenGacha}>观星台点将</button>}<button className="btn btn-sm" type="button" onClick={onOpenOrganization}>组织控制台</button><button className="btn btn-sm" type="button" onClick={onOpenEngine}>进入 {presentation?.sectionLabels?.engine ?? 'Engine'}</button></div>
+        <div className="hall-navigation"><button className="btn btn-sm" type="button" onClick={onOpenEngine}>进入 {presentation?.sectionLabels?.engine ?? 'Engine'}</button></div>
       </header>
 
       {(qianjiError || worldError || runError) && <div className="hall-error" role="alert">{qianjiError || worldError || runError}</div>}
@@ -81,19 +122,30 @@ export const TianJiHall: React.FC<TianJiHallProps> = ({ selectedQianjiId, onSele
         <section className="hall-roster" aria-label="人物列表">
           <div className="hall-section-heading"><div><p className="qj-eyebrow">{presentation?.sectionLabels?.members ?? '人物'}</p><h2>千机名录</h2></div><span>{items.length} 位</span></div>
           {loading && items.length === 0 && <p className="qj-empty">正在读取人物…</p>}
-          {!loading && !qianjiError && items.length === 0 && <p className="qj-empty">暂无人物身份。已有载体迁移后会显示在这里。</p>}
+          {!loading && !qianjiError && items.length === 0 && <p className="qj-empty">暂无人物，点击下方 + 招募第一位人物。</p>}
           <div className="qj-roster-list">{items.map(item => (
             <QianjiCard key={item.profile.qianjiId} item={item} selected={selectedQianjiId === item.profile.qianjiId}
-              onSelect={id => { onSelectedQianji(id); onSelectedPixel(items.find(entry => entry.profile.qianjiId === id)?.currentBinding?.pixelId ?? null); }} />
-          ))}</div>
+              onSelect={selectPerson} onMenuAction={handleMenuAction} showMeetingAction={Boolean(onOpenMeeting)} />
+          ))}
+            <div className="qj-roster-add" ref={addMenuRef}>
+              <button className="qj-add-button" type="button" aria-label="新建人物位" aria-haspopup="menu" aria-expanded={addMenuOpen} onClick={() => setAddMenuOpen(open => !open)}>+</button>
+              {addMenuOpen && (
+                <div className="qj-menu-popover qj-add-popover" role="menu" aria-label="新建菜单">
+                  <button type="button" role="menuitem" onClick={() => { setAddMenuOpen(false); onOpenGacha?.(); }}>招募人物</button>
+                  <button type="button" role="menuitem" onClick={() => { setAddMenuOpen(false); onOpenMeeting?.(); }}>发起会议</button>
+                </div>
+              )}
+            </div>
+          </div>
         </section>
 
         <section className="hall-detail-column">
-          {selected ? <QianjiProfilePanel item={selected} onRefresh={async () => { await refresh(); await refreshImmediately(); }} />
+          {selected ? <QianjiProfilePanel item={selected} tabRequest={profileTabRequest} retireRequestNonce={retireRequestNonce} onRefresh={async () => { await refresh(); await refreshImmediately(); }} />
             : <div className="qj-panel-placeholder">选择一位人物查看详情。</div>}
         </section>
 
         <aside className="hall-side-column">
+          <ApprovalPanel />
           <section className="hall-side-panel">
             <div className="hall-section-heading"><div><p className="qj-eyebrow">世界推进</p><h2>运行控制</h2></div><span className={runStatus?.running ? 'is-running' : ''}>{runState}</span></div>
             {recoveryRequired && <p className="hall-warning">存在未决操作。请进入 Engine 的 Recovery 面板处理后再运行。</p>}

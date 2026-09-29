@@ -71,6 +71,20 @@ describe("Model: Prompt Assembly & Hashing", () => {
     expect(() => builder.prepare({ ...input, identity: { ...identity, hidden: "leak" } as any }))
       .toThrow(CognitiveIsolationViolation);
   });
+
+  it("keeps a birth disposition in the system layer without legacy personality fields", () => {
+    const builder = new PromptBuilder({ baseSystemPrompt: "constitution" });
+    const result = builder.prepare({ state: { energy: 10 }, pixelMd: "", messageMd: "",
+      identity: { qianjiId: "qj_birth", bindingId: "binding_birth", narrativeRevision: 0,
+        displayName: "未名", title: null, roleLabel: null, traits: {}, behaviorProfile: [],
+        flaw: null, careerStatus: "active",
+        birthIdentity: { birthSeed: "20", birthAlgorithmVersion: 1, primaryHexagram: "水山蹇",
+          movingLine: 1, changedHexagram: "水火既济", birthText: "遇到阻力时先辨认路径。" } } });
+    expect(result.request.messages[0].content).toContain("<disposition_tension>");
+    expect(result.request.messages[0].content).toContain("不得在对话中生硬复述");
+    expect(result.request.messages[1].content).not.toContain("Behavior principles");
+    expect(result.request.messages[1].content).not.toContain("Flaw:");
+  });
 });
 
 describe("Model: JSON Repair & Response Parser", () => {

@@ -13,6 +13,44 @@ const generated = JSON.stringify({ title: "明察", shortBio: "曾远行四方�
   behaviorProfile: ["先核实资料再行动"], appearanceSpec: "青年，沉静" , skillTags: ["research", "typescript", "automation"] });
 
 describe("GachaService", () => {
+  it("recruits an immediately bound person without a draw and keeps the birth immutable", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "qianji-recruit-"));
+    const store = new CoreStore();
+    try {
+      const service = new GachaService({ store, workspaceRoot: root });
+      const first = service.recruit("recruit-once");
+      expect(service.recruit("recruit-once").qianjiId).toBe(first.qianjiId);
+      expect(first.birthIdentity?.primaryHexagram).toBeTruthy();
+      expect(first.draw).toBeNull();
+      const binding = store.qianji.getCurrentBindingByQianji(first.qianjiId);
+      expect(binding?.pixelId).toBe("0_0_0");
+      expect(store.pixels.getPixelAccount("0_0_0")?.energy).toBe(100000);
+      expect(fs.existsSync(path.join(root, "live", "pixels", "0_0_0", "state.json"))).toBe(true);
+      expect(() => store.qianji.updateNarrative(first.qianjiId, 0,
+        { ...first.narrative, roleLabel: "军师" })).toThrow("QIANJI_BIRTH_NARRATIVE_IMMUTABLE");
+      expect(() => store.db.prepare("UPDATE qianji_profiles SET birth_identity_json=? WHERE qianji_id=?")
+        .run("{}", first.qianjiId)).toThrow("QIANJI_BIRTH_IMMUTABLE");
+      expect(store.qianji.updateNarrative(first.qianjiId, 0,
+        { ...first.narrative, displayName: "知微" }).narrative.displayName).toBe("知微");
+    } finally {
+      store.close();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("closes the old draw endpoint while keeping legacy history readable", async () => {
+    const store = new CoreStore();
+    const app = fastify();
+    try {
+      await registerGachaRoutes(app, new GachaService({ store }), store,
+        new GachaImageService(store, os.tmpdir()));
+      const draw = await app.inject({ method: "POST", url: "/gacha/draw",
+        payload: { mode: "random", count: 1, idempotencyKey: "old-draw" } });
+      expect(draw.statusCode).toBe(410);
+      expect(store.qianji.listProfiles()).toHaveLength(0);
+      expect((await app.inject({ method: "GET", url: "/gacha/history" })).statusCode).toBe(200);
+    } finally { await app.close(); store.close(); }
+  });
   it("requests the specified portrait dimensions from the image provider", async () => {
     const fetchMock = vi.fn(async (_url: string, _init: RequestInit) => Response.json({ data: [{ b64_json: Buffer.from("png-data").toString("base64") }] }));
     vi.stubGlobal("fetch", fetchMock);

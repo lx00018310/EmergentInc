@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { fetchQianjiChat, postQianjiChat } from '../../api/qianji';
+import { fetchQianjiChat, markQianjiConclusion, postQianjiChat } from '../../api/qianji';
 import type { QianjiChatTurnDto, QianjiListItemDto } from '../../api/qianji';
 
 function requestKey(): string {
@@ -11,6 +11,7 @@ export const QianjiChatPanel: React.FC<{ item: QianjiListItemDto; onQueued: () =
   const [content, setContent] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [marking, setMarking] = useState<string | null>(null);
   const controller = useRef<AbortController | null>(null);
   const pendingRequest = useRef<{ question: string; key: string } | null>(null);
   const currentBinding = item.currentBinding;
@@ -67,7 +68,14 @@ export const QianjiChatPanel: React.FC<{ item: QianjiListItemDto; onQueued: () =
           <article className="qj-chat-turn" key={turn.turnId}>
             <p className="qj-chat-question"><b>阁主</b>{turn.question}</p>
             {turn.status === 'replied' && turn.reply !== null
-              ? <p className="qj-chat-reply"><b>{item.profile.narrative.displayName}</b>{turn.reply}</p>
+              ? <><p className="qj-chat-reply"><b>{item.profile.narrative.displayName}</b>{turn.reply}</p>
+                <button className="btn btn-xs" type="button" disabled={Boolean(turn.isMilestone) || marking === turn.turnId}
+                  onClick={async () => {
+                    setMarking(turn.turnId);
+                    try { await markQianjiConclusion(item.profile.qianjiId, turn.turnId); await refresh(); }
+                    catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
+                    finally { setMarking(null); }
+                  }}>{turn.isMilestone ? '已记入经历' : '记入经历'}</button></>
               : <p className={`qj-chat-state state-${turn.status}`}>{turn.status === 'queued' ? '待运行' : turn.status === 'processing' ? '运行中' : turn.status === 'no_reply' ? '本次没有直接回复' : turn.status === 'blocked' ? '运行暂停，待处理' : '本次失败，可查看 Engine 状态'}</p>}
           </article>
         ))}

@@ -22,9 +22,7 @@ import {
   validateMessageRouting,
   isHopLimitReached,
   getNeighbors6,
-  rollGacha,
-  randomQianjiNarrative,
-  buildGachaPrompt,
+  deriveBirthIdentity,
 } from "@emergentinc/domain";
 import { ToolRuntime, ToolContext, ExecutionToolScope } from "@emergentinc/tools";
 import { FeedbackFactory } from "../feedback/feedback_factory.js";
@@ -193,6 +191,11 @@ export class EffectRuntime {
   }
 
   private async applyCapabilityUnavailable(effect: CapabilityUnavailableEffect): Promise<void> {
+    const binding = this.ctx.store.qianji.getCurrentBindingByPixel(effect.pixelId);
+    this.ctx.store.db.prepare(`INSERT OR IGNORE INTO qianji_approval_requests
+      (request_id, qianji_id, pixel_id, capability, status, created_at)
+      VALUES (?, ?, ?, ?, 'pending', ?)`)
+      .run(effect.effectId, binding?.qianjiId ?? null, effect.pixelId, effect.capability, Date.now() / 1000);
     const feedback = FeedbackFactory.createCapabilityUnavailableFeedback(
       effect.pixelId,
       this.ctx.round,
@@ -555,20 +558,16 @@ export class EffectRuntime {
           const archiveRelativePath = path.relative(this.ctx.workspaceRoot, archivedPixelDir).split(path.sep).join("/");
           this.ctx.store.qianji.unbindAndRetire(previousBinding.bindingId, archiveRelativePath, "body_replaced", now);
         }
-        const seed = createHash("sha256").update(effect.effectId).digest().readUInt32LE(0);
-        const rolled = rollGacha(seed, "reproduction");
+        const seed = BigInt("0x" + createHash("sha256").update(effect.effectId).digest("hex").slice(0, 16)).toString();
+        const { primaryBits: _primaryBits, changedBits: _changedBits, ...birthIdentity } = deriveBirthIdentity(seed);
         const newborn = this.ctx.store.qianji.createProfile({
           careerStatus: "candidate",
           createdAt: now,
-          narrative: randomQianjiNarrative(seed),
+          birthIdentity,
+          narrative: { displayName: `未名·${seed.slice(-6)}`, title: null, roleLabel: null,
+            traits: {}, behaviorProfile: [], flaw: null, shortBio: null, appearanceSpec: null,
+            portraitAsset: null, contentRevision: null },
         });
-          const drawFingerprint = createHash("sha256").update(JSON.stringify({ qianjiId: newborn.qianjiId, seed, attributes: rolled.attributes,
-          mode: "reproduction", effectId: effect.effectId })).digest("hex");
-          const draw = this.ctx.store.gacha.create({ ...rolled, qianjiId: newborn.qianjiId, drawFingerprint,
-          requestedOrigin: "random", origin: "random", lineage: [], skillTags: [], lineageEvidence: [],
-          fallbackReason: null, generationStatus: "ready" });
-          const cardPrompt = buildGachaPrompt(draw, newborn.narrative, newborn.narrativeRevision);
-          this.ctx.store.gacha.setPrompt(newborn.qianjiId, cardPrompt.prompt, cardPrompt.fingerprint, newborn.narrativeRevision);
         this.ctx.store.qianji.createBinding({
           qianjiId: newborn.qianjiId,
           pixelId: childPixelId,

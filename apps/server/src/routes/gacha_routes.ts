@@ -38,11 +38,18 @@ function fail(reply: any, error: unknown) {
 
 export async function registerGachaRoutes(server: FastifyInstance, service: GachaService, store: CoreStore,
   images: GachaImageService): Promise<void> {
+  server.post("/qianji/recruit", async (request, reply) => {
+    const body = request.body;
+    if (!record(body) || !validText(body.idempotencyKey, 200) || Object.keys(body).length !== 1) {
+      return reply.status(400).send({ detail: "RECRUIT_INPUT_INVALID" });
+    }
+    try { return reply.status(201).send({ profile: service.recruit(body.idempotencyKey) }); }
+    catch (error) { return fail(reply, error); }
+  });
   server.post("/gacha/draw", async (request, reply) => {
     const input = parseDraw(request.body);
     if (!input) return reply.status(400).send({ detail: "GACHA_DRAW_INPUT_INVALID" });
-    try { return reply.status(201).send({ items: service.draw(input) }); }
-    catch (error) { return fail(reply, error); }
+    return reply.status(410).send({ detail: "旧抽卡入口已停用，请使用 /api/qianji/recruit。" });
   });
 
   server.get("/gacha/history", async (request, reply) => {

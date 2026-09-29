@@ -803,43 +803,6 @@ describe("Server: API Contract Integration Tests", () => {
     expect(artifact.rawPayload.toString("utf8")).toBe("archived");
   });
 
-  it("reports missing and invalid Mission fields for both create and update", async () => {
-    const payload = { missionType: "research", objective: "report", acceptanceCriteria: "readable", budgetTokens: 0,
-      roundsLimit: 1, ownerQianjiId: "qj-owner", participants: [{ qianjiId: "qj-owner" }] };
-    for (const request of [{ method: "POST", url: "/api/missions" }, { method: "PUT", url: "/api/missions/missing" }] as const) {
-      const response = await app.inject({ ...request, payload });
-      expect(response.statusCode).toBe(400);
-      expect(response.json().code).toBe("MISSION_INPUT_INVALID");
-      expect(response.json().errors.map((issue: any) => issue.path)).toEqual(["title", "budgetTokens", "participants.0.bindingId"]);
-      expect(response.json().detail).toContain("participants.0.bindingId must be a non-blank string");
-    }
-    expect(store.missions.list()).toEqual([]);
-  });
-
-  it("reports which candidate narrative and nested field need correction", async () => {
-    const response = await app.inject({ method: "POST", url: "/api/trials/missing/candidates", payload: {
-      pixelId: "1_0_0", initialEnergyTokens: 1000, idempotencyKey: "invalid-narrative",
-      formalNarrative: { traits: {}, behaviorProfile: [] },
-      testNarrative: { displayName: "Test", traits: {}, behaviorProfile: [42] },
-    } });
-    expect(response.statusCode).toBe(400);
-    expect(response.json().code).toBe("CANDIDATE_NARRATIVE_INVALID");
-    expect(response.json().errors).toEqual([
-      { path: "formalNarrative.displayName", message: "is required" },
-      { path: "testNarrative.behaviorProfile.0", message: "must be a string" },
-    ]);
-    expect(response.json().detail).toContain("formalNarrative.displayName is required");
-    expect(store.qianji.listProfiles()).toEqual([]);
-  });
-
-  it("reports candidate request fields missing before narrative validation", async () => {
-    const response = await app.inject({ method: "POST", url: "/api/trials/missing/candidates", payload: { pixelId: "1_0_0" } });
-    expect(response.statusCode).toBe(400);
-    expect(response.json().errors.map((issue: any) => issue.path)).toEqual([
-      "initialEnergyTokens", "idempotencyKey", "formalNarrative", "testNarrative",
-    ]);
-  });
-
   it("replays retirement without deactivating a new incarnation at the same coordinate", async () => {
     const profile = store.qianji.createProfile({ careerStatus: "active" });
     const binding = store.qianji.createBinding({ qianjiId: profile.qianjiId, pixelId: "1_0_0", incarnation: 1 });
@@ -869,7 +832,7 @@ describe("Server: API Contract Integration Tests", () => {
     expect(store.qianji.getCurrentBindingByPixel("1_0_0")).toEqual(successor);
   });
 
-  it("blocks retirement while a mission is open, archives the binding, and rejects retired chat", async () => {
+  it("blocks retirement while an execution is open, archives the binding, and rejects retired chat", async () => {
     const profile = store.qianji.createProfile({ careerStatus: "active" });
     const binding = store.qianji.createBinding({ qianjiId: profile.qianjiId, pixelId: "0_0_0", incarnation: 1 });
     store.pixels.upsertPixelAccount({ pixelId: "0_0_0", energy: 1000, active: true, refundDeficitTokens: 0, spendBlockedReason: null });
@@ -878,18 +841,17 @@ describe("Server: API Contract Integration Tests", () => {
     fs.mkdirSync(pixelDirectory, { recursive: true }); fs.mkdirSync(artifactDirectory, { recursive: true });
     fs.writeFileSync(path.join(pixelDirectory, "pixel.md"), "test identity");
     fs.writeFileSync(path.join(artifactDirectory, "result.txt"), "test artifact");
-    const mission = store.missions.createDraft({ title: "Open work", missionType: "test", objective: "Finish it",
-      acceptanceCriteria: "Owner review", budgetTokens: 100, roundsLimit: 1, ownerQianjiId: profile.qianjiId,
-      participants: [{ qianjiId: profile.qianjiId, bindingId: binding.bindingId, duty: null }] });
-    store.missions.transition(mission.missionId, "draft", "issued");
+    const execution = store.executions.create({ kind: "mission", subjectId: "execution_retire_guard", budgetTokens: 100,
+      roundsLimit: 1, inputSnapshot: {}, toolsSnapshot: [], bindingIds: [binding.bindingId] });
+    store.executions.transition(execution.executionId, "ready", "running");
 
     const payload = { reason: "No longer participating", idempotencyKey: "retire-qianji-once" };
     const blocked = await app.inject({ method: "POST", url: `/api/qianji/${profile.qianjiId}/retire`, payload });
     expect(blocked.statusCode).toBe(409);
-    expect(blocked.json().detail).toBe("QIANJI_HAS_OPEN_MISSION");
+    expect(blocked.json().detail).toBe("QIANJI_OCCUPIED_BY_EXECUTION");
     expect(fs.existsSync(pixelDirectory)).toBe(true);
 
-    store.missions.transition(mission.missionId, "issued", "cancelled");
+    store.executions.transition(execution.executionId, "running", "closed");
     const retired = await app.inject({ method: "POST", url: `/api/qianji/${profile.qianjiId}/retire`, payload });
     expect(retired.statusCode).toBe(200);
     expect(retired.json().profile.careerStatus).toBe("retired");

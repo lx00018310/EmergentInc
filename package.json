@@ -7,7 +7,7 @@
     "build": "tsc -b",
     "test": "vitest run",
     "test:watch": "vitest",
-    "typecheck": "tsc -b --noEmit"
+    "typecheck": "tsc -b && tsc -p frontend/tsconfig.app.json --noEmit"
   },
   "devDependencies": {
     "@types/node": "^22.13.9",

@@ -148,14 +148,6 @@ export class WorldService {
       round: m.roundNum,
     }));
 
-    const verifiedRevenues = this.store.business.listRevenues().filter(revenue => revenue.verified);
-    const businessAccounting = {
-      currency: "CNY",
-      confirmed_revenue_fen: verifiedRevenues.reduce((sum, revenue) => sum + (revenue.amountFen ?? 0), 0),
-      refund_fen: verifiedRevenues.reduce((sum, revenue) => sum + revenue.refundFen, 0),
-      source: "business_database",
-    };
-
     return {
       round: worldMeta.round || 0,
       active_pixels: accounts.length,
@@ -169,7 +161,6 @@ export class WorldService {
         USD_in: 0.0,
         USD_out: 0.0,
       },
-      business_accounting: businessAccounting,
       counters: worldMeta.counters || {
         external_requests: 0,
         capabilities_granted: 0,

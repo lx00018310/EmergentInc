@@ -1618,6 +1618,19 @@ select:focus {
 .qj-card-copy strong { color:var(--text-bright); font:600 15px var(--font-display); overflow-wrap:anywhere; } .qj-card-copy>span { color:var(--text-dim); overflow-wrap:anywhere; }
 .qj-card-copy small { color:var(--text-dim); font:10px var(--font-mono); overflow-wrap:anywhere; } .qj-card-badges { display:flex; flex-wrap:wrap; gap:5px; }
 .qj-card-badges span { padding:2px 5px; color:var(--accent-blue); border:1px solid rgba(56,225,255,.18); border-radius:4px; font-size:10px; }
+.qj-card-row { display:flex; align-items:stretch; gap:6px; }
+.qj-card-row.selected .qj-card { border-color:rgba(245,197,107,.7); background:rgba(39,35,27,.55); }
+.qj-card-row .qj-card { flex:1; min-width:0; width:auto; }
+.qj-card-menu { position:relative; flex:0 0 auto; display:flex; align-items:flex-start; }
+.qj-card-more { width:30px; height:30px; display:grid; place-items:center; border:1px solid var(--border-color); border-radius:6px; background:rgba(4,10,20,.56); color:var(--text-main); cursor:pointer; font-size:15px; line-height:1; }
+.qj-card-more:hover { border-color:rgba(245,197,107,.7); color:var(--gold); }
+.qj-menu-popover { position:absolute; right:0; top:calc(100% + 4px); z-index:30; min-width:132px; display:flex; flex-direction:column; gap:2px; padding:6px; background:rgba(7,14,26,.98); border:1px solid var(--border-color); border-radius:8px; box-shadow:0 12px 28px rgba(0,0,0,.45); }
+.qj-menu-popover button[role="menuitem"] { text-align:left; border:0; background:transparent; color:var(--text-main); padding:8px 10px; border-radius:5px; cursor:pointer; font:inherit; font-size:12px; }
+.qj-menu-popover button[role="menuitem"]:hover { background:rgba(245,197,107,.14); color:var(--gold); }
+.qj-roster-add { position:relative; display:flex; justify-content:center; padding:10px; border:1px dashed rgba(245,197,107,.4); border-radius:8px; background:rgba(4,10,20,.35); }
+.qj-add-button { width:38px; height:38px; display:grid; place-items:center; border:1px solid rgba(245,197,107,.55); border-radius:50%; background:transparent; color:var(--gold); font-size:20px; line-height:1; cursor:pointer; }
+.qj-add-button:hover { background:rgba(245,197,107,.14); }
+.qj-add-popover { left:50%; right:auto; transform:translateX(-50%); }
 .hall-detail-column { min-width:0; } .qj-profile-panel { overflow:hidden; }
 .qj-profile-header { display:flex; justify-content:space-between; gap:16px; padding:18px 20px; border-bottom:1px solid var(--border-color); background:linear-gradient(110deg,rgba(23,40,62,.65),rgba(9,16,29,.25)); }
 .qj-profile-header h2 { color:var(--text-bright); font:600 25px var(--font-display); overflow-wrap:anywhere; } .qj-profile-header p:not(.qj-eyebrow) { color:var(--text-dim); margin-top:4px; }

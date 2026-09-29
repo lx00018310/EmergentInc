@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import type { QianjiListItemDto } from '../../api/qianji';
 import { qianjiPortraitUrl } from '../../api/qianji';
 
@@ -6,37 +6,88 @@ const careerLabels: Record<string, string> = {
   candidate: '候选', trial: '试炼', active: '正式成员', retired: '已退役',
 };
 
+export type QianjiMenuAction = 'chat' | 'history' | 'narrative' | 'retire' | 'meeting';
+
 export interface QianjiCardProps {
   item: QianjiListItemDto;
   selected: boolean;
   onSelect: (qianjiId: string) => void;
+  onMenuAction?: (qianjiId: string, action: QianjiMenuAction) => void;
+  showMeetingAction?: boolean;
 }
 
-export const QianjiCard: React.FC<QianjiCardProps> = ({ item, selected, onSelect }) => {
+export const QianjiCard: React.FC<QianjiCardProps> = ({ item, selected, onSelect, onMenuAction, showMeetingAction }) => {
   const { profile, currentBinding, physical } = item;
   const [imageFailed, setImageFailed] = React.useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onPointerDown = (event: PointerEvent) => {
+      if (menuRef.current && !menuRef.current.contains(event.target as Node)) setMenuOpen(false);
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setMenuOpen(false);
+    };
+    document.addEventListener('pointerdown', onPointerDown);
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown);
+      document.removeEventListener('keydown', onKeyDown);
+    };
+  }, [menuOpen]);
+
+  const fire = (action: QianjiMenuAction) => {
+    setMenuOpen(false);
+    onSelect(profile.qianjiId);
+    onMenuAction?.(profile.qianjiId, action);
+  };
+
   return (
-    <button
-      className={`qj-card${selected ? ' selected' : ''}`}
-      type="button"
-      aria-pressed={selected}
-      onClick={() => onSelect(profile.qianjiId)}
-    >
-      <div className="qj-card-portrait">
-        {profile.narrative.portraitAsset && !imageFailed
-          ? <img src={qianjiPortraitUrl(profile.qianjiId)} alt={`${profile.narrative.displayName} 角色画像`} onError={() => setImageFailed(true)} />
-          : <span aria-label="暂无角色图片">{profile.draw ? '待绘' : '未设画像'}</span>}
-      </div>
-      <div className="qj-card-copy">
-        <strong>{profile.narrative.displayName}</strong>
-        <span>{profile.narrative.title || profile.narrative.roleLabel || '未设置称号'}</span>
-        <div className="qj-card-badges">
-          <span>{careerLabels[profile.careerStatus] || profile.careerStatus}</span>
-          {profile.draw && <span>{profile.draw.rarity}</span>}
-          <span>{physical?.active ? '载体活跃' : currentBinding ? '载体失活' : '未绑定 Pixel'}</span>
+    <div className={`qj-card-row${selected ? ' selected' : ''}`}>
+      <button
+        className="qj-card"
+        type="button"
+        aria-pressed={selected}
+        onClick={() => onSelect(profile.qianjiId)}
+      >
+        <div className="qj-card-portrait">
+          {profile.narrative.portraitAsset && !imageFailed
+            ? <img src={qianjiPortraitUrl(profile.qianjiId)} alt={`${profile.narrative.displayName} 角色画像`} onError={() => setImageFailed(true)} />
+            : <span aria-label="暂无角色图片">未设画像</span>}
         </div>
-        <small>{currentBinding ? `${currentBinding.pixelId} · 第 ${currentBinding.incarnation} 代` : profile.qianjiId}</small>
+        <div className="qj-card-copy">
+          <strong>{profile.narrative.displayName}</strong>
+          <span>{profile.birthIdentity
+            ? `${profile.birthIdentity.primaryHexagram} → ${profile.birthIdentity.changedHexagram}`
+            : '旧人物'}</span>
+          <div className="qj-card-badges">
+            <span>{careerLabels[profile.careerStatus] || profile.careerStatus}</span>
+            <span>{physical?.active ? '载体活跃' : currentBinding ? '载体失活' : '未绑定 Pixel'}</span>
+          </div>
+          <small>{new Date(profile.createdAt * 1000).toLocaleDateString()}</small>
+        </div>
+      </button>
+      <div className="qj-card-menu" ref={menuRef}>
+        <button
+          className="qj-card-more"
+          type="button"
+          aria-label={`${profile.narrative.displayName}更多操作`}
+          aria-haspopup="menu"
+          aria-expanded={menuOpen}
+          onClick={() => setMenuOpen(open => !open)}
+        >…</button>
+        {menuOpen && (
+          <div className="qj-menu-popover" role="menu" aria-label={`${profile.narrative.displayName}操作菜单`}>
+            <button type="button" role="menuitem" onClick={() => fire('chat')}>对话</button>
+            <button type="button" role="menuitem" onClick={() => fire('history')}>经历</button>
+            <button type="button" role="menuitem" onClick={() => fire('narrative')}>出生</button>
+            {showMeetingAction && <button type="button" role="menuitem" onClick={() => fire('meeting')}>发起会议</button>}
+            {profile.careerStatus === 'active' && <button type="button" role="menuitem" onClick={() => fire('retire')}>办理退役</button>}
+          </div>
+        )}
       </div>
-    </button>
+    </div>
   );
 };

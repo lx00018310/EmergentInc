@@ -6,6 +6,7 @@ import {
   QianjiNarrativeSpec,
   QianjiProfile,
   QianjiDraw,
+  QianjiBirthIdentity,
 } from "@emergentinc/protocol";
 import { SqliteDatabase } from "../sqlite/db.js";
 import { WorldEventRepository } from "./world_event_repository.js";
@@ -15,6 +16,7 @@ export interface CreateQianjiProfile {
   careerStatus?: QianjiCareerStatus;
   narrative?: QianjiNarrativeSpec;
   createdAt?: number;
+  birthIdentity?: QianjiBirthIdentity;
 }
 
 export interface CreateQianjiBinding {
@@ -53,9 +55,9 @@ export class QianjiRepository {
     return this.db.transaction(() => {
       this.db.prepare(`
         INSERT INTO qianji_profiles
-          (qianji_id, career_status, narrative_json, narrative_revision, created_at, retired_at, retired_reason)
-        VALUES (?, ?, ?, 0, ?, NULL, NULL)
-      `).run(qianjiId, careerStatus, JSON.stringify(narrative), createdAt);
+          (qianji_id, career_status, narrative_json, narrative_revision, birth_identity_json, created_at, retired_at, retired_reason)
+        VALUES (?, ?, ?, 0, ?, ?, NULL, NULL)
+      `).run(qianjiId, careerStatus, JSON.stringify(narrative), input.birthIdentity ? JSON.stringify(input.birthIdentity) : null, createdAt);
       this.db.prepare(`
         INSERT INTO qianji_narrative_revisions (qianji_id, revision, narrative_json, created_at)
         VALUES (?, 0, ?, ?)
@@ -97,6 +99,10 @@ export class QianjiRepository {
     return this.db.transaction(() => {
       const current = this.getProfile(qianjiId);
       if (!current) throw new Error("Qianji not found");
+      if (current.birthIdentity && JSON.stringify({ ...narrative, displayName: current.narrative.displayName, portraitAsset: current.narrative.portraitAsset }) !==
+          JSON.stringify({ ...current.narrative, displayName: current.narrative.displayName, portraitAsset: current.narrative.portraitAsset })) {
+        throw new Error("QIANJI_BIRTH_NARRATIVE_IMMUTABLE");
+      }
       if (current.narrativeRevision !== expectedRevision) throw new Error("REVISION_CONFLICT");
       const revision = expectedRevision + 1;
       const now = Date.now() / 1000;
@@ -319,42 +325,6 @@ export class QianjiRepository {
     };
   }
 
-  public getCareerSummary(qianjiId: string): {
-    modelCallCount: number; actualTokens: number; toolExecutionCount: number; trialCount: number;
-    completedMissionCount: number; failedMissionCount: number; successRate: number | null;
-    acceptedByMissionType: Array<{ missionType: string; count: number; evidenceIds: string[] }>;
-  } {
-    if (!this.getProfile(qianjiId)) throw new Error("Qianji not found");
-    const bindingIds = this.listBindings(qianjiId).map(binding => binding.bindingId);
-    const missionRows = this.db.prepare(`SELECT m.mission_id,m.mission_type,m.status,m.execution_id FROM mission_participants mp
-      JOIN missions m ON m.mission_id=mp.mission_id WHERE mp.qianji_id=? AND m.status IN ('completed','failed')
-      ORDER BY m.created_at,m.mission_id`).all(qianjiId) as any[];
-    const grouped = new Map<string, { missionType: string; count: number; evidenceIds: string[] }>();
-    for (const row of missionRows) if (row.status === "completed") {
-      const type = String(row.mission_type);
-      const group = grouped.get(type) ?? { missionType: type, count: 0, evidenceIds: [] };
-      group.count++;
-      if (row.execution_id) {
-        const evidence = this.db.prepare("SELECT evidence_id FROM execution_evidence WHERE execution_id=? ORDER BY created_at,evidence_id")
-          .all(row.execution_id) as any[];
-        group.evidenceIds.push(...evidence.map(item => String(item.evidence_id)));
-      }
-      grouped.set(type, group);
-    }
-    const marks = bindingIds.length ? bindingIds.map(() => "?").join(",") : "NULL";
-    const calls = bindingIds.length ? this.db.prepare(`SELECT COUNT(*) AS count,COALESCE(SUM(actual_tokens),0) AS tokens FROM model_calls WHERE binding_id IN (${marks})`).get(...bindingIds) as any : { count: 0, tokens: 0 };
-    const toolExecutions = bindingIds.length ? this.db.prepare(`SELECT COUNT(DISTINCT te.operation_id) AS count FROM tool_executions te
-      JOIN model_calls mc ON mc.call_id=te.model_call_id WHERE mc.binding_id IN (${marks})`).get(...bindingIds) as any : { count: 0 };
-    const completedMissionCount = missionRows.filter(row => row.status === "completed").length;
-    const failedMissionCount = missionRows.filter(row => row.status === "failed").length;
-    const denominator = completedMissionCount + failedMissionCount;
-    const trial = this.db.prepare("SELECT COUNT(*) AS count FROM trial_candidates WHERE qianji_id=?").get(qianjiId) as any;
-    return { modelCallCount: Number(calls.count), actualTokens: Number(calls.tokens), toolExecutionCount: Number(toolExecutions.count),
-      trialCount: Number(trial.count), completedMissionCount, failedMissionCount,
-      successRate: denominator === 0 ? null : completedMissionCount / denominator,
-      acceptedByMissionType: [...grouped.values()].map(group => ({ ...group, evidenceIds: [...new Set(group.evidenceIds)] })) };
-  }
-
   public unbindAndRetire(
     bindingId: string,
     archiveRelativePath: string,
@@ -428,6 +398,8 @@ export class QianjiRepository {
       retiredAt: row.retired_at == null ? null : Number(row.retired_at),
       retiredReason: row.retired_reason ?? null,
       draw,
+      birthIdentity: row.birth_identity_json ? JSON.parse(String(row.birth_identity_json)) : null,
+      legacyIdentity: !row.birth_identity_json,
     };
   }
 

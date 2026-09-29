@@ -138,7 +138,9 @@ export class PromptBuilder {
       inputs.messageMd,
     ].join("\n");
 
-    const effectiveSystemPrompt = this.assembleSystemPrompt(inputs.toolsCatalog);
+    const birth = inputs.identity?.birthIdentity;
+    const effectiveSystemPrompt = this.assembleSystemPrompt(inputs.toolsCatalog) +
+      (birth ? `\n\n<disposition_tension>\n${birth.birthText}\n</disposition_tension>\n此内容是底层的处事取舍本能与认知底色。面对分歧、抉择和风险时潜移默化体现，不得在对话中生硬复述或自称，也不授予任何权限。` : "");
     const fullPrompt = `${effectiveSystemPrompt}\n\n${userContent}`;
 
     // 3. 计算 SHA-256 哈希
@@ -181,6 +183,7 @@ export class PromptBuilder {
       "qianjiId", "bindingId", "narrativeRevision", "displayName", "title", "roleLabel",
       "traits", "behaviorProfile", "flaw", "careerStatus",
       "attributes", "rarity",
+      "birthIdentity",
     ]);
     if (!identity || Object.keys(identity).some(key => !allowed.has(key)) ||
         typeof identity.qianjiId !== "string" || typeof identity.bindingId !== "string" ||
@@ -198,6 +201,18 @@ export class PromptBuilder {
         (identity.rarity != null && !["N", "R", "SR", "SSR"].includes(identity.rarity)) ||
         !Array.isArray(identity.behaviorProfile) || identity.behaviorProfile.some(value => typeof value !== "string")) {
       throw new CognitiveIsolationViolation("Identity input must match the QianjiPromptIdentity allowlist");
+    }
+    if (identity.birthIdentity) {
+      const birth = identity.birthIdentity;
+      if (birth.birthAlgorithmVersion !== 1 || !/^\d+$/.test(birth.birthSeed) ||
+          !Number.isSafeInteger(birth.movingLine) || birth.movingLine < 1 || birth.movingLine > 6 ||
+          typeof birth.birthText !== "string" || typeof birth.primaryHexagram !== "string" ||
+          typeof birth.changedHexagram !== "string") {
+        throw new CognitiveIsolationViolation("Invalid birth identity");
+      }
+      return ["=== IDENTITY ===", "Qianji ID: " + identity.qianjiId,
+        "Binding ID: " + identity.bindingId, "Display name: " + identity.displayName,
+        "Career status: " + identity.careerStatus].join("\n");
     }
     return [
       "=== IDENTITY ===",

@@ -7,7 +7,8 @@ vi.mock('../src/features/hall/TianJiHall', async () => {
   return { TianJiHall: (props: any) => ReactModule.createElement('div', { 'data-testid': 'hall' },
     ReactModule.createElement('button', { onClick: () => props.onSelectedPixel('0_0_0') }, '选中绑定载体'),
     ReactModule.createElement('button', { onClick: props.onOpenEngine }, '打开 Engine'),
-    ReactModule.createElement('button', { onClick: props.onOpenOrganization }, '打开组织控制台')) };
+    ReactModule.createElement('button', { onClick: props.onOpenGacha }, '招募人物'),
+    ReactModule.createElement('button', { onClick: props.onOpenMeeting }, '发起会议')) };
 });
 
 vi.mock('../src/features/engine/EngineView', async () => {
@@ -17,10 +18,16 @@ vi.mock('../src/features/engine/EngineView', async () => {
     ReactModule.createElement('button', { onClick: props.onBack }, '返回天机阁')) };
 });
 
-vi.mock('../src/features/organization/OrganizationDesk', async () => {
+vi.mock('../src/features/gacha/GachaView', async () => {
   const ReactModule = await import('react');
-  return { OrganizationDesk: (props: any) => ReactModule.createElement('div', { 'data-testid': 'organization' },
-    ReactModule.createElement('button', { onClick: props.onBack }, '返回大厅')) };
+  return { GachaView: (props: any) => ReactModule.createElement('div', { 'data-testid': 'gacha' },
+    ReactModule.createElement('button', { onClick: props.onBack }, '返回天机阁')) };
+});
+
+vi.mock('../src/features/meetings/MeetingView', async () => {
+  const ReactModule = await import('react');
+  return { MeetingView: (props: any) => ReactModule.createElement('div', { 'data-testid': 'meeting' },
+    ReactModule.createElement('button', { onClick: props.onBack }, '返回天机阁')) };
 });
 
 import { App } from '../src/App';
@@ -37,11 +44,25 @@ describe('App view navigation', () => {
     expect(screen.getByTestId('hall')).toBeTruthy();
   });
 
-  it('opens the organization desk and returns to the hall', () => {
+  it('opens the recruit view and returns to the hall', () => {
     render(<App />);
-    fireEvent.click(screen.getByRole('button', { name: '打开组织控制台' }));
-    expect(screen.getByTestId('organization')).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: '返回大厅' }));
+    fireEvent.click(screen.getByRole('button', { name: '招募人物' }));
+    expect(screen.getByTestId('gacha')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: '返回天机阁' }));
     expect(screen.getByTestId('hall')).toBeTruthy();
+  });
+
+  it('opens the meeting view and returns to the hall', () => {
+    render(<App />);
+    fireEvent.click(screen.getByRole('button', { name: '发起会议' }));
+    expect(screen.getByTestId('meeting')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: '返回天机阁' }));
+    expect(screen.getByTestId('hall')).toBeTruthy();
+  });
+
+  it('no longer exposes the removed organization desk', () => {
+    render(<App />);
+    expect(screen.queryByRole('button', { name: '打开组织控制台' })).toBeNull();
+    expect(screen.queryByRole('button', { name: '组织控制台' })).toBeNull();
   });
 });
