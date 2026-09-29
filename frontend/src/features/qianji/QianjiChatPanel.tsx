@@ -60,7 +60,7 @@ export const QianjiChatPanel: React.FC<{ item: QianjiListItemDto; onQueued: () =
 
   return (
     <section className="qj-chat-panel" aria-label="人物对话">
-      <div className="qj-panel-heading"><h3>对话</h3><span>发送后进入队列，需手动启动 Run</span></div>
+      <div className="qj-panel-heading"><h3>对话</h3><span>发送后自动启动 Run</span></div>
       {error && <p className="qj-inline-error" role="alert">{error}</p>}
       <div className="qj-chat-history" aria-live="polite">
         {turns.length === 0 && <p className="qj-empty">还没有对话记录。</p>}

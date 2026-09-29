@@ -6,7 +6,7 @@ const careerLabels: Record<string, string> = {
   candidate: '候选', trial: '试炼', active: '正式成员', retired: '已退役',
 };
 
-export type QianjiMenuAction = 'chat' | 'history' | 'narrative' | 'retire' | 'meeting';
+export type QianjiMenuAction = 'history' | 'narrative' | 'retire' | 'meeting';
 
 export interface QianjiCardProps {
   item: QianjiListItemDto;
@@ -80,7 +80,6 @@ export const QianjiCard: React.FC<QianjiCardProps> = ({ item, selected, onSelect
         >…</button>
         {menuOpen && (
           <div className="qj-menu-popover" role="menu" aria-label={`${profile.narrative.displayName}操作菜单`}>
-            <button type="button" role="menuitem" onClick={() => fire('chat')}>对话</button>
             <button type="button" role="menuitem" onClick={() => fire('history')}>经历</button>
             <button type="button" role="menuitem" onClick={() => fire('narrative')}>出生</button>
             {showMeetingAction && <button type="button" role="menuitem" onClick={() => fire('meeting')}>发起会议</button>}

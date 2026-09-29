@@ -9,17 +9,17 @@ const state = vi.hoisted(() => ({
 
 vi.mock('../src/hooks/useWorldPolling', () => ({ useWorldPolling: () => state.world }));
 vi.mock('../src/hooks/useQianjiPolling', () => ({ useQianjiPolling: () => state.qianji }));
-vi.mock('../src/api/run', () => ({ startRun: vi.fn(), stopRun: vi.fn() }));
+vi.mock('../src/api/run', () => ({ startRun: vi.fn().mockResolvedValue({}) }));
+vi.mock('../src/api/meetings', () => ({ listApprovals: vi.fn().mockResolvedValue([]), decideApproval: vi.fn().mockResolvedValue(undefined) }));
 vi.mock('../src/features/qianji/QianjiProfilePanel', async () => {
   const ReactModule = await import('react');
-  return { QianjiProfilePanel: ({ item, tabRequest }: any) => ReactModule.createElement('div', { 'aria-label': '人物对话', 'data-tab-request': tabRequest ? `${tabRequest.tab}:${tabRequest.nonce}` : '' }, item.profile.narrative.displayName) };
-});
-vi.mock('../src/api/qianji', async importOriginal => {
-  const actual = await importOriginal<typeof import('../src/api/qianji')>();
-  return { ...actual, fetchQianjiChat: vi.fn().mockResolvedValue([]), postQianjiChat: vi.fn() };
+  return { QianjiProfilePanel: ({ item, modalRequest, onQueued }: any) => ReactModule.createElement('div', { 'aria-label': '人物详情', 'data-modal-request': modalRequest ? `${modalRequest.modal}:${modalRequest.nonce}` : '' },
+    item.profile.narrative.displayName,
+    ReactModule.createElement('button', { type: 'button', onClick: () => void onQueued() }, '模拟排队发送')) };
 });
 
 import { TianJiHall } from '../src/features/hall/TianJiHall';
+import { startRun } from '../src/api/run';
 
 const member = {
   profile: {
@@ -38,6 +38,10 @@ describe('TianJiHall', () => {
   const onOpenGacha = vi.fn();
   const onOpenMeeting = vi.fn();
 
+  const renderHall = () => render(
+    <TianJiHall selectedQianjiId="qj_test" onSelectedQianji={onSelectedQianji} onSelectedPixel={onSelectedPixel}
+      onOpenEngine={onOpenEngine} onOpenGacha={onOpenGacha} onOpenMeeting={onOpenMeeting} />);
+
   beforeEach(() => {
     vi.clearAllMocks();
     state.world = {
@@ -50,13 +54,13 @@ describe('TianJiHall', () => {
     };
   });
 
-  it('opens as a usable hall, shows neutral missing-image and unknown cost states', () => {
-    render(<TianJiHall selectedQianjiId="qj_test" onSelectedQianji={onSelectedQianji} onSelectedPixel={onSelectedPixel} onOpenEngine={onOpenEngine} />);
+  it('opens as a usable hall with a chat column and a missing-image state', () => {
+    renderHall();
     expect(screen.getByRole('heading', { name: '天机阁' })).toBeTruthy();
     expect(screen.getByText('EmergentInc')).toBeTruthy();
     expect(screen.getByText('未设画像')).toBeTruthy();
-    expect(screen.getByText('未知')).toBeTruthy();
-    expect(screen.getByLabelText('人物对话')).toBeTruthy();
+    expect(screen.getByLabelText('人物详情')).toBeTruthy();
+    expect(screen.getByLabelText('需要阁主决定')).toBeTruthy();
     expect(onSelectedPixel).toHaveBeenCalledWith('0_0_0');
   });
 
@@ -72,31 +76,69 @@ describe('TianJiHall', () => {
     expect(onOpenEngine).toHaveBeenCalledOnce();
   });
 
-  it('routes card ... commands to the detail tabs and meeting entry', () => {
-    render(<TianJiHall selectedQianjiId="qj_test" onSelectedQianji={onSelectedQianji} onSelectedPixel={onSelectedPixel} onOpenEngine={onOpenEngine} onOpenGacha={onOpenGacha} onOpenMeeting={onOpenMeeting} />);
+  it('routes card ... commands to dialogs and the meeting entry', () => {
+    renderHall();
     fireEvent.click(screen.getByRole('button', { name: '守序者更多操作' }));
+    expect(screen.queryByRole('menuitem', { name: '对话' })).toBeNull();
     fireEvent.click(screen.getByRole('menuitem', { name: '经历' }));
     expect(onSelectedQianji).toHaveBeenCalledWith('qj_test');
-    expect(screen.getByLabelText('人物对话').getAttribute('data-tab-request')).toMatch(/^history:/);
+    expect(screen.getByLabelText('人物详情').getAttribute('data-modal-request')).toMatch(/^history:/);
+    fireEvent.click(screen.getByRole('button', { name: '守序者更多操作' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: '办理退役' }));
+    expect(screen.getByLabelText('人物详情').getAttribute('data-modal-request')).toMatch(/^retire:/);
     fireEvent.click(screen.getByRole('button', { name: '守序者更多操作' }));
     fireEvent.click(screen.getByRole('menuitem', { name: '发起会议' }));
     expect(onOpenMeeting).toHaveBeenCalledOnce();
   });
 
   it('always offers a + slot with recruit and meeting commands', () => {
-    render(<TianJiHall selectedQianjiId="qj_test" onSelectedQianji={onSelectedQianji} onSelectedPixel={onSelectedPixel} onOpenEngine={onOpenEngine} onOpenGacha={onOpenGacha} onOpenMeeting={onOpenMeeting} />);
+    renderHall();
     fireEvent.click(screen.getByRole('button', { name: '新建人物位' }));
     expect(screen.getByRole('menu', { name: '新建菜单' })).toBeTruthy();
     fireEvent.click(screen.getByRole('menuitem', { name: '招募人物' }));
     expect(onOpenGacha).toHaveBeenCalledOnce();
   });
 
-  it('keeps the hall error visible and blocks Run while recovery is unresolved', () => {
+  it('keeps the side column limited to what the owner must decide', () => {
+    renderHall();
+    const side = screen.getByLabelText('需要阁主决定');
+    expect(screen.getByRole('heading', { name: '请求' })).toBeTruthy();
+    expect(side.textContent).toContain('需要阁主决定');
+    expect(screen.queryByRole('heading', { name: '运行控制' })).toBeNull();
+    expect(screen.queryByRole('heading', { name: '能量与成本' })).toBeNull();
+    expect(screen.queryByRole('heading', { name: '最近事件' })).toBeNull();
+    expect(screen.queryByRole('button', { name: '启动 Run' })).toBeNull();
+    expect(screen.queryByRole('spinbutton')).toBeNull();
+  });
+
+  it('starts a run as soon as a message is queued', async () => {
+    renderHall();
+    fireEvent.click(screen.getByRole('button', { name: '模拟排队发送' }));
+    await vi.waitFor(() => expect(startRun).toHaveBeenCalledWith({ rounds: 1, run_budget_tokens: 100000 }));
+    expect(state.qianji.refresh).toHaveBeenCalledOnce();
+    expect(state.world.refreshImmediately).toHaveBeenCalled();
+  });
+
+  it('leaves an active run to consume the queue without starting another', async () => {
+    state.world = { ...state.world, runStatus: { running: true, completed_rounds: 1, requested_rounds: 3 } };
+    renderHall();
+    fireEvent.click(screen.getByRole('button', { name: '模拟排队发送' }));
+    await vi.waitFor(() => expect(state.qianji.refresh).toHaveBeenCalledOnce());
+    expect(startRun).not.toHaveBeenCalled();
+  });
+
+  it('keeps the hall error visible', () => {
     state.qianji = { ...state.qianji, error: '人物接口读取失败' };
-    state.world = { ...state.world, runStatus: { running: false, unfinalized_operations: { hasUnfinalized: true } } };
-    render(<TianJiHall selectedQianjiId="qj_test" onSelectedQianji={onSelectedQianji} onSelectedPixel={onSelectedPixel} onOpenEngine={onOpenEngine} />);
+    renderHall();
     expect(screen.getByRole('alert').textContent).toContain('人物接口读取失败');
-    expect(screen.getAllByText(/需要恢复处理/).length).toBeGreaterThan(0);
-    expect(screen.getByRole('button', { name: '启动 Run' })).toHaveProperty('disabled', true);
+  });
+
+  it('blocks the auto run while unfinalized operations need recovery', async () => {
+    state.world = { ...state.world, runStatus: { running: false, unfinalized_operations: { hasUnfinalized: true } } };
+    renderHall();
+    expect(screen.getByText(/存在未决操作。请进入 Engine 的 Recovery 面板处理后再运行。/)).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: '模拟排队发送' }));
+    await vi.waitFor(() => expect(state.qianji.refresh).toHaveBeenCalledOnce());
+    expect(startRun).not.toHaveBeenCalled();
   });
 });

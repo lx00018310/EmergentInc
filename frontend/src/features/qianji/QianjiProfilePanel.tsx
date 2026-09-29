@@ -1,26 +1,32 @@
 import React, { useEffect, useState } from 'react';
 import { fetchQianjiHistory, qianjiArtifactUrl, retireQianji } from '../../api/qianji';
 import type { QianjiHistoryDto, QianjiListItemDto } from '../../api/qianji';
+import { Modal } from '../../components/Modal';
 import { QianjiChatPanel } from './QianjiChatPanel';
 import { QianjiNarrativeEditor } from './QianjiNarrativeEditor';
 
-export type QianjiProfileTab = 'chat' | 'history' | 'narrative';
+export type QianjiProfileModal = 'history' | 'narrative' | 'retire';
 
-export const QianjiProfilePanel: React.FC<{ item: QianjiListItemDto; onRefresh: () => Promise<void>; tabRequest?: { tab: QianjiProfileTab; nonce: number } | null; retireRequestNonce?: number }> = ({ item, onRefresh, tabRequest, retireRequestNonce }) => {
-  const [tab, setTab] = useState<QianjiProfileTab>('chat');
+export const QianjiProfilePanel: React.FC<{
+  item: QianjiListItemDto;
+  onRefresh: () => Promise<void>;
+  onQueued: () => Promise<void>;
+  modalRequest?: { modal: QianjiProfileModal; nonce: number } | null;
+}> = ({ item, onRefresh, onQueued, modalRequest }) => {
+  const [openModal, setOpenModal] = useState<QianjiProfileModal | null>(null);
   const [history, setHistory] = useState<QianjiHistoryDto | null>(null);
   const [historyError, setHistoryError] = useState<string | null>(null);
   const [historyLoading, setHistoryLoading] = useState(false);
-  const [retireOpen, setRetireOpen] = useState(false);
   const [retireReason, setRetireReason] = useState('');
   const [retireError, setRetireError] = useState<string | null>(null);
   const [retiring, setRetiring] = useState(false);
 
-  useEffect(() => { setTab('chat'); setHistory(null); setHistoryError(null); setRetireOpen(false); setRetireReason(''); }, [item.profile.qianjiId]);
-  useEffect(() => { if (tabRequest) setTab(tabRequest.tab); }, [tabRequest?.nonce]);
-  useEffect(() => { if (retireRequestNonce) setRetireOpen(true); }, [retireRequestNonce]);
   useEffect(() => {
-    if (tab !== 'history') return;
+    setOpenModal(null); setHistory(null); setHistoryError(null); setRetireReason(''); setRetireError(null);
+  }, [item.profile.qianjiId]);
+  useEffect(() => { if (modalRequest) setOpenModal(modalRequest.modal); }, [modalRequest?.nonce]);
+  useEffect(() => {
+    if (openModal !== 'history') return;
     const controller = new AbortController();
     setHistoryLoading(true);
     fetchQianjiHistory(item.profile.qianjiId, controller.signal)
@@ -28,11 +34,23 @@ export const QianjiProfilePanel: React.FC<{ item: QianjiListItemDto; onRefresh: 
       .catch(err => { if (!(err instanceof DOMException && err.name === 'AbortError')) setHistoryError(err instanceof Error ? err.message : String(err)); })
       .finally(() => { if (!controller.signal.aborted) setHistoryLoading(false); });
     return () => controller.abort();
-  }, [tab, item.profile.qianjiId]);
+  }, [openModal, item.profile.qianjiId]);
 
   const physicalText = !item.currentBinding ? '未绑定 Pixel'
     : item.physical?.active ? `载体活跃 · ${item.physical.energy ?? '未知'} Token`
       : `载体失活 · ${item.physical?.energy ?? '未知'} Token`;
+
+  const submitRetirement = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (retiring || !retireReason.trim()) return;
+    setRetiring(true); setRetireError(null);
+    try {
+      const key = globalThis.crypto?.randomUUID?.() ?? `retire-${Date.now()}`;
+      await retireQianji(item.profile.qianjiId, retireReason.trim(), key);
+      setOpenModal(null); setRetireReason(''); await onRefresh();
+    } catch (error) { setRetireError(error instanceof Error ? error.message : String(error)); }
+    finally { setRetiring(false); }
+  };
 
   return (
     <section className="qj-profile-panel" aria-label="人物详情">
@@ -41,31 +59,9 @@ export const QianjiProfilePanel: React.FC<{ item: QianjiListItemDto; onRefresh: 
           ? `${item.profile.birthIdentity.primaryHexagram} → ${item.profile.birthIdentity.changedHexagram}` : '旧人物'}</p></div>
         <div className="qj-physical-state"><b>{physicalText}</b>{item.currentBinding && <small>{item.currentBinding.pixelId} · 第 {item.currentBinding.incarnation} 代</small>}</div>
       </header>
-      {item.profile.careerStatus === 'active' && <div className="qj-retirement-control">
-        {!retireOpen ? <button className="btn btn-xs" type="button" onClick={() => setRetireOpen(true)}>办理退役</button> : <form onSubmit={async event => {
-          event.preventDefault();
-          if (retiring || !retireReason.trim()) return;
-          setRetiring(true); setRetireError(null);
-          try {
-            const key = globalThis.crypto?.randomUUID?.() ?? `retire-${Date.now()}`;
-            await retireQianji(item.profile.qianjiId, retireReason.trim(), key);
-            setRetireOpen(false); setRetireReason(''); await onRefresh();
-          } catch (error) { setRetireError(error instanceof Error ? error.message : String(error)); }
-          finally { setRetiring(false); }
-        }}>
-          <label>退役原因<textarea value={retireReason} onChange={event => setRetireReason(event.target.value)} maxLength={1000} required /></label>
-          <div className="qj-form-footer"><button className="btn btn-xs" type="button" disabled={retiring} onClick={() => setRetireOpen(false)}>取消</button><button className="btn btn-xs btn-primary" type="submit" disabled={retiring || !retireReason.trim()}>{retiring ? '处理中…' : '确认退役'}</button></div>
-          {retireError && <p className="qj-inline-error" role="alert">{retireError}</p>}
-        </form>}
-      </div>}
-      <div className="qj-tabs" role="tablist" aria-label="人物栏目">
-        <button type="button" role="tab" aria-selected={tab === 'chat'} onClick={() => setTab('chat')}>对话</button>
-        <button type="button" role="tab" aria-selected={tab === 'history'} onClick={() => setTab('history')}>经历</button>
-        <button type="button" role="tab" aria-selected={tab === 'narrative'} onClick={() => setTab('narrative')}>出生</button>
-      </div>
-      {tab === 'chat' && <QianjiChatPanel item={item} onQueued={onRefresh} />}
-      {tab === 'narrative' && <QianjiNarrativeEditor profile={item.profile} onSaved={onRefresh} />}
-      {tab === 'history' && (
+      <QianjiChatPanel item={item} onQueued={onQueued} />
+
+      <Modal isOpen={openModal === 'history'} title="经历" contentClassName="doc-modal-content" onClose={() => setOpenModal(null)}>
         <section className="qj-history-panel">
           {historyLoading && <p>正在读取履历…</p>}
           {historyError && <p className="qj-inline-error" role="alert">{historyError}</p>}
@@ -90,7 +86,23 @@ export const QianjiProfilePanel: React.FC<{ item: QianjiListItemDto; onRefresh: 
               {history.attributed.costSummary.totalCostCny === null ? '（完整成本未知）' : ''}</p>
           </>}
         </section>
-      )}
+      </Modal>
+
+      <Modal isOpen={openModal === 'narrative'} title={item.profile.birthIdentity ? '出生' : '人设'}
+        contentClassName="doc-modal-content" onClose={() => setOpenModal(null)}>
+        <QianjiNarrativeEditor profile={item.profile} onSaved={onRefresh} />
+      </Modal>
+
+      <Modal isOpen={openModal === 'retire'} title={`办理退役 · ${item.profile.narrative.displayName}`} onClose={() => setOpenModal(null)}>
+        <form className="qj-retire-form" onSubmit={submitRetirement}>
+          <label>退役原因<textarea value={retireReason} onChange={event => setRetireReason(event.target.value)} maxLength={1000} rows={4} required /></label>
+          <div className="qj-form-footer">
+            <button className="btn btn-xs" type="button" disabled={retiring} onClick={() => setOpenModal(null)}>取消</button>
+            <button className="btn btn-xs btn-primary" type="submit" disabled={retiring || !retireReason.trim()}>{retiring ? '处理中…' : '确认退役'}</button>
+          </div>
+          {retireError && <p className="qj-inline-error" role="alert">{retireError}</p>}
+        </form>
+      </Modal>
     </section>
   );
 };
