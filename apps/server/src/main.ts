@@ -176,7 +176,9 @@ async function bootstrap() {
     coreStore: store,
     workspaceRoot,
     ownerChatService,
-    gachaProvider: isModelConfigured ? provider : undefined,
+    gachaProvider: isModelConfigured
+      ? new OpenAICompatibleProvider({ baseUrl, apiKey, timeoutMs: 10 * 60 * 1000 })
+      : undefined,
     gachaUsageMeter: usageMeter,
     gachaModelName: modelName,
     gachaImageProvider: imageProvider,
