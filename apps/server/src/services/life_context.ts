@@ -43,7 +43,7 @@ export class LifeContext {
       }
       if (active.gene_hash !== geneHash || current.meta().generation_id !== active.id || current.meta().gene_hash !== geneHash ||
           current.meta().release_id !== active.release_id || current.meta().body_interface_version !== genome.body_interface_version)
-        throw new Error("ACTIVE_GENOME_MISMATCH");
+        throw new Error(`ACTIVE_GENOME_MISMATCH: workspace ${workspace} is bound to ${active.id} / ${active.gene_hash}; source is ${geneHash}. Use an explicitly approved upgrade; do not overwrite the stored hash.`);
       return new LifeContext(workspace, genome, lineage, current);
     } catch (e) { current?.close(); lineage.close(); throw e; }
   }

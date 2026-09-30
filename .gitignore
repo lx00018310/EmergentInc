@@ -21,3 +21,4 @@ node_modules/
 frontend/dist/
 dist/
 *.tsbuildinfo
+/.v22-test-output.log

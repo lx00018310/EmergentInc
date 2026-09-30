@@ -104,6 +104,9 @@ describe("trusted Generation lifecycle (local runtime contract doubles)", () => 
     expect(() => f.supervisor.submit({ ...request, base_release: "old" })).toThrow("BASE_CONFLICT");
     expect(classifyChange(["workspace/generations/G0001/body/skills/test.json"])).toBe("BODY");
     expect(classifyChange(["package.json"])).toBe("GENE");
+    expect(classifyChange(["apps/recovery/src/server.ts"])).toBe("ROOT");
+    expect(classifyChange(["scripts/local-upgrade.mjs"])).toBe("ROOT");
+    expect(() => f.supervisor.submit({ ...request, patch: [{ path: "apps/recovery/src/server.ts", content: "self approve" }] })).toThrow("ROOT_OF_TRUST_CHANGE_FORBIDDEN");
   });
   it("keeps the old generation active when candidate smoke fails", async () => {
     const f = fixture(), c = await f.prepare("r2"); f.supervisor.approve("r2", c.candidate.candidate_hash);

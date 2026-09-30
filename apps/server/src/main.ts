@@ -60,7 +60,7 @@ async function bootstrap() {
   const runtimeDir = path.resolve(workspaceRoot, "runtime");
   const ledgerDir = path.resolve(workspaceRoot, "ledger");
   const privateDir = path.resolve(workspaceRoot, "private");
-  const releaseLock = acquireWorkspaceLock(workspaceRoot);
+  const releaseLock = acquireWorkspaceLock(workspaceRoot, process.env.EMERGENTINC_LOCAL_UPGRADE_TOKEN);
   process.once("exit", releaseLock);
 
   if (config.mode === "business") {
@@ -86,7 +86,7 @@ async function bootstrap() {
     const memoryGate = new MemoryGate(store, () => life.current.meta().generation_id);
     memoryGate.syncConfirmedPayments();
     service.attachLife(life, body);
-    let quiesced = candidateMode || store.generation(life.current.meta().generation_id).state !== "ACTIVE";
+    let quiesced = candidateMode || process.env.EMERGENTINC_START_PAUSED === "1" || store.generation(life.current.meta().generation_id).state !== "ACTIVE";
     const evolution = { life, body, dream, memoryGate, quiesced: () => quiesced,
       quiesce: async () => { quiesced = true; await body.idle(); await dream.stop(); await service.stop(); },
       resume: async () => {

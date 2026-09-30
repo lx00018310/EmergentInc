@@ -8,6 +8,7 @@
     { "path": "packages/tools" },
     { "path": "packages/runtime" },
     { "path": "apps/server" },
+    { "path": "apps/recovery" },
     { "path": "supervisor" }
   ]
 }

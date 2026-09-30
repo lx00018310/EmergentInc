@@ -15,8 +15,14 @@ export function runtimeConfig(projectRoot: string, env = process.env) {
 }
 
 /** One process per workspace across both modes. Never remove a live process's lock. */
-export function acquireWorkspaceLock(workspaceRoot: string): () => void {
+export function acquireWorkspaceLock(workspaceRoot: string, localUpgradeToken?: string): () => void {
   fs.mkdirSync(path.join(workspaceRoot, "runtime"), { recursive: true });
+  const pending = path.join(workspaceRoot, "runtime/local-upgrade-pending.json");
+  if (fs.existsSync(pending)) {
+    const expected = JSON.parse(fs.readFileSync(pending, "utf8")).token;
+    if (typeof expected !== "string" || !/^[a-f0-9]{64}$/.test(expected) || expected !== localUpgradeToken)
+      throw new Error("LOCAL_UPGRADE_RECOVERY_REQUIRED");
+  }
   const file = path.join(workspaceRoot, "runtime", "instance.lock");
   const token = randomUUID();
   if (fs.existsSync(file)) {

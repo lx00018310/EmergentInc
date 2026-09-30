@@ -6,15 +6,6 @@ settings:
 
 importers:
 
-  supervisor:
-    dependencies:
-      '@emergentinc/persistence':
-        specifier: workspace:*
-        version: link:../packages/persistence
-      '@emergentinc/protocol':
-        specifier: workspace:*
-        version: link:../packages/protocol
-
   .:
     devDependencies:
       '@types/node':
@@ -29,6 +20,8 @@ importers:
       vitest:
         specifier: ^3.0.7
         version: 3.2.7(@types/node@22.20.3)(jsdom@25.0.1)(tsx@4.23.13)
+
+  apps/recovery: {}
 
   apps/server:
     dependencies:
@@ -213,6 +206,15 @@ importers:
       vitest:
         specifier: ^3.0.7
         version: 3.2.7(@types/node@22.20.3)(jsdom@25.0.1)(tsx@4.23.13)
+
+  supervisor:
+    dependencies:
+      '@emergentinc/persistence':
+        specifier: workspace:*
+        version: link:../packages/persistence
+      '@emergentinc/protocol':
+        specifier: workspace:*
+        version: link:../packages/protocol
 
 packages:
 

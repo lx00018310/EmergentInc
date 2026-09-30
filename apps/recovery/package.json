@@ -1,0 +1,7 @@
+{
+  "name": "@emergentinc/recovery",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": { "build": "tsc -b", "start": "node dist/main.js" }
+}

@@ -23,6 +23,7 @@ export interface EvolutionRuntime {
 }
 export function classifyChange(paths: string[]): "BODY" | "GENE" | "ROOT" {
   if (!paths.length) throw new Error("EMPTY_CHANGE");
-  if (paths.some(p => p.startsWith("supervisor/") || p === "scripts/generation-supervisor.mjs")) return "ROOT";
+  if (paths.some(p => p.startsWith("supervisor/") || p === "scripts/generation-supervisor.mjs" || p === "scripts/local-upgrade.mjs" ||
+    p === "apps/recovery" || p.startsWith("apps/recovery/"))) return "ROOT";
   return paths.every(p => /^workspace\/generations\/G\d{4,}\/body\/skills\/[a-zA-Z0-9_/-]+\.json$/.test(p)) ? "BODY" : "GENE";
 }
