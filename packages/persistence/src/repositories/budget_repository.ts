@@ -78,7 +78,7 @@ export class BudgetRepository {
     const stmt = this.db.prepare(`
       INSERT INTO global_budget (id, total_limit, total_spent, total_reserved, currency, updated_at)
       VALUES ('GLOBAL', ?, 0, 0, 'CNY', ?)
-      ON CONFLICT(id) DO UPDATE SET updated_at = excluded.updated_at
+      ON CONFLICT(id) DO NOTHING
     `);
     stmt.run(totalLimit, now);
     return this.getGlobalBudget()!;

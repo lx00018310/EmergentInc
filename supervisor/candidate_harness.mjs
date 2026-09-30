@@ -25,8 +25,9 @@ if (action === 'build') {
   const secret = randomBytes(32).toString('hex');
   const child = spawn(process.execPath, [join(directory, 'apps/server/dist/main.js')], { cwd: directory, shell: false,
     env: { ...cleanEnv, EMERGENTINC_WORKSPACE_ROOT: workspace, EMERGENTINC_RUNTIME_MODE: 'business',
-      EMERGENTINC_OWNER_SECRET: secret, EMERGENTINC_SECURE_COOKIES: '0', HOST: '127.0.0.1', PORT: String(port) }, stdio: 'ignore' });
-  let error; child.on('error', e => { error = e; });
+      EMERGENTINC_OWNER_SECRET: secret, EMERGENTINC_SECURE_COOKIES: '0', HOST: '127.0.0.1', PORT: String(port) }, stdio: ['ignore', 'ignore', 'pipe'] });
+  let error, diagnostics = ''; child.on('error', e => { error = e; });
+  child.stderr.on('data', chunk => { diagnostics = (diagnostics + String(chunk)).slice(-4096); });
   const base = `http://127.0.0.1:${port}`;
   const get = async (url, cookie) => {
     const response = await fetch(base + url, { headers: cookie ? { cookie } : {}, redirect: 'error', signal: AbortSignal.timeout(2000) });
@@ -35,7 +36,7 @@ if (action === 'build') {
   try {
     let live = false;
     for (let i = 0; i < 100; i++) {
-      if (error || child.exitCode !== null) throw new Error('CANDIDATE_SERVER_START_FAILED');
+      if (error || child.exitCode !== null) throw new Error('CANDIDATE_SERVER_START_FAILED: ' + diagnostics);
       try { live = (await get('/health/live')).alive === true; if (live) break; } catch { }
       await new Promise(resolve => setTimeout(resolve, 100));
     }
@@ -45,10 +46,14 @@ if (action === 'build') {
     const login = await fetch(base + '/api/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ secret }), signal: AbortSignal.timeout(2000) });
     const cookie = login.headers.get('set-cookie')?.split(';')[0]; if (login.status !== 200 || !cookie) throw new Error('CANDIDATE_OWNER_AUTH_FAILED');
     const business = await get('/api/business/overview', cookie), evolution = await get('/api/evolution/overview', cookie);
+    const people = await get('/api/qianji', cookie), world = await get('/api/world', cookie), run = await get('/api/run/status', cookie);
+    if (!Array.isArray(people.items) || !Array.isArray(world.pixels) || typeof run.running !== 'boolean') throw new Error('CANDIDATE_BODY_API_FAILED');
     if (!Array.isArray(business.plans) || business.modelConfigured !== false || evolution.current.generation_id !== generation ||
         !Array.isArray(evolution.skills) || !Array.isArray(evolution.memories) || !Array.isArray(evolution.proposals)) throw new Error('CANDIDATE_LIFE_SCHEMA_FAILED');
     if ((await fetch(base + '/api/business/intents', { method: 'POST', headers: { cookie, 'Content-Type': 'application/json' }, body: '{}' })).status !== 409)
       throw new Error('CANDIDATE_SIDE_EFFECT_GATE_FAILED');
+    if ((await fetch(base + '/api/run/start', { method: 'POST', headers: { cookie, 'Content-Type': 'application/json' }, body: '{}' })).status !== 409)
+      throw new Error('CANDIDATE_BODY_SIDE_EFFECT_GATE_FAILED');
   } finally {
     const exited = new Promise(resolve => child.once('exit', resolve));
     if (child.exitCode === null) { child.kill('SIGTERM'); const timeout = setTimeout(() => child.kill('SIGKILL'), 5000); await exited; clearTimeout(timeout); }

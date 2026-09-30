@@ -83,15 +83,33 @@ function context(workspace, projectRoot) {
     next: Number(db.prepare('SELECT COALESCE(MAX(generation_no),0)+1 n FROM generations').get().n),
     pending: Number(db.prepare("SELECT COUNT(*) n FROM business_operations WHERE state IN ('RESERVED','DISPATCHED','OUTCOME_UNKNOWN')").get().n),
     dream: Number(db.prepare("SELECT COUNT(*) n FROM dream_runs WHERE status IN ('RUNNING','OUTCOME_UNKNOWN')").get().n),
-    facts: Number(db.prepare('SELECT (SELECT COUNT(*) FROM life_events)+(SELECT COUNT(*) FROM business_events) n').get().n) }));
+    businessFacts: Number(db.prepare('SELECT COUNT(*) n FROM business_events').get().n),
+    administrativeFacts: db.prepare('SELECT generation_id,kind,payload,source_ref FROM life_events ORDER BY sequence').all().map(event => {
+      const payload = JSON.parse(event.payload);
+      const proposal = event.kind === 'gene_proposed' && payload.source === 'owner'
+        ? db.prepare('SELECT * FROM gene_proposals WHERE source_ref=?').get(event.source_ref.replace(/^proposal:/, ''))
+        : event.kind === 'owner_gene_decision' && payload.decision === 'APPROVED'
+          ? db.prepare('SELECT * FROM gene_proposals WHERE id=?').get(payload.proposalId) : undefined;
+      if (!proposal || proposal.source !== 'owner' || !['BORN', 'FAILED'].includes(proposal.state) || proposal.generation_id !== event.generation_id || !proposal.source_ref.startsWith('local-')) return false;
+      try {
+        const stored = read(path.join(directory(workspace, proposal.source_ref), 'record.json'));
+        const receipt = checked(workspace, proposal.source_ref, stored.candidateHash);
+        const target = db.prepare('SELECT * FROM generations WHERE id=?').get(receipt.c.target);
+        if (!target || receipt.c.base.id !== proposal.generation_id || receipt.c.geneHash !== target.gene_hash ||
+            receipt.record.proposalId !== proposal.id || receipt.record.ownerAuthorization?.candidateHash !== receipt.record.candidateHash) return false;
+        if (proposal.state === 'BORN') return receipt.record.state === 'COMMITTED' && ['ACTIVE', 'RETIRED'].includes(target.state) && proposal.candidate_hash === receipt.record.candidateHash;
+        return receipt.record.state === 'FAILED' && target.state === 'FAILED' &&
+          (proposal.candidate_hash === null || proposal.candidate_hash === receipt.record.candidateHash);
+      } catch { return false; }
+    }) }));
   const current = database(currentFile, db => ({ meta: db.prepare('SELECT * FROM current_meta').get(), events: Number(db.prepare('SELECT COUNT(*) n FROM current_events').get().n) }));
   const genome = readGenome(projectRoot);
   if (!state.active || state.active.id !== pointer.generation_id || current.meta.generation_id !== state.active.id ||
       state.active.gene_hash !== current.meta.gene_hash || current.meta.release_id !== state.active.release_id)
     throw new Error('LOCAL_UPGRADE_STORED_STATE_CONFLICT');
   if (state.pending || state.dream) throw new Error('LOCAL_UPGRADE_UNRESOLVED_EFFECTS');
-  // This first operator repair supports an idle initial generation only; never invent a Final Dream.
-  if (state.facts || current.events) throw new Error('LOCAL_UPGRADE_FINAL_DREAM_REQUIRED');
+  // Completed operator receipts already have durable structured evidence. Do not fake an LLM Dream.
+  if (state.businessFacts || current.events || state.administrativeFacts.some(value => !value)) throw new Error('LOCAL_UPGRADE_FINAL_DREAM_REQUIRED');
   if (genome.manifest.generation !== state.next) throw new Error('LOCAL_UPGRADE_MANIFEST_GENERATION_REQUIRED');
   if (genome.geneHash === state.active.gene_hash) throw new Error('LOCAL_UPGRADE_GENE_CHANGE_REQUIRED');
   const legacyFile = path.join(workspace, 'ledger/v9_core.sqlite3');
@@ -104,6 +122,7 @@ function context(workspace, projectRoot) {
     if (Number(pending)) throw new Error('LOCAL_UPGRADE_LEGACY_UNRESOLVED_EFFECTS');
   });
   return { base: state.active, target: `G${String(state.next).padStart(4, '0')}`, number: state.next, genome,
+    finalDream: state.administrativeFacts.length ? 'OWNER_MAINTENANCE_RECEIPTS_RETAINED' : 'NO_NEW_FACTS',
     fingerprints: { lineage: dataFingerprint(lineageFile), current: dataFingerprint(currentFile), legacy: dataFingerprint(legacyFile), live: treeHash(path.join(workspace, 'live')) } };
 }
 async function smoke(projectRoot, workspace, generation) {
@@ -137,6 +156,11 @@ export async function prepareLocalUpgrade(workspace, projectRoot, id, validate =
     const candidateWorkspace = path.join(dir, 'smoke');
     fs.mkdirSync(path.join(candidateWorkspace, 'lineage'), { recursive: true });
     fs.copyFileSync(path.join(dir, 'backup/lineage.sqlite3'), path.join(candidateWorkspace, 'lineage/lineage.sqlite3'));
+    if (snapshots.legacy) {
+      fs.mkdirSync(path.join(candidateWorkspace, 'ledger'), { recursive: true });
+      fs.copyFileSync(path.join(dir, 'backup/legacy.sqlite3'), path.join(candidateWorkspace, 'ledger/v9_core.sqlite3'));
+    }
+    if (fs.existsSync(path.join(dir, 'backup/files/live'))) copyTreeNew(path.join(dir, 'backup/files/live'), path.join(candidateWorkspace, 'live'));
     candidateLineage = new LineageStore(path.join(candidateWorkspace, 'lineage/lineage.sqlite3'));
     const generation = candidateLineage.createGeneration({ id: ctx.target, number: ctx.number, parentId: ctx.base.id, geneHash: ctx.genome.geneHash, releaseId: id });
     const staged = path.join(dir, 'prepared');
@@ -153,7 +177,7 @@ export async function prepareLocalUpgrade(workspace, projectRoot, id, validate =
       throw new Error('LOCAL_UPGRADE_INPUT_CHANGED');
     const candidate = { id, scope: 'windows_owner_maintenance', workspace, projectRoot, base: ctx.base, target: ctx.target, number: ctx.number,
       geneHash: ctx.genome.geneHash, bodyInterface: ctx.genome.manifest.body_interface_version, buildHash, snapshots,
-      fingerprints: ctx.fingerprints, preparedHash: treeHash(staged), finalDream: 'NO_NEW_FACTS', validation: 'COMPILED_CANDIDATE_SMOKE_PASSED' };
+      fingerprints: ctx.fingerprints, preparedHash: treeHash(staged), finalDream: ctx.finalDream, validation: 'COMPILED_CANDIDATE_SMOKE_PASSED' };
     const record = { candidate, candidateHash: hash(candidate), state: 'PREPARED', createdAt: Date.now() };
     save(path.join(dir, 'record.json'), record);
     return record;
@@ -267,6 +291,7 @@ export async function applyLocalUpgrade(workspace, id, exactHash, ownerReason, s
     lineage = new LineageStore(path.join(workspace, 'lineage/lineage.sqlite3'));
     const proposal = lineage.proposeGene(c.base.id, 'owner', { point: '应用 Owner 要求的本机源码升级', reason: ownerReason, effect: `进入 ${c.target}，原人物和运行记录保留` }, id);
     lineage.decideProposal(proposal.id, 'APPROVED'); record.proposalId = proposal.id;
+    lineage.db.prepare('UPDATE gene_proposals SET candidate_hash=?,target_generation_id=? WHERE id=?').run(exactHash, c.target, proposal.id);
     lineage.createGeneration({ id: c.target, number: c.number, parentId: c.base.id, geneHash: c.geneHash, releaseId: id });
     copyTreeNew(path.join(dir, 'prepared'), targetDirectory);
     writeGenerationPointer(workspace, c.target);

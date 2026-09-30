@@ -45,7 +45,7 @@ export function BusinessHome() {
   }
   const plans = (data?.plans ?? []) as Plan[];
   return <main className="business-shell">
-    <header><div><small>EMERGENTINC · PIXEL</small><h1>经营工作台</h1><p>给一个方向，让每一步都有结果可查。</p></div>
+    <header><div><small>EMERGENTINC · GENE</small><h1>经营工作台</h1><p>给一个方向，让每一步都有结果可查。</p><a href="/QIAN">返回千机阁</a></div>
       <button onClick={() => void act(async () => { await businessApi('logout', {}); window.location.reload(); })}>退出登录</button></header>
     <nav aria-label="主要导航">{[['home', '首页'], ['plans', '方案'], ['resources', '连接与资料'], ['evolution', '生命']].map(([id, label]) =>
       <button key={id} aria-current={tab === id ? 'page' : undefined} onClick={() => setTab(id!)}>{label}</button>)}</nav>

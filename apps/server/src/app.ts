@@ -70,7 +70,9 @@ export async function createServer(options: CreateServerOptions): Promise<Fastif
         if (!options.businessService) throw new Error("BUSINESS_SERVICE_REQUIRED");
         await registerBusinessRoutes(api, options.businessService, options.evolution?.memoryGate);
         if (options.evolution) await registerEvolutionRoutes(api, options.evolution);
-      } else {
+      }
+      // Product routes coexist: Gene workbench does not replace QIAN/YUAN's runtime.
+      if (mode === "legacy" || options.coreStore) {
         if (!options.coreStore || !options.worldService || !options.runService || !options.promptService || !options.toolRegistry) throw new Error("LEGACY_SERVICES_REQUIRED");
         await registerApiRoutes(api, options as ApiRoutesOptions);
       }

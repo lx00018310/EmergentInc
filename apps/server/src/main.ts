@@ -1,6 +1,7 @@
 import * as path from "node:path";
 import * as fs from "node:fs";
 import { createServer } from "./app.js";
+import { EvolutionServices } from "./routes/evolution_routes.js";
 import { CoreStore, BusinessStore } from "@emergentinc/persistence";
 import { BusinessService } from "./services/business_service.js";
 import { BusinessConnections } from "./services/business_connections.js";
@@ -63,6 +64,20 @@ async function bootstrap() {
   const releaseLock = acquireWorkspaceLock(workspaceRoot, process.env.EMERGENTINC_LOCAL_UPGRADE_TOKEN);
   process.once("exit", releaseLock);
 
+  let businessService: BusinessService | undefined;
+  let evolution: EvolutionServices | undefined;
+  let startLife: (() => void) | undefined;
+  let closeLife: (() => Promise<void>) | undefined;
+  let activeRun: RunService | undefined;
+  const stopRun = async () => {
+    activeRun?.requestStop();
+    const deadline = Date.now() + 30000;
+    while (activeRun?.getStatus().running) {
+      if (Date.now() > deadline) throw new Error("RUN_QUIESCE_TIMEOUT");
+      await new Promise(resolve => setTimeout(resolve, 25));
+    }
+  };
+
   if (config.mode === "business") {
     const { manifest, geneHash } = readGenome(projectRoot);
     const life = LifeContext.open(workspaceRoot, manifest, geneHash, process.env.EMERGENTINC_RELEASE_ID ?? "v22-initial",
@@ -87,22 +102,16 @@ async function bootstrap() {
     memoryGate.syncConfirmedPayments();
     service.attachLife(life, body);
     let quiesced = candidateMode || process.env.EMERGENTINC_START_PAUSED === "1" || store.generation(life.current.meta().generation_id).state !== "ACTIVE";
-    const evolution = { life, body, dream, memoryGate, quiesced: () => quiesced,
-      quiesce: async () => { quiesced = true; await body.idle(); await dream.stop(); await service.stop(); },
+    businessService = service;
+    evolution = { life, body, dream, memoryGate, quiesced: () => quiesced,
+      quiesce: async () => { quiesced = true; await stopRun(); await body.idle(); await dream.stop(); await service.stop(); },
       resume: async () => {
         if (candidateMode || store.activeGeneration()?.id !== life.current.meta().generation_id) throw new Error("GENERATION_NOT_ACTIVE");
         if (!quiesced) return;
         service.start({ exclusiveWorkspaceLockHeld: true }); dream.start(); quiesced = false;
       } };
-    const app = await createServer({ workspaceRoot, frontendDistDir, runtimeMode: "business", businessService: service,
-      evolution, ownerAuth: config.ownerAuth, trustLoopbackProxy: config.trustLoopbackProxy, development: process.env.EMERGENT_DEV === "1",
-      allowedOrigins: (process.env.EMERGENT_ALLOWED_ORIGINS || "").split(",").filter(Boolean) });
-    if (!quiesced) { service.start({ exclusiveWorkspaceLockHeld: true }); dream.start(); }
-    app.addHook("onClose", async () => { quiesced = true; await body.idle(); await dream.stop(); await service.stop(); life.close(); releaseLock(); });
-    for (const signal of ["SIGINT", "SIGTERM"] as const) process.once(signal, () => { void app.close(); });
-    await app.listen({ port: Number(process.env.PORT || 8765), host: config.host });
-    console.log(`[EmergentInc] business mode listening on port ${process.env.PORT || 8765}`);
-    return;
+    startLife = () => { if (!quiesced) { service.start({ exclusiveWorkspaceLockHeld: true }); dream.start(); } };
+    closeLife = async () => { quiesced = true; await body.idle(); await dream.stop(); await service.stop(); life.close(); };
   }
 
   // 确保工作区目录存在
@@ -135,16 +144,15 @@ async function bootstrap() {
     : { models: {} };
   const usageMeter = new UsageMeter(pricingConfig);
 
-  const isMockMode = process.argv.includes("--mock") || process.env.EMERGENT_MOCK_MODE === "1";
+  const isMockMode = !candidateMode && (process.argv.includes("--mock") || process.env.EMERGENT_MOCK_MODE === "1");
   const baseUrl = process.env.MCL_BASE_URL || "https://api.openai.com/v1";
-  const apiKey = process.env.MCL_API_KEY || "";
+  const apiKey = candidateMode ? "" : process.env.MCL_API_KEY || "";
   const modelName = process.env.MCL_DECISION_MODEL || process.env.MCL_MODEL || "gpt-4o-mini";
   const isModelConfigured = Boolean(apiKey && apiKey !== "mock-key" && !apiKey.includes("CONFIGURE_ME"));
 
   let provider: ModelProvider;
   if (isModelConfigured) {
-    const maskedKey = apiKey.length > 8 ? `${apiKey.substring(0, 6)}...${apiKey.slice(-4)}` : "***";
-    console.log(`[EmergentInc V10 Server] Model provider configured: model=${modelName}, baseUrl=${baseUrl}, apiKey=${maskedKey}`);
+    console.log(`[EmergentInc] Model provider configured: model=${modelName}`);
     provider = new OpenAICompatibleProvider({ baseUrl, apiKey });
   } else if (isMockMode) {
     console.warn("[EmergentInc V10 Server] RUNNING IN EXPLICIT --mock SANDBOX MODE");
@@ -209,6 +217,7 @@ async function bootstrap() {
     isMockMode,
     isModelConfigured,
   });
+  activeRun = runService;
   const ownerChatService = new OwnerChatService({
     projectRoot, workspaceRoot, store, worldService, runService,
     provider: isModelConfigured
@@ -218,7 +227,7 @@ async function bootstrap() {
   });
 
   const imageModel = process.env.GACHA_IMAGE_MODEL;
-  const imageKey = process.env.GACHA_IMAGE_API_KEY;
+  const imageKey = candidateMode ? undefined : process.env.GACHA_IMAGE_API_KEY;
   const imageProvider = imageModel && imageKey
     ? new OpenAICompatibleImageProvider(imageModel, process.env.GACHA_IMAGE_BASE_URL || "https://api.openai.com/v1", imageKey)
     : undefined;
@@ -227,7 +236,9 @@ async function bootstrap() {
   const app = await createServer({
     ownerAuth: config.ownerAuth,
     trustLoopbackProxy: config.trustLoopbackProxy,
-    runtimeMode: "legacy",
+    runtimeMode: config.mode === "business" ? "business" : "legacy",
+    businessService,
+    evolution,
     worldService,
     runService,
     promptService,
@@ -252,9 +263,10 @@ async function bootstrap() {
   const port = Number(process.env.PORT || 8765);
   const host = process.env.HOST || "127.0.0.1";
 
-  await app.listen({ port, host });
-  app.addHook("onClose", async () => { store.db.close(); releaseLock(); });
+  app.addHook("onClose", async () => { await stopRun(); await closeLife?.(); store.db.close(); releaseLock(); });
   for (const signal of ["SIGINT", "SIGTERM"] as const) process.once(signal, () => { void app.close(); });
+  await app.listen({ port, host });
+  startLife?.();
   console.log(`[EmergentInc V10 Server] Listening on http://${host}:${port}`);
 }
 

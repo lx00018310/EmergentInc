@@ -3,7 +3,7 @@ import * as fs from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { DatabaseSync } from 'node:sqlite';
-import { LineageStore, CurrentStore, readGenome, writeGenerationPointer } from '@emergentinc/persistence';
+import { CoreStore, LineageStore, CurrentStore, readGenome, writeGenerationPointer } from '@emergentinc/persistence';
 import { LifeContext } from '../src/services/life_context.js';
 import { acquireWorkspaceLock } from '../src/runtime_config.js';
 // @ts-expect-error Administrative command uses compiled production migration primitives.
@@ -116,5 +116,32 @@ describe('explicit Windows Owner upgrade (process adapter doubles)', () => {
     fs.mkdirSync(join(f.workspace, 'runtime'), { recursive: true });
     fs.writeFileSync(join(f.workspace, 'runtime/local-upgrade-pending.json'), '{}');
     expect(() => acquireWorkspaceLock(f.workspace)).toThrow('LOCAL_UPGRADE_RECOVERY_REQUIRED');
+  });
+  it('permits a further Owner upgrade when the only life events are verified completed maintenance receipts', async () => {
+    const f = fixture(), first = await prepareLocalUpgrade(f.workspace, f.project, 'local-first', f.validate);
+    await applyLocalUpgrade(f.workspace, 'local-first', first.candidateHash, 'Owner explicit first upgrade request', f.start);
+    const manifest = JSON.parse(fs.readFileSync(join(f.project, 'genome/manifest.json'), 'utf8'));
+    fs.writeFileSync(join(f.project, 'genome/manifest.json'), JSON.stringify({ ...manifest, generation: 3 }));
+    const second = await prepareLocalUpgrade(f.workspace, f.project, 'local-second', f.validate);
+    expect(second.candidate).toMatchObject({ target: 'G0003', finalDream: 'OWNER_MAINTENANCE_RECEIPTS_RETAINED' });
+    const receipt = join(f.workspace, 'runtime/local-upgrades/local-first/record.json');
+    const changed = JSON.parse(fs.readFileSync(receipt, 'utf8')); changed.candidateHash = 'tampered'; fs.writeFileSync(receipt, JSON.stringify(changed));
+    await expect(prepareLocalUpgrade(f.workspace, f.project, 'local-forged', f.validate)).rejects.toThrow('FINAL_DREAM_REQUIRED');
+  });
+  it('does not change existing budget amounts or timestamps when reopening Core storage', () => {
+    const f = fixture(), file = join(f.root, 'budget.sqlite3');
+    let core = new CoreStore(file);
+    core.db.prepare("UPDATE global_budget SET total_spent=123,total_reserved=45,updated_at=1 WHERE id='GLOBAL'").run();
+    const before = core.db.prepare("SELECT * FROM global_budget WHERE id='GLOBAL'").get();
+    core.db.close(); core = new CoreStore(file);
+    try { expect(core.db.prepare("SELECT * FROM global_budget WHERE id='GLOBAL'").get()).toEqual(before); } finally { core.db.close(); }
+  });
+  it('retains verifiable failed maintenance receipts while allowing the next explicit repair', async () => {
+    const f = fixture(), prepared = await prepareLocalUpgrade(f.workspace, f.project, 'local-failed-first', f.validate);
+    await expect(applyLocalUpgrade(f.workspace, 'local-failed-first', prepared.candidateHash, 'Owner explicit upgrade request', async () => { throw new Error('START_FAILED'); })).rejects.toThrow('START_FAILED');
+    const manifest = JSON.parse(fs.readFileSync(join(f.project, 'genome/manifest.json'), 'utf8'));
+    fs.writeFileSync(join(f.project, 'genome/manifest.json'), JSON.stringify({ ...manifest, generation: 3 }));
+    const next = await prepareLocalUpgrade(f.workspace, f.project, 'local-repaired', f.validate);
+    expect(next.candidate).toMatchObject({ target: 'G0003', finalDream: 'OWNER_MAINTENANCE_RECEIPTS_RETAINED' });
   });
 });
