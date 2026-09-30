@@ -1,0 +1,9 @@
+{
+  "name": "@emergentinc/evolution-supervisor",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@emergentinc/persistence": "workspace:*",
+    "@emergentinc/protocol": "workspace:*"
+  }
+}

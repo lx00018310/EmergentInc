@@ -1,0 +1,25 @@
+[Unit]
+Description=EmergentInc isolated Body JSON executor
+After=network.target
+
+[Service]
+Type=simple
+User=emergentinc-sandbox
+Group=emergentinc
+EnvironmentFile=/etc/emergentinc/body-sandbox-environment
+Environment=EMERGENTINC_BODY_SANDBOX_SOCKET=/run/emergentinc-body/body.sock
+Environment=EMERGENTINC_BODY_WORKER_STATE=/var/lib/emergentinc-body
+ExecStart=/usr/bin/node /opt/emergentinc-body/scripts/body-sandbox-worker.mjs
+RuntimeDirectory=emergentinc-body
+RuntimeDirectoryMode=0750
+StateDirectory=emergentinc-body
+StateDirectoryMode=0700
+Restart=on-failure
+RestartSec=5
+UMask=0077
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/run/emergentinc-body /var/lib/emergentinc-body
+
+[Install]
+WantedBy=multi-user.target

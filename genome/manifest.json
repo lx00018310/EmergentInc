@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "generation": 1,
+  "body_interface_version": "1",
+  "protected_paths": [
+    "genome/**", "apps/server/**", "packages/**", "frontend/**", "supervisor/**",
+    "scripts/**", "deploy/linux/**", "package.json", "pnpm-lock.yaml", "pnpm-workspace.yaml",
+    "tsconfig.json", "tsconfig.base.json", "vitest.config.ts", "vitest.workspace.ts"
+  ],
+  "capability_contracts": {
+    "body_skill@1": {
+      "input": "JSON", "output": "JSON", "network": false, "host_files": false,
+      "credentials": false, "child_process": false, "package_install": false,
+      "max_source_bytes": 65536, "max_json_bytes": 65536
+    },
+    "business": ["data_report@1", "review_feedback@1", "github_issue_create@1"]
+  }
+}

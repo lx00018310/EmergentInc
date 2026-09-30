@@ -1,12 +1,13 @@
 import { randomUUID } from "node:crypto";
 import { FastifyInstance } from "fastify";
 import { BusinessService } from "../services/business_service.js";
+import { MemoryGate } from "../services/memory_gate.js";
 
-export async function registerBusinessRoutes(app: FastifyInstance, service: BusinessService) {
+export async function registerBusinessRoutes(app: FastifyInstance, service: BusinessService, memoryGate?: MemoryGate) {
   const store = service.store;
   app.setErrorHandler((error, _request, reply) => {
     const code = error instanceof Error ? error.message : "BUSINESS_OPERATION_FAILED";
-    const status = /NOT_FOUND/.test(code) ? 404 : /INVALID_|_REQUIRED|PRECISION_UNSUPPORTED/.test(code) ? 400 :
+    const status = /SECURITY_BOUNDARY|EVENT_DENIED/.test(code) ? 403 : /NOT_FOUND/.test(code) ? 404 : /INVALID_|_REQUIRED|PRECISION_UNSUPPORTED/.test(code) ? 400 :
       /CONFLICT|EXHAUSTED|EXPIRED|INACTIVE|REVOKED|NOT_OPEN|NOT_APPROVABLE|NOT_RUNNING|NOT_RESUMABLE|ALREADY_RUNNING|REQUIRES_REVIEW|IMMUTABLE/.test(code) ? 409 : 500;
     return reply.status(status).send({ detail: status === 500 && !/^[A-Z_]+$/.test(code) ? "BUSINESS_OPERATION_FAILED" : code });
   });
@@ -31,7 +32,9 @@ export async function registerBusinessRoutes(app: FastifyInstance, service: Busi
     return store.approve(req.params.id, b.revision, b.hash);
   });
   for (const action of ["pause", "resume", "revoke"] as const) {
-    app.post<{ Params: { id: string } }>(`/business/plans/:id/${action}`, async req => store.control(req.params.id, action));
+    app.post<{ Params: { id: string } }>(`/business/plans/:id/${action}`, async req => {
+      const result = store.control(req.params.id, action); service.syncLifePlan(req.params.id); return result;
+    });
   }
   app.post("/business/datasets", async req => {
     const b = req.body as any;
@@ -50,7 +53,11 @@ export async function registerBusinessRoutes(app: FastifyInstance, service: Busi
   app.post<{ Params: { id: string } }>("/business/tasks/:id/reconcile", async req => service.reconcileTask(req.params.id));
   app.post("/business/orders", async req => store.evidence.createOrder(req.body as any));
   app.post<{ Params: { id: string } }>("/business/orders/:id/status", async req => store.evidence.updateOrder(req.params.id, req.body as any));
-  app.post("/business/payment-evidence", async req => store.evidence.recordPayment(req.body as any));
+  app.post("/business/payment-evidence", async req => {
+    const payment = store.evidence.recordPayment(req.body as any);
+    if (payment) memoryGate?.confirmedPayment(String(payment.id));
+    return payment;
+  });
   app.post<{ Params: { id: string } }>("/business/tasks/:id/retry", async req => {
     const b = req.body as any; store.retryPureTask(req.params.id, b?.note); return { ok: true };
   });
@@ -69,6 +76,7 @@ export async function registerBusinessRoutes(app: FastifyInstance, service: Busi
     if (!op || !["draft", "review"].includes(op.scope) || op.state !== "OUTCOME_UNKNOWN" || !Number.isSafeInteger(b?.amountMicros) || b.amountMicros < 0 ||
         typeof b.evidence !== "string" || !b.evidence.trim() || b.evidence.length > 4000) throw new Error("BILL_EVIDENCE_REQUIRED");
     store.settle(req.params.id, b.amountMicros, null, { source: "owner_confirmed", evidence: b.evidence });
+    if (["dream", "body"].includes(String(op.purpose))) return { ok: true, notice: "生命模型费用已核实；可从生命页面重试原请求，使用已保存响应。" };
     if (op.scope === "review") { service.restoreReview(req.params.id.slice(5)); return { ok: true }; }
     if (op.response) {
       try { return { ok: true, plan: service.restoreProposal(req.params.id) }; }

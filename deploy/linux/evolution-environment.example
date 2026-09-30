@@ -1,0 +1,17 @@
+# Trusted root-only config. Copy this variable to /etc/emergentinc/evolution-environment (0600).
+EMERGENTINC_EVOLUTION_CONFIG=/etc/emergentinc/evolution.json
+# /etc/emergentinc/evolution.json must also be root-owned 0600; example:
+# {
+#   "stateDirectory": "/var/lib/emergentinc-evolution",
+#   "trustedRoot": "/opt/emergentinc-supervisor",
+#   "releases": "/srv/emergentinc/releases",
+#   "currentLink": "/srv/emergentinc/current",
+#   "activePointer": "/srv/emergentinc/active-generation.json",
+#   "workspace": "/var/lib/emergentinc/workspace",
+#   "unit": "emergentinc.service",
+#   "appUrl": "http://127.0.0.1:8765",
+#   "ownerSecret": "REPLACE_WITH_SAME_OWNER_SECRET",
+#   "validatorUser": "emergentinc-validator",
+#   "pnpmPath": "/usr/local/bin/pnpm",
+#   "pnpmStore": "/var/cache/emergentinc-pnpm"
+# }

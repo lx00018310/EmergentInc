@@ -13,9 +13,9 @@ export interface BusinessTask {
 export class BusinessStore {
   readonly db: SqliteDatabase;
   readonly evidence: BusinessEvidence;
-  constructor(filename = ":memory:") {
+  constructor(filename = ":memory:", initializeSchema: (db: SqliteDatabase) => void = migrateBusiness) {
     this.db = new SqliteDatabase(filename);
-    try { migrateBusiness(this.db); } catch (e) { this.db.close(); throw e; }
+    try { initializeSchema(this.db); } catch (e) { this.db.close(); throw e; }
     this.evidence = new BusinessEvidence(this.db);
   }
   close() { this.db.close(); }
@@ -493,7 +493,7 @@ export class BusinessStore {
       requests: this.db.prepare("SELECT * FROM business_requests WHERE state='OPEN'").all(),
       unknownOperations: this.db.prepare("SELECT id,plan_id,purpose,reserved_micros,created_at FROM business_operations WHERE state='OUTCOME_UNKNOWN' AND scope IN ('draft','review')").all(),
       proposalProblems: this.db.prepare(`SELECT o.id,o.state,o.created_at FROM business_operations o
-        WHERE o.scope='draft' AND o.state IN ('SETTLED','NOT_SENT')
+        WHERE o.scope='draft' AND o.purpose='plan_proposal' AND o.state IN ('SETTLED','NOT_SENT')
         AND NOT EXISTS (SELECT 1 FROM business_events e WHERE e.id='proposal:' || o.id)
         ORDER BY o.created_at DESC LIMIT 20`).all(),
       tasks: this.db.prepare("SELECT * FROM business_tasks ORDER BY CASE WHEN state IN ('OUTCOME_UNKNOWN','FAILED') THEN 0 ELSE 1 END,next_run_at DESC LIMIT 100").all(),

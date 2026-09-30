@@ -3,6 +3,7 @@ import './business.css';
 import { readTable } from './read_table';
 import { BusinessOutcomes } from './BusinessOutcomes';
 import { StrategyHistory } from './StrategyHistory';
+import { EvolutionPanel } from './EvolutionPanel';
 
 import { businessApi, businessDecision, explanations } from './business_api';
 const money = (micros: number) => `¥${(micros / 1000000).toFixed(4)}`;
@@ -46,7 +47,7 @@ export function BusinessHome() {
   return <main className="business-shell">
     <header><div><small>EMERGENTINC · PIXEL</small><h1>经营工作台</h1><p>给一个方向，让每一步都有结果可查。</p></div>
       <button onClick={() => void act(async () => { await businessApi('logout', {}); window.location.reload(); })}>退出登录</button></header>
-    <nav aria-label="主要导航">{[['home', '首页'], ['plans', '方案'], ['resources', '连接与资料']].map(([id, label]) =>
+    <nav aria-label="主要导航">{[['home', '首页'], ['plans', '方案'], ['resources', '连接与资料'], ['evolution', '生命']].map(([id, label]) =>
       <button key={id} aria-current={tab === id ? 'page' : undefined} onClick={() => setTab(id!)}>{label}</button>)}</nav>
     {error && <p className="business-error" role="alert">{error}</p>}
     {!data ? <p>正在读取经营记录…</p> : <>
@@ -85,6 +86,7 @@ export function BusinessHome() {
         </div>) : <p>还没有已授权任务。批准方案后，这里会显示结果。</p>}</section>
         <BusinessOutcomes data={data} busy={busy} act={act} />
       </>}
+      {tab === 'evolution' && <EvolutionPanel />}
       {tab === 'plans' && <>{!plans.length && <section><p>先在首页输入方向，Pixel 会提出可批准的方案。</p></section>}{plans.map(view => <section key={view.id}>
         <div className="business-title"><h2>{view.plan.title}</h2><span>{states[view.state]} · 第 {view.revision} 版</span></div>
         <p>{view.plan.objective}</p><dl><dt>服务对象</dt><dd>{view.plan.audience}</dd><dt>待验证假设</dt><dd>{view.plan.hypothesis}</dd>

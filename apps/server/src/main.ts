@@ -5,6 +5,12 @@ import { CoreStore, BusinessStore } from "@emergentinc/persistence";
 import { BusinessService } from "./services/business_service.js";
 import { BusinessConnections } from "./services/business_connections.js";
 import { runtimeConfig, acquireWorkspaceLock } from "./runtime_config.js";
+import { LifeContext, readGenome, generationDirectory } from "./services/life_context.js";
+import { DreamService } from "./services/dream_service.js";
+import { MemoryGate } from "./services/memory_gate.js";
+import { BodyGrowthService } from "./services/body_growth_service.js";
+import { BodySkillSupervisor } from "./services/automation_supervisor.js";
+import { BodySandboxClient } from "@emergentinc/tools";
 import {
   ToolRegistry,
   registerAllBuiltinTools,
@@ -29,7 +35,8 @@ async function bootstrap() {
 
   // 自动安全加载根目录 .env 环境变量配置 (如果存在)
   const envPath = path.resolve(projectRoot, ".env");
-  if (fs.existsSync(envPath)) {
+  const candidateMode = process.env.EMERGENTINC_CANDIDATE_MODE === "1";
+  if (!candidateMode && fs.existsSync(envPath)) {
     try {
       const lines = fs.readFileSync(envPath, "utf-8").split("\n");
       for (const line of lines) {
@@ -57,21 +64,41 @@ async function bootstrap() {
   process.once("exit", releaseLock);
 
   if (config.mode === "business") {
-    const store = new BusinessStore(path.join(ledgerDir, "business.sqlite3"));
+    const { manifest, geneHash } = readGenome(projectRoot);
+    const life = LifeContext.open(workspaceRoot, manifest, geneHash, process.env.EMERGENTINC_RELEASE_ID ?? "v22-initial",
+      candidateMode ? undefined : process.env.EMERGENTINC_ACTIVE_GENERATION_FILE);
+    const store = life.lineage;
     const model = process.env.MCL_DECISION_MODEL || process.env.MCL_MODEL;
-    const apiKey = process.env.MCL_API_KEY;
+    const apiKey = candidateMode ? undefined : process.env.MCL_API_KEY;
     const pricingFile = path.join(privateDir, "business_model_pricing.json");
-    const prices = fs.existsSync(pricingFile) ? JSON.parse(fs.readFileSync(pricingFile, "utf8")) : { models: {} };
+    const prices = !candidateMode && fs.existsSync(pricingFile) ? JSON.parse(fs.readFileSync(pricingFile, "utf8")) : { models: {} };
     // Business calls require a named model's explicit currency and price, never a default estimate.
     const service = new BusinessService(store, apiKey && model ? new OpenAICompatibleProvider({
       baseUrl: process.env.MCL_BASE_URL || "https://api.openai.com/v1", apiKey, timeoutMs: 120000,
     }) : undefined, model, model ? prices.models?.[model] : undefined,
-      new BusinessConnections(store, path.join(privateDir, "business-connections")));
+      candidateMode ? undefined : new BusinessConnections(store, path.join(privateDir, "business-connections")));
+    const lifeModel = candidateMode ? undefined : service.lifeModel.bind(service);
+    const runner = !candidateMode && process.env.EMERGENTINC_BODY_SANDBOX_SOCKET ? new BodySandboxClient(process.env.EMERGENTINC_BODY_SANDBOX_SOCKET) : undefined;
+    const bodySupervisor = runner ? new BodySkillSupervisor(life.current, store, runner,
+      path.join(generationDirectory(workspaceRoot, life.current.meta().generation_id), "body/skills")) : undefined;
+    const body = new BodyGrowthService(life, bodySupervisor, lifeModel);
+    const dream = new DreamService(life, lifeModel, process.env.EMERGENTINC_DREAM_TIME, process.env.EMERGENTINC_DREAM_TIMEZONE);
+    const memoryGate = new MemoryGate(store, () => life.current.meta().generation_id);
+    memoryGate.syncConfirmedPayments();
+    service.attachLife(life, body);
+    let quiesced = candidateMode || store.generation(life.current.meta().generation_id).state !== "ACTIVE";
+    const evolution = { life, body, dream, memoryGate, quiesced: () => quiesced,
+      quiesce: async () => { quiesced = true; await body.idle(); await dream.stop(); await service.stop(); },
+      resume: async () => {
+        if (candidateMode || store.activeGeneration()?.id !== life.current.meta().generation_id) throw new Error("GENERATION_NOT_ACTIVE");
+        if (!quiesced) return;
+        service.start({ exclusiveWorkspaceLockHeld: true }); dream.start(); quiesced = false;
+      } };
     const app = await createServer({ workspaceRoot, frontendDistDir, runtimeMode: "business", businessService: service,
-      ownerAuth: config.ownerAuth, trustLoopbackProxy: config.trustLoopbackProxy, development: process.env.EMERGENT_DEV === "1",
+      evolution, ownerAuth: config.ownerAuth, trustLoopbackProxy: config.trustLoopbackProxy, development: process.env.EMERGENT_DEV === "1",
       allowedOrigins: (process.env.EMERGENT_ALLOWED_ORIGINS || "").split(",").filter(Boolean) });
-    service.start({ exclusiveWorkspaceLockHeld: true });
-    app.addHook("onClose", async () => { await service.stop(); store.close(); releaseLock(); });
+    if (!quiesced) { service.start({ exclusiveWorkspaceLockHeld: true }); dream.start(); }
+    app.addHook("onClose", async () => { quiesced = true; await body.idle(); await dream.stop(); await service.stop(); life.close(); releaseLock(); });
     for (const signal of ["SIGINT", "SIGTERM"] as const) process.once(signal, () => { void app.close(); });
     await app.listen({ port: Number(process.env.PORT || 8765), host: config.host });
     console.log(`[EmergentInc] business mode listening on port ${process.env.PORT || 8765}`);

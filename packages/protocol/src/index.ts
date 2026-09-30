@@ -14,3 +14,4 @@ export * from "./types/world_event.js";
 export * from "./types/execution.js";
 export * from "./types/business.js";
 export * from "./types/business_schedule.js";
+export * from "./types/life.js";

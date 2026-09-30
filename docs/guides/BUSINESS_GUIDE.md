@@ -1,6 +1,6 @@
-# 方案授权经营入口（实施中）
+# 方案授权经营入口
 
-当前落地路径：Owner 登录 → 授权拟定费用 → 上传资料 / 连接账号 → Pixel 拟定方案 → 批准具体版本 → 后台执行 → 记录实际结果 → 按已批时间复盘 → 再次审批或恢复策略。支持资料报告、反馈复盘和限定仓库的 GitHub 议题；订单与收款凭据由 Owner 手工确认。工程进度与未验收项见 [V21 实施记录](../EmergentInc_V21_实施记录.md)。协作、自修改及自动发布尚未实现。
+当前落地路径：Owner 登录 → 授权拟定费用 → 上传资料 / 连接账号 → Pixel 拟定方案 → 批准具体版本 → 后台执行 → 记录实际结果 → 按已批时间复盘 → 再次审批或恢复策略。支持资料报告、反馈复盘和限定仓库的 GitHub 议题；订单与收款凭据由 Owner 手工确认。V22 新增双库生命循环、受限 Body 候选、Memory/Dream 与可信切代模板；工程进度、显式离线迁移及 Linux 待验收项见 [V22 实施记录](../EmergentInc_V22_实施记录.md)。已有 V21 数据未迁移时，business 启动会返回 `V21_EXPLICIT_MIGRATION_REQUIRED`。
 
 ## Windows 开发与体验
 
@@ -93,8 +93,8 @@ Owner 在首页确认实例累计上限、其中的拟定额度、累计调用�
 ## 备份、恢复与模式回退
 
 ```powershell
-node scripts/business-maintenance.mjs inspect 'D:\EmergentIncData\ledger\business.sqlite3'
-node scripts/business-maintenance.mjs backup 'D:\EmergentIncData\ledger\business.sqlite3' 'D:\EmergentIncBackup\business-20260929.sqlite3'
+node scripts/business-maintenance.mjs inspect 'D:\EmergentIncData\lineage\lineage.sqlite3'
+node scripts/business-maintenance.mjs backup 'D:\EmergentIncData\lineage\lineage.sqlite3' 'D:\EmergentIncBackup\lineage-20260930.sqlite3'
 ```
 
 使用 SQLite online backup API，备份包含已提交 WAL。目标必须不存在；生成文件的完整性校验、表计数和 SHA-256 清单一起保存。私有配置与凭据另行用受控渠道备份，不能发进聊天或 Git。
@@ -109,4 +109,4 @@ node scripts/business-maintenance.mjs backup 'D:\EmergentIncData\ledger\business
 
 启动前完成构建，安装 unit 后执行 `systemctl daemon-reload` 和 `systemctl enable --now emergentinc`。检查 `/health/live` 与 `/health/ready`；ready 仅表示本进程/调度器能运行，不表示模型已连接或已获经营权限。重启后需重新登录；任务和费用持久化。进程锁碰到仍存活的 PID 会拒绝第二个实例。旧版本不认识进程锁，切换前必须人工停止旧服务。
 
-经营入口仍不允许运行生成代码或自动切换应用 release。P5 已提供独立的受限执行器、可信候选验证和自动化程序版本管理 CLI，尚未接入本入口，且没有 Linux 实机验收；见 [隔离与版本管理说明](../../deploy/linux/SANDBOX.md)。不能将 systemd 自动拉起进程当作代码升级回退验收。
+V22 的 Body 候选只能通过独立 rootless worker 运行纯 JSON 函数；应用进程不持有 Docker socket。Gene Release 切换由已安装的可信 Supervisor 完成，网页只批准提案方向。Linux 实机验收待做，安装边界见 [V22 实施记录](../EmergentInc_V22_实施记录.md)。V21 自动化管理员通道继续保留，见 [隔离与版本管理说明](../../deploy/linux/SANDBOX.md)。

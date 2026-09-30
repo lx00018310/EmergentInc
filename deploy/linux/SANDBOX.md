@@ -1,6 +1,6 @@
 # 隔离执行器与候选验证（P5 实施中）
 
-`RootlessSandbox`、候选验证器与 `scripts/automation-supervisor.mjs` 构成可信管理员使用的独立自动化程序管理通道。已有候选记录、验证、具体 hash 审批、激活、运行失败回退；尚未接入 Pixel 生成、业务任务派发和网页审批，也不负责整个应用版本/内核的更新，不能按完整自修改能力交付。
+`RootlessSandbox`、候选验证器与 `scripts/automation-supervisor.mjs` 构成 V21 可信管理员自动化通道，其准确 hash 审批保持不变。V22 新增独立的自主 Body 路径和 rootless worker，并增加 Gene Supervisor 安装模板；说明见 [V22 实施记录](../../docs/EmergentInc_V22_实施记录.md)。本文的 V21 通道仍不负责整个应用 Release，所有 Linux 真实隔离与切代尚待实机验收。
 
 ## 环境要求
 

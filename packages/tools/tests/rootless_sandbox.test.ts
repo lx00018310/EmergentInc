@@ -5,18 +5,31 @@ const config = { dockerPath: "/usr/bin/docker", socket: "unix:///run/user/1001/d
 function fixture() {
   const info = { OSType: "linux", SecurityOptions: ["name=rootless", "name=seccomp,profile=builtin"],
     CgroupVersion: "2", CgroupDriver: "systemd", MemoryLimit: true, SwapLimit: true, PidsLimit: true, CpuCfsQuota: true };
-  const container = { State: { Running: false }, Config: { Image: config.image, User: "65534:65534" }, Mounts: [], HostConfig: {
+  const container = { State: { Running: false }, Config: { Image: config.image, User: "65534:65534", Cmd: [] as string[], Entrypoint: ["/usr/local/bin/node"] }, Mounts: [], HostConfig: {
     Privileged: false, ReadonlyRootfs: true, NetworkMode: "none", Memory: 268435456, MemorySwap: 268435456,
     NanoCpus: 500000000, PidsLimit: 32, CapAdd: [], CapDrop: ["ALL"], SecurityOpt: ["no-new-privileges=true"], Binds: [], Devices: [],
   } };
   const executor = vi.fn(async (c: SandboxCommand) => {
     const action = c.args[2];
+    if (action === "create") container.Config.Cmd = c.args.slice(c.args.indexOf(config.image) + 1);
     return { code: 0, stderr: "", stdout: action === "info" ? JSON.stringify(info) : action === "create" ? "b".repeat(64) :
       action === "inspect" ? JSON.stringify(container) : action === "start" ? '{"result":{"rows":2}}' : "" };
   });
   return { info, container, executor, runner: new RootlessSandbox(config, executor, { platform: "linux", uid: 1001 }) };
 }
 describe("rootless isolation boundary (command contract tests, not Linux acceptance)", () => {
+  it("adds Node permissions to Body execution without granting child processes or file access", async () => {
+    const { runner, executor } = fixture(); await runner.runBody("export default x=>x", {});
+    const args = executor.mock.calls.find(([c]) => c.args[2] === "create")![0].args;
+    expect(args).toContain("--permission"); expect(args.some(a => a.startsWith("--allow-"))).toBe(false);
+  });
+  it("refuses Body execution when the daemon removes the Node permission flag", async () => {
+    const { runner, executor, container } = fixture(), original = executor.getMockImplementation()!;
+    executor.mockImplementation(async c => { if (c.args[2] === "inspect") container.Config.Cmd = ["-e", "unrestricted"];
+      return original(c); });
+    await expect(runner.runBody("export default x=>x", {})).rejects.toThrow("SANDBOX_POLICY_MISMATCH");
+    expect(executor.mock.calls.some(([c]) => c.args[2] === "start")).toBe(false);
+  });
   it("refuses host execution on Windows, root, mutable images or a different daemon", async () => {
     const { executor } = fixture();
     await expect(new RootlessSandbox(config, executor, { platform: "win32", uid: -1 }).run("export default x=>x", {})).rejects.toThrow("ROOTLESS_LINUX_REQUIRED");

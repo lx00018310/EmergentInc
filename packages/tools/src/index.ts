@@ -11,3 +11,5 @@ export { requestPublicImage } from "./builtin/public_http.js";
 export * from "./business/github_issues.js";
 export * from "./business/rootless_sandbox.js";
 export * from "./business/automation_validation.js";
+export * from "./business/body_validation.js";
+export * from "./business/body_sandbox_client.js";

@@ -1,0 +1,18 @@
+[Unit]
+Description=EmergentInc trusted interrupted-generation recovery
+After=local-fs.target emergentinc.service
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+EnvironmentFile=/etc/emergentinc/evolution-environment
+ExecStart=/usr/bin/node /opt/emergentinc-supervisor/generation-supervisor.mjs recover
+RemainAfterExit=yes
+UMask=0077
+TimeoutStartSec=300
+NoNewPrivileges=true
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target

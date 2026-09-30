@@ -86,7 +86,8 @@ export class RootlessSandbox {
     this.cleanupRequired = false;
     return { removed: names.length };
   }
-  async run(source: string, input: unknown): Promise<unknown> {
+  async runBody(source: string, input: unknown): Promise<unknown> { return this.run(source, input, true); }
+  async run(source: string, input: unknown, body = false): Promise<unknown> {
     this.checkHost();
     if (this.cleanupRequired) throw new Error("SANDBOX_CLEANUP_REQUIRES_REVIEW");
     if (typeof source !== "string" || !source.trim() || Buffer.byteLength(source) > 65536) throw new Error("INVALID_AUTOMATION_SOURCE");
@@ -96,6 +97,7 @@ export class RootlessSandbox {
     this.busy = true;
     const name = `emergentinc-sandbox-${randomUUID()}`;
     let created = false;
+    const nodeArgs = [...(body ? ["--permission"] : []), "--input-type=module", "-e", loader];
     try {
       await this.probe();
       // --pull=never and the digest prevent an implicit install or a mutable image tag.
@@ -106,11 +108,13 @@ export class RootlessSandbox {
         "--ulimit=nofile=64:64", "--ulimit=core=0:0", "--log-driver=none", "--restart=no", "--init",
         "--tmpfs=/tmp:rw,noexec,nosuid,nodev,size=16m,mode=1777", "--workdir=/tmp",
         "--env=NODE_OPTIONS=", "--env=NODE_PATH=", "--entrypoint=/usr/local/bin/node", "--interactive",
-        this.config.image, "--input-type=module", "-e", loader]);
+        this.config.image, ...nodeArgs]);
       if (result.code !== 0 || !/^[a-f0-9]{64}$/.test(result.stdout.trim())) throw new Error("SANDBOX_CREATE_FAILED");
       const receipt = await this.cli(["inspect", "--format", "{{json .}}", name]);
       if (receipt.code !== 0) throw new Error("SANDBOX_INSPECTION_FAILED");
       const container = JSON.parse(receipt.stdout), limits = container.HostConfig, config = container.Config;
+      if (body && (JSON.stringify(config?.Cmd) !== JSON.stringify(nodeArgs) ||
+          JSON.stringify(config?.Entrypoint) !== JSON.stringify(["/usr/local/bin/node"]))) throw new Error("SANDBOX_POLICY_MISMATCH");
       if (container.State?.Running || !limits || !config || !Array.isArray(container.Mounts) ||
           container.Mounts?.some((m: any) => m.Type !== "tmpfs" || m.Destination !== "/tmp" || m.Source) || config.Image !== this.config.image ||
           config.User !== "65534:65534" || limits.Privileged || !limits.ReadonlyRootfs || limits.NetworkMode !== "none" ||

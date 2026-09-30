@@ -6,6 +6,15 @@ settings:
 
 importers:
 
+  supervisor:
+    dependencies:
+      '@emergentinc/persistence':
+        specifier: workspace:*
+        version: link:../packages/persistence
+      '@emergentinc/protocol':
+        specifier: workspace:*
+        version: link:../packages/protocol
+
   .:
     devDependencies:
       '@types/node':

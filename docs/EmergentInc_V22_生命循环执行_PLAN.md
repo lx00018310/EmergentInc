@@ -1,2145 +1,580 @@
-# EmergentInc V22（V2.2）执行 Plan
-## 目标：让系统第一次真正“活过一代”
+# EmergentInc V22（V2.2）生命循环执行 Plan · 修订版
 
-> 仓库：`lx00018310/EmergentInc`  
-> V22 基线提交：`f69c1c026b56b4f28ce7eb809b9cc628650a3291`（`V21 rebuild`）  
-> 执行者：本地 AI / Codex  
-> 原则：**最小更改、复用 V21、先跑通生命循环，不提前实现终局自治。**
+目标：保留多 Pixel 自主运行与协作，让系统能自主修改 Body 代码、积累经验、生成 Gene 候选，并在人批准后把经过验证的能力遗传给下一代。
 
----
+修订日期：2026-09-30。状态：**待实施的整改计划，不是完成记录。**
 
-# 0. V22 的核心定义
+## 0. 执行依据、结论与范围
 
-本版本先统一术语，后续代码必须按这里实现，不要自行扩展定义。
+### 0.1 本文是唯一有效的 V22 整改执行计划
 
-## 0.1 一代（Generation）
+依据：
 
-**只有基因发生变化，才产生新一代。**
+- 原始计划提交：`21e26351a61e97dceac37a3e949179de0bd70a4a`。该提交只新增本计划，没有修改运行代码；其代码基线是 `f69c1c0`。
+- 已有本地四阶段实现：`1303a4a458ce58fc484fcb06a31b01f3235f807b`，以及工作区中尚未提交的 Review 修复。
+- 对话 [基因在自进化过程中的参考](chatgpt-conversation://6abc4015-df90-83e8-bc9d-053f7355a65b) 当前可读取的最后五轮与本任务中 Owner 的明确确认。接口未提供完整早期对话，不宣称已核对全部原文。
+- 最新确认：Body 可以自主修改自身前端、后端业务逻辑、工具/函数/流程；保留多 Pixel 自主 Run 与协作核心；系统生成、验证 Gene 候选，人负责审批。
 
-以下两种情况会产生下一代：
+原版保留了“一代由 Gene 变化定义、部分迁移、记忆不回滚、人批准基因”的方向，但把实现范围收窄成纯 JSON Skill、人工编写 Gene Patch，未证明能力真正进入 Gene。后续 V22R 又把界面限制成固定组件的 JSON 描述，并提出用经营任务替代主动 Run，进一步偏离目标。
 
-1. Dream / Pixel 提出的基因变异提案，经 Owner 批准并实际形成基因变化。
-2. Owner 主动要求修改基因，并实际形成基因变化。
+本修订替代原版中相冲突的限制，也替代 [V22R 计划](EmergentInc_V22R_Body_Gene_统一入口与自我迭代整改_PLAN.md) 的执行地位。原版可从 `21e2635` 追溯，不另保留一份仍可被误当成现行要求的计划。
 
-身体层无论增加多少技能、函数、工具，都仍属于同一代。
+### 0.2 已确认的产品与生命规则
 
-因此：
+| 决策 | 本次执行口径 |
+| --- | --- |
+| 正常产品 | Body 的 `/QIAN`、`/YUAN`；保留人物、元胞、自主运行、沟通与协作 |
+| 恢复及审批入口 | 独立 `/GENE`；健康时 Owner 可手动访问，日常 Body 导航不列出；Body 前端或后端崩溃后仍可登录和恢复 |
+| Body 自主范围 | 在既有 Gene 权限、接口、依赖环境内修改真实前端组件、后端业务模块、工具、函数和流程源码，生成、测试、激活、回退 |
+| Gene 候选生成 | Owner 批准方向后，由系统自动生成和验证代码；Owner 再批准准确候选，才可生效 |
+| 元胞运行核心 | 沿用多 Pixel Run、消息、调度与效应链，经营目标与预算接入该链 |
+| 一代 | 经过批准并实际发生的 Gene 内容变化；Body 更新只增加 Body Revision |
+| 出生与遗传 | 下一代部分迁移 Current；进入 Gene 的能力成为下一代基础能力，不依赖复制原 Body 插件 |
+| 经验 | 重要事实和经验进入 Lineage；代码与 Current 恢复不能抹去已发生事实 |
+| Root | 已安装可信根由管理员维护，系统不能借普通 Body/Gene 候选自行改写它 |
 
-```text
-Generation = Gene Version
-Body Revision != Generation
-```
+“自动生成候选”和“自动批准基因”是两项不同权限。本版实现前者，审批仍由 Owner 作出。Owner 主动要求 Gene 变化也建立提案及方向授权记录，不能跳过准确候选审批。
 
-建议编号：
+### 0.3 本轮交付边界
 
-```text
-G0001
-G0002
-G0003
-```
+本轮只修订计划及相关说明，不实施源代码、不修改运行数据、不部署、不暂存、提交或推送。现有未提交修复必须保留。Linux 实机验收按 Owner 要求继续暂缓；后续实施按本计划分阶段开展。
 
-同一代内部身体变化：
+当前 65 个测试文件、457 个测试通过等记录属于旧实现及 Review 修复的历史证据，见 [实施记录](EmergentInc_V22_实施记录.md)，不能用于证明本修订目标已经完成。
 
-```text
-G0001 / Body R0
-G0001 / Body R1
-G0001 / Body R2
-```
+## 1. 成功标准：需要真正发生什么
 
----
+最终实验必须同时证明以下事实：
 
-## 0.2 出生（Birth）
+1. 用户在 `/QIAN` 下达有预算和权限边界的目标；至少两个实际 Pixel 通过原有 Run、消息与协作机制推进目标。
+2. 某 Pixel 发现缺失能力，系统自动编写一个后端 Body 能力和使用它的真实前端组件；独立验证后激活，`/YUAN` 或 `/QIAN` 可见变化，任务真实调用新能力。
+3. 此过程 Gene Hash 和 Generation 不变，Body Revision 增加；新函数并非由预置分支伪装生成，新页面也并非只调整 JSON 布局。
+4. 一次有明确证据的 Body 代码故障触发相应回退；原输入、付费调用或外部写入不被自动重放，失败经验保留。
+5. Dream 基于真实执行证据提出把该能力上升为 Gene；Owner 批准方向后，系统生成、测试准确 Gene 候选，并在 `/GENE` 展示实际差异和证据。
+6. Owner 在独立可信界面批准准确候选，G0002 出生。一个新建 Pixel **没有复制该能力的旧 Body 插件**，仍能从 Gene 工具目录调用该能力。
+7. 故意制造下一次出生失败，恢复 G0002；Lineage 中费用、外部动作、记忆、审批和失败经历仍然存在。
+8. 分别破坏 Body 前端与终止 Body 后端，`/GENE` 均独立可用；真实代码不能利用 Owner 会话绕过审批。
 
-一个新的 Gene Candidate：
+只证明“有候选表、版本号变化、复制了插件、测试变多”，均不能替代这些验收。
 
-```text
-形成候选
-→ 通过可信验证
-→ Owner 批准准确候选
-→ 当前代数据完成整理
-→ 部分数据迁移到新 Current DB
-→ 新 Release 启动
-→ Health Check 通过
-→ 正式成为 ACTIVE Generation
-```
+## 2. 现有成果与必须纠正的缺口
 
-此时才算“出生”。
+| 现有位置 | 可以复用的成果 | 本次缺口 |
+| --- | --- | --- |
+| `packages/persistence/` | BusinessStore、Lineage / Current、迁移、LifeContext | 元胞 CoreStore 仍在另一条运行链，缺少统一身份与数据归属 |
+| `apps/server/src/services/run_service.ts`、`packages/runtime/` | RunService、RoundScheduler、AgentStepRunner、DecisionCompiler、EffectRuntime | 应接入生命上下文、动态能力、预算与外部动作控制，不能废弃主动 Run |
+| `body_growth_service.ts`、`packages/tools/` | Need、候选、测试、自动激活、回退、沙箱代理 | 当前纯 JSON 沙箱不能直接承担完整前后端模块的构建与运行 |
+| `business_service.ts` | 预算、方案、Operation、反馈、资源等待 | 固定经营动作和通用 business 身份尚未接入真实 Pixel 动态执行 |
+| `dream_service.ts` | 增量整理、三项提案、保存响应恢复 | 缺少系统 Gene Candidate Builder 和真实能力上升链 |
+| `supervisor/` | 独立可信安装、准确 Hash、复制双库烟测、出生、恢复日志 | 正常审批仍依赖 CLI，暂停/Final Dream 与当前应用 HTTP 耦合 |
+| `frontend/src/OwnerEntry.tsx`、`App.tsx` | 两个原有入口和可复用经营组件 | business/legacy 分裂，缺独立恢复页、真实可变 Body UI |
+| `genome/manifest.json` | 受保护路径、Hash、能力契约 | 把 `frontend/**`、`apps/server/**`、`packages/**` 整体作为 Gene，混淆基础规则与具体身体实现；当前连 `frontend/README.md` 也参与 Hash |
 
----
+保留已修复的四类行为：代际指针可读权限；切版前中断恢复不依赖新 Current；回退后使用已保存的 Dream 响应；准确 Body Need / 候选关联与跨代接续。整改不得使这些回归。
 
-## 0.3 生长（Growth）
+## 3. 从职责划分 Gene 与 Body
 
-**身体层完全自主。**
+### 3.1 判定原则
 
-身体可以在 Genome 允许的边界内：
+分类依据是“是否定义可遗传的基础契约、权限和生命规则”，不是“文件在后端、代码复杂、增加了组件，就算 Gene”。
 
-- 发现自己缺少某种能力；
-- 自己生成代码；
-- 引入一个外部 skill 作为候选；
-- 建立新的纯计算工具；
-- 修改已有 Body Skill；
-- 测试；
-- 激活；
-- 失败后自动回退。
+| 内容 | 所属层 | 正常变更方式 |
+| --- | --- | --- |
+| 已安装审批验证器、可信审批凭据、强制隔离边界、切版与恢复执行器 | Root | 管理员单独维护 |
+| Owner 登录及准确批准界面的可信最小实现 | Root 管理的恢复底座 | 不能由待批准 Gene 或 Body 候选修改 |
+| 身份、权限、基础读写接口、预算与效应约束、数据生命规则 | Gene | 系统候选 + Owner 准确批准 + Birth |
+| 已批准为后代默认能力的工具/函数实现及其契约 | Gene | 同上 |
+| 当前业务策略、任务组合、局部决策策略、工作流程 | Body | 既有边界内自动生成、测试、激活 |
+| `/QIAN`、`/YUAN` 的具体 React/TSX/CSS 组件与交互实现 | Body | 同上；在隔离浏览器环境中运行 |
+| 当前任务的后端实现、工具、函数及模块 | Body | 同上；在受限进程/容器中运行 |
+| 新权限、新基础接口、共享数据库 schema、新依赖及锁文件/构建规则变更 | Gene | 必须进入 Gene 候选流程 |
+| 文档、临时输出、构建缓存 | 非 Gene 内容 | 正常维护，不据此产生新一代 |
 
-身体生长：
+新 Body 组件使用已有 React/依赖环境，不需要因为“新增组件类型”而改 Gene。新增 Body 内部接口或数据组合也不自动成为 Gene；只有改变跨边界契约、持久 schema 或权限时才进入 Gene 流程。
 
-```text
-不改变 Generation
-不需要 Owner 每次批准
-不得修改 Genome / Root of Trust
-```
+Body 可以调用 Gene 已提供的读、写、模型、外部连接器能力，但必须经能力代理校验已有授权。禁止直接读取凭据、正式数据库文件、宿主任意路径或 Docker socket。需要新外部权限时先申请资源/授权；若现有 Gene 无法表达该权限，再形成 Gene Proposal。
 
----
+### 3.2 路径和构建边界
 
-## 0.4 死亡（Death）
+实施前列出 Root / Gene / Body 文件映射及导入方向。建议将可变前端与业务模块集中到明确的 Body 源码目录；目录名可按仓库现状确定，不强制搬迁整个 Monorepo。
 
-区分三种情况：
+必须满足：
 
-### Body Revision 死亡
+- Gene 不直接 import 可变 Body 源码到可信进程；通过版本化接口连接。
+- Body 不能写 Gene、Root、构建配置、锁文件或强制测试程序。
+- 解析实际路径并拒绝符号链接、路径穿越和越界导入；不能只用字符串前缀证明隔离。
+- 初始 Body R0 从现有页面和实现提取，保留人物、招募、会议、元胞与 Run 功能；不重建一个空白演示产品。
+- 所有生效代码来自不可变、已验证的候选产物。生成期间只写候选目录，不原地改正在运行的代码。
+- 强制验证程序从可信安装读取。候选自带的测试可以补充证据，不能替换、删除或降低强制验收。
 
-新的身体能力运行失败：
+### 3.3 三种 Hash 不混用
 
-```text
-R3 失败
-→ 自动回退 R2
-→ R3 标记 ROLLED_BACK
-→ Generation 仍然是 G0001
-```
+- **Gene Hash**：基础契约、实现和已遗传能力的确定性内容 Hash；不包含可变 Body、文档、时间戳、缓存和显示用代号。
+- **Body Revision / Hash**：真实身体源码、固定依赖环境引用、构建产物、接口和验证证据的绑定。
+- **Candidate Release Hash**：准确待发布内容及构建环境、验证器版本的整体绑定，由可信验证端计算。
 
-### 新一代夭折
+不能只改 Generation 数字或重新打包就声称 Gene 进化。Gene 内容未变时不创建下一代。Body 单独发布不触碰 Gene Hash；Gene 候选必须声明其所需的初始 Body 和迁移兼容关系。
 
-G0002 候选无法通过验证或无法正常启动：
+旧 Hash 算法与新分层的切换本身属于一次明确的基因升级：版本化 Hash 规则，保留旧 Hash 与父代映射，在独立 workspace 演练后走受控升级。首次安装恢复底座由管理员完成；不能要求尚未实现的自我迭代链完成自己的初始安装，也不能直接改现有数据库里的 Hash。
 
-```text
-G0002 = FAILED / STILLBORN
-G0001 继续 ACTIVE
-```
+## 4. 运行结构：恢复底座与可变身体分开
 
-### 上一代退休
-
-G0002 成功接管：
-
-```text
-G0001 = RETIRED
-G0002 = ACTIVE
-```
-
-历史与经验不随身体死亡而删除。
-
----
-
-## 0.5 V22 的核心原则
-
-> **身体可以回退，记忆不能回退。**
-
-代码、Body Skill、Current DB 都允许回退。
-
-但已经沉淀到 Lineage / History 中的：
-
-- 重要经历；
-- 失败原因；
-- 成功经验；
-- Owner 纠偏；
-- Gene Proposal；
-- Generation 历史；
-
-不能因为代码回滚而消失。
-
----
-
-# 1. 对 V21 最新代码的判断
-
-V21 已经提供了 V22 所需的大部分“胚胎”，不要推倒重做。
-
-当前 `f69c1c...` 已经具备：
-
-- 独立 `business` 运行模式；
-- Owner 登录与权限边界；
-- workspace 单实例锁；
-- 独立 `business.sqlite3`；
-- 方案 / Grant / Task / Schedule / Operation / Cost / Order / Payment 的持久化；
-- Unknown Outcome / Recovery 语义；
-- `/health/live` 与 `/health/ready`；
-- Linux `systemd` 模板；
-- `/srv/emergentinc/current` Release 运行形态；
-- Rootless Docker Sandbox；
-- Automation Candidate：
-  - submit；
-  - validate；
-  - hash；
-  - approval；
-  - activate；
-  - rollback；
-- 独立 `AutomationSupervisor`；
-- 数据库一致性备份工具。
-
-这些全部复用。
-
-V22 **不要重新设计 Business 主链**。
-
----
-
-# 2. V22 总体架构
-
-V22 收敛为五个部分：
+下面是职责和故障边界，不要求每个模块都建一个服务：
 
 ```text
-┌──────────────────────────────────────┐
-│  Root of Trust                      │
-│  不随普通代码自修改                  │
-│  Release / Gene / Rollback 最终裁决  │
-└──────────────────┬───────────────────┘
-                   │
-┌──────────────────▼───────────────────┐
-│  Genome                             │
-│  一代的遗传基础                      │
-│  核心权限 / 接口 / 不变量 / 核心代码 │
-└──────────────────┬───────────────────┘
-                   │
-┌──────────────────▼───────────────────┐
-│  Body                               │
-│  当前代可自由生长部分                │
-│  Skills / Functions / Pure Tools    │
-└──────────────────┬───────────────────┘
-                   │
-┌──────────────────▼───────────────────┐
-│  Current DB                         │
-│  当前身体正在使用的工作状态          │
-└──────────────────┬───────────────────┘
-                   │  selective memory
-                   ▼
-┌──────────────────────────────────────┐
-│  Lineage / History DB               │
-│  跨代经历 / 经验 / 经营事实 / Gene史 │
-└──────────────────────────────────────┘
+Owner 浏览器
+  │
+  ▼
+独立 Recovery Host（Root 管理的薄恢复底座）
+  ├─ 可信登录、准确候选审批、诊断、固定恢复动作
+  ├─ /GENE：独立资源；正常可手动访问
+  ├─ /QIAN、/YUAN：稳定入口壳 + 可信授权控件
+  │      └─ 不同 origin 的隔离 Body UI：真实生成的组件和脚本
+  └─ 固定受限控制通道 → 已安装 Supervisor
+                          └─ 校验、Gene 切版、恢复、可信日志
+
+当前 Generation Runtime（Gene 基础实现）
+  ├─ 多 Pixel Run / 调度 / 决策 / 消息 / 效应约束
+  ├─ Gene 工具目录、受控数据/模型/连接器代理
+  ├─ LifeContext、预算与事实账本、MemoryGate / Dream
+  └─ 与 Body Runtime 按接口通信
+          ├─ 可变业务、工具、函数、流程和局部策略
+          └─ 与对应 Body UI Revision 配套运行
+
+候选构建/测试 worker
+  └─ 隔离代码生成产物与正式运行数据、凭据、外部副作用
 ```
 
-另外：
+复用已有应用、Supervisor、worker，新增独立 Recovery Host 这一必要边界；Gene 基础服务可在一个运行进程内装配，不另起一组经营微服务。实际 Body 代码必须处于独立受限执行环境，不能只改一个进程名称。
+
+### 4.1 Recovery Host 的最小职责
+
+- 独立启动、独立登录、读取可信运行状态、展示准确候选及验证结果。
+- 通过固定动作调用 Supervisor：检查候选、批准准确对象、出生、恢复、查看操作进度。
+- 不持有业务模型循环，不承载全部经营、Dream 和数据库操作。
+- 不导入 Body bundle，不依赖 Body session，也不要求 Current 成功打开后才提供页面。
+- 运行 HTTP 的用户不因提供恢复入口而获得通用 root shell；特权动作由固定安装的执行器完成。
+- 启动及审批材料来自可信安装。Gene 候选不能通过修改自己的审批页面、认证或日志来批准自己。
+
+`/GENE` 是产品地址；其认证和批准底座归 Root 管理，并不意味着全部“基因业务”都放入 Root。基因能力、提案和记忆仍由 Gene Runtime 提供；Runtime 不可用时显示相应数据不可读，只保留可验证的诊断和恢复操作。
+
+最终宿主、磁盘或 Recovery Host 自身失效仍需管理员 CLI。此处承诺 Body 前后端故障隔离，不承诺任意硬件故障下网页仍在线。
+
+### 4.2 同代前端脚本的浏览器隔离
+
+本次允许生成真实前端源码，因此不能沿用 V22R 的“只允许 JSON View”来规避问题。
+
+- 用户地址保持 `/QIAN`、`/YUAN`；可信入口壳在隔离 iframe 内加载 Body UI。
+- Body 资源使用独立 origin，且避免与 Owner Cookie 共用 host；本地开发也要验证实际 Cookie 边界，不能仅换端口。
+- iframe 初始只允许运行脚本，不开放同源权限、顶层导航、弹窗、表单提交等多余能力。模块资源的跨域配置只对无凭据的 Body 静态资源开放。
+- Owner Cookie 仅发给可信 host，使用 HttpOnly、SameSite、生产 Secure；登录与审批接口另校验 CSRF/Origin，拒绝来自 Body 或 opaque origin 的直接请求。
+- Body UI 经限定 MessageChannel 与可信壳通信，绑定 frame window、实例 nonce、Body Revision 和能力目录；不把 `origin=null` 或“来自 iframe”当作授权。
+- 消息桥不提供“任意 URL fetch”“任意 API 转发”“批准候选”或 Owner session；授权与审批只由可信壳显示准确对象并接收 Owner 操作。
+- CSP 限定资源和网络；Body 不能注册控制可信页面的 service worker，不能获取管理 Cookie、钥匙或宿主接口。
+- Body 前端上报的成功/健康只是证据之一，不能单独决定费用结算、准确批准或服务器回退。
+
+这不是多建一个产品界面，而是运行真实可变代码所需的信任隔离。iframe 权限与 Cookie host 语义参见 [MDN iframe](https://developer.mozilla.org/en-US/docs/Web/HTML/Reference/Elements/iframe) 和 [MDN Set-Cookie](https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Set-Cookie)。
+
+### 4.3 数据与进程权限
+
+Gene Runtime 通过现有 Store 管理正式业务与生命数据；Body 只获得按 Pixel、任务、Generation、权限和有效期约束的能力句柄。恢复底座不与应用争抢同一业务 workspace 锁，各角色分别取得其负责资源的锁。
+
+Body 进程不接收 Owner secret/session、模型 Key、连接器凭据、数据库文件或系统管理 socket。Body 的网络/数据效果统一通过代理，单次调用重新校验授权和准确 Revision；不能仅在进程启动时验一次。
+
+## 5. 保留元胞核心，统一经营约束
+
+### 5.1 保留的执行链
 
 ```text
-Dream
-=
-Current + 最近重要事实
-→ 提炼 Memory
-→ 提出 Gene Proposal
+目标 / 环境 / 消息
+  → RunService
+  → RoundScheduler
+  → AgentStepRunner + LifeContext
+  → DecisionCompiler
+  → EffectRuntime
+  → 已授权 Gene / Body 能力、通信、交付
+  → 结果 / 反馈 / 后续消息
 ```
 
----
+保留既有唤醒、轮次、元胞资格、消息路由、邻接/通讯规则、预算停止、取消和效应幂等语义。需要纠正的具体问题先列证据，不以“统一经营”为由把它替换成顺序执行三种动作的工作流。
 
-# 3. Root of Trust：V22 只做最小可信根
+Body 可更改局部业务决策策略、工具实现、任务组合和在已有接口内的协作流程；不可绕过调度资格、邻接约束、权限核验或账本。改变这些基础规则属于 Gene。
 
-V22 不建设复杂“宪法系统”。
+### 5.2 经营能力接入已有 Run
 
-只建立一个系统无法自行绕开的最小根。
+- 经营目标、方案、费用授权和资源需求成为 Run 的输入与约束；Run 仍由真实 Pixel 决策和合作。
+- 复用 BusinessStore 的费用、外部动作和对账机制，给模型调用与 Effect 统一接入 Operation 预留、幂等和结算。
+- 招募、会议、Body 生长、Dream、Gene Candidate Builder 都必须计入明确预算；不能出现不同入口各自扣费、彼此不知道余额。
+- 保留 Run token/round 上限与能量等现有机制，但它们不能代替实际货币预算，也不能被相互等值换算。
+- 对同一工作项确定唯一调度/执行所有者；现有 business worker 通过适配向 Run 发任务或退为必要后台事务处理，不能与 Run 同时执行同一目标。
+- 原三种 business action 可作为现有能力继续使用，不再构成全部自主能力的固定上限。
+- 同代新 Body 能力在已批准范围内可自动使用；新增外部写入对象、费用额度或权限范围仍须对应 Owner 授权。
 
-## 3.1 新增独立 Evolution Supervisor
+最终正常运行不依赖 `business/legacy` 模式切换。可以保留迁移期间的兼容读取，但不能把旧 Run 只保留为历史查询。
 
-新增模板代码，例如：
+### 5.3 身份与 LifeContext
+
+区分 `qianji_id`、`pixel_id`、`incarnation`、`generation_id`；人物/元胞生命周期编号不等于全局 Gene 代号。
+
+目标、Run、决策、Operation、Need、候选、消息、产物、反馈和记忆都能追溯真实执行身份。多个 Pixel 协作时分别记贡献与权限，不能统一冒充一个 business Agent。
+
+每次决策使用有界上下文：
 
 ```text
-supervisor/
-├─ generation_supervisor.ts
-├─ release_builder.ts
-├─ migration_runner.ts
-└─ protocol.ts
+当前 Gene 契约及可调用基础工具
++ 该 Pixel 的 Current 工作状态
++ 当前已激活 Body 工具/流程及版本
++ 相关 Lineage 经验
++ 本轮目标、消息、环境和授权
 ```
 
-部署后必须复制到：
+工具目录必须实际注册到 ToolRegistry / EffectRuntime，绑定可执行处理器和来源 Hash；只把工具名称写入 prompt 不算完成。记忆先按身份、类型、代际、重要性和时间查询，最多 20 条并限制总输入大小，不引入向量数据库。
 
-```text
-/opt/emergentinc-supervisor/
-```
+## 6. Body 自主修改代码的完整管线
 
-生产权限：
+### 6.1 Need 与候选
 
-```text
-owner: root
-app user: read = no / write = no
-```
-
-应用用户 `emergentinc`：
-
-```text
-不能修改 supervisor
-不能修改 systemd
-不能直接切换 /srv/emergentinc/current
-不能直接写 releases/
-```
-
-实际 Release、Generation 的切换只能由 Supervisor 完成。
-
-仓库里的 `supervisor/` 只是安装模板。
-
-**以后即使 EmergentInc 修改了仓库中的 supervisor 源码，也不会自动改变已安装的 Root of Trust。**
-
----
-
-## 3.2 Root of Trust 第一版只负责五件事
-
-```text
-1. 判断修改属于 Body 还是 Gene
-2. Gene Candidate 验证
-3. Owner 对准确 Gene Candidate Hash 的批准
-4. Generation Birth / Release Switch
-5. 失败时恢复上一代
-```
-
-除此以外不要继续扩张 Root。
-
----
-
-# 4. Gene 与 Body 的工程边界
-
-V22 必须第一次把两者真正分开。
-
-## 4.1 Genome
-
-Genome 代表：
-
-- 身份；
-- 权限边界；
-- 基础工具契约；
-- 数据库生命规则；
-- Body 执行接口；
-- Generation 规则；
-- Dream / Memory 规则；
-- 安全边界；
-- 基础 Runtime。
-
-新增：
-
-```text
-genome/manifest.json
-```
-
-至少包含：
-
-```json
-{
-  "schema_version": 1,
-  "generation": 1,
-  "body_interface_version": "1",
-  "protected_paths": [],
-  "capability_contracts": {}
-}
-```
-
-不要把具体业务策略写进 Genome。
-
----
-
-## 4.2 V22 默认视为 Gene 的内容
-
-至少包括：
-
-```text
-genome/**
-apps/server/src/runtime_config.ts
-apps/server/src/owner_auth.ts
-
-新的：
-apps/server/src/services/life_context.ts
-apps/server/src/services/dream_service.ts
-packages/persistence/src/lineage_store.ts
-packages/persistence/src/current_store.ts
-packages/persistence/src/migrations/lineage_schema.ts
-packages/persistence/src/migrations/current_schema.ts
-
-Root / Evolution 协议
-数据库迁移规则
-基础权限规则
-基础 capability contract
-```
-
-以及：
-
-```text
-package.json
-pnpm-lock.yaml
-pnpm-workspace.yaml
-deploy/linux/**
-```
-
-第一版依赖和运行环境变化一律按 Gene Change 处理。
-
-原因：
-
-Body 不能通过修改 npm scripts、依赖、数据库 schema 等方式绕过 Genome。
-
----
-
-## 4.3 Body
-
-V22 不允许 Body 任意改整个 Monorepo。
-
-身体层通过 **动态 Body Skill** 生长。
-
-Body Skill 是：
-
-```text
-JSON input
-→ sandboxed code
-→ JSON output
-```
-
-存放在当前 Generation 的身体目录：
-
-```text
-workspace/
-└─ generations/
-   └─ G0001/
-      └─ body/
-         └─ skills/
-```
-
-Body Skill 可以：
-
-- 数据整理；
-- 分类；
-- 计算；
-- 文本结构转换；
-- 特定业务函数；
-- 当前场景专用逻辑。
-
-第一版 Body Skill：
-
-```text
-禁止直接网络
-禁止读 credentials
-禁止任意宿主文件
-禁止 child_process
-禁止 Docker socket
-禁止 package install
-```
-
-如果 Body 发现：
-
-> “我需要新的网络权限 / 新数据库 schema / 新基础接口 / 新依赖”
-
-则不能自己突破。
-
-应形成：
-
-```text
-Gene Proposal
-```
-
----
-
-# 5. 两层生命数据：第一版直接落地两个物理数据库
-
-这一项 V22 必须实现，不留到以后。
-
-## 5.1 Lineage DB
-
-路径：
-
-```text
-workspace/
-└─ lineage/
-   └─ lineage.sqlite3
-```
-
-它是**跨 Generation 存活**的数据。
-
-现有：
-
-```text
-workspace/ledger/business.sqlite3
-```
-
-迁移为 Lineage DB 的基础。
-
-不要重写现有 Business Store。
-
-执行：
-
-```text
-business.sqlite3
-→ SQLite online backup
-→ lineage.sqlite3
-→ 在原 Business Schema 基础上升级 Schema
-```
-
-保留原 `business.sqlite3` 备份直到 V22 完整验收完成。
-
----
-
-## 5.2 Lineage DB 中继续保留
-
-V21 已有的长期事实继续保留：
-
-- Business Settings；
-- Plans / Revisions；
-- Grants；
-- Operations；
-- Cost Entries；
-- Events；
-- Orders；
-- Payments；
-- Feedback；
-- Datasets；
-- Connections metadata。
-
-这些已经发生的业务事实不能因为 Generation 回退而消失。
-
----
-
-## 5.3 Lineage DB 新增表
-
-### generations
-
-```text
-id
-generation_no
-parent_id
-gene_hash
-release_id
-state
-born_at
-retired_at
-failure_reason
-```
-
-状态只做：
-
-```text
-BIRTHING
-ACTIVE
-RETIRED
-FAILED
-ROLLED_BACK
-```
-
----
-
-### memories
-
-```text
-id
-generation_id
-pixel_id nullable
-kind
-point
-reason
-effect
-importance
-source
-source_ref
-created_at
-```
-
-这里不保存大段自由文本。
-
-Memory 第一版统一：
-
-```text
-要点 point
-原因 reason
-效果 effect
-```
-
----
-
-### dream_runs
-
-```text
-id
-generation_id
-from_cursor
-to_cursor
-status
-input_hash
-output_hash
-created_at
-finished_at
-```
-
----
-
-### gene_proposals
-
-```text
-id
-generation_id
-source
-point
-reason
-effect
-state
-created_at
-owner_decided_at
-candidate_hash nullable
-target_generation_id nullable
-```
-
-状态：
-
-```text
-PROPOSED
-APPROVED
-REJECTED
-IMPLEMENTING
-CANDIDATE_READY
-BORN
-FAILED
-```
-
----
-
-# 6. Current DB：每一代有自己的当前身体状态
-
-路径：
-
-```text
-workspace/
-└─ generations/
-   ├─ G0001/
-   │  └─ current.sqlite3
-   ├─ G0002/
-   │  └─ current.sqlite3
-   └─ ...
-```
-
-任意时刻应用只打开：
-
-```text
-1 个 lineage.sqlite3
-+
-1 个 ACTIVE Generation 的 current.sqlite3
-```
-
-这就是前面讨论的“两份数据库同时加载”。
-
----
-
-## 6.1 Current DB 第一版只保存真正的“当前身体状态”
-
-不要把 V21 Business Schema 再复制一遍。
-
-只增加：
-
-### current_meta
-
-```text
-generation_id
-body_revision
-gene_hash
-release_id
-created_at
-```
-
-### pixel_working_state
-
-```text
-pixel_id
-state_json
-carry_forward
-updated_at
-```
-
-### objectives
-
-```text
-id
-pixel_id
-content
-state
-carry_forward
-updated_at
-```
-
-### body_skills
-
-```text
-skill_id
-name
-active_change_id
-interface_version
-state
-successful_runs
-failed_runs
-updated_at
-```
-
-### body_needs
-
-```text
-id
-pixel_id
-need
-evidence
-state
-created_at
-updated_at
-```
-
-不要在 Current DB 创建另一套订单、账本、费用或付款系统。
-
----
-
-# 7. Generation 切换时的“部分迁移”
-
-V22 不做“完整复制数据库”。
-
-建立一个明确的：
-
-```text
-GenerationMigrator
-```
-
-只迁移白名单。
-
-## 7.1 默认迁移
-
-从 G0001 Current DB 到 G0002：
-
-### 迁移
-
-- `objectives` 中仍然 OPEN 且 `carry_forward=1`；
-- `pixel_working_state` 中 `carry_forward=1`；
-- 与新 `body_interface_version` 兼容的 ACTIVE Body Skills；
-- 明确标记为跨代继续的 Body Need。
-
-### 不迁移
-
-- 临时 scratch；
-- 已失败候选；
-- 已结束 objective；
-- 临时错误；
-- cache；
-- debug 信息；
-- 已处理 dream 输入；
-- 已退休 Body Skill。
-
----
-
-## 7.2 Body Skill 跨代继承
-
-如果：
-
-```text
-old.body_interface_version == new.body_interface_version
-```
-
-则 ACTIVE Skill 可以继承。
-
-如果接口版本改变：
-
-```text
-skill = REVALIDATION_REQUIRED
-```
-
-不能直接执行。
-
----
-
-## 7.3 Business 事实不需要迁移
-
-因为它们已经在：
-
-```text
-lineage.sqlite3
-```
-
-例如：
-
-- 一笔付款；
-- 已发生费用；
-- 已发送 GitHub Issue；
-- Owner 批准历史；
-
-都不会因为 Generation 切换重新复制。
-
-这样能避免：
-
-```text
-回滚代码
-=
-回滚真实世界
-```
-
-这种错误。
-
----
-
-# 8. Body Growth：让身体真正开始自己长
-
-V21 的：
-
-```text
-RootlessSandbox
-AutomationSupervisor
-automation_validation
-```
-
-直接作为 Body Growth 的基础。
-
-不要重新做一套 sandbox。
-
----
-
-## 8.1 AutomationSupervisor 最小改造
-
-当前只管理一个固定 automation profile。
-
-V22 改为支持：
-
-```text
-多个 skill slot
-```
-
-例如：
-
-```text
-csv_summary
-customer_segment
-text_cleaner
-proposal_ranker
-```
-
-一个 slot 同时只有一个 ACTIVE version。
-
----
-
-## 8.2 Body Candidate 的状态
-
-```text
-NEED
-→ GENERATED
-→ VALIDATING
-→ ACTIVE
-```
-
-失败：
-
-```text
-VALIDATION_FAILED
-```
-
-运行时失败：
-
-```text
-ACTIVE R3
-→ runtime failure
-→ rollback R2
-→ R3 = ROLLED_BACK
-```
-
----
-
-## 8.3 Body 层不再要求 Owner 逐次 approve
-
-当前 `AutomationSupervisor.approve()` 的 Owner 语义不要直接删除。
-
-新增独立 Body 路径：
-
-```text
-validateBodyCandidate()
-→ policyAutoActivate()
-```
-
-仅当以下全部成立：
-
-```text
-属于 Body Skill
-未触碰 Gene
-RootlessSandbox 验证通过
-接口契约匹配
-测试通过
-资源限制通过
-```
-
-才允许自动激活。
-
-Gene Candidate 仍然必须 Owner Approve。
-
----
-
-## 8.4 Body Skill 候选格式
-
-建议：
-
-```json
-{
-  "skill_id": "customer_segment",
-  "purpose": "...",
-  "source": "...",
-  "tests": [
-    {
-      "input": {},
-      "expected": {}
-    }
-  ]
-}
-```
-
-测试用例是**数据**。
-
-不允许模型自己写一段测试程序然后宣布自己通过。
-
-可信 Harness：
-
-```text
-加载 candidate source
-→ 输入 tests.input
-→ 得到 result
-→ supervisor 比较 expected
-```
-
----
-
-## 8.5 身体主动产生 Need
-
-增加：
-
-```text
-BodyGrowthService
-```
-
-输入：
-
-```text
-pixel_id
-need
-evidence
-```
-
-任何 Pixel 都可以提出身体 Need。
-
-V21 business 当前仍主要是一个经营 Pixel，但接口从第一版就保留 `pixel_id`，以后多 Pixel 不需要重做数据结构。
-
-BodyGrowthService：
+Need 来源于 Pixel 实际任务缺口、失败、重复工作、界面/流程缺陷或 Owner 反馈，必须附执行证据，不能开机无目标持续生成代码。
 
 ```text
 Need
-→ 判断是否属于 Body 边界
-→ 如属于 Body：
-    生成 Candidate
-    验证
-    自动激活
-→ 如超出 Body：
-    转 Gene Proposal
+  → 读取当前 Gene/Body 接口和相关证据
+  → 在候选副本中生成真实源码 Patch
+  → 路径/导入/权限检查
+  → 隔离构建与可信测试
+  → 暂存为不可变候选产物
+  → 自动激活
+  → 真实调用与运行观察
+  → 保留或按明确故障回退
 ```
 
----
-
-# 9. “找 Skill”与“写 Skill”统一走 Candidate Pipeline
-
-Body 可以：
+沿用现有 Need / Candidate 表与状态机，按需扩展，不另造重复的版本平台。候选至少绑定：
 
 ```text
-自己写代码
+actor、need_id、base_generation、base_gene_hash、base_body_revision
+patch_hash、source/artifact_hash、interface_version、runtime/dependency_digest
+所需 capability/grant、validation_report_hash、previous_revision
 ```
 
-也可以：
+候选可以同时包含前端组件与后端模块，将两者作为一个兼容单元验证/激活。不同 Pixel 并发修改同一 Body 基线时，用 CAS 检查基线；过时 Patch 必须重放到新候选副本并重新验证，不能覆盖别人的生效变更。
 
-```text
-从外部找到一段 Skill Source
-```
+### 6.2 可写范围与资源控制
 
-但不能直接安装。
+- 可以新建或修改 Body TS/TSX/CSS/业务模块、局部工具与流程源码，在已有依赖中编译。
+- 已有纯 JSON Skill 作为一种能力形态保留，不能成为全部 Body 的唯一形态。
+- Body 的读写工具可以写其获准的工作数据、交付物和候选源码；不能因此写正式 Gene、Root 或任意宿主路径。
+- 外部找到的 skill 同样先变成候选，记录来源、源码和所需权限；不执行其安装脚本或自行安装依赖。
+- 生成及反馈修复的调用次数、token、费用、构建耗时和资源设上限。首版每个候选默认至多 2 次反馈修复，耗尽后记录失败，不无限重试。
+- 不支持的环境明确显示待验证，不能在 Windows 宿主直接运行生成的后端代码来代替沙箱。
 
-统一：
+现有 RootlessSandbox 的 stdin 纯 JSON 执行协议不足以承载真实应用模块。必须扩展受限构建/运行 profile：只读基础依赖、独立临时产物目录、无正式数据/凭据挂载、网络和资源限制、退出清理，以及固定能力代理。不能开放 Docker socket 或宿主 shell 给 Body。
 
-```text
-source
-→ Candidate
-→ Sandbox
-→ Tests
-→ Activate
-```
+### 6.3 验证、激活和恢复
 
-V22 不实现：
+强制验证至少覆盖：类型/构建、导入边界、能力调用权限、真实运行入口、前后端接口一致性、无凭据泄露、代表性行为用例及故障退出。前端用真实浏览器测渲染和消息桥；后端用隔离运行器测能力实现。
 
-```text
-npm install arbitrary-package
-pip install
-执行外部 install.sh
-执行未知 binary
-```
+模型可生成附加测试，但通过与否由独立验证器判断。源码里返回“测试成功”或修改自己的测试脚本不构成验证通过。
 
-这些属于未来 Gene / Trust Boundary 问题。
+自动激活时：
 
----
+1. 校验仍处于同一 Generation、Gene 和兼容 Body 基线。
+2. 停止新任务取得旧 Revision，已开始调用继续绑定旧产物；不能在调用中途替换实现。
+3. 检查受影响的在途效果，遇到未知外部结果保留核实状态，不自动再次执行。
+4. 原子切换新的 Body 注册与前后端引用；确认握手中的实际 Revision。
+5. 写激活事实，更新 Need 的准确满足关系，再允许新任务使用。
 
-# 10. Memory：不是所有事情都即时写历史
+同代回退只恢复兼容的代码/注册引用，不回滚整个 Current 抹掉新任务事实。不把业务拒绝、预算耗尽、401、无模型配置或外部结果未知当作代码故障。
 
-V22 不建设“全量事件全部进入记忆”的系统。
+单个客户端报错先记诊断；服务器确认模块崩溃、启动失败或可信探测复现故障后，才可按对应策略恢复兼容前版。没有可验证前版时停止相应能力并提供 `/GENE` 诊断，不创建空库或悄悄换实现。
 
-Memory 只来自两条路径：
+## 7. Memory / Dream 与提案
 
-```text
-必要时即时沉淀
-+
-Dream 周期整理
-```
+复用两条记忆路径：
 
----
+- MemoryGate：Body 回退、出生/夭折、Owner 明确纠偏、已确认重要经营结果、越界事件，立即形成有来源的记忆。
+- Dream：每天一次、Owner 手动、出生前 Final Dream；只整理游标之后的新事实。
 
-# 11. 即时 Memory Gate
+“没有新事实，不调用模型”保持不变。大批输入分批并保留确定游标；每代 Current 的游标独立，共享事实游标只前进。恢复旧代保存响应时，经验归原代，待决策提案面向当前代，不能串改游标。
 
-增加：
-
-```text
-MemoryGate
-```
-
-第一版只允许少数明确事件立即形成 Memory。
-
-至少：
-
-### 1. Body 自动回滚
-
-```text
-point: 某 Skill R3 运行失败并回退到 R2
-reason: ...
-effect: 后续使用 R2；该失败模式应避免
-```
-
-### 2. Generation Birth / Rollback
-
-成功出生或新一代夭折必须记住。
-
-### 3. Owner 明确纠偏
-
-Owner 明确指出系统判断错误、方向错误或权限边界问题。
-
-### 4. 经证据确认的重要经营结果
-
-例如：
-
-- 外部客户真实付款；
-- 明确退款；
-- 已确认重大失败。
-
-不能把文案生成、Issue 数量等当成经营成功。
-
-### 5. Security Boundary Event
-
-例如：
-
-```text
-Body 请求越过 Gene Boundary
-Sandbox policy mismatch
-受保护路径修改尝试
-```
-
----
-
-# 12. Dream：低频整理当前生命经历
-
-新增：
-
-```text
-DreamService
-```
-
----
-
-## 12.1 Dream 触发
-
-V22 第一版只做：
-
-```text
-每天 1 次
-+
-Generation Birth 前强制 1 次 Final Dream
-+
-Owner 可手动触发
-```
-
-不要第一版做多个复杂 Cron。
-
-时间通过配置：
-
-```text
-EMERGENTINC_DREAM_TIME
-EMERGENTINC_DREAM_TIMEZONE
-```
-
-默认可以使用：
-
-```text
-03:00
-Asia/Shanghai
-```
-
----
-
-## 12.2 Dream 输入
-
-只读取：
-
-```text
-上次 Dream 之后
-```
-
-发生的：
-
-- Current DB 中重要状态变化；
-- Body Need；
-- Body Skill activation / failure；
-- Owner Feedback；
-- 已确认 Business Outcome；
-- Generation / Gene 相关事件。
-
-不要把：
-
-```text
-整个数据库
-所有日志
-全部文件
-```
-
-直接塞给模型。
-
----
-
-## 12.3 无新事实，不调用模型
-
-沿用 V21 已经建立的原则：
-
-```text
-No new facts
-=
-No model call
-```
-
----
-
-## 12.4 Dream 输出
-
-严格 JSON。
-
-### Memory
+记忆和提案给 Owner 的内容保持三项：
 
 ```json
 {
-  "point": "要点",
-  "reason": "为什么值得记住",
-  "effect": "它以后会影响什么"
+  "point": "建议把哪个 Body 能力或基础变化进入 Gene",
+  "reason": "哪些运行经历证明它值得遗传",
+  "effect": "对后代能力和行为的预期影响"
 }
 ```
 
-### Gene Proposal
-
-```json
-{
-  "point": "建议把什么上升到基因层",
-  "reason": "为什么",
-  "effect": "进入基因后会产生什么效果"
-}
-```
-
-第一版 Gene Proposal 就保持这三项。
-
-不增加复杂评分体系。
-
----
-
-## 12.5 Dream 不能修改 Gene
-
-流程：
-
-```text
-Dream
-→ Gene Proposal
-→ PROPOSED
-→ 等待 Owner
-```
-
-绝不能：
-
-```text
-Dream
-→ 修改 Genome
-```
-
----
-
-# 13. Gene Proposal：第一阶段的人类审批模式
-
-这部分严格采用本次对话确定的三阶段路线中的第一阶段。
-
-V22：
-
-```text
-Pixel / Dream 可以提案
-Owner 决定是否允许
-```
-
-后续版本再考虑：
-
-```text
-系统自己审批
-```
-
-V22 不做。
-
----
-
-## 13.1 Gene Proposal 来源
-
-两种：
-
-```text
-source = dream
-source = owner
-```
-
-Owner 主动要求 Gene Change 时同样创建 Proposal 记录。
-
-这样以后回看历史时，可以知道：
-
-```text
-哪次变化来自系统
-哪次变化来自人类
-```
-
----
-
-## 13.2 V22 不自动生成完整 Gene Patch
-
-为了控制范围：
-
-**V22 不要求 EmergentInc 自己自动完成核心 Gene Code 编写。**
-
-第一阶段流程：
-
-```text
-Dream / Owner
-→ Gene Proposal
-→ Owner 批准方向
-→ 本地 Codex / 人类形成 Gene Candidate Patch
-→ Generation Supervisor 验证
-→ Owner 批准准确 Candidate Hash
-→ Birth
-```
-
-这与当前阶段“人参与基因突变”一致。
-
-未来再把：
-
-```text
-Gene Proposal → Gene Candidate
-```
-
-也交给系统自动完成。
-
----
-
-# 14. Generation Supervisor：出生流程
-
-新增：
-
-```text
-scripts/generation-supervisor.mjs
-```
-
-调用安装在：
-
-```text
-/opt/emergentinc-supervisor/
-```
-
-中的可信实现。
-
----
-
-## 14.1 Gene Candidate 必须绑定
-
-至少绑定：
-
-```text
-base_generation
-base_release
-proposal_id
-patch_hash
-gene_hash
-candidate_release_hash
-```
-
-Owner 批准的是：
-
-```text
-准确 candidate hash
-```
-
-而不是一句：
-
-```text
-“我同意升级”
-```
-
----
-
-## 14.2 Birth 流程
-
-固定顺序：
-
-```text
-1. 获取 Evolution Lock
-
-2. 检查当前 ACTIVE Generation
-
-3. 验证 Proposal 已批准
-
-4. 验证 Candidate 基于当前 Active Release
-
-5. 验证未修改 Root of Trust
-
-6. typecheck
-
-7. test
-
-8. build
-
-9. 对 lineage.sqlite3 做 SQLite online backup
-
-10. 对当前 Generation current.sqlite3 做快照
-
-11. 执行 Final Dream
-
-12. 创建：
-    G0002 = BIRTHING
-
-13. 创建：
-    generations/G0002/current.sqlite3
-
-14. GenerationMigrator 执行部分迁移
-
-15. 用“候选 workspace”启动 Candidate
-    - 使用 lineage backup
-    - 使用 G0002 current DB copy
-    - 禁止真实 external write
-    - 禁止真实 paid model call
-
-16. /health/live
-
-17. /health/ready
-
-18. 停止正式 G0001
-
-19. 原子切换：
-    /srv/emergentinc/current
-    → G0002 release
-
-20. ACTIVE generation pointer
-    → G0002
-
-21. 启动正式服务
-
-22. live + ready + smoke check
-
-23. 成功：
-    G0002 = ACTIVE
-    G0001 = RETIRED
-
-24. 失败：
-    current symlink → G0001
-    active generation → G0001
-    启动 G0001
-    G0002 = FAILED / ROLLED_BACK
-
-25. 将 Birth Result 写入 Lineage Memory
-```
-
----
-
-# 15. Candidate 验证绝不能碰正式业务副作用
-
-Candidate Smoke Test 使用：
-
-```text
-Lineage DB backup
-+
-Current DB candidate copy
-+
-禁用真实 Connection
-+
-禁用真实模型付费调用
-```
-
-不能出现：
-
-```text
-为了测试新一代
-→ 真发 GitHub Issue
-→ 真调用客户
-→ 真产生付款
-```
-
-候选验证只检查：
-
-- DB 能打开；
-- migrations 正常；
-- Server 能启动；
-- health；
-- Owner auth；
-- Business overview；
-- Current + Lineage 双库读取；
-- Body Skill registry；
-- Dream schema；
-- Genome manifest；
-- 核心测试。
-
----
-
-# 16. Generation Rollback
-
-如果 G0002 正式启动后立即失败：
-
-```text
-代码 → G0001
-Current DB → G0001 current.sqlite3
-Lineage DB → 不回滚
-```
-
-这是非常重要的规则。
-
-也就是说：
-
-```text
-时间可以退回岔路口
-但系统记得自己走过那条错误的路
-```
-
----
-
-## 16.1 Rollback 后
-
-如果 G0002 已经产生一些未整理 Current 数据：
-
-不要为了 Dream 阻塞紧急回滚。
-
-先：
-
-```text
-冻结 G0002 current.sqlite3
-记录 hash
-完成回滚
-```
-
-然后增加：
-
-```text
-POST_ROLLBACK_DREAM_REQUIRED
-```
-
-系统恢复稳定后，再从冻结的 G0002 Current DB 中提炼失败经验。
-
----
-
-# 17. LifeContext：Pixel 每次运行时加载什么
-
-新增：
-
-```text
-LifeContext
-```
-
-Pixel / Business Agent 每次工作时组合：
-
-```text
-Genome Context
-+
-Current State
-+
-Relevant Memories
-+
-Task / Environment
-```
-
-不是把整个 History DB 全加载。
-
----
-
-## 17.1 V22 Memory Retrieval
-
-第一版不要上：
-
-- Vector DB；
-- Embedding；
-- RAG 平台。
-
-先简单：
-
-```text
-按：
-pixel_id
-kind
-importance
-generation
-时间
-
-取最多 N 条
-```
-
-例如：
-
-```text
-MAX_MEMORY_ITEMS = 20
-```
-
-以后数据真的大了再升级检索方式。
-
----
-
-# 18. Current → History 的正式机制
-
-最终形成：
-
-```text
-Current DB
-     │
-     ├─ MemoryGate
-     │    └─ 极少数关键事件立即写 Memory
-     │
-     └─ Dream
-          ├─ Memory
-          └─ Gene Proposal
-```
-
-在 Generation Birth 时：
-
-```text
-Final Dream
-+
-Partial Migration
-```
-
-因此：
-
-- Current 保留丰富、琐碎、短期状态；
-- Lineage 保留真正跨代有价值的事实与经验。
-
----
-
-# 19. V21 数据迁移步骤
-
-这一部分必须先做并独立验收。
-
-## Step 1
-
-停止服务。
-
-## Step 2
-
-运行当前已有：
-
-```text
-scripts/business-maintenance.mjs
-```
-
-检查：
+身份、来源 Need、Body Hash、调用证据、提案状态作为系统元数据关联，不要求 Owner 手写复杂评分表。提案可来自 Pixel、Dream 或 Owner；保存批准、拒绝、修改方向及其理由，以便未来回顾，不在本版自动学习出批准权。
 
-```text
-business.sqlite3
-```
-
-integrity。
-
-## Step 3
-
-online backup：
-
-```text
-business.sqlite3
-→ lineage/lineage.sqlite3
-```
-
-## Step 4
-
-校验：
-
-- SHA；
-- 表数量；
-- 记录数量；
-- Orders；
-- Payments；
-- Operations；
-- Costs；
-- Plans。
-
-## Step 5
-
-Lineage Schema：
-
-```text
-Business Schema V1
-→ Lineage Schema V2
-```
-
-只添加生命相关表。
-
-不要重建已有 Business 表。
-
-## Step 6
-
-创建：
-
-```text
-G0001
-```
-
-其 gene hash 来自当前 V22 初始 Genome。
-
-创建：
-
-```text
-generations/G0001/current.sqlite3
-```
-
-## Step 7
-
-将 `G0001` 标记 ACTIVE。
-
-此时：
-
-```text
-V21 现有事实
-=
-G0001 的祖先历史
-```
-
----
-
-# 20. 代码改造清单
-
-## 新增
-
-建议：
-
-```text
-genome/manifest.json
-
-packages/persistence/src/lineage_store.ts
-packages/persistence/src/current_store.ts
-packages/persistence/src/migrations/lineage_schema.ts
-packages/persistence/src/migrations/current_schema.ts
-
-apps/server/src/services/life_context.ts
-apps/server/src/services/memory_gate.ts
-apps/server/src/services/dream_service.ts
-apps/server/src/services/body_growth_service.ts
-apps/server/src/routes/evolution_routes.ts
-
-supervisor/generation_supervisor.ts
-supervisor/release_builder.ts
-supervisor/generation_migrator.ts
-supervisor/protocol.ts
-
-scripts/generation-supervisor.mjs
-
-deploy/linux/emergentinc-evolution.service
-deploy/linux/evolution-environment.example
-```
-
----
-
-## 修改
-
-重点只改：
-
-```text
-apps/server/src/main.ts
-apps/server/src/app.ts
-apps/server/src/services/business_service.ts
-
-packages/persistence/src/business_store.ts
-packages/persistence/src/index.ts
-
-packages/protocol/src/types/business.ts
-
-apps/server/src/services/automation_supervisor.ts
-packages/tools/src/business/automation_validation.ts
-
-frontend/src/features/business/
-```
-
-不要大范围重构旧 Legacy。
-
----
-
-# 21. Owner 页面只增加一个最小 Evolution 区域
-
-不要做复杂“生命可视化”。
-
-第一版只显示：
-
-```text
-Current Generation
-Current Body Revision
-Active Body Skills
-Recent Memories
-Pending Gene Proposals
-Generation History
-```
-
-Gene Proposal：
-
-```text
-要点
-原因
-效果
-
-[批准方向]
-[拒绝]
-```
-
-注意：
-
-这里批准的是：
-
-```text
-Proposal Direction
-```
-
-真正 Release Candidate 形成后，对准确 Candidate Hash 的最终批准仍走 Trusted Supervisor Channel。
-
-第一版可以继续使用 CLI。
-
-不要为了做漂亮 UI 降低 Root of Trust 的可信边界。
-
----
-
-# 22. V22 明确不做的事情
-
-为了防止本地 AI 过度设计，以下全部排除：
-
-- 不上 Kubernetes；
-- 不换 Postgres；
-- 不做微服务拆分；
-- 不合并 legacy 与 business；
-- 不删除 legacy；
-- 不做自动 Gene 审批；
-- 不做 Gene 自动代码生成闭环；
-- 不做 Vector DB；
-- 不做 Embedding Memory；
-- 不做复杂 Memory Score；
-- 不做遗传算法；
-- 不做多个 Dream Agent；
-- 不做 Agent 投票修改 Genome；
-- 不开放任意 Shell；
-- 不让 Body 修改 package manager / DB schema；
-- 不让 Body 直接拿外部账号 credential；
-- 不让 Candidate 测试产生真实外部副作用。
-
-V22 只完成：
-
-> **一套可以真正出生、生长、死亡，并保留记忆的最小生命循环。**
-
----
-
-# 23. 自动测试要求
-
-必须增加以下测试。
-
-## A. Generation 定义
-
-Body Skill 更新：
-
-```text
-Generation 不变化
-Body Revision +1
-```
-
-Gene Hash 改变并成功 Birth：
-
-```text
-Generation +1
-```
-
----
-
-## B. 两库隔离
-
-验证：
-
-```text
-Current DB rollback
-```
-
-不会删除：
-
-```text
-Lineage Memory
-Business Cost
-Order
-Payment
-Generation History
-```
-
----
-
-## C. Partial Migration
-
-构造：
-
-```text
-carry_forward = 1
-carry_forward = 0
-```
-
-出生下一代后：
-
-```text
-只有 1 被迁移
-```
-
----
-
-## D. Body 自动进化
-
-```text
-Need
-→ Candidate
-→ Sandbox pass
-→ Auto Activate
-```
-
-不需要 Owner Approve。
-
----
-
-## E. Body 失败回退
-
-```text
-R2 ACTIVE
-R3 Activate
-R3 Runtime Failure
-→ R2 Restore
-```
-
-同时生成一条 Memory。
-
----
-
-## F. Body 越界
-
-Body Candidate 试图：
-
-```text
-修改 Genome
-使用网络
-挂载 host
-读取 private
-调用 child_process
-```
-
-必须拒绝。
-
----
-
-## G. Dream 无新事实
-
-```text
-no new facts
-→ 0 model call
-```
-
----
-
-## H. Dream Gene Proposal
-
-Dream 输出：
-
-```text
-point / reason / effect
-```
-
-只能进入：
-
-```text
-PROPOSED
-```
-
-不能修改 Genome。
-
----
-
-## I. Gene 未批准
-
-Candidate 再好：
-
-```text
-没有 Owner Candidate Hash Approval
-→ 不能 Birth
-```
-
----
-
-## J. Successful Birth
+Dream 不修改正在生效的 Gene，也不能批准提案。它可以为后续 Candidate Builder 提供结构化需求与证据。
 
-```text
-G0001 ACTIVE
-→ Gene Change
-→ G0002 candidate
-→ Final Dream
-→ Partial Migration
-→ Candidate Validation
-→ Release Switch
-→ G0002 ACTIVE
-→ G0001 RETIRED
-```
-
----
-
-## K. Failed Birth
-
-模拟：
-
-```text
-G0002 health fail
-```
+## 8. 系统生成 Gene 候选，人批准生效
 
-结果：
+### 8.1 正常路径
 
 ```text
-G0001 ACTIVE
-G0002 FAILED
-Lineage 中存在 G0002 失败 Memory
+Pixel / Dream / Owner 提案
+  → Owner 在 /GENE 批准方向、范围和生成预算
+  → 系统 Gene Candidate Builder 生成 Patch
+  → 独立隔离构建 / 测试 / 数据迁移演练 / 行为比较
+  → 有界反馈修复或失败
+  → 冻结准确候选与验证报告
+  → /GENE 显示差异、权限变化、遗传能力和验证结果
+  → Owner 批准准确 candidate hash
+  → Supervisor 复验、Final Dream、部分迁移、Birth
 ```
 
----
+优先复用当前模型适配器、Operation 账本、候选构建器和 Supervisor，新增必要编排，不把外部 Codex CLI 当作必需运行服务。人工编写 Patch 仍可作为显式干预途径，但正常闭环必须能够不经人工写代码完成。
 
-## L. Memory 不回滚
+方向批准只允许在范围/预算内生成候选，不等于允许发布。Candidate Builder 没有生效权和 Root 写权限。
 
-```text
-G0002 出生
-→ 产生重要 Memory
-→ G0002 rollback
-```
+### 8.2 候选与批准绑定
 
-结果：
+准确候选至少绑定：
 
 ```text
-代码回 G0001
-Current 回 G0001
-Memory 仍然存在
+proposal_id、direction_approval_id、base_generation、base_release_hash
+base_gene_hash、patch_hash、new_gene_hash、candidate_release_hash
+body_compatibility、migration_contract、validation_report_hash、trusted_harness_version
 ```
-
----
-
-# 24. Linux 实机验收
 
-V22 不能再用 Windows mock 作为最终通过依据。
+Owner 在可信页面看到的是验证器生成的准确对象，不能仅显示候选自己宣称的说明。展示实际代码差异、行为变化、权限/依赖变化、测试结果、失败风险和恢复对象；描述先说明“改变什么、为什么、效果”，技术细节可展开。
 
-必须在真实 Linux Server 做一次。
+最终审批与执行：
 
----
+- Recovery Host 验证 Owner 身份和 CSRF，提交绑定准确候选的单次请求；Supervisor 再核验当前基线、方向批准、验证报告和完整产物。
+- 审批凭据/签名材料及日志由 Root 侧管理，不能存在 Body 或可变 Gene 的可读写空间。
+- 同一请求幂等；审批重放、Hash 改动、基线改变、验证器变化或证据失效都不能直接发布。
+- 候选更新后须重新验证并重新批准准确对象；生成方向不变且预算仍足够时不必反复询问同一方向。
+- 生效前再次检查当前 Body 的兼容与迁移关系；生成期间 Body 新增的工作不能被旧候选覆盖。
+- CLI 保留为管理员应急通道；正常方向审批和准确候选审批都能在 `/GENE` 完成。
 
-## 24.1 权限
+### 8.3 真正“上升到 Gene”的硬验收
 
-确认：
+不能把 carry_forward 复制身体叫作基因遗传。
 
-```text
-emergentinc
-```
-
-无法写：
-
-```text
-/opt/emergentinc-supervisor
-/srv/emergentinc/releases
-/etc/emergentinc
-systemd unit
-```
+一次能力上升必须完成：
 
----
+1. 选择已由 Body 生成并实际使用过的能力，记录源码 Hash、契约、成功/失败及协作调用证据。
+2. 系统提炼其通用接口与实现，形成 Gene Patch；只在 Owner 批准范围内调整，不因为上升就扩大权限。
+3. 独立测试检验原有行为、边界、代表性新输入和后代调用。拒绝只改 manifest 标签或保留指向旧 Body 目录的路径。
+4. 把实现纳入新 Gene 内容与只读基础能力目录，迁移时去除或显式停用同名 Body 覆盖，避免调用来源混淆。
+5. G0002 创建一个新 Pixel，测试数据中不复制该能力的旧 Body 插件。它从 Gene 目录解析并执行能力，回执记录 `origin=gene`、Gene Hash 和实际实现 Hash。
+6. 该能力适用于有相应权限的后代 Pixel，不仅对原提案 Pixel 可见；不同元胞仍受各自权限约束。
 
-## 24.2 Rootless Docker
+兼容的其他 Body 能力仍可部分迁移，那叫身体状态延续；两者分别记录、分别测试。
 
-真实检查：
+## 9. 两个生命数据库与既有元胞数据
 
-```text
-rootless
-seccomp
-cgroup v2
-memory limit
-CPU limit
-PID limit
-network none
-no host mount
-no credentials
-```
-
-V21 已有的 Sandbox 验证全部在 Linux 实机再跑一次。
+### 9.1 事实归属
 
----
+继续使用两个物理生命数据库：
 
-# 25. V22 最终端到端实验
+- `lineage/lineage.sqlite3`：跨代经营事实、费用/外部效果与核实证据、长期身份、重要经验、提案/决定、代际历史。
+- `generations/Gxxxx/current.sqlite3`：当代 Pixel 工作状态、开放目标、可继续任务、Body Need/候选/激活引用、短期消息/上下文与本代游标。
 
-这是本版本最重要的验收。
+具体旧表不能仅凭名称搬迁。先列 `v9_core.sqlite3`、现有 BusinessStore、Current、live 文件中的人物、绑定、世界、消息、Run、效应与费用归属，逐表定义“保留的权威源、目标表、主键、恢复规则”。
 
-不要只看单元测试。
-
-完整执行一次：
-
-```text
-① G0001 启动
+持久原始记录与模型 Memory 不等同：费用、未知外部结果、审批和必要审计必须保留；普通状态与噪声不全部变成经验或送入模型。
 
-② Pixel 发现缺少一个简单的数据处理能力
+Root 私有审批/恢复日志可以独立存储，但不成为第三套经营事实账本。旧库迁移后可保留为只读历史；不能长期让同一条正在运行的事实由两套数据库分别写入并决定权限。
 
-③ BodyGrowthService 产生新 Skill
+### 9.2 升级既有数据
 
-④ Sandbox 验证
+按必要范围分步迁移，复用 Store 适配，避免同时重写所有领域模型：
 
-⑤ Skill 自动激活
+1. 停止对应写入，盘点在途 Run、未结算调用、消息和 workspace 锁。
+2. SQLite online backup，记录源库路径、Hash、完整性、表计数及关键关联；保留源库。
+3. 用独立副本 dry-run，生成逐表/逐类迁移报告，保留原 ID、时间、身份与未知结果。
+4. 导入必要运行状态和历史事实，明确旧库何时退出写入；校验双重扣费和重复调度不会发生。
+5. 新系统实际读取人物、消息、Run 和预算；无法映射的项列为待处理，不随机绑定人物，不把未知费用当成零。
+6. 发布使用显式 schema 版本，禁止初始化空 workspace 或改数据库 Gene Hash 来绕过冲突。
 
-⑥ G0001 Body Revision：
-   R0 → R1
+费用及外部动作的旧授权只有在范围、对象、有效期和主体均可核实且满足现行契约时才能继续；否则等待必要授权，不悄悄提升权限。
 
-⑦ Skill 实际执行成功
+### 9.3 出生时的部分迁移
 
-⑧ Dream 运行
+迁移白名单：
 
-⑨ Dream 写入至少 1 条 Memory
+- 仍开放且明确 carry_forward 的目标、工作状态、可安全继续的任务/消息及有效身份关联。
+- 接口、权限、运行环境和数据契约均兼容的已激活 Body 能力/界面。
+- 明确延续的 Need；已满足 Need 只有关联候选仍可执行才保持满足。
 
-⑩ Dream 或 Owner 产生 1 条 Gene Proposal：
-   point
-   reason
-   effect
+不迁移 scratch、缓存、失败候选为活跃能力、结束目标、旧进程租约或已消费消息为新任务。付费调用/外部写入的未决状态不得因“不迁移临时状态”被丢弃，它们在 Lineage 中继续阻止重复执行。
 
-⑪ Owner 批准 Proposal
+接口版本相同只是兼容条件之一。权限、依赖或 schema 变化也要重新验证；不兼容项进入 `REVALIDATION_REQUIRED` 或明确等待状态。
 
-⑫ 本地 Codex / 人工实现 Gene Candidate
+### 9.4 Gene 恢复不能恢复现实世界
 
-⑬ Supervisor 验证 Candidate
+新代失败时恢复旧 Release 和旧 Current 指针，Lineage 不回滚。新代产生的事实继续存在；旧代恢复后先与这些事实对账，再恢复派发。
 
-⑭ Owner 批准准确 Candidate Hash
+Gene 对共享 Lineage 的迁移须保证保留的回退版本仍可读取与核实必要事实；本版优先可向后读取的加法变更。破坏回退兼容的 schema 候选应拒绝并说明，不允许通过还原旧 Lineage 备份消除问题。
 
-⑮ Final Dream
+## 10. Birth 与中断恢复
 
-⑯ Current DB Partial Migration
+复用现有 Supervisor 日志与锁，按下列阶段保证可恢复；每个有副作用的阶段先写入意图：
 
-⑰ G0002 Candidate 启动验证
+1. 验证方向及准确批准、不可变产物、可信测试结果、当前 Gene/Release 基线和 Body 兼容性。
+2. 取得 Evolution Lock，暂停所有新 Run、Body 生长、Dream、候选生成与外部动作派发；排空允许完成的调用，保留未决结果。
+3. 执行 Final Dream；没有新事实则记录跳过，不付费。若费用或结果未知、响应未核实，保持待处理，不能伪造整理完成。
+4. 保存一致的双库快照和源指纹；Final Dream 的结果须包含在迁移/烟测所见事实中。
+5. 先登记 `BIRTHING` 意图，再创建新代 Current，进行白名单迁移；分配的代号不重复使用。验证失败尚未进入出生的候选只记录候选失败。
+6. 在隔离候选 workspace 中使用 Lineage 副本和新 Current 副本启动；禁止真实付费模型、外部写入及正式凭据。
+7. 烟测多 Pixel 执行、Gene/Body 目录、双库、数据迁移、正常入口和 Body handshake。Recovery Host 的审批测试使用隔离实例，不碰生产批准状态。
+8. 记录停止旧代的意图，停止旧进程，按恢复日志切换 Release 与代际指针；两个指针不能假定天然组成一个原子事务。
+9. 正式启动新代但保持业务暂停，确认真实版本、双库、健康、前后端和协作基本行为；通过后将新代置 ACTIVE、旧代置 RETIRED，再恢复派发。
+10. 写入实际出生结果、验证证据及 Lineage Memory。
 
-⑱ G0002 正式接管
+失败处理：
 
-⑲ G0001 RETIRED
+| 失败位置 | 行为 |
+| --- | --- |
+| 候选生成/验证失败 | 保留候选与费用证据，旧代继续；不分配一个假成功的新代 |
+| 切版前中断，包括新 Current 尚未创建 | 放弃本次出生并恢复旧代派发；不能因找不到新 Current 而停止原本健康的旧服务 |
+| 切版中/新代启动失败 | 读取可信日志，恢复旧 Release/Current 指针，验证旧代后才恢复派发 |
+| 新代运行后故障 | 冻结失败 Current、记录 Hash，先恢复旧代；失败代待整理数据随后做 Post-Rollback Dream |
+| 数据/Hash 不可验证 | 保持诊断与必要暂停，禁止伪造恢复成功或自动建空库 |
 
-⑳ 在 G0002 中能够读取：
-   - 当前状态
-   - G0001 的 Memory
-   - 跨代 Business Facts
-```
+Body/Gene Runtime 失联时，Supervisor 通过独立控制端/进程证据判断状态，不依赖调用故障 Body 的 HTTP 才能恢复。Final Dream 从已停写的可读快照或正常 Gene 服务读取；无法读取或费用未决时报告阻塞。紧急恢复不能被“必须先成功做梦”阻塞。
 
-然后再做一次故障实验：
+代际指针继续由可信端控制，应用只读；写入权限和原子替换必须保持已有 Review 修复。恢复后的未知调用只核实或消费已保存响应，不能重新产生一次相同的付费/外部效果。
+
+## 11. 产品交互与故障入口
+
+### 11.1 正常页面
+
+- `/QIAN`：保留人物、招募、绑定、会议；加入目标、预算、方案/资源决定、交付与反馈的局部视图。
+- `/YUAN`：保留元胞、环境、消息、Run、协作与结果；展示实际身份、执行状态和必要费用信息。
+- 经营工作台已有组件按功能复用，不作为第三个日常入口。
+- Gene、Current、Memory、Dream 和 Supervisor 技术管理沉入水下；用户仍能看到需要决定的目标、授权和结果。
+- 正常 Body 变化不逐次要求批准；需要 Owner 决定的费用、外部权限与基因变更在可信控件中呈现真实范围。
 
-```text
-构造 G0003 启动失败
-→ G0002 自动恢复
-→ G0003 FAILED
-→ G0003 为什么失败被 Lineage 记住
-```
+### 11.2 /GENE
 
-完成以上两条，才允许宣布：
+第一版只做必要操作：独立登录、运行诊断、提案方向批准/拒绝、生成进度与证据、准确候选批准/出生、明确的 Body/代际恢复、费用已核实且响应保存的 Dream 恢复，以及相关历史。
 
-# “EmergentInc 已经活过一代。”
+正常时 Owner 可手动进入；故障时可信入口壳显示简短错误和链接。Body 前端完全失效、没有机会渲染错误时，直接访问 `/GENE` 仍然有效。
 
----
+候选代码、日志、报告均作为不可信文本/差异显示，不在审批 origin 中执行，不泄露凭据。不要为了展示“层”而再创建多个管理产品。
 
-# 26. 推荐实施顺序
+### 11.3 最小故障判据
 
-## Phase 1：生命数据层
+- 真实 Body 进程退出：记录退出码/Revision，停止新派发。
+- Body 健康握手连续三次失败（初始每次超时 2 秒，可配置）：标为不可用，保留原因；超时本身不授权重放请求。
+- 前端资源缺失、启动异常或渲染失败：显示本次客户端故障；经可信探测复现后才考虑服务端 Body 回退。
+- 恢复成功须通过实际版本握手和相应前后端烟测，不能只凭进程再次存在或 HTTP 200。
+- 业务失败、余额不足、认证失败、模型不可用、Owner 拒绝或结果未知不触发代码/代际自动回退。
 
-完成：
+## 12. 实施阶段与交付门槛
 
-```text
-Lineage DB
-Current DB
-G0001
-LifeContext
-Partial Migration
-```
+后续实施按 P0 → P5 执行。现有四阶段成果是可复用基础，不重复从零建设；任何未满足的硬门槛都不得改写为“已完成”。
 
-验收后再继续。
+| 阶段 | 主要工作 | 通过门槛 |
+| --- | --- | --- |
+| P0 基线与边界 | 记录现有修复；逐模块分层；旧库归属/dry-run；Hash、身份、权限与接口定义 | 分层清单和迁移报告可审阅；没有被整体删除的原 Run/协作能力 |
+| P1 恢复与隔离 | 独立 Recovery Host/GENE、可信审批通道、独立 Body 进程、跨 origin UI 和消息桥、源码边界 | 杀 Body 后端及破坏 bundle，GENE 仍登录；恶意前后端不能批准自己或取得凭据 |
+| P2 统一运行链 | 保留 Run/调度/决策/效应，接 LifeContext、能力目录与账本；迁移必要数据；统一两页 | 两个 Pixel 实际通信协作；动态能力可调用；唯一调度所有者；无重复付费 |
+| P3 自主 Body 源码 | 真实前后端代码生成、隔离构建、独立测试、并发检查、自动激活/回退 | 同代真实源码与行为发生变化，Gene Hash 不变；失败不重放效果 |
+| P4 Gene 自动候选与遗传 | 提案→方向批准→系统写 Patch/测试→准确批准；能力进入 Gene；部分迁移/Birth | 无人工写 Patch；新代新 Pixel 无原 Body 插件仍调用 Gene 能力 |
+| P5 完整实验与故障回归 | 正常产品、真实协作、生长、经验、审批、出生、夭折恢复及旧数据回归 | 第 1 节全部有可复现证据；明确区分本地结果与 Linux 实机结果 |
 
----
+分阶段只做必要结构变化，不顺带视觉重设计、重写整个订单/账本或引入新编排平台。
 
-## Phase 2：身体生长
+### 12.1 Windows 本地与 Linux 实机分开报告
 
-完成：
+Windows 先完成协议、服务拆分、真实本机恢复进程/浏览器隔离、SQLite 迁移与故障测试。模型、外部动作、Linux 发布控制可以使用替身，但必须标注。
 
-```text
-Body Need
-Body Skill
-Sandbox Validation
-Auto Activate
-Body Rollback
-```
+生成后端源码的实际安全执行与隔离构建依赖合格的 worker；没有该环境时，该项记录“待 Linux/隔离环境验收”，不能回退到宿主执行。真实付费模型生成也需要既有预算授权，替身只能证明编排，不能证明实际生成质量。
 
-这一阶段不能修改 Gene。
+Linux 实机验收继续暂缓。恢复后需验证 rootless/cgroup/seccomp、只读依赖、宿主及凭据不可见、受限网络/能力代理、CPU/内存/PID/超时、强制清理、服务用户权限、已安装 Root 的不可变性及真实切版。只有这部分及真实生成实验通过，才可声称完整生命循环通过。
 
----
+## 13. 文件与模块改动范围
 
-## Phase 3：Memory + Dream
+以下是实施定位，不要求为了符合名称搬迁全部文件：
 
-完成：
+| 位置 | 必要变化 |
+| --- | --- |
+| `frontend/src/OwnerEntry.tsx`、`App.tsx`、`features/business/` | 统一正常入口，复用经营组件，保留 Run/元胞交互，拆可信控件和真实 Body UI |
+| 新独立 Recovery Host / Gene UI 构建入口 | 独立启动、登录、候选展示与批准、固定控制通道；由 Root 管理安装 |
+| 明确的 Body 前端/后端源码目录 | 提取现有 R0，允许组件/模块/流程源码按候选发布 |
+| `apps/server/src/main.ts`、`app.ts` | 拆启动依赖，取消最终产品按 mode 分裂，装配统一 Run 与生命服务 |
+| `apps/server/src/services/run_service.ts`、`packages/runtime/` | 保留多 Pixel 核心，适配 Gene/Body 工具目录、LifeContext、Operation/预算与动态模块 |
+| `packages/tools/` | 实际处理器注册、受限能力代理、Body 应用模块构建/执行 profile |
+| `body_growth_service.ts`、`business_service.ts` | 真实源码候选与调用、身份和 Need 关联、统一调度所有权 |
+| `dream_service.ts`、新增候选生成编排 | 证据关联、方向批准后自动 Patch/反馈修复、准确候选状态 |
+| `packages/protocol/`、`genome/manifest.json` | 精确分层、来源契约、审批/候选/桥接类型、Hash 范围 |
+| `packages/persistence/` | CoreStore 适配、两库归属、必要 schema 升级、迁移/未知结果/兼容报告 |
+| `supervisor/` | 复用 Birth/恢复，接独立可信批准通道、隔离验证、多进程状态及新烟测 |
+| `scripts/`、`deploy/linux/`、工作区构建配置 | 独立构建、启动/停止顺序、目录与用户权限、可信安装及故障注入 |
+| README、frontend README、Owner/业务指南、实施记录 | 当前实现与目标分开，真实命令、三地址、审批和恢复操作同步 |
 
-```text
-MemoryGate
-Daily Dream
-Final Dream
-Memory
-Gene Proposal
-```
+新增表、状态、配置先检查现有结构能否表达。只增加实际流程所需字段，不一次建设通用插件商店、审批平台、微服务或全量事件系统。
 
-Gene Proposal 仍然必须人工审批。
+当前 `frontend/README.md` 仍有旧 Python/FastAPI 启动说明，须在实施时纠正为实际 Node/Fastify 命令。由于它现在被 `frontend/**` 纳入 Gene Hash，本次文档修订只同步根 README 与两份 Plan；前端 README 随受控边界升级修正，避免仅改说明便改变用户正在验证的运行基因。
 
----
+## 14. 自动测试与验收矩阵
 
-## Phase 4：Generation Birth / Death
+| 编号 | 测试 | 必须观察到的结果 |
+| --- | --- | --- |
+| T01 | 正常入口 | 同一次启动能使用 QIAN/YUAN 与多 Pixel Run，不切换 legacy/business |
+| T02 | 健康状态访问 GENE | Owner 手动可登录，Body 日常导航无 Gene 技术管理项 |
+| T03 | 真实 Body 后端被终止 | 独立 GENE 登录、状态、恢复仍有效 |
+| T04 | Body bundle 缺失/语法错误/渲染异常 | 可信壳能诊断，GENE 不依赖坏 bundle |
+| T05 | 恶意 Body 前端 | 不能读取管理凭据、调用批准、顶层导航或借消息桥任意转发 |
+| T06 | 恶意 Body 后端/候选路径 | 不能写 Gene/Root/正式库、取凭据、越界导入、路径穿越或自改强制测试 |
+| T07 | 多 Pixel 主链 | 至少两个不同 Pixel 经 Run 和消息实际协作，身份、上下文、权限可追溯 |
+| T08 | 同代真实源码生长 | 自动生成前端组件及后端实现、验证并实际调用；Body Hash 变而 Gene Hash/代号不变 |
+| T09 | 候选失败及并发冲突 | 不激活失败产物，不覆盖新的 Body 基线，不产生额外重复效果 |
+| T10 | Body 回退 | 恢复兼容前版，不还原整库，不重放原输入，失败记忆保留 |
+| T11 | 非代码故障 | 401、预算/模型问题、未知外部结果不会触发笼统回退 |
+| T12 | 唯一费用与效果记录 | Run、经营、Dream、生长/候选生成共享授权与对账规则，无双调度、双扣费 |
+| T13 | Dream 增量与保存响应 | 无新事实零调用，未知不重发，核实后消费保存响应；跨代游标保持正确 |
+| T14 | Gene 系统编写 | Owner 只做方向与准确批准，系统形成真实 Patch、测试报告和产物，无人工改代码补链 |
+| T15 | 批准与产物绑定 | 自批、重放、过期基线、Hash/报告变化均被可信端拒绝 |
+| T16 | 真正能力遗传 | 新代新 Pixel 无原 Body 插件；调用来源和实现 Hash 证明能力来自 Gene |
+| T17 | 双库部分迁移 | 只延续明确兼容状态，不复活过期租约/已消费任务，不丢未决效果 |
+| T18 | 旧元胞数据升级 | 人物、消息、Run、事实、费用与旧 ID 可核对；无第三套相同事实的活跃权威源 |
+| T19 | 出生成功与失败 | G2 接管，G3 失败恢复 G2；代码/Current 回退而 Lineage 保留 |
+| T20 | 阶段中断恢复 | 创建 Current 前、停止旧服务前后、双指针切换间均可恢复，保留已有 Review 修复 |
+| T21 | 候选验证副作用隔离 | 复制双库、假连接器，无正式模型费用、外部写入、正式凭据 |
+| T22 | 共享 schema 回退兼容 | 新代产生事实后旧代仍能读取/核实；不还原 Lineage 来掩盖不兼容 |
+| T23 | Gene Hash 定义 | 只改 Body/文档/显示代号不形成 Gene 变化；真实基础实现变更必须审批 |
+| T24 | 真实环境 | Linux 权限/沙箱/服务切换及实际模型生成分别有实测证据，替身结果不冒充通过 |
 
-完成：
+类型/构建/相关回归通过后，再运行全量回归及各独立前端构建。现有 Windows 命令：
 
-```text
-Root Supervisor
-Gene Candidate
-Candidate Hash Approval
-Release Validation
-Birth
-Retire
-Rollback
+```powershell
+npm.cmd run typecheck
+npm.cmd test -- --reporter=dot --maxWorkers=4
+npm.cmd --prefix frontend run build
 ```
 
-最后进行 Linux 端到端实验。
+新增构建入口后把准确命令补入实施记录。文档修改本身只需检查链接、格式、事实和差异，不为了文档变更多跑一遍运行测试。
 
----
+## 15. 最终实验与交付证据
 
-# 27. 本版本最终状态
+在隔离实验 workspace 中，使用事先确定的目标、输入和预算：
 
-V22 完成以后，EmergentInc 应该达到：
-
 ```text
-Root of Trust
-    ↓
-Genome G000N
-    ↓
-Body 自主生长
-    ↓
-Current DB 记录这一代正在发生什么
-    ↓
-MemoryGate + Dream
-    ↓
-Lineage DB 形成跨代经验
-    ↓
-Gene Proposal
-    ↓
-Owner 审批
-    ↓
-新的 Genome
-    ↓
-Generation G000N+1
+G0001 / R0
+  → Pixel A 与 Pixel B 自主 Run、消息协作
+  → 发现资料处理能力及结果界面不足
+  → 系统生成后端处理函数 + 前端交互组件
+  → 独立测试、自动激活 R1、真实协作调用
+  → 注入 R2 代码故障，恢复 R1，失败事实入 Lineage
+  → Dream 提议把已验证的通用处理能力写入 Gene
+  → Owner 批准方向
+  → 系统自动形成并验证 Gene 候选
+  → Owner 在 /GENE 批准准确候选
+  → Final Dream + 部分迁移 → G0002 ACTIVE
+  → 新 Pixel 不带旧 Body 插件，从 Gene 调用该能力
+  → 另一准确批准候选在 G0003 出生时注入故障
+  → 恢复 G0002，保留费用、失败 Current、记忆和审批历史
 ```
-
-最终最重要的不是“自动部署成功”。
 
-而是下面这条链第一次真实成立：
+另外分别破坏 Body UI 和终止 Body 进程，验证独立 GENE 恢复；业务验证期间正常 Run 保留多元胞协作。
 
-> **这一代活着 → 长出新的身体能力 → 经历成功与失败 → 形成记忆 → 提出遗传变化 → 新一代出生 → 上一代死亡/退休 → 经验继续存在。**
+交付证据至少包括：基线与未提交改动清单、分层/迁移报告、实际前后端 Patch、生成/验证/调用回执、Gene/Body/Release Hash、Owner 两次审批记录、后代无 Body 副本的 Gene 调用证据、故障恢复日志及两库事实核对。隐藏凭据，说明哪些模型/外部动作/系统操作使用替身。
 
-这就是 V22 的唯一核心目标。
+只有完整实测通过才宣布“系统自主长出身体能力，并在人的批准下把能力遗传给下一代”。本计划不自动批准 Gene、不自动修改 Root、不开放任意宿主写入/依赖安装，也不以缩回 JSON 插件、停用多 Pixel Run 或要求人工写 Patch 来降低验收标准。

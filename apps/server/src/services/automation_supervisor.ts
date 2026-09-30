@@ -1,6 +1,11 @@
 import { createHash } from "node:crypto";
 import { SqliteDatabase } from "@emergentinc/persistence";
 import { RootlessSandbox, AUTOMATION_PROFILE, AUTOMATION_SUITE_HASH, automationCandidateHash, validateAutomation, validateAutomationInput, validateAutomationOutput } from "@emergentinc/tools";
+import { BodyCandidate, lifeId } from "@emergentinc/protocol";
+import { CurrentStore, LineageStore } from "@emergentinc/persistence";
+import { BodyRunner, bodyCandidate, bodyHash, bodyCandidateHash, boundedJson, validateBodyCandidate } from "@emergentinc/tools";
+import { mkdirSync, readFileSync, writeFileSync, existsSync } from "node:fs";
+import { join } from "node:path";
 
 type Row = Record<string, any>;
 type Runner = Pick<RootlessSandbox, "probe" | "run" | "recoverInterrupted">;
@@ -165,6 +170,163 @@ export class AutomationSupervisor {
           this.db.prepare("UPDATE changes SET state='RECOVERY_REQUIRED' WHERE id=?").run(c.id); this.event(c.id, "rollback_failed", { reason }); });
       }
       throw e; // No automatic replay against the previous program.
+    } finally { this.running = false; }
+  }
+}
+
+/** Independent autonomous Body path. The V21 Owner approval path above remains unchanged. */
+export class BodySkillSupervisor {
+  private running = false;
+  private recovered = false;
+  constructor(readonly current: CurrentStore, readonly lineage: LineageStore, private runner: BodyRunner, private skillsDirectory: string) {}
+  private generation() { return String(this.current.meta().generation_id); }
+  private assertActive() {
+    if (this.lineage.activeGeneration()?.id !== this.generation()) throw new Error("GENERATION_NOT_ACTIVE");
+  }
+  get(id: string): Row {
+    const c = this.current.db.prepare("SELECT * FROM body_candidates WHERE id=?").get(id);
+    if (!c) throw new Error("BODY_CANDIDATE_NOT_FOUND");
+    return { ...c, candidate: JSON.parse(String(c.candidate_json)), validation: c.validation ? JSON.parse(String(c.validation)) : null };
+  }
+  submit(id: string, value: unknown, needId?: string) {
+    this.assertActive(); lifeId(id);
+    const candidate = bodyCandidate(value, this.current.meta().body_interface_version);
+    const requestHash = bodyHash({ candidate, needId: needId ?? null });
+    return this.current.db.transaction(() => {
+      const previous = this.current.db.prepare("SELECT id FROM body_candidates WHERE id=?").get(id);
+      if (previous) { const p = this.get(id); if (p.request_hash !== requestHash) throw new Error("BODY_IDEMPOTENCY_CONFLICT"); return p; }
+      this.current.db.prepare(`INSERT INTO body_candidates(id,skill_id,need_id,candidate_json,request_hash,state,created_at)
+        VALUES(?,?,?,?,?,'GENERATED',?)`).run(id, candidate.skill_id, needId ?? null, JSON.stringify(candidate), requestHash, Date.now());
+      if (needId) this.current.db.prepare("UPDATE body_needs SET state='GENERATED',updated_at=? WHERE id=?").run(Date.now(), needId);
+      this.current.event("body_generated", { changeId: id, skillId: candidate.skill_id });
+      return this.get(id);
+    });
+  }
+  async recover() {
+    if (this.running) throw new Error("SUPERVISOR_BUSY");
+    this.running = true;
+    try {
+      await this.runner.recoverInterrupted({ exclusiveSupervisorLockHeld: true });
+      this.current.db.prepare("UPDATE body_candidates SET state='GENERATED' WHERE state='VALIDATING'").run();
+      this.recovered = true;
+    } finally { this.running = false; }
+  }
+  async idle() { while (this.running) await new Promise(resolve => setTimeout(resolve, 25)); }
+  private checked(c: Row): BodyCandidate {
+    const candidate = bodyCandidate(c.candidate, this.current.meta().body_interface_version);
+    const v = c.validation;
+    if (!v?.passed || v.interfaceVersion !== candidate.interface_version || v.suiteHash !== bodyHash(candidate.tests) ||
+        !v.checks?.length || v.checks.length !== candidate.tests.length || !v.checks.every((t: any) => t.passed === true) ||
+        v.candidateHash !== c.candidate_hash || c.candidate_hash !== bodyCandidateHash(candidate, v.image)) throw new Error("BODY_VALIDATION_INVALID");
+    return candidate;
+  }
+  async validateBodyCandidate(id: string) {
+    this.assertActive();
+    if (!this.recovered) throw new Error("SUPERVISOR_RECOVERY_REQUIRED");
+    if (this.running) throw new Error("SUPERVISOR_BUSY");
+    const c = this.get(id);
+    if (c.state === "VALIDATED") { this.checked(c); return c; }
+    if (c.state !== "GENERATED") throw new Error("BODY_NOT_VALIDATABLE");
+    this.running = true;
+    this.current.db.prepare("UPDATE body_candidates SET state='VALIDATING' WHERE id=?").run(id);
+    try {
+      const receipt = await validateBodyCandidate(c.candidate, this.runner);
+      this.current.db.transaction(() => {
+        this.current.db.prepare("UPDATE body_candidates SET state=?,candidate_hash=?,validation=? WHERE id=?")
+          .run(receipt.passed ? "VALIDATED" : "VALIDATION_FAILED", receipt.candidateHash, JSON.stringify(receipt), id);
+        this.current.event(receipt.passed ? "body_validation_passed" : "body_validation_failed", { changeId: id, checks: receipt.checks });
+      });
+    } catch (e) {
+      this.current.db.prepare("UPDATE body_candidates SET state='GENERATED' WHERE id=?").run(id);
+      throw e;
+    } finally { this.running = false; }
+    return this.get(id);
+  }
+  private artifact(c: Row) { return join(this.skillsDirectory, c.skill_id, `${c.id}.json`); }
+  async policyAutoActivate(id: string) {
+    this.assertActive();
+    if (!this.recovered) throw new Error("SUPERVISOR_RECOVERY_REQUIRED");
+    if (this.running) throw new Error("SUPERVISOR_BUSY");
+    this.running = true;
+    try {
+      const c = this.get(id), candidate = this.checked(c);
+      if ((await this.runner.probe()).image !== c.validation.image) throw new Error("BODY_RUNTIME_CHANGED");
+      if (c.activated_at !== null) return c;
+      if (c.state !== "VALIDATED") throw new Error("BODY_NOT_ACTIVATABLE");
+      const directory = join(this.skillsDirectory, candidate.skill_id); mkdirSync(directory, { recursive: true });
+      const file = this.artifact(c), json = JSON.stringify(candidate);
+      if (existsSync(file)) { if (readFileSync(file, "utf8") !== json) throw new Error("BODY_ARTIFACT_CONFLICT"); }
+      else writeFileSync(file, json, { flag: "wx", mode: 0o600 });
+      return this.current.db.transaction(() => {
+        const previous = this.current.db.prepare("SELECT active_change_id FROM body_skills WHERE skill_id=? AND state='ACTIVE'").get(c.skill_id)?.active_change_id ?? null;
+        const revision = Number(this.current.db.prepare("SELECT COALESCE(MAX(body_revision),0) n FROM body_candidates").get()!.n) + 1;
+        if (previous) this.current.db.prepare("UPDATE body_candidates SET state='RETIRED' WHERE id=?").run(previous);
+        this.current.db.prepare("UPDATE body_candidates SET state='ACTIVE',previous_id=?,activated_at=?,body_revision=? WHERE id=?")
+          .run(previous, Date.now(), revision, id);
+        this.current.db.prepare(`INSERT INTO body_skills VALUES(?,?,?,?, 'ACTIVE',0,0,?) ON CONFLICT(skill_id) DO UPDATE SET
+          name=excluded.name,active_change_id=excluded.active_change_id,interface_version=excluded.interface_version,state='ACTIVE',updated_at=excluded.updated_at`)
+          .run(c.skill_id, candidate.purpose, id, candidate.interface_version, Date.now());
+        this.current.db.prepare("UPDATE current_meta SET body_revision=? WHERE id=1").run(revision);
+        if (c.need_id) this.current.db.prepare("UPDATE body_needs SET state='SATISFIED',updated_at=? WHERE id=?").run(Date.now(), c.need_id);
+        this.current.event("body_activated", { changeId: id, skillId: c.skill_id, revision });
+        return this.get(id);
+      });
+    } finally { this.running = false; }
+  }
+  private rollback(c: Row, reason: string) {
+    let previous: Row | undefined;
+    if (c.previous_id) {
+      previous = this.get(c.previous_id); this.checked(previous);
+      if (previous.validation.image !== c.validation.image || readFileSync(this.artifact(previous), "utf8") !== JSON.stringify(previous.candidate))
+        throw new Error("BODY_PREVIOUS_INVALID");
+    }
+    // Remember before changing a Current pointer. This record cannot vanish with a body restore.
+    this.lineage.remember(this.generation(), "body_rollback", { point: `${c.skill_id} ${c.id} 失败并回退`,
+      reason: reason.slice(0, 1000), effect: previous ? `后续使用 ${previous.id}；禁止自动重放本次输入` : "能力停用，等待新候选" }, `body-rollback:${this.generation()}:${c.id}`, undefined, 4);
+    this.current.db.transaction(() => {
+      this.current.db.prepare("UPDATE body_candidates SET state='ROLLED_BACK' WHERE id=?").run(c.id);
+      if (previous) this.current.db.prepare("UPDATE body_candidates SET state='ACTIVE' WHERE id=?").run(previous.id);
+      this.current.db.prepare("UPDATE body_skills SET active_change_id=?,state=?,failed_runs=failed_runs+1,updated_at=? WHERE skill_id=?")
+        .run(previous?.id ?? null, previous ? "ACTIVE" : "DISABLED", Date.now(), c.skill_id);
+      this.current.db.prepare(`UPDATE current_meta SET body_revision=(SELECT COALESCE(MAX(c.body_revision),0)
+        FROM body_candidates c JOIN body_skills s ON s.active_change_id=c.id WHERE s.state='ACTIVE') WHERE id=1`).run();
+      this.current.event("body_rolled_back", { changeId: c.id, restored: previous?.id ?? null, reason });
+    });
+  }
+  async run(skillId: string, input: unknown) {
+    this.assertActive(); lifeId(skillId); boundedJson(input);
+    if (!this.recovered) throw new Error("SUPERVISOR_RECOVERY_REQUIRED");
+    if (this.running) throw new Error("SUPERVISOR_BUSY");
+    const active = this.current.db.prepare("SELECT active_change_id FROM body_skills WHERE skill_id=? AND state='ACTIVE'").get(skillId);
+    if (!active?.active_change_id) throw new Error("ACTIVE_BODY_SKILL_REQUIRED");
+    const c = this.get(String(active.active_change_id));
+    this.running = true;
+    try {
+      const candidate = this.checked(c);
+      if (readFileSync(this.artifact(c), "utf8") !== JSON.stringify(candidate)) throw new Error("BODY_ARTIFACT_CONFLICT");
+      if ((await this.runner.probe()).image !== c.validation.image) throw new Error("BODY_RUNTIME_CHANGED");
+      const result = boundedJson(await this.runner.runBody(candidate.source, input));
+      const known = candidate.tests.find(t => bodyHash(t.input) === bodyHash(input));
+      if (known && bodyHash(result) !== bodyHash(known.expected)) throw new Error("BODY_OUTPUT_CONTRACT_MISMATCH");
+      this.current.db.transaction(() => {
+        this.current.db.prepare("UPDATE body_skills SET successful_runs=successful_runs+1,updated_at=? WHERE skill_id=?").run(Date.now(), skillId);
+        this.current.event("body_run_succeeded", { skillId, changeId: c.id, inputHash: bodyHash(input), outputHash: bodyHash(result) });
+      });
+      return { changeId: c.id, result };
+    } catch (e) {
+      const reason = e instanceof Error ? e.message : "BODY_EXECUTION_FAILED";
+      if (/^(BODY_OUTPUT_CONTRACT_MISMATCH|INVALID_BODY_JSON|AUTOMATION_EXECUTION_FAILED|AUTOMATION_OUTPUT_INVALID|SANDBOX_COMMAND_TIMEOUT|SANDBOX_OUTPUT_LIMIT)$/.test(reason)) {
+        try { this.rollback(c, reason); } catch {
+          this.current.db.prepare("UPDATE body_skills SET state='RECOVERY_REQUIRED' WHERE skill_id=?").run(skillId);
+          this.lineage.remember(this.generation(), "security_boundary", { point: `${skillId} 回退失败并停用`, reason: "前版完整性无法确认", effect: "不得继续执行，需修复候选记录与环境" }, `body-rollback-failed:${this.generation()}:${c.id}`);
+          throw new Error("BODY_ROLLBACK_REQUIRES_REVIEW");
+        }
+      }
+      else {
+        this.current.db.prepare("UPDATE body_skills SET state='RECOVERY_REQUIRED' WHERE skill_id=?").run(skillId);
+        this.lineage.remember(this.generation(), "security_boundary", { point: `${skillId} 已停用`, reason: "运行环境或候选完整性无法确认", effect: "需要验证环境后重新激活" }, `body-security:${this.generation()}:${c.id}`);
+      }
+      throw e;
     } finally { this.running = false; }
   }
 }
