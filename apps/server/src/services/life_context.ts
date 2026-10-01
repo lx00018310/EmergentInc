@@ -5,6 +5,7 @@ import { LineageStore, CurrentStore } from "@emergentinc/persistence";
 
 export { readGenome, generationDirectory, writeGenerationPointer } from "@emergentinc/persistence";
 import { generationDirectory, writeGenerationPointer } from "@emergentinc/persistence";
+import { lifeOverview } from "./life_overview.js";
 
 export class LifeContext {
   constructor(readonly workspaceRoot: string, readonly genome: GenomeManifest, readonly lineage: LineageStore, readonly current: CurrentStore) {}
@@ -54,8 +55,6 @@ export class LifeContext {
       memories: this.lineage.relevantMemories({ pixelId }), task, environment };
   }
   overview() {
-    return { current: this.current.meta(), skills: this.current.skills(), memories: this.lineage.relevantMemories(),
-      proposals: this.lineage.proposals(), generations: this.lineage.generations(),
-      needs: this.current.db.prepare("SELECT * FROM body_needs ORDER BY created_at DESC LIMIT 100").all() };
+    return lifeOverview(this);
   }
 }

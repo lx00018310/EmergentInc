@@ -3,6 +3,7 @@ export type GeneProposalState = "PROPOSED" | "APPROVED" | "REJECTED" | "IMPLEMEN
 export interface MemoryPoint { point: string; reason: string; effect: string }
 export interface GenomeManifest {
   schema_version: 1;
+  gene_hash_version?: 1 | 2;
   generation: number;
   body_interface_version: string;
   protected_paths: string[];
@@ -33,6 +34,7 @@ export function memoryPoint(value: unknown): MemoryPoint {
 export function genomeManifest(value: unknown): GenomeManifest {
   const v = value as GenomeManifest;
   if (!v || v.schema_version !== 1 || !Number.isSafeInteger(v.generation) || v.generation < 1 ||
+      (v.gene_hash_version !== undefined && v.gene_hash_version !== 1 && v.gene_hash_version !== 2) ||
       typeof v.body_interface_version !== "string" || !/^[0-9]+$/.test(v.body_interface_version) ||
       !Array.isArray(v.protected_paths) || !v.protected_paths.length ||
       v.protected_paths.some(p => typeof p !== "string" || !p || p.startsWith("/") || p.includes("..") || p.includes("\\")) ||

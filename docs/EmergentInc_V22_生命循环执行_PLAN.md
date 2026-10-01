@@ -68,7 +68,7 @@
 | `dream_service.ts` | 增量整理、三项提案、保存响应恢复 | 缺少系统 Gene Candidate Builder 和真实能力上升链 |
 | `supervisor/` | 独立可信安装、准确 Hash、复制双库烟测、出生、恢复日志 | 正常审批仍依赖 CLI，暂停/Final Dream 与当前应用 HTTP 耦合 |
 | `frontend/src/OwnerEntry.tsx`、`App.tsx` | 两个原有入口和可复用经营组件 | business/legacy 分裂，缺独立恢复页、真实可变 Body UI |
-| `genome/manifest.json` | 受保护路径、Hash、能力契约 | 把 `frontend/**`、`apps/server/**`、`packages/**` 整体作为 Gene，混淆基础规则与具体身体实现；当前连 `frontend/README.md` 也参与 Hash |
+| `genome/manifest.json` | 受保护路径、Hash、能力契约 | 把 `frontend/**`、`apps/server/**`、`packages/**` 整体作为 Gene，混淆基础规则与具体身体实现；历史 V1 还包含 `frontend/README.md`；V2 已排除 README/测试，但 Body 源码隔离仍未完成 |
 
 保留已修复的四类行为：代际指针可读权限；切版前中断恢复不依赖新 Current；回退后使用已保存的 Dream 响应；准确 Body Need / 候选关联与跨代接续。整改不得使这些回归。
 
@@ -114,6 +114,8 @@ Body 可以调用 Gene 已提供的读、写、模型、外部连接器能力，
 - **Candidate Release Hash**：准确待发布内容及构建环境、验证器版本的整体绑定，由可信验证端计算。
 
 不能只改 Generation 数字或重新打包就声称 Gene 进化。Gene 内容未变时不创建下一代。Body 单独发布不触碰 Gene Hash；Gene 候选必须声明其所需的初始 Body 和迁移兼容关系。
+
+本机稳定启动修复已引入显式 V2 Hash 与 Owner 批准冻结发布；这完成换行、README/测试/显示代号的排除，并未完成可变 Body 目录分离。实际实施见整改记录。
 
 旧 Hash 算法与新分层的切换本身属于一次明确的基因升级：版本化 Hash 规则，保留旧 Hash 与父代映射，在独立 workspace 演练后走受控升级。首次安装恢复底座由管理员完成；不能要求尚未实现的自我迭代链完成自己的初始安装，也不能直接改现有数据库里的 Hash。
 

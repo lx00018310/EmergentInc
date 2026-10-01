@@ -19,6 +19,8 @@ function fixture() {
   const manifest = { schema_version: 1 as const, generation: 1, body_interface_version: "1", protected_paths: ["genome/**", "apps/server/**"], capability_contracts: {} };
   fs.mkdirSync(join(base, "genome"), { recursive: true }); fs.mkdirSync(join(base, "apps/server"), { recursive: true });
   fs.writeFileSync(join(base, "genome/manifest.json"), JSON.stringify(manifest)); fs.writeFileSync(join(base, "apps/server/core.txt"), "V21 core");
+  fs.mkdirSync(join(base, "packages/runtime"), { recursive: true });
+  fs.writeFileSync(join(base, "packages/runtime/index.ts"), "export const runtime = true;");
   fs.writeFileSync(join(base, ".env"), "DO_NOT_COPY=secret");
   let currentRelease = base;
   const initial = readGenome(base);
@@ -29,6 +31,7 @@ function fixture() {
     validateRelease: vi.fn(async candidate => { fs.mkdirSync(join(candidate, "apps/server/dist"), { recursive: true }); fs.writeFileSync(join(candidate, "apps/server/dist/main.js"), "trusted build output"); }),
     quiesce: vi.fn(async () => {}), finalDream,
     smoke: vi.fn(async (release, candidateWorkspace, generation) => {
+      expect(fs.readFileSync(join(release, "packages/runtime/index.ts"), "utf8")).toBe("export const runtime = true;");
       expect(candidateWorkspace).not.toBe(workspace); expect(fs.existsSync(join(candidateWorkspace, "private"))).toBe(false);
       expect(fs.existsSync(join(release, ".env"))).toBe(false);
       const genome = readGenome(release), candidate = LifeContext.open(candidateWorkspace, genome.manifest, genome.geneHash, "candidate");
@@ -106,6 +109,8 @@ describe("trusted Generation lifecycle (local runtime contract doubles)", () => 
     expect(classifyChange(["package.json"])).toBe("GENE");
     expect(classifyChange(["apps/recovery/src/server.ts"])).toBe("ROOT");
     expect(classifyChange(["scripts/local-upgrade.mjs"])).toBe("ROOT");
+    for (const entry of ["scripts/local-release.mjs", "scripts/launch-approved.mjs", "EmergentInc_UI.bat", "EmergentInc_UI.ps1"])
+      expect(() => f.supervisor.submit({ ...request, patch: [{ path: entry, content: "self approve" }] })).toThrow("ROOT_OF_TRUST_CHANGE_FORBIDDEN");
     expect(() => f.supervisor.submit({ ...request, patch: [{ path: "apps/recovery/src/server.ts", content: "self approve" }] })).toThrow("ROOT_OF_TRUST_CHANGE_FORBIDDEN");
   });
   it("keeps the old generation active when candidate smoke fails", async () => {

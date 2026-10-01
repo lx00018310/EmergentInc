@@ -24,27 +24,19 @@ if %errorlevel% equ 0 (
     exit /b 1
 )
 
-rem Build both backend and frontend so the UI and API match current source code.
-echo Building backend...
-call npm run build
-if %errorlevel% neq 0 (
-    echo.
-    echo [BUILD FAILED] Backend build error - NOT starting server with stale code.
+rem Existing workspaces boot the approved frozen release; only fresh installations need a build.
+node scripts/launch-approved.mjs --check
+if %errorlevel% equ 1 (
+    echo [ERROR] Approved release validation failed. Use explicit controlled upgrade or recovery.
     pause
     exit /b 1
 )
-
-echo Building frontend UI...
-pushd frontend
-call npm run build
-if %errorlevel% neq 0 (
-    popd
-    echo.
-    echo [BUILD FAILED] Frontend build error - NOT starting server with a stale UI.
-    pause
-    exit /b 1
+if %errorlevel% equ 2 (
+    call npm.cmd run build
+    if errorlevel 1 exit /b 1
+    call npm.cmd --prefix frontend run build
+    if errorlevel 1 exit /b 1
 )
-popd
 
 start "" http://127.0.0.1:8765
 
@@ -52,7 +44,7 @@ rem Print every real LLM request/response/error to this console window.
 rem Set EMERGENT_LLM_TRACE=0 before launching to silence it.
 if not defined EMERGENT_LLM_TRACE set EMERGENT_LLM_TRACE=1
 
-node apps/server/dist/main.js %*
+node scripts/launch-approved.mjs %*
 if %errorlevel% neq 0 (
     echo.
     echo [SERVER STOPPED OR ERRORED]

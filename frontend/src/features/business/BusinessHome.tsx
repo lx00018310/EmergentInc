@@ -4,6 +4,7 @@ import { readTable } from './read_table';
 import { BusinessOutcomes } from './BusinessOutcomes';
 import { StrategyHistory } from './StrategyHistory';
 import { EvolutionPanel } from './EvolutionPanel';
+import type { BusinessTab } from './evolution/life_types';
 
 import { businessApi, businessDecision, explanations } from './business_api';
 const money = (micros: number) => `¥${(micros / 1000000).toFixed(4)}`;
@@ -19,7 +20,7 @@ type Plan = { id: string; revision: number; hash: string; direction: string; sta
 
 export function BusinessHome() {
   const [data, setData] = useState<any>(null), [error, setError] = useState(''), [busy, setBusy] = useState(false);
-  const [direction, setDirection] = useState(''), [tab, setTab] = useState('home');
+  const [direction, setDirection] = useState(''), [tab, setTab] = useState<BusinessTab | 'life'>('life');
   const [total, setTotal] = useState('10'), [draft, setDraft] = useState('2'), [calls, setCalls] = useState('10');
   const [days, setDays] = useState('7'), [uploadId, setUploadId] = useState('');
   const [feedback, setFeedback] = useState<Record<string, string>>({});
@@ -44,17 +45,18 @@ export function BusinessHome() {
     setUploadId('');
   }
   const plans = (data?.plans ?? []) as Plan[];
-  return <main className="business-shell">
-    <header><div><small>EMERGENTINC · GENE</small><h1>经营工作台</h1><p>给一个方向，让每一步都有结果可查。</p><a href="/QIAN">返回千机阁</a></div>
+  return <main className={`business-shell${tab === 'life' ? ' life-shell' : ''}`}>
+    <header><div><small>EMERGENTINC · GENE</small><h1>生命控制台</h1><p>信任边界、遗传规则、进化过程与当前工作。</p><a href="/QIAN">返回千机阁</a></div>
       <button onClick={() => void act(async () => { await businessApi('logout', {}); window.location.reload(); })}>退出登录</button></header>
-    <nav aria-label="主要导航">{[['home', '首页'], ['plans', '方案'], ['resources', '连接与资料'], ['evolution', '生命']].map(([id, label]) =>
-      <button key={id} aria-current={tab === id ? 'page' : undefined} onClick={() => setTab(id!)}>{label}</button>)}</nav>
+    <nav aria-label="主要导航">{([['life', '生命总览'], ['business', '经营'], ['plans', '方案'], ['resources', '连接与资料']] as const).map(([id, label]) =>
+      <button key={id} aria-current={tab === id ? 'page' : undefined} onClick={() => setTab(id)}>{label}</button>)}</nav>
     {error && <p className="business-error" role="alert">{error}</p>}
-    {!data ? <p>正在读取经营记录…</p> : <>
+    {tab === 'life' && <EvolutionPanel onNavigate={setTab} />}
+    {tab !== 'life' && (!data ? <p>正在读取经营记录…</p> : <>
       <section className="business-metrics"><div><small>已确认费用</small><strong>{money(data.spentMicros)}</strong></div>
         <div><small>待确认预留</small><strong>{money(data.reservedMicros)}</strong></div>
         <div><small>待你决定</small><strong>{data.requests.length + data.unknownOperations.length + data.tasks.filter((t: any) => t.state === 'OUTCOME_UNKNOWN' && t.capability === 'github_issue_create').length + plans.filter(p => p.state === 'AWAITING_APPROVAL').length}</strong></div></section>
-      {tab === 'home' && <>
+      {tab === 'business' && <>
         {data.schedulerFailure && <p role="alert" className="business-error">后台调度已停止：数据库或任务状态需要管理员检查。记录已保留；此时请勿重复启动任务。</p>}
         {!!data.proposalProblems?.length && <p role="alert" className="business-error">有 {data.proposalProblems.length} 次请求未形成有效方案，相关费用仍计入累计账。请修改方向后重新拟定；系统不会自动重复付费调用。</p>}
         <section><h2>你想改善什么业务？</h2><p>当前可处理资料、在已连接的 GitHub 仓库提交经批准的议题，并记录经营凭据。发布动作不等于获客成功，收款尚未接入平台自动核验。</p>
@@ -86,8 +88,7 @@ export function BusinessHome() {
         </div>) : <p>还没有已授权任务。批准方案后，这里会显示结果。</p>}</section>
         <BusinessOutcomes data={data} busy={busy} act={act} />
       </>}
-      {tab === 'evolution' && <EvolutionPanel />}
-      {tab === 'plans' && <>{!plans.length && <section><p>先在首页输入方向，Pixel 会提出可批准的方案。</p></section>}{plans.map(view => <section key={view.id}>
+      {tab === 'plans' && <>{!plans.length && <section><p>先在经营页输入方向，Pixel 会提出可批准的方案。</p></section>}{plans.map(view => <section key={view.id}>
         <div className="business-title"><h2>{view.plan.title}</h2><span>{states[view.state]} · 第 {view.revision} 版</span></div>
         <p>{view.plan.objective}</p><dl><dt>服务对象</dt><dd>{view.plan.audience}</dd><dt>待验证假设</dt><dd>{view.plan.hypothesis}</dd>
           <dt>衡量结果</dt><dd>{view.plan.metric.name}：{view.plan.metric.baseline} → {view.plan.metric.target}；证据：{view.plan.metric.evidence}</dd>
@@ -144,7 +145,7 @@ export function BusinessHome() {
           {(data.connections ?? []).map((c: any) => <p key={c.id}>{c.account_login} · {c.repository} · {c.enabled ? '允许在方案批准后执行' : '已禁止新动作'}
             {Boolean(c.enabled) && <button disabled={busy} onClick={() => void act(() => businessApi(`business/connections/${c.id}/disable`, {}))}>禁止新动作</button>}</p>)}</section>
         <section><h2>已接通能力</h2><p>资料报告、反馈复盘、GitHub 议题，均为第 1 版。对外动作仅限连接账号和批准的具体标题、正文及仓库。没有新反馈时，复盘不调用模型。</p></section></>}
-    </>}
+    </>)}
     {busy && <p role="status">正在处理，请勿重复提交…</p>}
   </main>;
 }

@@ -3,6 +3,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { BusinessHome } from '../src/features/business/BusinessHome';
 import { readTable } from '../src/features/business/read_table';
 import { businessDecision } from '../src/features/business/business_api';
+import { lifeFixture } from './life_fixture';
 
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 describe('business owner journey', () => {
@@ -22,8 +23,9 @@ describe('business owner journey', () => {
         metric: { name: '整理时间', baseline: '30分钟', target: '10分钟', evidence: '工时记录' }, stopCondition: '质量降低',
         budgetMicros: 1000000, expiresAt: Date.now() + 86400000, actions: [{ datasetId: 'inquiries', purpose: '检查字段' }], resources: [] } };
     const payload = { settings: { limit_micros: 1000000 }, modelConfigured: true, plans: [p], datasets: [], requests: [], unknownOperations: [], tasks: [], spentMicros: 100, reservedMicros: 0 };
-    const fetcher = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => ({ ok: true, json: async () => payload } as Response));
-    render(<BusinessHome />); await screen.findByText('已确认费用');
+    const fetcher = vi.spyOn(globalThis, 'fetch').mockImplementation(async url => ({ ok: true, json: async () => String(url).includes('/evolution/') ? lifeFixture() : payload } as Response));
+    render(<BusinessHome />);
+    fireEvent.click(screen.getByRole('button', { name: '经营', exact: true })); await screen.findByText('已确认费用');
     fireEvent.click(screen.getByRole('button', { name: '方案', exact: true }));
     expect(screen.getByText(/检查字段/)).toBeTruthy(); expect(screen.getByText(/工时记录/)).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: '批准执行此版本' }));

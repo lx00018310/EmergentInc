@@ -18,7 +18,11 @@ export class DreamService {
     if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(time)) throw new Error("INVALID_DREAM_TIME");
     try { new Intl.DateTimeFormat("en", { timeZone: timezone }).format(); } catch { throw new Error("INVALID_DREAM_TIMEZONE"); }
   }
-  status() { return { busy: this.busy, failure: this.failure, time: this.time, timezone: this.timezone }; }
+  status() {
+    const pendingFactCount = this.facts().facts.length;
+    return { busy: this.busy, failure: this.failure, time: this.time, timezone: this.timezone,
+      hasNewFacts: pendingFactCount > 0, pendingFactCount };
+  }
   private facts() {
     const generation = String(this.life.current.meta().generation_id);
     // Current cursors belong to one generation; shared cursors never regress after an older run is recovered.

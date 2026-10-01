@@ -22,18 +22,18 @@ if ($portBusy) {
     exit 1
 }
 
-# Build the frontend so the UI always matches current source code.
-Write-Host "Building frontend UI..." -ForegroundColor Cyan
-Push-Location frontend
-npm run build
-if ($LASTEXITCODE -ne 0) {
-    Pop-Location
-    Write-Host ""
-    Write-Host "[BUILD FAILED] Frontend build error - NOT starting server with a stale UI." -ForegroundColor Red
-    pause
+# Existing workspaces boot the approved frozen release. Build only a fresh installation.
+node scripts/launch-approved.mjs --check
+if ($LASTEXITCODE -eq 1) {
+    Write-Host "[ERROR] Approved release validation failed. Use explicit controlled upgrade or recovery." -ForegroundColor Red
     exit 1
 }
-Pop-Location
+if ($LASTEXITCODE -eq 2) {
+    npm.cmd run build
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    npm.cmd --prefix frontend run build
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+}
 
 Start-Process "http://127.0.0.1:8765"
 
@@ -41,4 +41,5 @@ Start-Process "http://127.0.0.1:8765"
 # Set EMERGENT_LLM_TRACE=0 before launching to silence it.
 if (-not $env:EMERGENT_LLM_TRACE) { $env:EMERGENT_LLM_TRACE = "1" }
 
-node apps/server/dist/main.js $args
+node scripts/launch-approved.mjs $args
+exit $LASTEXITCODE

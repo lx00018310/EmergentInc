@@ -58,7 +58,7 @@ SQLite online backup 与报告保存于忽略目录 `cache/v22-p0-snapshot-20260
 | Root | 已安装 supervisor、固定验证器/控制入口；新增 apps/recovery | Recovery 不导入 server、Store、模型或 Body；Gene Patch 明确禁止改 apps/recovery |
 | Gene | protocol 基础约束、persistence、runtime 强制调度/效应规则、能力代理及预算核验 | 保留；后续拆出可变局部策略，不能删除 Run/消息/协作 |
 | Body | frontend 的实际产品组件、server 的具体业务实现/工具/流程 | 仍在旧目录中；P1/P3 需要提取 R0 与隔离源码产物，当前未解除 protected_paths |
-| 文档/产物 | README、docs、构建输出 | 目标不纳入 Gene 内容；现行旧算法尚未切换，frontend README 仍参与旧 Hash |
+| 文档/产物 | README、docs、构建输出 | 目标不纳入 Gene 内容；历史旧算法纳入 frontend README；本次 V2 切换排除 README/测试/显示代号，实际 Body 源码仍受保护 |
 
 Hash 算法、Body 目录和共享运行接口升级需作为受控变更；本次没有直接更新现有 workspace 的 Gene Hash。新开发代码改变了受保护源码，不能把旧生产 workspace 直接当成无需升级即可启动的验收环境。
 
@@ -117,7 +117,7 @@ G0001 的 Lineage 和 Current 保存的 Gene Hash 一致，指针与接口也一
 6. 正式 workspace 上的后端先暂停业务；健康、准确 Generation/Gene Hash、登录与前端资源通过后，原子更新 Lineage 中的 ACTIVE/RETIRED 状态，再恢复业务派发。
 7. 启动失败保留失败 Current、提案与记忆，恢复升级前指针；不覆盖 Lineage。进程中断可显式 `recover`，数据库已提交而日志未更新的情况不会误回退。
 
-旧代 Hash 不被覆盖，旧库、人物和 Run 不被清空。失败时恢复的是升级前代际状态；若当前 checkout 已改变，旧版本服务的重新运行还需要对应旧源码，不能仅恢复指针就声称代码恢复成功。
+旧代 Hash 不被覆盖，旧库、人物和 Run 不被清空。失败时恢复的是升级前代际状态；历史 G0002/G0004 收据没有冻结代码，因此恢复还依赖对应旧源码。本次新增的发布均保留完整冻结版本；恢复指针后启动器只选择与该代匹配的批准发布，没有冻结旧版本时明确拒绝启动。
 
 ### 命令
 
@@ -200,3 +200,40 @@ G0003 正式暂停启动时，旧 CoreStore 初始化会无条件更新 `global_
 浏览器没有 pageerror。截图在忽略目录 `cache/QIAN-verified.png`、`cache/YUAN-verified.png`、`cache/GENE-verified.png`，测试日志在 `cache/v22-three-routes-final-tests.log`。只进行了登录、读取和页面切换，没有提交付费任务。
 
 本轮完成页面及接口共存，尚未完成经营任务与多 Pixel 的统一预算/调度、真实 Body 源码生长、自动 Gene 候选或完整工作台的独立进程故障隔离。三个产品地址目前仍由同一个应用进程提供，独立 Recovery Host 只是已有的诊断原型；Linux 实机验收继续暂缓。
+
+
+## 稳定启动修复：冻结批准版本
+
+### 重复故障的根因
+
+G0004 保存 Hash `cfff952c…`，开发目录新增四层生命控制台后变为 `918a5ec7…`。这是有效源码变更，严格校验拒绝启动符合设计。旧维护工具只批准当前 checkout，却仍从可变 checkout 启动；启动脚本又每次重新构建，后续修改必然再次触发不匹配。旧算法还把换行符、测试、README 和代号变化计为 Gene 变化。
+
+### 修改与边界
+
+- 受控准备先复制代码和编译产物，在新发布目录执行 `pnpm.cmd install --offline --frozen-lockfile --ignore-scripts`。发布不复制 `.env*`、私有目录、数据库或原 `node_modules`；依赖工作区链接须完全位于发布内。
+- 准确候选绑定冻结发布完整 Hash。副本烟测和正式暂停启动都运行该发布；批准前后复查完整性，发布被改动时拒绝执行。
+- `.bat`、`.ps1` 和 `launch-approved.mjs` 根据活动指针、Lineage、Current、Owner 收据与完整发布 Hash 选择版本；正式日常启动不重建开发目录，不批准新源码，也不在损坏发布时降级到 checkout。首次空生命库单独冻结初始版本。
+- `gene_hash_version=2` 显式启用稳定 Hash；保留 V1 算法。V2 排除 README、测试和 manifest 显示代号，统一有效 UTF-8 文本换行；运行代码、依赖、契约、Prompt 和二进制仍参与 Hash。Body 源码隔离尚未完成，没有提前移除其保护。
+- 启动、冻结和升级命令列为 Root 维护范围，普通 Gene Patch 不能改写这些入口。Windows 同一管理员账户下提供完整性核验，不声称已经实现 Linux 权限隔离。
+
+现有本机数据需要一次受控升级以安装冻结发布。之后编辑源码、重建、修改说明或重新检出，不再影响已批准版本的正常重启；需要启用新功能时仍须走批准流程。未决生命事实仍要求 Final Dream，未知效果或活跃 Run 仍阻止升级。本次不会自动模拟 Dream 或清空记录。
+
+### 验收目标
+
+自动测试覆盖 V1 兼容、换行和非运行文件稳定性、真实代码变化、准确批准、过时输入、发布篡改、私有配置排除及外部链接拒绝。另在本机正式 workspace 验证受控升级、重复真实进程重启和三个页面，比较原 Core 全表及 live 指纹。
+### 实际结果（2026-10-01）
+
+- 操作 `local-20261001-g5-frozen-v3`：COMMITTED / RUNNING，G0004 → G0005。旧代和旧 Hash 原样保留。
+- Gene Hash：`08bdb52a7fa91c54be483749746806768cdba5cfda36090e72e23bb88730e976`。
+- 准确候选 Hash：`4ba0a36473175401231396d618c27cbc37302b8895d48826c04b9980d9510e79`。
+- 冻结发布 Hash：`287d6d48601edc9329d71f64efa9c737020f9c6f7d96d23819af885759fe09d4`。
+- 旧 Core 全表指纹 `80352258…`、G0004 Current 全表指纹 `96c036cc…`、live 内容指纹在升级及两次重启后均不变。保留 3 位人物、3 个元胞、5 次 Run、12 条消息与 12 次模型调用。
+- 实际插入临时未发布 Gene 源码，使开发 Hash 变成 `a1c0d10e…`，重新运行后端构建，再连续两次启动已批准发布。两次 `/health/ready` 都报告 G0005 和批准 Hash；临时文件已移除，源码 Hash 恢复一致。
+- 独立空 workspace 在 8767 端口首次冻结并启动 G0001，停止后再次启动同一批准初始发布，通过。该验收实例已停止，正式 8765 服务继续运行。
+- Edge 登录与读取 `/QIAN`、`/YUAN`、`/GENE` 通过，三个原接口 200，无 pageerror。`/GENE` 显示当前 G0005 与四层生命控制台，经营、方案、连接与资料仍可访问；返回千机阁正常。
+- 最终 71 个测试文件 / 496 项测试全部通过；类型检查、前端构建、差异检查通过。SQLite 实验性提示和既有 chunk 大小提示仍存在，未通过隐藏提示代替修复。
+- 首两次准备因发布复制规则发现问题而拒绝：`runtime` 目录排除误删 `packages/runtime`，以及把 `.tsbuildinfo` 当作执行产物核验。已保留正确运行包、排除构建元数据，并给本机冻结与原 ReleaseBuilder 添加断言；当时正式数据和指针尚未改变。失败准备目录保留，没有创建失败新代或复用操作 ID。
+
+证据位于忽略目录：`cache/stable-launch-final-tests.log`、`cache/stable-launch-before.json`、`cache/stable-launch-after.json`、`cache/approved-restart-server.log`、`cache/initial-launch-server.log` 及 `cache/*-frozen-verified.png`。准确授权、备份、发布与升级日志在 `workspace/runtime/local-upgrades/local-20261001-g5-frozen-v3/`，不提交私有配置或运行数据。
+
+本次结论：重复 `ACTIVE_GENOME_MISMATCH` 的启动流程缺陷已修复，严格校验继续有效。自迭代执行链和完整 `/GENE` 进程隔离仍按主 Plan 待完成；Linux 实机验收继续暂缓。

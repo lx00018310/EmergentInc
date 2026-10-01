@@ -19,24 +19,22 @@ React / TypeScript / Vite 前端，后端为 Node.js / Fastify / SQLite。
 本机验证使用 Node.js 24.14.1。先按 [根 README](../README.md) 配置 Owner 口令和 workspace。根目录执行：
 
 ```powershell
-npm.cmd run build
-npm.cmd --prefix frontend run build
-node apps/server/dist/main.js
+node scripts/launch-approved.mjs
 ```
 
-也可使用根目录的 `EmergentInc_UI.bat`。服务已经运行时不要重复启动。访问 `http://127.0.0.1:8765/QIAN`、`/YUAN`、`/GENE`。
+日常启动运行 Owner 批准的冻结版本；源码构建须经过受控升级才对正式 workspace 生效。也可使用根目录的 `EmergentInc_UI.bat`。服务已经运行时不要重复启动。访问 `http://127.0.0.1:8765/QIAN`、`/YUAN`、`/GENE`。
 
 已有 workspace 遇到 Gene Hash 不匹配时，按 [受控升级说明](../docs/EmergentInc_V22_整改实施记录.md#本机受控升级与启动恢复) 处理，不能通过清库或覆盖 Hash 解决。
 
 ## 前端开发
 
-Vite 在 5173 端口，通过 /api 代理连接 8765 后端。后端需明确允许开发 origin。以下从仓库根目录执行：
+Vite 在 5173 端口，通过 /api 代理连接 8765 后端。后端需明确允许开发 origin。Vite 只预览前端源码；开发后端源码应使用明确指定的独立 workspace，不能复用正式数据。以下从仓库根目录执行：
 
 ```powershell
 # 终端一
 $env:EMERGENT_DEV = '1'
 $env:EMERGENT_ALLOWED_ORIGINS = 'http://127.0.0.1:5173'
-node apps/server/dist/main.js
+node scripts/launch-approved.mjs
 
 # 终端二
 npm.cmd --prefix frontend run dev

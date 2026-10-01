@@ -103,7 +103,8 @@ async function bootstrap() {
     service.attachLife(life, body);
     let quiesced = candidateMode || process.env.EMERGENTINC_START_PAUSED === "1" || store.generation(life.current.meta().generation_id).state !== "ACTIVE";
     businessService = service;
-    evolution = { life, body, dream, memoryGate, quiesced: () => quiesced,
+    evolution = { life, body, dream, memoryGate, recoveryOrigin: candidateMode ? undefined : process.env.EMERGENTINC_RECOVERY_ORIGIN,
+      quiesced: () => quiesced,
       quiesce: async () => { quiesced = true; await stopRun(); await body.idle(); await dream.stop(); await service.stop(); },
       resume: async () => {
         if (candidateMode || store.activeGeneration()?.id !== life.current.meta().generation_id) throw new Error("GENERATION_NOT_ACTIVE");

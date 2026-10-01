@@ -1,6 +1,7 @@
 {
   "schema_version": 1,
-  "generation": 4,
+  "gene_hash_version": 2,
+  "generation": 5,
   "body_interface_version": "1",
   "protected_paths": [
     "genome/**", "apps/server/**", "packages/**", "frontend/**", "supervisor/**",

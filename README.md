@@ -108,7 +108,7 @@ EmergentInc 探索 AI 元胞如何在明确目标、预算和权限内形成分�
 pnpm.cmd install --frozen-lockfile
 ```
 
-本机依赖已安装时可直接构建：
+以下构建命令用于开发和准备受控升级；构建不会自动发布到已有 workspace：
 
 ```powershell
 npm.cmd run build
@@ -143,7 +143,7 @@ node -p "require('node:crypto').randomBytes(32).toString('hex')"
 EMERGENTINC_RUNTIME_MODE=business
 ```
 
-停止旧服务并完成必要的受控升级后，运行：
+日常启动使用已经批准的冻结版本。停止旧服务后运行：
 
 ```powershell
 .\EmergentInc_UI.bat
@@ -154,6 +154,8 @@ EMERGENTINC_RUNTIME_MODE=business
 - 千机阁：`http://127.0.0.1:8765/QIAN`
 - 元胞界面：`http://127.0.0.1:8765/YUAN`
 - 完整经营工作台：`http://127.0.0.1:8765/GENE`
+
+启动器核对活动代、Owner 收据及发布文件完整性，再启动 `workspace/runtime/local-upgrades/<id>/release/`。它不会在每次启动时构建或发布开发目录；未发布源码可以继续修改。首次空 workspace 会先构建、冻结初始版本；已有数据缺少冻结版本时明确要求受控升级。
 
 根地址登录后进入千机阁。页面由 URL 决定，session.mode 不再把所有地址强制变成经营工作台。旧 `legacy` 配置仅保留兼容用途；正常验证三页使用 `business`。
 
@@ -190,9 +192,9 @@ workspace/
 
 V21 业务数据通过显式离线工具迁移：先停止服务、检查完整性，再做 SQLite online backup、核对表与记录，添加生命表并建立 G0001。保留原 `business.sqlite3`。迁移命令和证据见 [实施记录](docs/EmergentInc_V22_实施记录.md)。
 
-Genome Hash 绑定当前受保护内容。已有代遇到源码变化会拒绝静默更新；开发验证使用独立 workspace，正式基因变更走候选审批流程。不要把修改数据库中的 hash 当成升级。
+Gene Hash 绑定受保护的运行源码和契约。V2 算法统一 UTF-8 文本的 LF/CRLF，排除 README、测试及显示代号；真实源码、接口、依赖或运行 Prompt 改动仍改变 Hash。旧算法及旧代 Hash 保留，算法升级也必须经过批准。Body 尚未完成隔离，因此当前仍保护其现有源码目录。
 
-Windows 本机已有数据遇到 `ACTIVE_GENOME_MISMATCH` 时，可由 Owner 显式执行候选准备、准确 Hash 批准和受控启动；本次已验证 G0001 → G0002，保留人物与 Run 历史。入口是 `scripts/local-upgrade.mjs`，适用条件、备份、恢复和操作顺序见 [本机升级记录](docs/EmergentInc_V22_整改实施记录.md#本机受控升级与启动恢复)。它不由启动脚本自动运行，也不替代 Linux 已安装的可信 Supervisor。
+Windows 本机源码升级使用 `scripts/local-upgrade.mjs`：停止服务 → 测试与构建 → `prepare` 冻结代码、产物和离线安装的依赖 → 审阅准确候选 → `apply` 批准、迁移并启动该冻结版本。日常重启使用 `EmergentInc_UI.bat`、`.ps1` 或 `node scripts/launch-approved.mjs`。不要对正式 workspace 直接运行开发目录的 `apps/server/dist/main.js`，也不要覆盖数据库 Hash 或清库。命令、适用条件及证据见 [本机升级与稳定启动](docs/EmergentInc_V22_整改实施记录.md#稳定启动修复冻结批准版本)。此流程不替代 Linux 的独立可信 Supervisor。
 
 ## 代码与维护入口
 

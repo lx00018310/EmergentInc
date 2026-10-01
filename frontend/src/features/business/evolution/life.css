@@ -1,0 +1,45 @@
+.business-shell.life-shell { padding-top: 12px; }
+.life-shell > header small { font-size: 10px; line-height: 1.3; }
+.life-shell > header h1 { font-size: 22px; line-height: 1.3; margin: 2px 0; }
+.life-shell > header p,.life-shell > header a { font-size: 11px; line-height: 1.3; }
+.life-shell > header a { color: var(--accent-blue); }
+.life-shell > nav { margin: 8px 0; flex-wrap: wrap; }
+.life-shell > nav button { padding: 6px 12px; line-height: 1.3; }
+.life-identity { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin: 8px 0; }
+.business-shell .life-identity h2 { margin: 0; font-size: 18px; }
+.business-shell .life-layer { margin: 0; padding: 8px 14px; border-left: 3px solid var(--layer-color); background: var(--bg-card); overflow-wrap: anywhere; }
+.life-root { --layer-color: var(--accent-yellow); }.life-genome { --layer-color: var(--accent-purple); }
+.life-evolution { --layer-color: var(--accent-blue); }.life-body { --layer-color: var(--accent-green); }
+.business-shell .life-layer-header { gap: 14px; align-items: flex-start; }
+.life-layer-header > div { display: flex; align-items: baseline; flex-wrap: wrap; gap: 0 8px; flex: 1; min-width: 0; }
+.life-layer-number { color: var(--layer-color); font: 600 20px var(--font-mono); min-width: 32px; }
+.business-shell .life-layer-header h2 { display: inline; font-size: 16px; margin: 0; }
+.life-layer-header small { letter-spacing: .08em; }.life-layer-header p { flex: 1 1 280px; font-size: 12px; margin: 0; }
+.life-summary { display: grid; grid-template-columns: 1.2fr 1fr 1.1fr; gap: 18px; margin: 4px 0 2px 46px; }
+.life-summary h3 { color: #98a8ba; font-size: 10px; line-height: 1.2; font-weight: 500; margin-bottom: 2px; }
+.business-shell .life-summary p { color: var(--text-main); font-size: 12px; line-height: 1.4; margin: 0; }
+.life-state { display: inline-block; padding: 1px 6px; border: 1px solid var(--border-color); border-radius: 4px; font: 11px var(--font-mono); white-space: normal; overflow-wrap: anywhere; }
+.life-state-waiting { color: var(--accent-yellow); }.life-state-error,.business-shell .life-failure { color: var(--accent-red); }
+.business-shell .life-detail { background: transparent; padding: 0; margin: 0 0 0 46px; border: 0; border-radius: 0; }
+.life-detail > summary { color: #98a8ba; font-size: 12px; line-height: 1.4; }
+.life-detail[open] > summary { margin-bottom: 14px; }
+.life-detail h3 { font-size: 14px; margin: 16px 0 8px; }
+.business-shell .life-detail dl { grid-template-columns: minmax(130px, 190px) 1fr; gap: 8px; }
+.life-detail ul { padding-left: 20px; }.life-hash { overflow-wrap: anywhere; word-break: break-all; }
+.life-connector { color: #98a8ba; text-align: center; font-size: 11px; line-height: 1.2; padding: 4px 0; }
+.life-record { border-top: 1px solid var(--border-color); padding: 10px 0; }
+.life-contract-field { display: contents; }
+.life-events { list-style: none; padding: 0; }
+.life-events li { border-left: 1px solid var(--border-color); padding: 10px 14px; }
+.life-events li > div { display: flex; flex-wrap: wrap; gap: 10px; align-items: baseline; font-size: 11px; }
+.life-events p { overflow-wrap: anywhere; }.life-events strong { font-weight: 500; }
+.life-pipeline { list-style: none; display: flex; flex-wrap: wrap; gap: 8px; padding: 0; }
+.life-pipeline li { display: flex; flex-direction: column; gap: 6px; padding: 8px; border: 1px solid var(--border-color); font-size: 11px; }
+.life-pipeline li + li::before { content: '↓'; color: var(--text-dim); }
+@media (max-width: 700px) {
+  .life-identity { align-items: flex-start; flex-direction: column; gap: 2px; }
+  .life-summary { grid-template-columns: 1fr; gap: 8px; margin-left: 0; }
+  .business-shell .life-detail { margin-left: 0; }
+  .business-shell .life-layer-header { gap: 8px; flex-wrap: wrap; }
+  .business-shell .life-detail dl { grid-template-columns: 1fr; }
+}

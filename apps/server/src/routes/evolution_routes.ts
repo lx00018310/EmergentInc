@@ -4,18 +4,20 @@ import { LifeContext } from "../services/life_context.js";
 import { DreamService } from "../services/dream_service.js";
 import { MemoryGate } from "../services/memory_gate.js";
 import { BodyGrowthService } from "../services/body_growth_service.js";
+import { recoveryHealth } from "../services/life_overview.js";
 
 export interface EvolutionServices {
   life: LifeContext; dream: DreamService; memoryGate: MemoryGate; body: BodyGrowthService;
+  recoveryOrigin?: string;
   quiesced?: () => boolean; quiesce?: () => Promise<void>; resume?: () => Promise<void>;
 }
 export async function registerEvolutionRoutes(app: FastifyInstance, services: EvolutionServices) {
   const { life, dream, memoryGate, body } = services;
-  app.get("/evolution/overview", async () => ({ ...life.overview(), dream: dream.status(),
-    dreamRuns: life.lineage.db.prepare(`SELECT d.id,d.generation_id,d.status,d.trigger,d.error,d.created_at,
-      CASE WHEN d.trigger!='post_rollback' AND d.status IN ('FAILED','RUNNING','OUTCOME_UNKNOWN') AND o.state='SETTLED' AND o.response IS NOT NULL THEN 1 ELSE 0 END retry_available
-      FROM dream_runs d LEFT JOIN business_operations o ON o.id='life:' || d.generation_id || ':dream:' || d.id
-      ORDER BY d.created_at DESC LIMIT 10`).all() }));
+  app.get("/evolution/overview", async () => {
+    const overview = life.overview(), status = dream.status();
+    return { ...overview, dream: status, trust: { ...overview.trust, recovery: await recoveryHealth(services.recoveryOrigin) },
+      evolution: { ...overview.evolution, dream: status } };
+  });
   app.post("/evolution/dream", async () => dream.run());
   app.post<{ Params: { id: string } }>("/evolution/dream/:id/retry", async req => dream.retry(req.params.id));
   app.post("/evolution/final-dream", async () => dream.finalDream());

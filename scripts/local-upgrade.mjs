@@ -10,6 +10,7 @@ import { LineageStore, CurrentStore, readGenome, writeGenerationPointer } from '
 import { acquireWorkspaceLock } from '../apps/server/dist/runtime_config.js';
 import { snapshotDatabase } from '../supervisor/dist/migration_runner.js';
 import { GenerationMigrator } from '../supervisor/dist/generation_migrator.js';
+import { freezeLocalRelease, verifyFrozenRelease, ownerEnvironment } from './local-release.mjs';
 
 // Explicit Owner maintenance for a Windows development checkout, never a web API or Linux Root fallback.
 const sha = value => createHash('sha256').update(value).digest('hex');
@@ -41,13 +42,16 @@ function save(file, value) {
   try { fs.writeFileSync(fd, JSON.stringify(value, null, 2)); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
   fs.renameSync(temporary, file);
 }
-function treeHash(root) {
+function treeHash(root, omitBuildMetadata = false) {
   const result = createHash('sha256');
   if (!fs.existsSync(root)) return result.update('MISSING').digest('hex');
   const walk = relative => {
     const file = path.join(root, relative), stat = fs.lstatSync(file);
     if (stat.isSymbolicLink()) throw new Error('LOCAL_UPGRADE_SYMLINK_FORBIDDEN');
-    if (stat.isDirectory()) for (const name of fs.readdirSync(file).sort()) walk(relative ? relative + '/' + name : name);
+    if (stat.isDirectory()) for (const name of fs.readdirSync(file).sort()) {
+      if (omitBuildMetadata && name.endsWith('.tsbuildinfo')) continue;
+      walk(relative ? relative + '/' + name : name);
+    }
     else if (stat.isFile()) result.update(relative).update('\0').update(fs.readFileSync(file)).update('\0');
     else throw new Error('LOCAL_UPGRADE_SPECIAL_FILE_FORBIDDEN');
   }; walk(''); return result.digest('hex');
@@ -56,7 +60,7 @@ function artifacts(root) {
   const dirs = ['apps/server/dist', 'frontend/dist', 'supervisor/dist', ...fs.readdirSync(path.join(root, 'packages')).map(name => `packages/${name}/dist`)];
   return hash(dirs.map(name => {
     if (!fs.existsSync(path.join(root, name))) throw new Error('LOCAL_UPGRADE_BUILD_REQUIRED');
-    return [name, treeHash(path.join(root, name))];
+    return [name, treeHash(path.join(root, name), true)];
   }));
 }
 function database(file, callback) {
@@ -134,7 +138,7 @@ async function smoke(projectRoot, workspace, generation) {
     child.once('exit', code => { clearTimeout(timer); code === 0 ? resolve() : reject(new Error('LOCAL_UPGRADE_CANDIDATE_SMOKE_FAILED')); });
   });
 }
-export async function prepareLocalUpgrade(workspace, projectRoot, id, validate = smoke) {
+export async function prepareLocalUpgrade(workspace, projectRoot, id, validate = smoke, install) {
   workspace = fs.realpathSync(workspace); projectRoot = fs.realpathSync(projectRoot);
   const unlock = acquireWorkspaceLock(workspace), dir = directory(workspace, id);
   let next, previous, candidateLineage;
@@ -142,6 +146,9 @@ export async function prepareLocalUpgrade(workspace, projectRoot, id, validate =
     if (fs.existsSync(dir)) throw new Error('LOCAL_UPGRADE_ID_ALREADY_EXISTS');
     const ctx = context(workspace, projectRoot), buildHash = artifacts(projectRoot);
     fs.mkdirSync(dir, { recursive: true });
+    const release = await freezeLocalRelease(projectRoot, path.join(dir, 'release'), install);
+    if (readGenome(release.directory).geneHash !== ctx.genome.geneHash || artifacts(release.directory) !== buildHash)
+      throw new Error('LOCAL_UPGRADE_RELEASE_COPY_MISMATCH');
     const snapshots = {};
     for (const [name, relative] of Object.entries({ lineage: 'lineage/lineage.sqlite3', current: `generations/${ctx.base.id}/current.sqlite3`, legacy: 'ledger/v9_core.sqlite3' })) {
       if (fs.existsSync(path.join(workspace, relative))) snapshots[name] = await snapshotDatabase(path.join(workspace, relative), path.join(dir, 'backup', name + '.sqlite3'));
@@ -171,12 +178,12 @@ export async function prepareLocalUpgrade(workspace, projectRoot, id, validate =
     previous.close(); previous = undefined; next.close(); next = undefined; candidateLineage.close(); candidateLineage = undefined;
     copyTreeNew(staged, path.join(candidateWorkspace, 'generations', ctx.target));
     writeGenerationPointer(candidateWorkspace, ctx.target);
-    await validate(projectRoot, candidateWorkspace, ctx.target);
+    await validate(release.directory, candidateWorkspace, ctx.target);
     const again = context(workspace, projectRoot);
     if (hash(ctx.fingerprints) !== hash(again.fingerprints) || ctx.genome.geneHash !== again.genome.geneHash || buildHash !== artifacts(projectRoot))
       throw new Error('LOCAL_UPGRADE_INPUT_CHANGED');
     const candidate = { id, scope: 'windows_owner_maintenance', workspace, projectRoot, base: ctx.base, target: ctx.target, number: ctx.number,
-      geneHash: ctx.genome.geneHash, bodyInterface: ctx.genome.manifest.body_interface_version, buildHash, snapshots,
+      geneHash: ctx.genome.geneHash, bodyInterface: ctx.genome.manifest.body_interface_version, buildHash, release, snapshots,
       fingerprints: ctx.fingerprints, preparedHash: treeHash(staged), finalDream: ctx.finalDream, validation: 'COMPILED_CANDIDATE_SMOKE_PASSED' };
     const record = { candidate, candidateHash: hash(candidate), state: 'PREPARED', createdAt: Date.now() };
     save(path.join(dir, 'record.json'), record);
@@ -189,25 +196,16 @@ function checked(workspace, id, exactHash) {
     throw new Error('LOCAL_UPGRADE_EXACT_HASH_REQUIRED');
   return { dir, record, c };
 }
-function childEnvironment(root) {
-  const env = { ...process.env };
-  const file = path.join(root, '.env');
-  if (fs.existsSync(file)) for (const line of fs.readFileSync(file, 'utf8').split('\n')) {
-    const item = line.trim(), at = item.indexOf('=');
-    if (!item || item.startsWith('#') || at < 1) continue;
-    const key = item.slice(0, at).trim(); if (!env[key]) env[key] = item.slice(at + 1).trim().replace(/^["'](.*)["']$/, '$1');
-  }
-  return env;
-}
 export async function startPaused(c, token, logFile) {
-  const env = childEnvironment(c.projectRoot), host = env.HOST || '127.0.0.1', port = Number(env.PORT || 8765);
+  const releaseRoot = verifyFrozenRelease(c, directory(c.workspace, c.id));
+  const env = ownerEnvironment(c.projectRoot), host = env.HOST || '127.0.0.1', port = Number(env.PORT || 8765);
   if (!['127.0.0.1', '::1', 'localhost'].includes(host) || env.EMERGENTINC_ACTIVE_GENERATION_FILE || !env.EMERGENTINC_OWNER_SECRET || env.EMERGENTINC_OWNER_SECRET.length < 32)
     throw new Error('LOCAL_UPGRADE_LOOPBACK_CONFIGURATION_REQUIRED');
   const probe = createServer();
   await new Promise((resolve, reject) => { probe.once('error', reject); probe.listen(port, host, resolve); });
   await new Promise(resolve => probe.close(resolve));
   const fd = fs.openSync(logFile, 'a', 0o600);
-  const child = spawn(process.execPath, [path.join(c.projectRoot, 'apps/server/dist/main.js')], { cwd: c.projectRoot,
+  const child = spawn(process.execPath, [path.join(releaseRoot, 'apps/server/dist/main.js')], { cwd: releaseRoot,
     windowsHide: true, detached: true, shell: false, stdio: ['ignore', fd, fd], env: { ...env,
       EMERGENTINC_RUNTIME_MODE: 'business', EMERGENTINC_WORKSPACE_ROOT: c.workspace, EMERGENTINC_CANDIDATE_MODE: '0',
       EMERGENTINC_START_PAUSED: '1', EMERGENTINC_LOCAL_UPGRADE_TOKEN: token } });
@@ -283,6 +281,7 @@ export async function applyLocalUpgrade(workspace, id, exactHash, ownerReason, s
     if (ctx.base.id !== c.base.id || ctx.target !== c.target || ctx.genome.geneHash !== c.geneHash ||
         artifacts(c.projectRoot) !== c.buildHash || hash(ctx.fingerprints) !== hash(c.fingerprints) || treeHash(path.join(dir, 'prepared')) !== c.preparedHash)
       throw new Error('LOCAL_UPGRADE_INPUT_CHANGED');
+    verifyFrozenRelease(c, dir);
     const targetDirectory = path.join(workspace, 'generations', c.target);
     if (fs.existsSync(targetDirectory)) throw new Error('LOCAL_UPGRADE_TARGET_EXISTS');
     const token = randomBytes(32).toString('hex');
@@ -302,6 +301,7 @@ export async function applyLocalUpgrade(workspace, id, exactHash, ownerReason, s
     if (readGenome(c.projectRoot).geneHash !== c.geneHash || artifacts(c.projectRoot) !== c.buildHash ||
         dataFingerprint(path.join(workspace, 'ledger/v9_core.sqlite3')) !== c.fingerprints.legacy || treeHash(path.join(workspace, 'live')) !== c.fingerprints.live)
       throw new Error('LOCAL_UPGRADE_INPUT_CHANGED');
+    verifyFrozenRelease(c, dir);
     lineage.db.transaction(() => {
       if (lineage.activeGeneration()?.id !== c.base.id) throw new Error('LOCAL_UPGRADE_ACTIVE_CHANGED_REQUIRES_REVIEW');
       lineage.db.prepare("UPDATE generations SET state='RETIRED',retired_at=? WHERE id=?").run(Date.now(), c.base.id);
