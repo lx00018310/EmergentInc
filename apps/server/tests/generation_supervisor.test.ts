@@ -8,6 +8,7 @@ import { DreamService } from "../src/services/dream_service.js";
 import { BodyGrowthService } from "../src/services/body_growth_service.js";
 import { BodySkillSupervisor } from "../src/services/automation_supervisor.js";
 import { GenerationSupervisor } from "../../../supervisor/generation_supervisor.js";
+import { releaseHash } from "../../../supervisor/release_builder.js";
 import { classifyChange, EvolutionRuntime } from "../../../supervisor/protocol.js";
 
 const cleanup: (() => void)[] = [];
@@ -61,6 +62,28 @@ function fixture() {
   return { directory, releases, workspace, lineage, runtime, supervisor, prepare, app: () => app! };
 }
 describe("trusted Generation lifecycle (local runtime contract doubles)", () => {
+  it("archives unsynthesized facts for an explicit Owner release while keeping Root forbidden for Gene", async () => {
+    const f=fixture(),base=join(f.releases,"r1"),directory=join(f.releases,"owner-r2");
+    fs.cpSync(base,directory,{recursive:true});fs.unlinkSync(join(directory,".env"));
+    fs.writeFileSync(join(directory,"genome/manifest.json"),JSON.stringify({...readGenome(base).manifest,generation:2}));
+    fs.mkdirSync(join(directory,"supervisor"));fs.writeFileSync(join(directory,"supervisor/trusted.txt"),"Owner installed Root change");
+    fs.writeFileSync(join(directory,"apps/server/core.txt"),"V24 core");f.app().current.event("retained_fact",{real:true});
+    const proposal=f.lineage.proposeGene("G0001","owner",point);f.lineage.decideProposal(proposal.id,"APPROVED");
+    const request={id:"owner-r2",base_generation:"G0001",base_release:"r1",proposal_id:proposal.id,patch:[],
+      owner_release:{reason:"Explicit Owner maintenance",source_commit:"a".repeat(40),release_hash:releaseHash(directory)}};
+    expect(()=>f.supervisor.submit(request)).toThrow("LOCAL_OWNER_ENTRY");
+    f.supervisor.submitOwnerRelease(request);const c=await f.supervisor.validate(request.id);
+    expect(c.candidate.owner_release).toEqual(request.owner_release);
+    f.supervisor.approve(request.id,c.candidate.candidate_hash);await f.supervisor.birth(request.id);
+    expect(f.runtime.finalDream).not.toHaveBeenCalled();
+    const archived=new CurrentStore(join(f.directory,"trusted/snapshots",request.id,"current-before.sqlite3"),{readOnly:true});
+    try{expect(archived.db.prepare("SELECT payload FROM current_events WHERE kind='retained_fact'").get()?.payload).toBe('{"real":true}');}finally{archived.close();}
+    expect(f.lineage.db.prepare("SELECT * FROM dream_runs WHERE status='COMPLETED'").all()).toHaveLength(0);
+    expect(f.lineage.db.prepare("SELECT * FROM life_events WHERE kind='OWNER_MAINTENANCE_DREAM_DEFERRED'").all()).toHaveLength(1);
+    f.runtime.checkRollback=vi.fn(()=>{throw new Error("V23_ROLLBACK_DENIED_INSTANCE_PAYMENT_FACTS");});
+    await expect(f.supervisor.rollback(request.id,"unsafe")).rejects.toThrow("INSTANCE_PAYMENT_FACTS");
+    expect(f.lineage.activeGeneration()?.id).toBe("G0002");expect(f.runtime.stop).toHaveBeenCalledTimes(1);
+  });
   it("runs the complete local life cycle: grow, remember, approve exact Gene, birth, migrate and retire", async () => {
     const f = fixture(), life = f.app();
     life.current.setObjective("keep", "business", "继续目标", "OPEN", true); life.current.setObjective("scratch", "business", "临时目标");

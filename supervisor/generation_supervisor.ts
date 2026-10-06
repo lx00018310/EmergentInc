@@ -62,6 +62,7 @@ export class GenerationSupervisor {
   submit(request: GeneRequest) {
     if (this.busy) throw new Error("EVOLUTION_BUSY");
     lifeId(request?.id); lifeId(request.base_generation); lifeId(request.base_release); lifeId(request.proposal_id);
+    if (request.owner_release) throw new Error("OWNER_RELEASE_REQUIRES_LOCAL_OWNER_ENTRY");
     this.base(request);
     const requestHash = evolutionHash(request), existing = this.db.prepare("SELECT id FROM candidates WHERE id=?").get(request.id);
     if (existing) { const c = this.get(request.id); if (c.request_hash !== requestHash) throw new Error("GENE_IDEMPOTENCY_CONFLICT"); return c; }
@@ -70,6 +71,26 @@ export class GenerationSupervisor {
       this.db.prepare("INSERT INTO candidates(id,request_hash,request_json,directory,state,created_at) VALUES(?,?,?,?,'SUBMITTED',?)")
         .run(request.id, requestHash, JSON.stringify(request), directory, Date.now());
       this.event(request.id, "gene_candidate_submitted", { patchHash: evolutionHash(request.patch) });
+    });
+    this.lineage.db.prepare("UPDATE gene_proposals SET state='IMPLEMENTING' WHERE id=?").run(request.proposal_id);
+    return this.get(request.id);
+  }
+  /** Explicit installed Owner CLI only; normal Gene submission still forbids Root changes. */
+  submitOwnerRelease(request: GeneRequest) {
+    if (this.busy) throw new Error("EVOLUTION_BUSY");
+    lifeId(request.id); lifeId(request.base_generation); lifeId(request.base_release); lifeId(request.proposal_id);
+    const owner = request.owner_release;
+    if (!owner || request.patch.length || !/^[a-f0-9]{40}$/.test(owner.source_commit) || !/^[a-f0-9]{64}$/.test(owner.release_hash))
+      throw new Error("INVALID_OWNER_RELEASE");
+    lifeText(owner.reason, 1000); this.base(request);
+    const requestHash = evolutionHash(request), existing = this.db.prepare("SELECT id FROM candidates WHERE id=?").get(request.id);
+    if (existing) { const c = this.get(request.id); if (c.request_hash !== requestHash) throw new Error("GENE_IDEMPOTENCY_CONFLICT"); return c; }
+    const directory = path.join(this.releases, request.id);
+    if (fs.realpathSync(directory) !== directory || releaseHash(directory) !== owner.release_hash) throw new Error("OWNER_RELEASE_INTEGRITY_CONFLICT");
+    this.db.transaction(() => {
+      this.db.prepare("INSERT INTO candidates(id,request_hash,request_json,directory,state,created_at) VALUES(?,?,?,?,'SUBMITTED',?)")
+        .run(request.id, requestHash, JSON.stringify(request), directory, Date.now());
+      this.event(request.id, "owner_software_release_submitted", owner);
     });
     this.lineage.db.prepare("UPDATE gene_proposals SET state='IMPLEMENTING' WHERE id=?").run(request.proposal_id);
     return this.get(request.id);
@@ -88,7 +109,7 @@ export class GenerationSupervisor {
       if (genome.manifest.generation !== this.nextNumber()) throw new Error("GENOME_GENERATION_NUMBER_CONFLICT");
       const bound = { id, base_generation: c.request.base_generation, base_release: c.request.base_release,
         proposal_id: c.request.proposal_id, patch_hash: evolutionHash(c.request.patch), gene_hash: genome.geneHash,
-        candidate_release_hash: releaseHash(c.directory), release_id: id };
+        candidate_release_hash: releaseHash(c.directory), release_id: id, ...(c.request.owner_release ? {owner_release: c.request.owner_release} : {}) };
       const candidate: GeneCandidate = { ...bound, candidate_hash: evolutionHash(bound), directory: c.directory };
       this.db.transaction(() => {
         this.db.prepare("UPDATE candidates SET state='VALIDATED',candidate_json=? WHERE id=?").run(JSON.stringify(candidate), id);
@@ -103,6 +124,8 @@ export class GenerationSupervisor {
   }
   private checked(c: Record<string, any>): GeneCandidate {
     const candidate = c.candidate as GeneCandidate | null;
+    if (evolutionHash(c.request) !== c.request_hash || evolutionHash(candidate?.owner_release ?? null) !== evolutionHash(c.request.owner_release ?? null))
+      throw new Error("GENE_CANDIDATE_INTEGRITY_CONFLICT");
     if (!candidate || candidate.directory !== c.directory || candidate.release_id !== c.id ||
         candidate.patch_hash !== evolutionHash(c.request.patch) || candidate.gene_hash !== readGenome(c.directory).geneHash ||
         candidate.candidate_release_hash !== releaseHash(c.directory)) throw new Error("GENE_CANDIDATE_INTEGRITY_CONFLICT");
@@ -152,7 +175,7 @@ export class GenerationSupervisor {
       }
       const oldDirectory = generationDirectory(this.workspace, previous.id);
       await snapshotDatabase(path.join(oldDirectory, "current.sqlite3"), path.join(snapshots, "current-before.sqlite3"));
-      await this.runtime.finalDream();
+      if (!c.request.owner_release) await this.runtime.finalDream();
       // Persist intent before creating either the generation row or its Current DB.
       this.db.prepare("UPDATE candidates SET state='BIRTHING',target_generation=?,previous_release=?,phase='MIGRATING' WHERE id=?")
         .run(generation, previous.release_id, id);
@@ -178,6 +201,17 @@ export class GenerationSupervisor {
         }catch(error){this.event(id,'world_current_migration_failed',{worldId:world.id,reason:error instanceof Error?error.message:'WORLD_MIGRATION_FAILED'});throw error;}
       }
 
+      if (c.request.owner_release) {
+        const files: {file:string;sha256:string}[] = [];
+        const walk = (directory:string) => { for (const name of fs.readdirSync(directory)) {
+          const file=path.join(directory,name); if(fs.statSync(file).isDirectory())walk(file);
+          else if(name.endsWith('.sqlite3'))files.push({file,sha256:createHash('sha256').update(fs.readFileSync(file)).digest('hex')});
+        }}; walk(snapshots);
+        this.lineage.lifeEvent(previous.id, "OWNER_MAINTENANCE_DREAM_DEFERRED", {
+          candidateId:id, reason:c.request.owner_release.reason, source_generation:previous.id, snapshots:files,
+          policy:"RAW_FACTS_RETAINED_NO_MODEL_NO_COMPLETED_DREAM"
+        }, `owner-maintenance-dream:${id}`);
+      }
       // Entirely separate workspace: cloned Lineage, cloned Current, no private credentials.
       const testWorkspace = path.join(this.directory, "candidate-workspaces", id);
       const testSystem=this.runtime.worlds?path.join(testWorkspace,'system'):testWorkspace;
@@ -263,7 +297,9 @@ export class GenerationSupervisor {
       return;
     }
     this.db.prepare("UPDATE candidates SET state='ROLLING_BACK',phase='STOPPING',failure_reason=? WHERE id=?").run(reason, id);
+    this.runtime.checkRollback?.(path.join(this.releases, previous.release_id));
     await this.runtime.stop();
+    await this.runtime.prepareRollback?.(path.join(this.releases, previous.release_id));
     const frozen = path.join(this.directory, "frozen", `${generation}-${id}`, "current.sqlite3");
     const frozenHash = fs.existsSync(frozen)?createHash('sha256').update(fs.readFileSync(frozen)).digest('hex'):await snapshotDatabase(path.join(generationDirectory(this.workspace, generation), "current.sqlite3"), frozen);
     const frozenWorlds:{worldId:string;file:string;sha256:string}[]=[];
@@ -307,7 +343,11 @@ export class GenerationSupervisor {
     if (c.state === "ROLLED_BACK") return c;
     if (c.state !== "BORN" || this.lineage.activeGeneration()?.id !== c.target_generation) throw new Error("GENERATION_NOT_ACTIVE");
     this.busy = true;
-    try { await this.restore(id, reason, "ROLLED_BACK"); return this.get(id); } finally { this.busy = false; }
+    try {
+      this.runtime.checkRollback?.(path.join(this.releases, c.request.base_release));
+      await this.runtime.quiesce();
+      try { this.runtime.checkRollback?.(path.join(this.releases, c.request.base_release)); } catch (e) { await this.runtime.resume(); throw e; }
+      await this.restore(id, reason, "ROLLED_BACK"); return this.get(id); } finally { this.busy = false; }
   }
   async recover() {
     if (this.busy) throw new Error("EVOLUTION_BUSY");

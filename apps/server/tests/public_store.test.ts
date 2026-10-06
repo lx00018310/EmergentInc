@@ -4,6 +4,7 @@ import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { LineageStore, WorldRegistryStore, writeGenerationPointer, SqliteDatabase } from '@emergentinc/persistence';
 import { snapshotDatabase } from '../../../supervisor/migration_runner.js';
+import {checkPaymentRollback,preparePaymentRollback} from '../../../supervisor/payment_compatibility.js';
 import { UsageMeter } from '@emergentinc/model';
 import { createServer } from '../src/app.js';
 import { PaymentService } from '../src/services/payment_service.js';
@@ -60,6 +61,25 @@ function wire(invoice: any) {
   return { signature, evidence, rpc };
 }
 describe('V24 anonymous store with an instance treasury', () => {
+  it('reverses V24 attribution preserving historical receipts, but refuses any instance invoice', async () => {
+    const f=await fixture(),legacy=join(f.root,'legacy');fs.mkdirSync(join(legacy,'genome'),{recursive:true});
+    fs.writeFileSync(join(legacy,'genome/manifest.json'),JSON.stringify({capability_contracts:{}}));
+    const invoice=f.payments.createInvoice({qianji_id:f.a.qianji_id,rail_id:'bsc',amount:'12',idempotency_key:'historical-rollback'}),evidence=wire(invoice);
+    f.payments.observe(invoice.invoice_id,evidence.signature,'finalized',evidence.evidence);
+    const tables=['payment_rails','payment_invoices','payment_observations','payment_receipts','world_revenue_events','payment_outbox'];
+    const before=tables.map(table=>f.payments.db.prepare(`SELECT * FROM ${table}`).all());
+    const copy=join(f.root,'rollback.sqlite3');await snapshotDatabase(f.paymentFile,copy);
+    checkPaymentRollback(copy,legacy);preparePaymentRollback(copy,legacy);
+    const db=new SqliteDatabase(copy);
+    try{expect(db.prepare('PRAGMA user_version').get()!.user_version).toBe(2);expect(db.prepare('PRAGMA foreign_key_check').all()).toEqual([]);
+      expect(tables.map(table=>db.prepare(`SELECT * FROM ${table}`).all())).toEqual(before);
+      expect(db.prepare('PRAGMA table_info(payment_invoices)').all().find(row=>row.name==='world_id')?.notnull).toBe(1);
+    }finally{db.close();}
+    const upgraded=new PaymentService(copy,f.control,f.lineage);upgraded.createInstanceInvoice({order_id:'new_order',rail_id:'bsc',amount:'10',idempotency_key:'new-instance'});upgraded.close();
+    expect(()=>checkPaymentRollback(copy,legacy)).toThrow('V23_ROLLBACK_DENIED_INSTANCE_PAYMENT_FACTS');
+    expect(()=>preparePaymentRollback(copy,legacy)).toThrow('V23_ROLLBACK_DENIED_INSTANCE_PAYMENT_FACTS');
+    const retained=new SqliteDatabase(copy);try{expect(retained.prepare('PRAGMA user_version').get()!.user_version).toBe(3);expect(retained.prepare('SELECT count(*) n FROM payment_invoices').get()!.n).toBe(2);}finally{retained.close();}
+  });
   it('migrates an existing V2 USDT invoice / receipt / revenue / outbox graph without rewriting any financial rows', async () => {
     const f = await fixture(), invoice = f.payments.createInvoice({ qianji_id: f.a.qianji_id, rail_id: 'bsc', amount: '12', idempotency_key: 'historical-world' });
     const evidence = wire(invoice); f.payments.observe(invoice.invoice_id, evidence.signature, 'finalized', evidence.evidence);

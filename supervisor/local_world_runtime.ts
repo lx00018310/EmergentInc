@@ -3,6 +3,7 @@ import * as path from 'node:path';
 import {spawn,ChildProcess} from 'node:child_process';
 import {EvolutionRuntime} from './protocol.js';
 import {DatabaseSync} from 'node:sqlite';
+import {checkPaymentRollback,preparePaymentRollback} from './payment_compatibility.js';
 
 export interface LocalWorldRuntimeConfig {workspace:string;releases:string;stateDirectory:string;activeReleaseFile:string;appUrl:string;ownerEnvironment:NodeJS.ProcessEnv}
 /** Explicit Windows Owner maintenance. This is not an OS-isolated Linux trust root. */
@@ -53,6 +54,8 @@ export class LocalWorldRuntime implements EvolutionRuntime {
     process.kill(record.pid);this.cookie=undefined;
     for(let i=0;i<150;i++){try{process.kill(record.pid,0);}catch(e){if((e as NodeJS.ErrnoException).code==='ESRCH')return;throw e;}await new Promise(r=>setTimeout(r,100));}throw new Error('WORLD_SERVER_STOP_TIMEOUT');
   }
+  checkRollback(directory:string){checkPaymentRollback(path.join(this.config.workspace,'system/payment/payment.sqlite3'),directory);}
+  async prepareRollback(directory:string){preparePaymentRollback(path.join(this.config.workspace,'system/payment/payment.sqlite3'),directory);}
   async switchRelease(directory:string){
     const relative=path.relative(this.config.releases,directory);if(!relative||relative.startsWith('..')||path.isAbsolute(relative)||path.dirname(relative)!=='.')throw new Error('LOCAL_RELEASE_PATH_INVALID');
     const temporary=this.config.activeReleaseFile+'.next';fs.writeFileSync(temporary,JSON.stringify({directory:fs.realpathSync(directory)}));fs.renameSync(temporary,this.config.activeReleaseFile);

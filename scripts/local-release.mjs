@@ -7,7 +7,7 @@ import { DatabaseSync } from 'node:sqlite';
 
 const sourceRoots = new Set(['apps', 'packages', 'frontend', 'genome', 'scripts', 'supervisor', 'deploy', 'resources', 'tests', 'docs',
   'package.json', 'pnpm-lock.yaml', 'pnpm-workspace.yaml', 'tsconfig.json', 'tsconfig.base.json', 'vitest.config.ts', 'vitest.workspace.ts',
-  'README.md', 'README_CN.md', 'AGENTS.md', 'LICENSE', 'EmergentInc_UI.bat', 'EmergentInc_UI.ps1']);
+  'README.md', 'README_CN.md', 'AGENTS.md', 'LICENSE', 'EmergentInc_UI.bat', 'EmergentInc_UI.ps1', 'EmergentInc_Upgrade.bat']);
 const excluded = new Set(['.git', 'node_modules', 'workspace', 'owner_private', 'cache', '.codex', '.agents', '.aws']);
 const read = file => JSON.parse(fs.readFileSync(file, 'utf8'));
 const jsonHash = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');

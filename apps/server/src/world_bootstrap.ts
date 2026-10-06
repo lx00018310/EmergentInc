@@ -70,6 +70,6 @@ export async function bootstrapWorlds(projectRoot:string,config:ReturnType<typeo
   for(const signal of ['SIGINT','SIGTERM'] as const)process.once(signal,()=>{void app.close();});
   await app.listen({port:Number(process.env.PORT||8765),host:config.host});
   if(!paused){promotion.reconcileInherited();payments.deliverMemories();monitor.start();dream.start();business.start({exclusiveWorkspaceLockHeld:true});}
-  console.log(`[EmergentInc V23] ${active.id}, ${registry.list().length} Worlds, http://${config.host}:${process.env.PORT||8765}`);
+  console.log(`[EmergentInc V24] ${active.id}, ${registry.list().length} Worlds, http://${config.host}:${process.env.PORT||8765}`);
   return app;
 }

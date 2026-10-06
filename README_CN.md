@@ -110,7 +110,9 @@ node scripts/v23-upgrade.mjs approve <Owner目录> <准确候选哈希> "批准�
 node scripts/v23-upgrade.mjs apply <Owner目录> <准确候选哈希>
 ```
 
-后续批准变更使用 `scripts/v23-generation.mjs` 的 submit / validate / approve / birth。V24 保留 V23 Workspace 布局，不新增 Gene 机制。Schema 兼容和验证证据见 [V24 实施记录](docs/EmergentInc_V24_实施记录.md)。
+V23 → V24 及保持此 Workspace 布局的后续软件版本，使用根目录 `EmergentInc_Upgrade.bat`：status / prepare / show / approve / apply / rollback / recover。完整命令和历史版本入口见 [版本升级入口](docs/版本升级入口.md)。World 的 Gene 变更仍使用 `scripts/v23-generation.mjs` 的 submit / validate / approve / birth，不能修改 Root。
+
+Owner 软件维护保留未整理事实及快照，不调用模型或生成虚假 Dream。V24 出现实例发票后拒绝直接回退 V23；兼容性和验证证据见 [V24 实施记录](docs/EmergentInc_V24_实施记录.md)。
 
 ## 验证状态
 

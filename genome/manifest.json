@@ -98,6 +98,11 @@
       "signing": false,
       "spending": false,
       "previous_USDC": "read_only_archive"
+    },
+    "instance_payment@1": {
+      "scope": "instance",
+      "payment_schema": 3,
+      "rollback_to_v23": "only_without_instance_payment_facts"
     }
   }
 }

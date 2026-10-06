@@ -1,9 +1,9 @@
 @echo off
 chcp 65001 > nul
 setlocal enabledelayedexpansion
-title EmergentInc V10 Small Runtime Console
+title EmergentInc Approved Runtime
 echo ========================================================
-echo  Starting EmergentInc V10 Visual Control Deck...
+echo  Starting the approved EmergentInc release...
 echo ========================================================
 
 cd /d "%~dp0"

@@ -110,6 +110,8 @@ node scripts/v23-upgrade.mjs approve <owner-directory> <exact-candidate-hash> "r
 node scripts/v23-upgrade.mjs apply <owner-directory> <exact-candidate-hash>
 ```
 
+For V23 → V24 and later software releases retaining the same Workspace layout, use `EmergentInc_Upgrade.bat` or `node scripts/version-upgrade.mjs`: status / prepare / show / approve / apply / rollback / recover. See [version upgrade entry points](docs/版本升级入口.md). Owner software maintenance archives unsynthesized facts without calling a model. Direct rollback to V23 is refused after any instance invoice exists. Normal Gene upgrades retain their Root restrictions and Final Dream requirement.
+
 Subsequent approved changes use `scripts/v23-generation.mjs` submit / validate / approve / birth. V24 retains the V23 workspace layout and adds no new Gene mechanism. See the [V24 implementation record](docs/EmergentInc_V24_实施记录.md) for schema compatibility and validation evidence.
 
 ## Validation status

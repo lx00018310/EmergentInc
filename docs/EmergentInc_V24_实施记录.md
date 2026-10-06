@@ -101,3 +101,13 @@ pnpm.cmd --dir frontend build
 | F 数据连续 | V2 数据迁移、重启、批准升级与兼容回退本地验证通过；Linux 实机及首次生产切换未执行 |
 
 **这是完成开发和本地验证的候选，不是 V24 全部正式验收完成。**缺少正式定价 / 联系方式 / 收款配置、首次兼容回退准备、准确 Release 发布批准，以及真实客户支付证据。
+
+## 本机软件升级入口补充
+
+新增 `EmergentInc_Upgrade.bat` / `scripts/version-upgrade.mjs`，面向已采用 V23 Workspace 布局的本机 Owner 软件升级。prepare 冻结已提交源码并执行固定校验；approve 绑定准确候选哈希；apply 复用既有 GenerationSupervisor 的快照、全 World 迁移、隔离烟测、切换与恢复，不直接修改批准数据库或运行 Release。
+
+Owner 的完整软件 Release 通过独立的 `submitOwnerRelease` 提交，来源提交、原因与冻结哈希纳入准确候选。普通 Gene submit 仍拒绝 Root 修改及 Owner Release 元数据，不增加 HTTP 发布入口。
+
+软件维护保留未整理 Current 事实和快照，明确记录 `OWNER_MAINTENANCE_DREAM_DEFERRED`，不调用模型、不伪造完成的 Dream。普通 Gene 出生的 Final Dream 门槛保持。
+
+V23 回退在暂停及停服前检查实例归属；任何实例发票 / 收据 / 收入都阻止直接回退。没有实例财务事实时，只逆迁移三张归属表为 schema 2，保留历史行和引用图；不会覆盖数据库备份。入口命令与各版本对应关系见 [版本升级入口](版本升级入口.md)。
