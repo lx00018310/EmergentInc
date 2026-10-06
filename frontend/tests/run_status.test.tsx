@@ -1,6 +1,7 @@
 import React from 'react';
 import { afterEach, describe, expect, it } from 'vitest';
-import { cleanup, render, screen } from '@testing-library/react';
+import { act, cleanup, render, screen } from '@testing-library/react';
+import { setLanguage } from '../src/i18n';
 import { RunStatus } from '../src/features/run/RunStatus';
 import type { WorldDto } from '../src/api/types';
 
@@ -13,6 +14,9 @@ describe('V11 RunStatus costs', () => {
     expect(screen.getByRole('heading', { name: 'EmergentInc 元胞会社' })).toBeDefined();
     expect(screen.getByText('未知')).toBeDefined();
     expect(screen.queryByText('¥15.00')).toBeNull();
+    act(() => setLanguage('en'));
+    expect(screen.getByRole('heading', { name: 'EmergentInc', exact: true })).toBeDefined();
+    expect(screen.getByText('Unknown')).toBeDefined();
   });
 
   it('distinguishes null costs from a reported zero', () => {

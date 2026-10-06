@@ -12,7 +12,7 @@ export interface RunStatusProps {
 }
 
 export const RunStatus: React.FC<RunStatusProps> = ({ world, runStatus, onOpenHelp, onBack }) => {
-  useLanguage();
+  const lang = useLanguage();
   const round = world?.round ?? runStatus?.current_round ?? 0;
   const pixels = world?.pixels ?? [];
   const alivePixels = pixels.filter((p) => p.active).length;
@@ -50,7 +50,7 @@ export const RunStatus: React.FC<RunStatusProps> = ({ world, runStatus, onOpenHe
     <header className="app-header">
       <div className="logo-title">
         <span className="logo-icon">◈</span>
-        <h1>EmergentInc <span className="logo-cn">{tr("元胞会社")}</span></h1>
+        <h1>EmergentInc {lang === 'zh-CN' && <span className="logo-cn">{tr("元胞会社")}</span>}</h1>
         <span className="logo-sub">MIDNIGHT FOUNDRY // CELLULAR SOCIETY OBSERVATORY</span>
         <span className="badge" id="run-badge">run: {runId}</span>
       </div>
