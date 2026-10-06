@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { QianjiCard } from '../src/features/qianji/QianjiCard';
 import { Entry } from '../src/Entry';
 import { en } from '../src/i18n/en';
 import { zhCN } from '../src/i18n/zh-CN';
@@ -36,11 +37,16 @@ describe('V24 public and bilingual entry', () => {
     fireEvent.click(screen.getByRole('button', { name: 'EN' }));
     expect(screen.getByRole('heading', { name: 'Log in to EmergentInc' })).toBeTruthy();
   });
-  it('keeps dictionary coverage identical and resolves module-level status labels at the selected language', () => {
+  it('keeps dictionary coverage identical and resolves module-level and nested World labels at the selected language', () => {
     expect(Object.keys(en).sort()).toEqual(Object.keys(zhCN).sort());
     setLanguage('en'); expect(displayRunStatus('STOPPED')).toBe('Stopped');
     setLanguage('zh-CN'); expect(displayRunStatus('STOPPED')).toBe('已停止');
     expect(t('An actual customer requirement')).toBe('An actual customer requirement');
     expect(t('{0} is actual customer text')).toBe('{0} is actual customer text');
+    setLanguage('en');
+    render(<QianjiCard selected={false} onSelect={() => {}} item={{ profile: { qianjiId: 'test', narrative: { displayName: 'Atlas' }, careerStatus: 'active', createdAt: 1 }, world: { status: 'ACTIVE', activePixels: 1 } } as any} />);
+    expect(screen.getByText(/● World active/)).toBeTruthy();
+    act(() => setLanguage('zh-CN'));
+    expect(screen.getByText(/● World 活跃/)).toBeTruthy();
   });
 });

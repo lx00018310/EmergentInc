@@ -88,7 +88,7 @@ export const RunControls: React.FC<RunControlsProps> = ({
     }
 
     setIsSubmitting(true);
-    onLogMessage('info', tr("[DISPATCH] 发送推进请求：rounds={0}, command=\"{1}\"...", [parsed.rounds, actualCommand || '默认推进']));
+    onLogMessage('info', tr("[DISPATCH] 发送推进请求：rounds={0}, command=\"{1}\"...", [parsed.rounds, actualCommand || tr('默认推进')]));
 
     try {
       const started = await startRun({

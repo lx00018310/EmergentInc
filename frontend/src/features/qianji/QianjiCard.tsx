@@ -76,7 +76,7 @@ export const QianjiCard: React.FC<QianjiCardProps> = ({ item, selected, onSelect
           <div className="qj-card-badges">
             <span>{careerLabels[profile.careerStatus] || profile.careerStatus}</span>
             <span style={{ color: physical?.active ? 'var(--tj-accent)' : 'var(--tj-text-dim)' }}>
-              {item.world?tr("{0} · {1} 元胞", [item.world.status==='ACTIVE'?'● World 活跃':'○ World '+item.world.status, item.world.activePixels??0]):physical?.active ? (tr("● 载体活跃")) : currentBinding ? (tr("○ 载体失活")) : (tr("未绑定 Pixel"))}
+              {item.world?tr("{0} · {1} 元胞", [item.world.status==='ACTIVE'?tr('● World 活跃'):'○ World '+item.world.status, item.world.activePixels??0]):physical?.active ? (tr("● 载体活跃")) : currentBinding ? (tr("○ 载体失活")) : (tr("未绑定 Pixel"))}
             </span>
           </div>
           <small>{new Date(profile.createdAt * 1000).toLocaleDateString()}</small>

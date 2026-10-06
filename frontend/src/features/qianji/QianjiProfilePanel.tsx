@@ -59,8 +59,8 @@ export const QianjiProfilePanel: React.FC<{
   }, [openModal, reloadHistory]);
 
   const physicalText = item.world?tr("World {0} · {1} 活跃元胞", [item.world.status, item.world.activePixels??0]) : !item.currentBinding ? (tr("未绑定 Pixel"))
-    : item.physical?.active ? tr("载体活跃 · {0} Token", [item.physical.energy ?? '未知'])
-      : tr("载体失活 · {0} Token", [item.physical?.energy ?? '未知']);
+    : item.physical?.active ? tr("载体活跃 · {0} Token", [item.physical.energy ?? tr('未知')])
+      : tr("载体失活 · {0} Token", [item.physical?.energy ?? tr('未知')]);
 
   const submitRetirement = async (event: React.FormEvent) => {
     event.preventDefault();

@@ -521,7 +521,7 @@ export const en: Record<string, string> = {
   "运行中 · {0}/{1} 轮": "Running · {0}/{1} rounds",
   "需要恢复处理": "Recovery required",
   "上次运行失败": "Last run failed",
-  "千": "QIAN",
+  "千": "Q",
   "EmergentInc 元胞会社": "EmergentInc",
   "轮": "rounds",
   "进入": "Enter",
