@@ -98,9 +98,9 @@ pnpm.cmd --dir frontend build
 | C 双语 | 字典、四入口、持久化与浏览器验证通过 |
 | D 商品 | 唯一商品、双语编辑、价格、上下架已实现；正式配置待 Owner 提供 |
 | E 商业闭环 | 模拟 RPC 与实际进程本地验证通过；真实客户付款尚未验收 |
-| F 数据连续 | V2 数据迁移、重启、批准升级与兼容回退本地验证通过；Linux 实机及首次生产切换未执行 |
+| F 数据连续 | V2 数据迁移、重启、批准升级与兼容回退本地验证通过；本机首次 V23 → V24 已切换并核对原 28 个数据库；Linux 实机未验收 |
 
-**这是完成开发和本地验证的候选，不是 V24 全部正式验收完成。**缺少正式定价 / 联系方式 / 收款配置、首次兼容回退准备、准确 Release 发布批准，以及真实客户支付证据。
+**本机 V24 升级完成，商业上线验收尚未全部完成。**正式定价 / 联系方式 / 收款配置及真实客户支付证据仍缺失。
 
 ## 本机软件升级入口补充
 
@@ -111,3 +111,15 @@ Owner 的完整软件 Release 通过独立的 `submitOwnerRelease` 提交，来�
 软件维护保留未整理 Current 事实和快照，明确记录 `OWNER_MAINTENANCE_DREAM_DEFERRED`，不调用模型、不伪造完成的 Dream。普通 Gene 出生的 Final Dream 门槛保持。
 
 V23 回退在暂停及停服前检查实例归属；任何实例发票 / 收据 / 收入都阻止直接回退。没有实例财务事实时，只逆迁移三张归属表为 schema 2，保留历史行和引用图；不会覆盖数据库备份。入口命令与各版本对应关系见 [版本升级入口](版本升级入口.md)。
+
+## 2026-10-06 本机实际切换记录
+
+- 用户在本对话明确授权“升级”。通过上述 Owner 入口准备、准确哈希批准并应用；没有写入伪造审批行。
+- 来源提交：`5f2d06b3e654c017df8c7be5f69cb1a07370bc22`。
+- Release：`local-v24-3290c842-4b0e-4a04-a0a6-45365c6f546a`；G0006 → G0007；候选最终为 `BORN / COMPLETED`，无 failure_reason。
+- 准确候选哈希：`f1a8e6d2311007dcb15e15923bd62b2aa9267a848dd4538f40b46c3a436e9e39`；冻结 Release 哈希：`0e9bebb0a6dd1d662a77c9005066bbbe03d80d89f7b36c6eacfbae07bb636c0c`。
+- 固定候选校验：类型检查、597 个测试、后端及前端构建通过；两个实际进程测试在候选模式跳过，已分别执行通过。初次全量运行有一次嵌套候选测试失败；单独重跑 Owner V23 → V24 → V23 与启动失败自动恢复演练通过，正式冻结候选校验也通过。
+- `/health/ready` 返回 `v24-public-1 / G0007 / ready=true`；三个 ACTIVE World 的 Current 均为 G0007；`launch-approved.mjs --check` 选择此批准 Release。
+- 原有 28 个数据库均存在且完整性检查通过；旧表内容摘要仅有预期的 Lineage 变化：进程租约、升级提案、代际状态、升级事件与出生记忆。原 control / payment 业务行、旧代 Current、World Core 行一致。
+- 公开首页在浏览器验证英文、中文；匿名 Public Site 管理接口仍返回 401。实例订单与收入均为零，商品 disabled、price=NULL；没有创建虚构收款配置或正式测试订单。
+- 证据在项目忽略目录 `cache/v24-owner-upgrade-evidence/`：prepare / approve / apply 日志、准确候选、before / after 内容摘要、测试日志与真实首页截图。快照在配置的 Owner 状态目录下 `snapshots/<release_id>/`。
