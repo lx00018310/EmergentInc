@@ -132,7 +132,7 @@ describe("trusted Generation lifecycle (local runtime contract doubles)", () => 
     expect(classifyChange(["package.json"])).toBe("GENE");
     expect(classifyChange(["apps/recovery/src/server.ts"])).toBe("ROOT");
     expect(classifyChange(["scripts/local-upgrade.mjs"])).toBe("ROOT");
-    for (const entry of ["scripts/local-release.mjs", "scripts/launch-approved.mjs", "scripts/v23-migration-dry-run.mjs", "EmergentInc_UI.bat", "EmergentInc_UI.ps1"])
+    for (const entry of ["scripts/local-release.mjs", "scripts/launch-approved.mjs", "scripts/upgrade-web.mjs", "resources/upgrade-web.html", "scripts/v23-migration-dry-run.mjs", "EmergentInc_UI.bat", "EmergentInc_UI.ps1"])
       expect(() => f.supervisor.submit({ ...request, patch: [{ path: entry, content: "self approve" }] })).toThrow("ROOT_OF_TRUST_CHANGE_FORBIDDEN");
     expect(() => f.supervisor.submit({ ...request, patch: [{ path: "apps/recovery/src/server.ts", content: "self approve" }] })).toThrow("ROOT_OF_TRUST_CHANGE_FORBIDDEN");
   });

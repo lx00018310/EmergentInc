@@ -29,9 +29,16 @@ export class QianjiWorldGateway {
       control.db.prepare('UPDATE world_chat_turns SET reply=?,reply_call_id=?,replied_at=? WHERE turn_id=? AND world_id=? AND message_id=? AND reply IS NULL')
         .run(outbox.reply,outbox.model_call_id,outbox.created_at,outbox.turn_id,world.world_id,outbox.message_id);
     return control.db.prepare('SELECT * FROM world_chat_turns WHERE qianji_id=? ORDER BY created_at LIMIT 200').all(qianjiId).map(row=>{
-      const message=runtime?.store.messages.getMessage(String(row.message_id));return {turnId:row.turn_id,qianjiId:row.qianji_id,worldId:row.world_id,
+      const message=runtime?.store.messages.getMessage(String(row.message_id));
+      let status: 'queued'|'processing'|'replied'|'no_reply'|'blocked'|'failed' = 'failed';
+      if(row.reply!==null)status='replied';
+      else if(message?.status==='COMMITTED')status='no_reply';
+      else if(message?.status==='QUEUED')status='queued';
+      else if(message && ['WAITING_PIXEL_BUDGET','WAITING_RUN_BUDGET','WAITING_EXECUTION_BUDGET','CALL_OUTCOME_UNKNOWN','AWAITING_SETTLEMENT','ABANDONED'].includes(message.status))status='blocked';
+      else if(message && ['PROCESSING','RESERVED','CALLING','RESPONSE_STORED'].includes(message.status))status=runtime?.run.getStatus().running?'processing':'blocked';
+      return {turnId:row.turn_id,qianjiId:row.qianji_id,worldId:row.world_id,
         bindingId:null,messageId:row.message_id,question:row.question,reply:row.reply,createdAt:Number(row.created_at)/1000,repliedAt:row.replied_at?Number(row.replied_at)/1000:null,
-        entryPixelId:row.entry_pixel_id,isMilestone:Boolean(control.db.prepare('SELECT turn_id FROM world_conclusions WHERE turn_id=?').get(row.turn_id)),status:row.reply?'replied':message?.status==='COMMITTED'?'no_reply':message?.status==='QUEUED'?'queued':'processing'};
+        entryPixelId:row.entry_pixel_id,isMilestone:Boolean(control.db.prepare('SELECT turn_id FROM world_conclusions WHERE turn_id=?').get(row.turn_id)),status};
     });
   }
 }

@@ -1,4 +1,5 @@
 export const en: Record<string, string> = {
+  "Publish upgrade": "Publish upgrade",
   "错误提示": "Error",
   "V11 五层上下文说明": "V11: five context layers",
   "关闭": "Close",

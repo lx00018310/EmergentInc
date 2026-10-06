@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen } from '@testing-library/react';
 
 const state = vi.hoisted(() => ({
-  world: { world: null as any, runStatus: null as any, error: null as string | null, refreshImmediately: vi.fn().mockResolvedValue(undefined) },
+  world: { world: null as any, worldId: null as string | null, runStatus: null as any, error: null as string | null, refreshImmediately: vi.fn().mockResolvedValue(undefined) },
   qianji: { items: [] as any[], events: [] as any[], presentation: null as any, error: null as string | null, loading: false, refresh: vi.fn().mockResolvedValue(undefined) },
 }));
 
@@ -20,6 +20,7 @@ vi.mock('../src/features/qianji/QianjiProfilePanel', async () => {
 
 import { QianJiHall } from '../src/features/hall/QianJiHall';
 import { startRun } from '../src/api/run';
+import { enableWorlds } from '../src/api/worldScope';
 
 const member = {
   profile: {
@@ -50,8 +51,11 @@ describe('QianJiHall', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    enableWorlds(false);
+    localStorage.removeItem('emergentinc.tips.read.0_0_0');
     state.world = {
       world: { round: 12, pixels: [{ active: true }], metrics: { alive_pixels: 1, total_energy: 1000, total_spent_cny: null } },
+      worldId: null,
       runStatus: null, error: null, refreshImmediately: vi.fn().mockResolvedValue(undefined),
     };
     state.qianji = {
@@ -68,6 +72,44 @@ describe('QianJiHall', () => {
     expect(screen.getByLabelText('人物详情')).toBeTruthy();
     expect(screen.getByLabelText('需要阁主决定')).toBeTruthy();
     expect(onSelectedPixel).toHaveBeenCalledWith('0_0_0');
+  });
+
+  it.each([
+    ['zh-CN', 'Tips (公开提醒):', '● 新提醒', '标记已读', '已读'],
+    ['en', 'Tips (public reminders):', '● New reminder', 'Mark as read', 'Read'],
+  ])('shows Tips and shares the YUAN read version in %s', (lang, title, unread, mark, read) => {
+    localStorage.setItem('emergentinc.language', lang);
+    state.world.world.pixels = [{ id: '0_0_0', active: true, tips_md: 'Please review the outline.', tips_version: 'v1' },
+      { id: '1_0_0', active: true, tips_md: 'Other person reminder.', tips_version: 'v1' }];
+    const { rerender } = renderHall();
+    expect(screen.getByRole('heading', { name: title })).toBeTruthy();
+    expect(screen.getByText('Please review the outline.')).toBeTruthy();
+    expect(screen.queryByText('Other person reminder.')).toBeNull();
+    expect(screen.getByText(unread)).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: mark }));
+    expect(localStorage.getItem('emergentinc.tips.read.0_0_0')).toBe('v1');
+    expect(screen.getByText(read)).toBeTruthy();
+    state.world.world = { ...state.world.world, pixels: [{ ...state.world.world.pixels[0], tips_version: 'v2' }] };
+    rerender(<QianJiHall selectedQianjiId="qj_test" onSelectedQianji={onSelectedQianji} onSelectedPixel={onSelectedPixel} onOpenEngine={onOpenEngine} />);
+    expect(screen.getByText(unread)).toBeTruthy();
+  });
+
+  it('shows reminders from every Pixel in the selected World, including a non-gateway Pixel', () => {
+    enableWorlds(true);
+    state.world.worldId = 'world_a';
+    state.qianji.items = [{ ...member, currentBinding: null, world: { world_id: 'world_a', status: 'ACTIVE', gateway_pixel_id: '0_0_0', gatewayRevision: 0 } }];
+    state.world.world.pixels = [{ id: '0_0_0', active: true, tips_md: 'Gateway reminder.', tips_version: 'v1' },
+      { id: '1_0_0', active: true, tips_md: 'Internal Pixel reminder.', tips_version: 'v1' }];
+    const { rerender } = renderHall();
+    expect(screen.getByText('Gateway reminder.')).toBeTruthy();
+    expect(screen.getByText('Internal Pixel reminder.')).toBeTruthy();
+    fireEvent.click(screen.getAllByRole('button', { name: '标记已读' })[1]);
+    expect(localStorage.getItem('emergentinc.tips.read.world_a.1_0_0')).toBe('v1');
+    expect(localStorage.getItem('emergentinc.tips.read.world_a.0_0_0')).toBeNull();
+    state.qianji.items = [{ ...state.qianji.items[0], world: { ...state.qianji.items[0].world, world_id: 'world_b' } }];
+    rerender(<QianJiHall selectedQianjiId="qj_test" onSelectedQianji={onSelectedQianji} onSelectedPixel={onSelectedPixel} onOpenEngine={onOpenEngine} />);
+    expect(screen.queryByText('Gateway reminder.')).toBeNull();
+    expect(screen.queryByText('Internal Pixel reminder.')).toBeNull();
   });
 
   it('passes the selected stable Qianji ID and exposes only the Engine entry', () => {

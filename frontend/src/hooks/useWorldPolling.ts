@@ -1,9 +1,11 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { fetchWorld, fetchWorkspaceAudit } from '../api/world';
 import { fetchRunStatus } from '../api/run';
+import { selectedWorld, worldsEnabled } from '../api/worldScope';
 import type { WorldDto, RunStatusDto, WorkspaceAuditDto } from '../api/types';
 
 export interface UseWorldPollingResult {
+  worldId: string | null;
   world: WorldDto | null;
   runStatus: RunStatusDto | null;
   audit: WorkspaceAuditDto | null;
@@ -13,6 +15,7 @@ export interface UseWorldPollingResult {
 }
 
 export function useWorldPolling(): UseWorldPollingResult {
+  const [worldId, setWorldId] = useState<string | null>(null);
   const [world, setWorld] = useState<WorldDto | null>(null);
   const [runStatus, setRunStatus] = useState<RunStatusDto | null>(null);
   const [audit, setAudit] = useState<WorkspaceAuditDto | null>(null);
@@ -33,6 +36,7 @@ export function useWorldPolling(): UseWorldPollingResult {
     const controller = new AbortController();
     activeAbortControllerRef.current = controller;
     const { signal } = controller;
+    const requestWorldId = worldsEnabled() ? selectedWorld() : null;
 
     try {
       // 并行拉取 world 与 run status
@@ -41,8 +45,9 @@ export function useWorldPolling(): UseWorldPollingResult {
         fetchRunStatus(signal),
       ]);
 
-      if (!isMountedRef.current) return;
+      if (!isMountedRef.current || signal.aborted || requestWorldId !== (worldsEnabled() ? selectedWorld() : null)) return;
 
+      setWorldId(requestWorldId);
       setWorld(worldRes);
       setRunStatus(runRes);
       setError(null);
@@ -107,6 +112,7 @@ export function useWorldPolling(): UseWorldPollingResult {
   }, [fetchCycle]);
 
   return {
+    worldId,
     world,
     runStatus,
     audit,

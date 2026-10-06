@@ -1,4 +1,5 @@
 export const zhCN: Record<string, string> = {
+  "Publish upgrade": "发布升级",
   "错误提示": "错误提示",
   "V11 五层上下文说明": "V11 五层上下文说明",
   "关闭": "关闭",

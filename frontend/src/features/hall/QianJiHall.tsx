@@ -3,6 +3,7 @@ import {selectWorld,worldsEnabled} from '../../api/worldScope';
 import {WorldSummary} from '../qianji/WorldSummary';
 import React, { useEffect, useRef, useState } from 'react';
 import { useWorldPolling } from '../../hooks/useWorldPolling';
+import { usePixelTips } from '../../hooks/usePixelTips';
 import { useQianjiPolling } from '../../hooks/useQianjiPolling';
 import { startRun } from '../../api/run';
 import { QianjiCard, type QianjiMenuAction } from '../qianji/QianjiCard';
@@ -24,13 +25,16 @@ export interface QianJiHallProps {
 export const QianJiHall: React.FC<QianJiHallProps> = ({ selectedQianjiId, onSelectedQianji, onSelectedPixel, onOpenEngine, onOpenGacha, onOpenMeeting }) => {
   useLanguage();
   const { items, presentation, error: qianjiError, loading, refresh } = useQianjiPolling();
-  const { world, runStatus, error: worldError, refreshImmediately } = useWorldPolling();
+  const { world, worldId, runStatus, error: worldError, refreshImmediately } = useWorldPolling();
   const [runError, setRunError] = useState<string | null>(null);
   const [modalRequest, setModalRequest] = useState<{ modal: QianjiProfileModal; nonce: number } | null>(null);
   const [addMenuOpen, setAddMenuOpen] = useState(false);
   const [isRecoveryOpen, setIsRecoveryOpen] = useState(false);
   const addMenuRef = useRef<HTMLDivElement | null>(null);
   const selected = items.find(item => item.profile.qianjiId === selectedQianjiId) ?? null;
+  const tipsPixels = world?.pixels.filter(pixel =>
+    (worldsEnabled() ? Boolean(selected?.world && worldId === selected.world.world_id) : pixel.id === selected?.currentBinding?.pixelId) && pixel.tips_md?.trim());
+  const { markTipsRead, unreadTipsPixelIds } = usePixelTips(tipsPixels, worldsEnabled() ? selected?.world?.world_id ?? null : null);
   const recoveryRequired = Boolean(runStatus?.unfinalized_operations?.hasUnfinalized && !runStatus?.running);
 
   useEffect(() => {
@@ -195,6 +199,14 @@ export const QianJiHall: React.FC<QianJiHallProps> = ({ selectedQianjiId, onSele
         </section>
 
         <aside className="hall-side-column" aria-label={tr("需要阁主决定")}>
+          {tipsPixels && tipsPixels.length > 0 && <section className="hall-side-panel" aria-label={tr("Tips (公开提醒):")}>
+            <h2>{tr("Tips (公开提醒):")}</h2>
+            {tipsPixels.map(pixel => <article key={pixel.id}>
+              <p><strong>{pixel.id}</strong> · <span>{unreadTipsPixelIds.has(pixel.id) ? tr("● 新提醒") : tr("已读")}</span></p>
+              <div className="pixel-md-preview">{pixel.tips_md}</div>
+              {unreadTipsPixelIds.has(pixel.id) && <button className="btn btn-sm" type="button" onClick={() => markTipsRead(pixel)}>{tr("标记已读")}</button>}
+            </article>)}
+          </section>}
           {selected?.world?<WorldSummary item={selected} onRefresh={refresh}/>:!worldsEnabled()&&<ApprovalPanel />}
         </aside>
       </main>

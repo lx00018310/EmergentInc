@@ -1,7 +1,7 @@
 import { t as tr, useLanguage } from '../../i18n';
-import {selectedWorld,worldsEnabled} from '../../api/worldScope';
-import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useWorldPolling } from '../../hooks/useWorldPolling';
+import { usePixelTips } from '../../hooks/usePixelTips';
 import { RunStatus } from '../../features/run/RunStatus';
 import { RunControls } from '../../features/run/RunControls';
 import { ConsolePanel, ConsoleMessage } from '../../features/run/ConsolePanel';
@@ -32,7 +32,7 @@ import type { PromptDto } from '../../api/types';
 
 export const EngineView: React.FC<{ onBack: () => void; initialPixelId?: string | null; onSelectedPixelChange?: (id: string | null) => void }> = ({ onBack, initialPixelId, onSelectedPixelChange }) => {
   useLanguage();
-  const { world, runStatus, audit, error: pollingError, refreshImmediately } = useWorldPolling();
+  const { world, worldId, runStatus, audit, error: pollingError, refreshImmediately } = useWorldPolling();
 
   // 控制台日志
   const [messages, setMessages] = useState<ConsoleMessage[]>([
@@ -95,26 +95,7 @@ export const EngineView: React.FC<{ onBack: () => void; initialPixelId?: string 
 
   const selectedPixel = world?.pixels.find((p) => p.id === selectedPixelId) || null;
 
-  // Tips 已读状态：仅存 localStorage（Owner UI 显示状态，不属于世界真值）
-  const [tipsReadRevision, setTipsReadRevision] = useState(0);
-  const tipsReadKey = (pixelId: string) => `emergentinc.tips.read.${worldsEnabled()?selectedWorld()+'.':''}${pixelId}`;
-  const isTipsUnread = useCallback((pixel: { id: string; tips_md?: string; tips_version?: string }) => {
-    return Boolean(
-      (pixel.tips_md ?? '').trim() &&
-      localStorage.getItem(tipsReadKey(pixel.id)) !== String(pixel.tips_version ?? '')
-    );
-  }, []);
-  const markTipsRead = useCallback((pixel: { id: string; tips_version?: string }) => {
-    localStorage.setItem(tipsReadKey(pixel.id), String(pixel.tips_version ?? ''));
-    setTipsReadRevision((v) => v + 1);
-  }, []);
-  const unreadTipsPixelIds = useMemo(() => {
-    const ids = new Set<string>();
-    for (const p of world?.pixels || []) {
-      if (isTipsUnread(p)) ids.add(p.id);
-    }
-    return ids;
-  }, [world, isTipsUnread, tipsReadRevision]);
+  const { isTipsUnread, markTipsRead, unreadTipsPixelIds } = usePixelTips(world?.pixels, worldId);
 
   // 提示词状态 (独立实例)
   const [genesisPrompt, setGenesisPrompt] = useState<PromptDto | null>(null);

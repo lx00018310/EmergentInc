@@ -30,6 +30,34 @@ async function fixture(){const root=fs.mkdtempSync(join(tmpdir(),'v23-product-')
   return {root,lineage,control,registry,manager,a,b,genome,payments,promotion,app,request,narrative,generation};
 }
 describe('authenticated V23 product and life integration',()=>{
+  it('stops a 100-round run when Pixel energy cannot fund a call and reports blocked chat',async()=>{
+    const f=await fixture(),runtime=await f.manager.open(f.a.world_id);
+    runtime.store.db.prepare('UPDATE pixel_accounts SET energy=322').run();
+    const response=await f.request('POST',`/api/qianji/${f.a.qianji_id}/chat`,{content:'work',idempotencyKey:'low-energy',rounds:1,runBudgetTokens:100000});
+    expect(response.statusCode,response.body).toBe(202);
+    while(runtime.run.getStatus().running)await new Promise(r=>setTimeout(r,10));
+    const chat=await f.request('GET',`/api/qianji/${f.a.qianji_id}/chat`);
+    expect(chat.json().items[0].status).toBe('blocked');
+    await runtime.run.start({rounds:100,runBudgetTokens:100000});
+    while(runtime.run.getStatus().running)await new Promise(r=>setTimeout(r,10));
+    expect(runtime.run.getStatus()).toMatchObject({completed_rounds:1,model_calls_completed:0,stop_reason:'NO_ACTIVE_MESSAGES',result_status:'STOPPED'});
+    runtime.store.db.prepare('UPDATE pixel_accounts SET energy=100000').run();
+    await runtime.run.start({rounds:1,runBudgetTokens:100000});
+    while(runtime.run.getStatus().running)await new Promise(r=>setTimeout(r,10));
+    expect((await f.request('GET',`/api/qianji/${f.a.qianji_id}/chat`)).json().items[0].status).toBe('replied');
+  });
+  it.each([
+    ['COMMITTED','no_reply'],['QUEUED','queued'],['WAITING_PIXEL_BUDGET','blocked'],
+    ['WAITING_RUN_BUDGET','blocked'],['WAITING_EXECUTION_BUDGET','blocked'],
+    ['CALL_OUTCOME_UNKNOWN','blocked'],['AWAITING_SETTLEMENT','blocked'],
+    ['ABANDONED','blocked'],['MODEL_RESPONSE_INVALID','failed'],['PROCESSING','blocked'],
+  ])('maps World message status %s to chat status %s after a run stops',async(messageStatus,status)=>{
+    const f=await fixture(),runtime=await f.manager.open(f.a.world_id);
+    const {QianjiWorldGateway}=await import('../src/services/qianji_world_gateway.js');
+    const gateway=new QianjiWorldGateway(f.manager),turn=await gateway.enqueue(f.a.qianji_id,'work','status');
+    runtime.store.messages.updateStatus(String(turn.message_id),messageStatus as any);
+    expect((await gateway.turns(f.a.qianji_id))[0].status).toBe(status);
+  });
   it('runs only the selected World, reproduces cells without new Qianji, and keeps identities after gateway death',async()=>{
     const f=await fixture();expect((await f.app.inject('/api/worlds')).statusCode).toBe(401);
     const response=await f.request('POST',`/api/qianji/${f.a.qianji_id}/chat`,{content:'work',idempotencyKey:'turn',rounds:1,runBudgetTokens:80000});expect(response.statusCode,response.body).toBe(202);

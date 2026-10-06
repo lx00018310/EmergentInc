@@ -20,6 +20,10 @@ export async function launchApproved(projectRoot, args = []) {
     return approved ? 0 : 2;
   }
   if (!approved) approved = await initializeLocalRelease(projectRoot, workspace);
+  if (env.EMERGENTINC_LOCAL_EVOLUTION_CONFIG) {
+    const { ensureUpgradeWeb } = await import('./upgrade-web.mjs');
+    console.log('发布升级 / Publish upgrade: ' + await ensureUpgradeWeb(projectRoot));
+  }
   const directory = approved.directory;
   if (approved) {
     const { readGenome } = await import(pathToFileURL(path.join(directory, 'packages/persistence/dist/index.js')).href);

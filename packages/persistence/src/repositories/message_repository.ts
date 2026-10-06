@@ -262,15 +262,11 @@ export class MessageRepository {
     return Number(row?.count ?? 0);
   }
 
-  /** 当前或未来轮次仍有可处理的消息；可补足预算的等待消息留待下一轮恢复。 */
+  /** 当前或未来轮次仍有可处理的消息；预算等待消息在轮次开始恢复后才可执行。 */
   public hasProcessableMessages(executionId: string | null = null): boolean {
     const row = this.db.prepare(`
       SELECT 1 FROM messages
-      WHERE execution_id IS ? AND (status IN ('QUEUED', 'RESPONSE_STORED')
-         OR (status = 'WAITING_PIXEL_BUDGET' AND recipient IN (
-           SELECT pixel_id FROM pixel_accounts
-           WHERE energy >= 100 AND active = 1 AND refund_deficit_tokens = 0
-         )))
+      WHERE execution_id IS ? AND status IN ('QUEUED', 'RESPONSE_STORED')
       LIMIT 1
     `).get(executionId);
     return Boolean(row);
