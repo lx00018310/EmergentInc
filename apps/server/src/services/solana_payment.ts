@@ -20,7 +20,7 @@ export function solanaPayUrl(recipient:string,mint:string,reference:string,atomi
   const url=new URL('solana:'+publicAddress(recipient));url.searchParams.set('amount',displayAtomic(atomic));url.searchParams.set('spl-token',publicAddress(mint));
   url.searchParams.set('reference',publicAddress(reference));url.searchParams.set('label','EmergentInc');url.searchParams.set('memo',invoiceId);return url.toString();
 }
-export interface PaymentInvoice { invoice_id:string;network:PaymentNetwork;mint:string;recipient_address:string;reference:string;amount_atomic:string;memo:string|null;expires_at:number;status:string;world_id:string;qianji_id:string }
+export interface PaymentInvoice { invoice_id:string;network:PaymentNetwork;mint:string;recipient_address:string;reference:string;amount_atomic:string;memo:string|null;expires_at:number;status:string;world_id:string|null;qianji_id:string|null }
 /** Verify wire instruction keys/data, canonical recipient ATA, exact net receipt and reference; no payer-address guess. */
 export function verifySolanaPayment(invoice:PaymentInvoice,signature:string,transaction:any,allReferences:string[]){
   if(!transaction?.meta||transaction.meta.err!==null||transaction.transaction?.signatures?.[0]!==signature)throw new Error('PAYMENT_TRANSACTION_FAILED_OR_MISMATCH');

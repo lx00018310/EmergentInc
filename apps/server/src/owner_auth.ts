@@ -1,5 +1,6 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { FastifyInstance } from "fastify";
+import { isAnonymousStoreRoute } from './routes/public_routes.js';
 
 export interface OwnerAuthOptions { secret: string; secureCookies: boolean }
 const digest = (value: string) => createHash("sha256").update(value).digest();
@@ -16,7 +17,7 @@ export function registerOwnerAuth(app: FastifyInstance, options: OwnerAuthOption
   const cookie = (value: string, age: number) => `${cookieName}=${value}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${age}${options.secureCookies ? "; Secure" : ""}`;
   app.addHook("onRequest", async (req, reply) => {
     const route = req.url.split("?")[0];
-    if (route.startsWith("/api/") && route !== "/api/session" && route !== "/api/login" && !valid(req.headers.cookie)) {
+    if (route.startsWith("/api/") && route !== "/api/session" && route !== "/api/login" && !isAnonymousStoreRoute(req.method,route!) && !valid(req.headers.cookie)) {
       return reply.status(401).send({ detail: "OWNER_LOGIN_REQUIRED" });
     }
   });

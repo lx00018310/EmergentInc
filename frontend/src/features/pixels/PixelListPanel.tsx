@@ -1,3 +1,4 @@
+import { t as tr, useLanguage } from '../../i18n';
 import React, { useMemo, useState } from 'react';
 import type { PixelSummaryDto } from '../../api/types';
 
@@ -17,6 +18,7 @@ export const PixelListPanel: React.FC<PixelListPanelProps> = ({
   unreadTipsPixelIds,
   onSelectPixel,
 }) => {
+  useLanguage();
   const [query, setQuery] = useState('');
 
   const sorted = useMemo(() => {
@@ -31,13 +33,13 @@ export const PixelListPanel: React.FC<PixelListPanelProps> = ({
       <input
         className="text-input"
         type="text"
-        placeholder={`搜索元胞 ID (${pixels.length})…`}
+        placeholder={tr("搜索元胞 ID ({0})…", [pixels.length])}
         value={query}
         onChange={(e) => setQuery(e.target.value)}
         style={{ marginBottom: '6px' }}
       />
       <div className="pixel-list-body">
-        {sorted.length === 0 && <div className="text-muted" style={{ padding: '8px' }}>无匹配元胞</div>}
+        {sorted.length === 0 && <div className="text-muted" style={{ padding: '8px' }}>{tr("无匹配元胞")}</div>}
         {sorted.map((p) => {
           const unread = unreadTipsPixelIds?.has(p.id);
           return (

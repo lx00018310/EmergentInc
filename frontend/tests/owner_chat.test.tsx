@@ -8,7 +8,7 @@ import * as ownerApi from '../src/api/ownerChat';
 vi.mock('../src/api/ownerChat', () => ({ askOwner: vi.fn() }));
 
 describe('OwnerChat', () => {
-  beforeEach(() => { localStorage.clear(); vi.clearAllMocks(); });
+  beforeEach(() => { localStorage.clear(); localStorage.setItem('emergentinc.language', 'zh-CN'); vi.clearAllMocks(); });
 
   it('显示回答与来源，刷新组件后恢复本机对话', async () => {
     vi.mocked(ownerApi.askOwner).mockResolvedValue({

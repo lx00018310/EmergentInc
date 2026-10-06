@@ -1,3 +1,4 @@
+import { t as tr, useLanguage } from '../../i18n';
 import React from 'react';
 import type { WorldDto, RunStatusDto, WorkspaceAuditDto } from '../../api/types';
 import { displayRunStatus } from './runStatusLabels';
@@ -11,6 +12,7 @@ export interface RunStatusProps {
 }
 
 export const RunStatus: React.FC<RunStatusProps> = ({ world, runStatus, onOpenHelp, onBack }) => {
+  useLanguage();
   const round = world?.round ?? runStatus?.current_round ?? 0;
   const pixels = world?.pixels ?? [];
   const alivePixels = pixels.filter((p) => p.active).length;
@@ -48,31 +50,31 @@ export const RunStatus: React.FC<RunStatusProps> = ({ world, runStatus, onOpenHe
     <header className="app-header">
       <div className="logo-title">
         <span className="logo-icon">◈</span>
-        <h1>EmergentInc <span className="logo-cn">元胞会社</span></h1>
+        <h1>EmergentInc <span className="logo-cn">{tr("元胞会社")}</span></h1>
         <span className="logo-sub">MIDNIGHT FOUNDRY // CELLULAR SOCIETY OBSERVATORY</span>
         <span className="badge" id="run-badge">run: {runId}</span>
       </div>
       <div className="header-metrics">
-        {onBack && <button className="btn btn-xs" type="button" onClick={onBack}>返回千机阁</button>}
+        {onBack && <button className="btn btn-xs" type="button" onClick={onBack}>{tr("返回千机阁")}</button>}
         <div className="metric-item">
           <span className="m-label">Round:</span> <span className="m-val">{round}</span>
         </div>
         <div className="metric-item">
-          <span className="m-label">活跃元胞:</span>{' '}
+          <span className="m-label">{tr("活跃元胞:")}</span>{' '}
           <span className="m-val">
             {alivePixels} / {totalPixels}
           </span>
         </div>
         <div className="metric-item">
-          <span className="m-label">总能量(Tokens):</span>{' '}
+          <span className="m-label">{tr("总能量(Tokens):")}</span>{' '}
           <span className="m-val">{Number(totalEnergy).toLocaleString()}</span>
         </div>
         <div className="metric-item">
-          <span className="m-label">支出折算:</span>{' '}
-          <span className="m-val">{totalSpentCny == null ? '未知' : `¥${Number(totalSpentCny).toFixed(2)}`}</span>
+          <span className="m-label">{tr("支出折算:")}</span>{' '}
+          <span className="m-val">{totalSpentCny == null ? (tr("未知")) : `¥${Number(totalSpentCny).toFixed(2)}`}</span>
         </div>
         <div className="metric-item">
-          <span className="m-label">系统状态:</span>{' '}
+          <span className="m-label">{tr("系统状态:")}</span>{' '}
           <span className="m-val" style={{ color: systemHealthColor }}>
             {displayRunStatus(systemHealth)}
           </span>
@@ -80,8 +82,8 @@ export const RunStatus: React.FC<RunStatusProps> = ({ world, runStatus, onOpenHe
         {onOpenHelp && (
           <button
             className="btn btn-xs"
-            title="V11 五层上下文说明"
-            aria-label="帮助"
+            title={tr("V11 五层上下文说明")}
+            aria-label={tr("帮助")}
             onClick={onOpenHelp}
           >
             ?

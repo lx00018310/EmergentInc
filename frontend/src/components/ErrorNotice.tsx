@@ -1,3 +1,4 @@
+import { t as tr, useLanguage } from '../i18n';
 import React from 'react';
 
 export interface ErrorNoticeProps {
@@ -8,11 +9,12 @@ export interface ErrorNoticeProps {
 }
 
 export const ErrorNotice: React.FC<ErrorNoticeProps> = ({
-  title = '错误提示',
+  title = (tr("错误提示")),
   message,
   severity = 'error',
   onDismiss,
 }) => {
+  useLanguage();
   if (!message) return null;
 
   const isError = severity === 'error';

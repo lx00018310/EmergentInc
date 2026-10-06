@@ -1,3 +1,4 @@
+import { t as tr, useLanguage } from '../../i18n';
 import React, { useState, useEffect } from 'react';
 import { Modal } from '../../components/Modal';
 import { fetchPixelArtifacts, getArtifactDownloadUrl } from '../../api/files';
@@ -18,6 +19,7 @@ export const ArtifactBrowser: React.FC<ArtifactBrowserProps> = ({
   onPreviewFile,
   onLogMessage,
 }) => {
+  useLanguage();
   const [data, setData] = useState<PixelArtifactsResponseDto | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(false);
 
@@ -47,30 +49,27 @@ export const ArtifactBrowser: React.FC<ArtifactBrowserProps> = ({
   return (
     <Modal
       isOpen={isOpen}
-      title={`元胞 ${pixelId || ''} 交付物列表`}
+      title={tr("元胞 {0} 交付物列表", [pixelId || ''])}
       onClose={onClose}
       contentClassName="form-modal-content"
       footer={
         <button className="btn btn-secondary" onClick={onClose}>
-          关闭
-        </button>
+          {tr("关闭")}</button>
       }
     >
       {isLoading ? (
         <div style={{ color: 'var(--text-dim)', padding: '20px', textAlign: 'center' }}>
-          正在加载交付物列表...
-        </div>
+          {tr("正在加载交付物列表...")}</div>
       ) : items.length === 0 ? (
         <div style={{ color: 'var(--text-dim)', padding: '20px', textAlign: 'center' }}>
-          当前元胞暂无隔离交付物文件。
-        </div>
+          {tr("当前元胞暂无隔离交付物文件。")}</div>
       ) : (
         <table className="data-table">
           <thead>
             <tr>
-              <th>文件名</th>
-              <th>大小</th>
-              <th style={{ textAlign: 'right' }}>操作</th>
+              <th>{tr("文件名")}</th>
+              <th>{tr("大小")}</th>
+              <th style={{ textAlign: 'right' }}>{tr("操作")}</th>
             </tr>
           </thead>
           <tbody>
@@ -84,11 +83,10 @@ export const ArtifactBrowser: React.FC<ArtifactBrowserProps> = ({
                     style={{ marginRight: '6px' }}
                     onClick={() => {
                       onClose();
-                      onPreviewFile(`交付物: ${it.filename}`, it.filename);
+                      onPreviewFile(tr("交付物: {0}", [it.filename]), it.filename);
                     }}
                   >
-                    查看
-                  </button>
+                    {tr("查看")}</button>
                   {pixelId && (
                     <a
                       href={getArtifactDownloadUrl(pixelId, it.filename)}
@@ -96,8 +94,7 @@ export const ArtifactBrowser: React.FC<ArtifactBrowserProps> = ({
                       className="btn btn-xs btn-secondary"
                       style={{ textDecoration: 'none', display: 'inline-block' }}
                     >
-                      下载
-                    </a>
+                      {tr("下载")}</a>
                   )}
                 </td>
               </tr>

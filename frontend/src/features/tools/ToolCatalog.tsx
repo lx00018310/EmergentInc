@@ -1,3 +1,4 @@
+import { t as tr, useLanguage } from '../../i18n';
 import React, { useState, useEffect } from 'react';
 import { Modal } from '../../components/Modal';
 import { fetchToolsCatalog } from '../../api/tools';
@@ -14,6 +15,7 @@ export const ToolCatalog: React.FC<ToolCatalogProps> = ({
   onClose,
   onLogMessage,
 }) => {
+  useLanguage();
   const [tools, setTools] = useState<ToolSpecDto[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [selectedSchema, setSelectedSchema] = useState<{ name: string; schema: Record<string, unknown> } | null>(null);
@@ -36,45 +38,41 @@ export const ToolCatalog: React.FC<ToolCatalogProps> = ({
   return (
     <Modal
       isOpen={isOpen}
-      title="只读系统工具目录 (Tools Catalog)"
+      title={tr("只读系统工具目录 (Tools Catalog)")}
       onClose={onClose}
       contentClassName="doc-modal-content"
       footer={
         <button className="btn btn-secondary" onClick={onClose}>
-          关闭
-        </button>
+          {tr("关闭")}</button>
       }
     >
       {selectedSchema ? (
         <div>
           <div style={{ marginBottom: '8px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <span style={{ fontWeight: 600, color: 'var(--text-bright)' }}>
-              工具参数 Schema: <code>{selectedSchema.name}</code>
+              {tr("工具参数 Schema:") + " "}<code>{selectedSchema.name}</code>
             </span>
             <button className="btn btn-xs" onClick={() => setSelectedSchema(null)}>
-              返回工具列表
-            </button>
+              {tr("返回工具列表")}</button>
           </div>
           <pre className="doc-view-box">{JSON.stringify(selectedSchema.schema, null, 2)}</pre>
         </div>
       ) : isLoading ? (
         <div style={{ color: 'var(--text-dim)', padding: '20px', textAlign: 'center' }}>
-          正在加载工具目录...
-        </div>
+          {tr("正在加载工具目录...")}</div>
       ) : tools.length === 0 ? (
         <div style={{ color: 'var(--text-dim)', padding: '20px', textAlign: 'center' }}>
-          当前未注册任何可用工具。
-        </div>
+          {tr("当前未注册任何可用工具。")}</div>
       ) : (
         <table className="data-table">
           <thead>
             <tr>
-              <th>工具名称</th>
-              <th>效应 (Effect)</th>
-              <th>描述</th>
-              <th>超时 (秒)</th>
-              <th>状态</th>
-              <th style={{ textAlign: 'right' }}>操作</th>
+              <th>{tr("工具名称")}</th>
+              <th>{tr("效应 (Effect)")}</th>
+              <th>{tr("描述")}</th>
+              <th>{tr("超时 (秒)")}</th>
+              <th>{tr("状态")}</th>
+              <th style={{ textAlign: 'right' }}>{tr("操作")}</th>
             </tr>
           </thead>
           <tbody>
@@ -110,8 +108,7 @@ export const ToolCatalog: React.FC<ToolCatalogProps> = ({
                     className="btn btn-xs"
                     onClick={() => setSelectedSchema({ name: t.name, schema: t.input_schema })}
                   >
-                    查看参数
-                  </button>
+                    {tr("查看参数")}</button>
                 </td>
               </tr>
             ))}

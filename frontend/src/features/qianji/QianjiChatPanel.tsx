@@ -1,3 +1,4 @@
+import { t as tr, useLanguage } from '../../i18n';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { fetchQianjiChat, postQianjiChat } from '../../api/qianji';
 import type { QianjiChatTurnDto, QianjiListItemDto } from '../../api/qianji';
@@ -11,6 +12,7 @@ export const QianjiChatPanel: React.FC<{
   onSent: () => Promise<void>;
   sendBlocked?: string | null;
 }> = ({ item, onSent, sendBlocked }) => {
+  useLanguage();
   const [turns, setTurns] = useState<QianjiChatTurnDto[]>([]);
   const [content, setContent] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -62,26 +64,26 @@ export const QianjiChatPanel: React.FC<{
   };
 
   return (
-    <section className="qj-chat-panel" aria-label="人物对话">
-      <div className="qj-panel-heading"><h3>对话</h3><span>发送即启动 Run</span></div>
+    <section className="qj-chat-panel" aria-label={tr("人物对话")}>
+      <div className="qj-panel-heading"><h3>{tr("对话")}</h3><span>{tr("发送即启动 Run")}</span></div>
       {error && <p className="qj-inline-error" role="alert">{error}</p>}
-      {item.world&&<p>发送后运行本 World 1 轮，额度上限 100,000 Tokens。</p>}
+      {item.world&&<p>{tr("发送后运行本 World 1 轮，额度上限 100,000 Tokens。")}</p>}
       <div className="qj-chat-history" aria-live="polite">
-        {turns.length === 0 && <p className="qj-empty">还没有对话记录。</p>}
+        {turns.length === 0 && <p className="qj-empty">{tr("还没有对话记录。")}</p>}
         {turns.slice().reverse().map(turn => (
           <article className="qj-chat-turn" key={turn.turnId}>
-            <p className="qj-chat-question"><b>阁主</b>{turn.question}</p>
+            <p className="qj-chat-question"><b>{tr("阁主")}</b>{turn.question}</p>
             {turn.status === 'replied' && turn.reply !== null
               ? <p className="qj-chat-reply"><b>{item.profile.narrative.displayName}</b>{turn.reply}</p>
-              : <p className={`qj-chat-state state-${turn.status}`}>{turn.status === 'queued' ? '等待本轮处理' : turn.status === 'processing' ? '运行中' : turn.status === 'no_reply' ? '本次没有直接回复' : turn.status === 'blocked' ? '运行暂停，待处理' : '本次失败，可查看 Engine 状态'}</p>}
+              : <p className={`qj-chat-state state-${turn.status}`}>{turn.status === 'queued' ? (tr("等待本轮处理")) : turn.status === 'processing' ? (tr("运行中")) : turn.status === 'no_reply' ? (tr("本次没有直接回复")) : turn.status === 'blocked' ? (tr("运行暂停，待处理")) : (tr("本次失败，可查看 Engine 状态"))}</p>}
           </article>
         ))}
       </div>
       <form onSubmit={submit} className="qj-chat-form">
-        <label htmlFor={`qj-chat-${item.profile.qianjiId}`}>发送给 {item.profile.narrative.displayName}</label>
+        <label htmlFor={`qj-chat-${item.profile.qianjiId}`}>{tr("发送给") + " "}{item.profile.narrative.displayName}</label>
         <textarea id={`qj-chat-${item.profile.qianjiId}`} value={content} onChange={event => setContent(event.target.value)} rows={3} maxLength={4000}
-          placeholder={sendBlocked ?? (canChat ? '输入问题或指令…' : item.world?'当前 World 没有活跃入口，请更换入口':'当前人物未绑定可运行的 Pixel')} disabled={!canChat || submitting} />
-        <div className="qj-form-footer"><small>{[...content].length}/2000 字</small><button className="btn btn-primary" type="submit" disabled={!canChat || submitting || !content.trim() || [...content].length > 2000}>{submitting ? '正在发送…' : '发送'}</button></div>
+          placeholder={sendBlocked ?? (canChat ? (tr("输入问题或指令…")) : item.world?(tr("当前 World 没有活跃入口，请更换入口")):(tr("当前人物未绑定可运行的 Pixel")))} disabled={!canChat || submitting} />
+        <div className="qj-form-footer"><small>{[...content].length}{tr("/2000 字")}</small><button className="btn btn-primary" type="submit" disabled={!canChat || submitting || !content.trim() || [...content].length > 2000}>{submitting ? (tr("正在发送…")) : (tr("发送"))}</button></div>
       </form>
     </section>
   );

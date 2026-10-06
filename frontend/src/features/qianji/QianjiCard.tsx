@@ -1,9 +1,10 @@
+import { t as tr, useLanguage } from '../../i18n';
 import React, { useEffect, useRef, useState } from 'react';
 import type { QianjiListItemDto } from '../../api/qianji';
 import { qianjiPortraitUrl } from '../../api/qianji';
 
 const careerLabels: Record<string, string> = {
-  candidate: '候选', trial: '试炼', active: '正式成员', retired: '已退役',
+  get candidate() { return tr("候选"); }, get trial() { return tr("试炼"); }, get active() { return tr("正式成员"); }, get retired() { return tr("已退役"); },
 };
 
 export type QianjiMenuAction = 'history' | 'narrative' | 'retire' | 'meeting';
@@ -20,6 +21,7 @@ import { TechGoggleAvatar } from './TechGoggleAvatar';
 
 
 export const QianjiCard: React.FC<QianjiCardProps> = ({ item, selected, onSelect, onMenuAction, showMeetingAction }) => {
+  useLanguage();
   const { profile, currentBinding, physical } = item;
   const [imageFailed, setImageFailed] = React.useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -57,10 +59,10 @@ export const QianjiCard: React.FC<QianjiCardProps> = ({ item, selected, onSelect
       >
         <div className="qj-card-portrait">
           {profile.narrative.portraitAsset && !imageFailed
-            ? <img src={qianjiPortraitUrl(profile.qianjiId)} alt={`${profile.narrative.displayName} 角色画像`} onError={() => setImageFailed(true)} />
+            ? <img src={qianjiPortraitUrl(profile.qianjiId)} alt={tr("{0} 角色画像", [profile.narrative.displayName])} onError={() => setImageFailed(true)} />
             : <>
                 <TechGoggleAvatar />
-                <span className="sr-only">未设画像</span>
+                <span className="sr-only">{tr("未设画像")}</span>
               </>}
         </div>
         <div className="qj-card-copy">
@@ -69,12 +71,12 @@ export const QianjiCard: React.FC<QianjiCardProps> = ({ item, selected, onSelect
             <span style={{ color: 'var(--tj-gold)', marginRight: 2 }}>☰</span>
             {profile.birthIdentity
               ? `${profile.birthIdentity.primaryHexagram} → ${profile.birthIdentity.changedHexagram}`
-              : '极地机巧推演中'}
+              : (tr("极地机巧推演中"))}
           </span>
           <div className="qj-card-badges">
             <span>{careerLabels[profile.careerStatus] || profile.careerStatus}</span>
             <span style={{ color: physical?.active ? 'var(--tj-accent)' : 'var(--tj-text-dim)' }}>
-              {item.world?`${item.world.status==='ACTIVE'?'● World 活跃':'○ World '+item.world.status} · ${item.world.activePixels??0} 元胞`:physical?.active ? '● 载体活跃' : currentBinding ? '○ 载体失活' : '未绑定 Pixel'}
+              {item.world?tr("{0} · {1} 元胞", [item.world.status==='ACTIVE'?'● World 活跃':'○ World '+item.world.status, item.world.activePixels??0]):physical?.active ? (tr("● 载体活跃")) : currentBinding ? (tr("○ 载体失活")) : (tr("未绑定 Pixel"))}
             </span>
           </div>
           <small>{new Date(profile.createdAt * 1000).toLocaleDateString()}</small>
@@ -84,17 +86,17 @@ export const QianjiCard: React.FC<QianjiCardProps> = ({ item, selected, onSelect
         <button
           className="qj-card-more"
           type="button"
-          aria-label={`${profile.narrative.displayName}更多操作`}
+          aria-label={tr("{0}更多操作", [profile.narrative.displayName])}
           aria-haspopup="menu"
           aria-expanded={menuOpen}
           onClick={() => setMenuOpen(open => !open)}
         >…</button>
         {menuOpen && (
-          <div className="qj-menu-popover" role="menu" aria-label={`${profile.narrative.displayName}操作菜单`}>
-            <button type="button" role="menuitem" onClick={() => fire('history')}>经历</button>
-            <button type="button" role="menuitem" onClick={() => fire('narrative')}>出生</button>
-            {showMeetingAction && <button type="button" role="menuitem" onClick={() => fire('meeting')}>发起会议</button>}
-            {profile.careerStatus !== 'retired' && <button type="button" role="menuitem" onClick={() => fire('retire')}>办理退役</button>}
+          <div className="qj-menu-popover" role="menu" aria-label={tr("{0}操作菜单", [profile.narrative.displayName])}>
+            <button type="button" role="menuitem" onClick={() => fire('history')}>{tr("经历")}</button>
+            <button type="button" role="menuitem" onClick={() => fire('narrative')}>{tr("出生")}</button>
+            {showMeetingAction && <button type="button" role="menuitem" onClick={() => fire('meeting')}>{tr("发起会议")}</button>}
+            {profile.careerStatus !== 'retired' && <button type="button" role="menuitem" onClick={() => fire('retire')}>{tr("办理退役")}</button>}
           </div>
         )}
       </div>

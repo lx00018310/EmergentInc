@@ -1,3 +1,4 @@
+import { t as tr, useLanguage } from '../../i18n';
 import React, { useState, useEffect } from 'react';
 import { Modal } from '../../components/Modal';
 import { fetchEnvironment, updateEnvironment } from '../../api/prompts';
@@ -13,6 +14,7 @@ export const EnvironmentEditor: React.FC<EnvironmentEditorProps> = ({
   onClose,
   onLogMessage,
 }) => {
+  useLanguage();
   const [content, setContent] = useState<string>('');
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [isSaving, setIsSaving] = useState<boolean>(false);
@@ -36,7 +38,7 @@ export const EnvironmentEditor: React.FC<EnvironmentEditorProps> = ({
     setIsSaving(true);
     try {
       const res = await updateEnvironment(content);
-      onLogMessage('success', `[ENV UPDATED] 外部环境已更新，字节数: ${res.length}`);
+      onLogMessage('success', tr("[ENV UPDATED] 外部环境已更新，字节数: {0}", [res.length]));
       onClose();
     } catch (err) {
       onLogMessage('error', `[ENV SAVE FAILED] ${err instanceof Error ? err.message : String(err)}`);
@@ -48,34 +50,31 @@ export const EnvironmentEditor: React.FC<EnvironmentEditorProps> = ({
   return (
     <Modal
       isOpen={isOpen}
-      title="外部环境 (environment.md)"
+      title={tr("外部环境 (environment.md)")}
       onClose={onClose}
       contentClassName="form-modal-content"
       footer={
         <>
           <button className="btn btn-secondary" onClick={onClose} disabled={isSaving}>
-            取消
-          </button>
+            {tr("取消")}</button>
           <button className="btn btn-primary" onClick={handleSave} disabled={isSaving || isLoading}>
-            {isSaving ? '保存中...' : '保存更新'}
+            {isSaving ? (tr("保存中...")) : (tr("保存更新"))}
           </button>
         </>
       }
     >
       <p className="form-hint">
-        environment.md 全局存在但对元胞默认隐形，元胞必须主动声明读取才可见。您可以在此更新外部市场事实与真实业务要求：
-      </p>
+        {tr("environment.md 全局存在但对元胞默认隐形，元胞必须主动声明读取才可见。您可以在此更新外部市场事实与真实业务要求：")}</p>
       {isLoading ? (
         <div style={{ color: 'var(--text-dim)', padding: '20px', textAlign: 'center' }}>
-          正在加载外部环境...
-        </div>
+          {tr("正在加载外部环境...")}</div>
       ) : (
         <textarea
           className="modal-textarea"
           rows={12}
           value={content}
           onChange={(e) => setContent(e.target.value)}
-          placeholder="可输入全局业务环境设定..."
+          placeholder={tr("可输入全局业务环境设定...")}
         />
       )}
     </Modal>

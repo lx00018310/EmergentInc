@@ -145,6 +145,11 @@ export class GenerationSupervisor {
     try {
       await this.runtime.quiesce(); quiesced = true;
       await snapshotDatabase(this.lineage.db.dbPath, path.join(snapshots, "lineage-before.sqlite3"));
+      if(this.runtime.worlds){
+        await snapshotDatabase(path.join(this.workspace,'control/control.sqlite3'),path.join(snapshots,'control-before.sqlite3'));
+        const paymentFile=path.join(this.workspace,'payment/payment.sqlite3');
+        if(fs.existsSync(paymentFile))await snapshotDatabase(paymentFile,path.join(snapshots,'payment-before.sqlite3'));
+      }
       const oldDirectory = generationDirectory(this.workspace, previous.id);
       await snapshotDatabase(path.join(oldDirectory, "current.sqlite3"), path.join(snapshots, "current-before.sqlite3"));
       await this.runtime.finalDream();
@@ -189,6 +194,8 @@ export class GenerationSupervisor {
       writeGenerationPointer(testSystem, generation);
       if(this.runtime.worlds){
         await snapshotDatabase(path.join(this.workspace,'control/control.sqlite3'),path.join(testSystem,'control/control.sqlite3'));
+        const paymentFile=path.join(this.workspace,'payment/payment.sqlite3');
+        if(fs.existsSync(paymentFile))await snapshotDatabase(paymentFile,path.join(testSystem,'payment/payment.sqlite3'));
         for(const world of worlds){const copied=path.join(testWorkspace,'worlds',world.id);
           copyDirectoryNew(path.join(world.directory,'live'),path.join(copied,'live'));
           fs.copyFileSync(path.join(world.directory,'world.json'),path.join(copied,'world.json'),fs.constants.COPYFILE_EXCL);

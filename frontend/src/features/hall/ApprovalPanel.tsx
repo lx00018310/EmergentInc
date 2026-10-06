@@ -1,7 +1,9 @@
+import { t as tr, useLanguage } from '../../i18n';
 import { useEffect, useState } from 'react';
 import { decideApproval, listApprovals, type ApprovalDto } from '../../api/meetings';
 
 export function ApprovalPanel() {
+  useLanguage();
   const [items, setItems] = useState<ApprovalDto[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -20,9 +22,9 @@ export function ApprovalPanel() {
   };
   const pending = items.filter(item => item.status === 'pending');
   return <section className="hall-side-panel">
-    <div className="hall-section-heading"><div><p className="qj-eyebrow">需要阁主决定</p><h2>请求</h2></div>
-      <button className="btn btn-sm" type="button" onClick={refresh}>刷新</button></div>
-    {pending.length === 0 && <p className="qj-empty">暂无待处理请求。</p>}
+    <div className="hall-section-heading"><div><p className="qj-eyebrow">{tr("需要阁主决定")}</p><h2>{tr("请求")}</h2></div>
+      <button className="btn btn-sm" type="button" onClick={refresh}>{tr("刷新")}</button></div>
+    {pending.length === 0 && <p className="qj-empty">{tr("暂无待处理请求。")}</p>}
     {pending.map(item => (
       <article className="hall-event qj-approval-event" key={item.requestId}>
         <div className="qj-approval-header">
@@ -30,7 +32,7 @@ export function ApprovalPanel() {
           <strong>{item.capability}</strong>
         </div>
         <div className="qj-approval-meta">
-          <small>申请载体：{item.qianjiId ?? item.pixelId}</small>
+          <small>{tr("申请载体：")}{item.qianjiId ?? item.pixelId}</small>
         </div>
         <div className="org-actions">
           <button
@@ -39,7 +41,7 @@ export function ApprovalPanel() {
             disabled={busy === item.requestId}
             onClick={() => void decide(item.requestId, 'approved')}
           >
-            {busy === item.requestId ? '处理中…' : '批准授权'}
+            {busy === item.requestId ? (tr("处理中…")) : (tr("批准授权"))}
           </button>
           <button
             className="btn btn-xs btn-reject-soft"
@@ -47,12 +49,11 @@ export function ApprovalPanel() {
             disabled={busy === item.requestId}
             onClick={() => void decide(item.requestId, 'rejected')}
           >
-            拒绝
-          </button>
+            {tr("拒绝")}</button>
         </div>
       </article>
     ))}
-    <small>批准会记录决定，权限仍须由阁主在相应配置中开启。</small>
+    <small>{tr("批准会记录决定，权限仍须由阁主在相应配置中开启。")}</small>
     {error && <p role="alert" className="org-error-text">{error}</p>}
   </section>;
 }

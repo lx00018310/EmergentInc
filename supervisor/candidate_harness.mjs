@@ -51,6 +51,11 @@ if (action === 'build') {
     const session=await get('/api/session',cookie);
     const people = await get('/api/qianji', cookie), world = await get('/api/world', cookie), run = session.worldsEnabled?{running:false}:await get('/api/run/status', cookie);
     if(session.worldsEnabled){
+      const site=await get('/api/public/site'),products=await get('/api/public/products');
+      if(typeof site.headline_en!=='string'||!Array.isArray(products.items))throw new Error('CANDIDATE_PUBLIC_STORE_FAILED');
+      if((await fetch(base+'/api/public-site')).status!==401)throw new Error('CANDIDATE_PUBLIC_OWNER_BOUNDARY_FAILED');
+      const storefront=await get('/api/public-site',cookie);
+      if(storefront.revenue.scope!=='INSTANCE'||!Array.isArray(storefront.orders))throw new Error('CANDIDATE_PUBLIC_PERSISTENCE_FAILED');
       const worlds=(await get('/api/worlds',cookie)).items;
       for(const item of worlds.filter(w=>w.status==='ACTIVE'&&!w.blockedReason)){const scoped=await get('/api/worlds/'+item.world_id, cookie);if(scoped.current.generation_id!==generation)throw new Error('CANDIDATE_WORLD_GENERATION_FAILED');}
       const {readGeneCatalog,executeGeneSkill}=await import(pathToFileURL(join(directory,'apps/server/dist/services/gene_promotion_service.js')).href);

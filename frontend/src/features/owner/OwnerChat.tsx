@@ -1,3 +1,4 @@
+import { t as tr, useLanguage } from '../../i18n';
 import React, { useEffect, useRef, useState } from 'react';
 import { askOwner, type OwnerChatTurn } from '../../api/ownerChat';
 import { ApiError } from '../../api/client';
@@ -18,6 +19,7 @@ function loadHistory(): Message[] {
 }
 
 export const OwnerChat: React.FC = () => {
+  useLanguage();
   const [messages, setMessages] = useState<Message[]>(loadHistory);
   const [draft, setDraft] = useState('');
   const [busy, setBusy] = useState(false);
@@ -45,7 +47,7 @@ export const OwnerChat: React.FC = () => {
       }].slice(-40));
     } catch (err) {
       setError(err instanceof ApiError
-        ? (err.status === 404 ? '当前服务尚未加载老板窗口接口；请在运行结束后重启服务。' : err.detail)
+        ? (err.status === 404 ? (tr("当前服务尚未加载老板窗口接口；请在运行结束后重启服务。")) : err.detail)
         : err instanceof Error ? err.message : String(err));
     } finally {
       setBusy(false);
@@ -54,30 +56,30 @@ export const OwnerChat: React.FC = () => {
 
   return (
     <div className="owner-chat">
-      <div className="owner-chat-history" aria-label="老板窗口对话记录">
-        {messages.length === 0 && <p className="form-hint">可询问项目进度、运行状态和 Pixel 工作。回答会读取提问时的最新数据，并列出依据。</p>}
+      <div className="owner-chat-history" aria-label={tr("老板窗口对话记录")}>
+        {messages.length === 0 && <p className="form-hint">{tr("可询问项目进度、运行状态和 Pixel 工作。回答会读取提问时的最新数据，并列出依据。")}</p>}
         {messages.map((message, index) => (
           <div className={`owner-chat-message ${message.role}`} key={index}>
-            <strong>{message.role === 'user' ? '老板' : '助手'}</strong>
+            <strong>{message.role === 'user' ? (tr("老板")) : (tr("助手"))}</strong>
             <div className="owner-chat-content">{message.content}</div>
             {message.role === 'assistant' && (
               <div className="owner-chat-evidence">
-                {message.as_of && <div>读取时间：{new Date(message.as_of).toLocaleString()}</div>}
-                {message.sources && message.sources.length > 0 && <div>依据：{message.sources.join('、')}</div>}
-                {message.usage?.tokens != null && <div>本次消耗：{message.usage.tokens} Tokens</div>}
+                {message.as_of && <div>{tr("读取时间：")}{new Date(message.as_of).toLocaleString()}</div>}
+                {message.sources && message.sources.length > 0 && <div>{tr("依据：")}{message.sources.join('、')}</div>}
+                {message.usage?.tokens != null && <div>{tr("本次消耗：")}{message.usage.tokens} Tokens</div>}
               </div>
             )}
           </div>
         ))}
-        {busy && <p role="status">正在读取并回答...</p>}
+        {busy && <p role="status">{tr("正在读取并回答...")}</p>}
         <div ref={endRef} />
       </div>
       {error && <p className="operation-error" role="alert">{error}</p>}
       <div className="owner-chat-compose">
         <textarea
           className="modal-textarea"
-          aria-label="向老板窗口提问"
-          placeholder="例如：目前项目进展到什么程度了？"
+          aria-label={tr("向老板窗口提问")}
+          placeholder={tr("例如：目前项目进展到什么程度了？")}
           value={draft}
           maxLength={2000}
           rows={3}
@@ -86,9 +88,9 @@ export const OwnerChat: React.FC = () => {
           onKeyDown={event => { if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) { event.preventDefault(); void send(); } }}
         />
         <div className="owner-chat-actions">
-          <span className="form-hint">Ctrl + Enter 发送 · 记录保存在本机浏览器</span>
-          <button className="btn btn-sm btn-secondary" disabled={busy || messages.length === 0} onClick={() => { setMessages([]); setError(null); }}>清空对话</button>
-          <button className="btn btn-sm btn-primary" disabled={busy || !draft.trim()} onClick={() => void send()}>发送</button>
+          <span className="form-hint">{tr("Ctrl + Enter 发送 · 记录保存在本机浏览器")}</span>
+          <button className="btn btn-sm btn-secondary" disabled={busy || messages.length === 0} onClick={() => { setMessages([]); setError(null); }}>{tr("清空对话")}</button>
+          <button className="btn btn-sm btn-primary" disabled={busy || !draft.trim()} onClick={() => void send()}>{tr("发送")}</button>
         </div>
       </div>
     </div>

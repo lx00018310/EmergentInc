@@ -7,7 +7,7 @@ import { GenePatchFile, classifyChange } from "./protocol.js";
 export const evolutionHash = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
 const excluded = new Set([".git", "node_modules", "workspace", "owner_private", "cache", ".env", ".codex", ".agents", ".aws"]);
 const sourceRoots = new Set(["apps", "packages", "frontend", "genome", "scripts", "supervisor", "deploy", "resources", "tests", "docs",
-  "package.json", "pnpm-lock.yaml", "pnpm-workspace.yaml", "tsconfig.json", "tsconfig.base.json", "vitest.config.ts", "vitest.workspace.ts", "README.md", "AGENTS.md", "LICENSE"]);
+  "package.json", "pnpm-lock.yaml", "pnpm-workspace.yaml", "tsconfig.json", "tsconfig.base.json", "vitest.config.ts", "vitest.workspace.ts", "README.md", "README_CN.md", "AGENTS.md", "LICENSE"]);
 export function releaseHash(root: string) {
   const hash = createHash("sha256"), absoluteRoot = fs.realpathSync(root);
   const walk = (relative: string) => {

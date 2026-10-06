@@ -1,3 +1,4 @@
+import { t as tr, useLanguage } from '../../i18n';
 import React from 'react';
 import { Modal } from '../../components/Modal';
 
@@ -29,6 +30,7 @@ export const FilePreview: React.FC<FilePreviewProps> = ({
   activeDocTab,
   onSelectDocTab,
 }) => {
+  useLanguage();
   return (
     <Modal
       isOpen={isOpen}
@@ -44,17 +46,15 @@ export const FilePreview: React.FC<FilePreviewProps> = ({
               className="btn btn-primary"
               style={{ textDecoration: 'none', display: 'inline-flex', alignItems: 'center' }}
             >
-              下载原文件
-            </a>
+              {tr("下载原文件")}</a>
           )}
           <button className="btn btn-secondary" onClick={onClose}>
-            关闭
-          </button>
+            {tr("关闭")}</button>
         </div>
       }
     >
       {docTabs && docTabs.length > 0 && (
-        <div className="operation-tabs" role="tablist" aria-label="文档">
+        <div className="operation-tabs" role="tablist" aria-label={tr("文档")}>
           {docTabs.map((t) => (
             <button
               key={t.key}
@@ -70,13 +70,12 @@ export const FilePreview: React.FC<FilePreviewProps> = ({
       )}
       {isLoading ? (
         <div style={{ color: 'var(--text-dim)', padding: '20px', textAlign: 'center' }}>
-          正在加载内容...
-        </div>
+          {tr("正在加载内容...")}</div>
       ) : previewType === 'image' && downloadUrl ? (
         <div style={{ textAlign: 'center', padding: '16px', background: 'var(--bg-main)', borderRadius: '6px' }}>
           <img
             src={downloadUrl}
-            alt={filename || '交付物图片预览'}
+            alt={filename || (tr("交付物图片预览"))}
             style={{
               maxWidth: '100%',
               maxHeight: '60vh',
@@ -98,11 +97,10 @@ export const FilePreview: React.FC<FilePreviewProps> = ({
         >
           <div style={{ fontSize: '32px', marginBottom: '12px' }}>📦</div>
           <div style={{ fontSize: '14px', fontWeight: 600, color: 'var(--text-bright)', marginBottom: '8px' }}>
-            {filename || '二进制交付物'}
+            {filename || (tr("二进制交付物"))}
           </div>
           <div style={{ color: 'var(--text-dim)', fontSize: '12px', marginBottom: '16px' }}>
-            该文件为二进制或非纯文本格式，不支持直接在线纯文本预览。请直接下载原始文件查看。
-          </div>
+            {tr("该文件为二进制或非纯文本格式，不支持直接在线纯文本预览。请直接下载原始文件查看。")}</div>
           {downloadUrl && (
             <a
               href={downloadUrl}
@@ -110,12 +108,11 @@ export const FilePreview: React.FC<FilePreviewProps> = ({
               className="btn btn-primary"
               style={{ textDecoration: 'none', display: 'inline-block' }}
             >
-              ⬇ 立即下载原始文件
-            </a>
+              {tr("⬇ 立即下载原始文件")}</a>
           )}
         </div>
       ) : (
-        <pre className="doc-view-box">{content || '(空内容)'}</pre>
+        <pre className="doc-view-box">{content || (tr("(空内容)"))}</pre>
       )}
     </Modal>
   );

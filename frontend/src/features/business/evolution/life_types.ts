@@ -1,8 +1,12 @@
+import { language, t } from '../../../i18n';
 export type BusinessTab = 'business' | 'plans' | 'resources';
 export type LifeAction = (fn: () => Promise<unknown>) => Promise<void>;
 export interface LifeEvent {
   id: string; time: number; type: string; layer: 'ROOT' | 'GENOME' | 'EVOLUTION' | 'BODY';
   title: string; detail: string; state: string; generation: string;
+}
+export function eventTitle(event: LifeEvent): string {
+  return event.id.startsWith('memory:') ? event.title : event.id.startsWith('generation:') ? t('{0} 出生', [event.generation]) : t(event.title);
 }
 export interface Generation {
   id: string; generation_no: number; parent_id: string | null; gene_hash: string; release_id: string;
@@ -44,4 +48,4 @@ export interface LifeOverview {
       recentResults: { id: string; capability: string; state: string; error: string | null; time: number }[] };
   };
 }
-export const lifeTime = (time: number | null | undefined) => time == null ? '无记录' : new Date(time).toLocaleString('zh-CN', { hour12: false });
+export const lifeTime = (time: number | null | undefined) => time == null ? t('无记录') : new Date(time).toLocaleString(language(), { hour12: false });

@@ -9,6 +9,8 @@ import { OwnerAuthOptions, registerOwnerAuth } from "./owner_auth.js";
 import { BusinessService } from "./services/business_service.js";
 import { registerBusinessRoutes } from "./routes/business_routes.js";
 import { EvolutionServices, registerEvolutionRoutes } from "./routes/evolution_routes.js";
+import { PublicStore } from './services/public_store.js';
+import { registerPublicRoutes } from './routes/public_routes.js';
 
 export interface CreateServerOptions extends Partial<ApiRoutesOptions> {
   worlds?: WorldRouteServices;
@@ -46,6 +48,11 @@ export async function createServer(options: CreateServerOptions): Promise<Fastif
 
   const mode = options.runtimeMode ?? "legacy";
   registerOwnerAuth(app, options.ownerAuth, mode, Boolean(options.worlds));
+  if (options.worlds) {
+    const store = new PublicStore(options.worlds.payments.control, options.worlds.payments);
+    registerPublicRoutes(app, store);
+    app.addHook('onClose', async () => store.close());
+  }
   app.addHook("onRequest", async (req, reply) => {
     if (options.evolution?.quiesced?.() && req.method !== "GET" && req.url.startsWith("/api/") &&
         !["/api/login", "/api/logout", "/api/evolution/final-dream", "/api/evolution/quiesce", "/api/evolution/resume"].includes(req.url.split("?")[0]!))
@@ -54,7 +61,7 @@ export async function createServer(options: CreateServerOptions): Promise<Fastif
   app.get("/health/live", async () => ({ alive: true, processId:process.pid }));
   app.get("/health/ready", async (_req, reply) => {
     const ready = !options.businessService?.status().schedulerFailure && !options.worlds?.manager.list().some(w=>w.runtimeFailure);
-    return reply.status(ready ? 200 : 503).send({ ready, mode, version: options.worlds ? "v23-world-1" : options.evolution ? "v22-life-1" : "v21-business-1",
+    return reply.status(ready ? 200 : 503).send({ ready, mode, version: options.worlds ? "v24-public-1" : options.evolution ? "v22-life-1" : "v21-business-1",
       ...(options.evolution ? { generation: options.evolution.life.current.meta().generation_id,
         geneHash: options.evolution.life.current.meta().gene_hash, bodyRevision: options.evolution.life.current.meta().body_revision } : {}) });
   });

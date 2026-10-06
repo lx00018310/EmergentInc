@@ -1,8 +1,9 @@
+import { t as tr } from '../../i18n';
 /** Parse quoted CSV without running formulas or silently accepting malformed records. */
 export function readTable(text: string, filename: string): Record<string, unknown>[] {
   if (filename.toLowerCase().endsWith('.json')) {
     const rows = JSON.parse(text);
-    if (!Array.isArray(rows)) throw new Error('JSON 资料需要是表格行数组。');
+    if (!Array.isArray(rows)) throw new Error((tr("JSON 资料需要是表格行数组。")));
     return rows;
   }
   const source = text.replace(/^\uFEFF/, '');
@@ -19,16 +20,16 @@ export function readTable(text: string, filename: string): Record<string, unknow
       row.push(value); value = ''; closed = false;
       if (c !== ',') { if (c === '\r' && source[i + 1] === '\n') i++; records.push(row); row = []; }
     } else {
-      if (closed || c === '"') throw new Error('CSV 引号格式不正确，请重新导出为 UTF-8 CSV。');
+      if (closed || c === '"') throw new Error((tr("CSV 引号格式不正确，请重新导出为 UTF-8 CSV。")));
       value += c;
     }
   }
-  if (quoted) throw new Error('CSV 存在未闭合的引号。');
+  if (quoted) throw new Error((tr("CSV 存在未闭合的引号。")));
   if (value || row.length || closed) { row.push(value); records.push(row); }
   const headers = records.shift()?.map(h => h.trim());
-  if (!headers?.length || headers.some(h => !h) || new Set(headers).size !== headers.length) throw new Error('CSV 第一行需要非空且不重复的列名。');
+  if (!headers?.length || headers.some(h => !h) || new Set(headers).size !== headers.length) throw new Error((tr("CSV 第一行需要非空且不重复的列名。")));
   return records.filter(r => !(r.length === 1 && r[0] === '')).map((r, i) => {
-    if (r.length !== headers.length) throw new Error(`CSV 第 ${i + 2} 行的列数与表头不一致。`);
+    if (r.length !== headers.length) throw new Error(tr("CSV 第 {0} 行的列数与表头不一致。", [i + 2]));
     return Object.fromEntries(headers.map((h, j) => {
       const cell = r[j]!;
       // Preserve leading zero identifiers, long account numbers and formulas as text.

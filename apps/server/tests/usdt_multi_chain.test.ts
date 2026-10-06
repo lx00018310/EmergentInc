@@ -131,7 +131,7 @@ describe('four-chain USDT without private keys or guessed invoice ownership',()=
     const migrated=new PaymentService(file,f.control,f.lineage);clean.push(()=>migrated.close());
     expect(migrated.legacy()).toEqual({asset:'USDC',archived:true,receipts:1});expect(migrated.rails()).toHaveLength(0);expect(migrated.revenue(f.a.world_id).mainnetAtomic).toBe('0');
     expect(migrated.db.prepare('SELECT asset,amount_atomic,status FROM legacy_usdc_payment_invoices').get()).toMatchObject({asset:'USDC',amount_atomic:'10000000',status:'FINALIZED'});
-    expect(migrated.db.prepare('PRAGMA foreign_key_check').all()).toHaveLength(0);expect(migrated.db.prepare('PRAGMA user_version').get()!.user_version).toBe(2);
+    expect(migrated.db.prepare('PRAGMA foreign_key_check').all()).toHaveLength(0);expect(migrated.db.prepare('PRAGMA user_version').get()!.user_version).toBe(3);
   });
   it('drains manual scans on quiesce and flushes previously finalized receipts to Memory before Final Dream',async()=>{
     const f=fixture(),tx=evidence(f.ia);f.service().observe(f.ia.invoice_id,tx.receipt.transactionHash,'finalized',tx);

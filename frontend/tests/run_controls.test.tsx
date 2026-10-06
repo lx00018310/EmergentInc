@@ -16,6 +16,7 @@ describe('RunControls Component', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     localStorage.clear();
+    localStorage.setItem('emergentinc.language', 'zh-CN');
   });
 
   it('在私有资料和执行记录旁打开三个独立弹窗入口', () => {

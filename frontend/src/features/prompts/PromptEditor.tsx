@@ -1,3 +1,4 @@
+import { t as tr, useLanguage } from '../../i18n';
 import React, { useState, useEffect } from 'react';
 import type { PromptDto } from '../../api/types';
 
@@ -24,6 +25,7 @@ export const PromptEditor: React.FC<PromptEditorProps> = ({
   onSave,
   onClear,
 }) => {
+  useLanguage();
   const [draft, setDraft] = useState<string>('');
   const [isDirty, setIsDirty] = useState<boolean>(false);
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
@@ -82,7 +84,7 @@ export const PromptEditor: React.FC<PromptEditorProps> = ({
             color: isActive ? 'var(--accent-green)' : 'var(--text-dim)',
           }}
         >
-          {isActive ? '生效中' : '已关闭'}
+          {isActive ? (tr("生效中")) : (tr("已关闭"))}
         </span>
       </div>
       <p className="form-hint" style={{ marginBottom: '8px', fontSize: '12px' }}>
@@ -119,7 +121,7 @@ export const PromptEditor: React.FC<PromptEditorProps> = ({
               {' '}| Hash: <code style={{ color: 'var(--accent-blue)' }}>{promptData.hash}</code>
             </>
           )}
-          {isDirty && <span style={{ color: 'var(--accent-yellow)', marginLeft: '6px' }}>(未保存)</span>}
+          {isDirty && <span style={{ color: 'var(--accent-yellow)', marginLeft: '6px' }}>{tr("(未保存)")}</span>}
         </span>
         <span style={{ color: isOverLimit ? 'var(--accent-red)' : 'var(--text-main)' }}>
           {charCount} / 12000
@@ -138,15 +140,14 @@ export const PromptEditor: React.FC<PromptEditorProps> = ({
           disabled={isRunning || isSubmitting || isOverLimit || (!isDirty && draft === promptData?.content)}
           onClick={handleSave}
         >
-          {isSubmitting ? '保存中...' : '保存提示词'}
+          {isSubmitting ? (tr("保存中...")) : (tr("保存提示词"))}
         </button>
         <button
           className="btn btn-sm btn-secondary"
           disabled={isRunning || isSubmitting || (!isActive && !draft)}
           onClick={handleClear}
         >
-          清空并关闭
-        </button>
+          {tr("清空并关闭")}</button>
       </div>
     </div>
   );

@@ -1,3 +1,4 @@
+import { t as tr, useLanguage } from '../../i18n';
 import React, { useEffect, useRef, useState } from 'react';
 import type { WorkspaceAuditDto, RunStatusDto } from '../../api/types';
 import { displayRunStatus, displayStopReason } from './runStatusLabels';
@@ -24,6 +25,7 @@ export const ConsolePanel: React.FC<ConsolePanelProps> = ({
   onReconcile,
   hideRecoveryAlert = false,
 }) => {
+  useLanguage();
   const boxRef = useRef<HTMLDivElement | null>(null);
   const [expanded, setExpanded] = useState(false);
 
@@ -42,13 +44,13 @@ export const ConsolePanel: React.FC<ConsolePanelProps> = ({
   if (blockReasons.length === 0 && runStatus?.unfinalized_operations) {
     const ops = runStatus.unfinalized_operations;
     if (ops.unsettledReservations?.length) {
-      blockReasons.push(`未决预留：${ops.unsettledReservations.length} 笔`);
+      blockReasons.push(tr("未决预留：{0} 笔", [ops.unsettledReservations.length]));
     }
     if (ops.unknownCalls?.length) {
-      blockReasons.push(`结果未知调用：${ops.unknownCalls.length} 笔`);
+      blockReasons.push(tr("结果未知调用：{0} 笔", [ops.unknownCalls.length]));
     }
     if (ops.callingMessages?.length) {
-      blockReasons.push(`未决消息：${ops.callingMessages.length} 条`);
+      blockReasons.push(tr("未决消息：{0} 条", [ops.callingMessages.length]));
     }
   }
 
@@ -71,11 +73,9 @@ export const ConsolePanel: React.FC<ConsolePanelProps> = ({
               className="alert-title"
               style={{ color: 'var(--accent-red)', fontWeight: 'bold', marginBottom: '4px' }}
             >
-              启动受阻：需逐项审计决策（需要处理未决操作）
-            </div>
+              {tr("启动受阻：需逐项审计决策（需要处理未决操作）")}</div>
             <div style={{ fontSize: '12px', lineHeight: 1.4 }}>
-              系统检测到未决 Reservation 或中断调用事务，已保护性拦截启动：
-              {blockReasons.length > 0 && (
+              {tr("系统检测到未决 Reservation 或中断调用事务，已保护性拦截启动：")}{blockReasons.length > 0 && (
                 <ul style={{ paddingLeft: '18px', marginTop: '4px', marginBottom: '6px' }}>
                   {blockReasons.map((r, i) => (
                     <li key={i}>{r}</li>
@@ -91,8 +91,7 @@ export const ConsolePanel: React.FC<ConsolePanelProps> = ({
                   style={{ fontWeight: 'bold', cursor: 'pointer' }}
                   onClick={() => onReconcile()}
                 >
-                  查看未决项 (Review)
-                </button>
+                  {tr("查看未决项 (Review)")}</button>
               </div>
             )}
           </div>
@@ -103,8 +102,8 @@ export const ConsolePanel: React.FC<ConsolePanelProps> = ({
         {displayRunStatus(runStatus.result_status)}：{displayStopReason(runStatus.stop_reason)} {runStatus.error_code} {runStatus.error_summary ?? runStatus.last_error}
       </p>}
       <div className="console-toggle" onClick={() => setExpanded((v) => !v)} role="button">
-        <span>控制台日志 ({messages.length})</span>
-        <span className="text-muted">{expanded ? '收起 ▲' : '展开 ▼'}</span>
+        <span>{tr("控制台日志 (")}{messages.length})</span>
+        <span className="text-muted">{expanded ? (tr("收起 ▲")) : (tr("展开 ▼"))}</span>
       </div>
       {expanded ? (
         <div className="console-box" ref={boxRef}>

@@ -1,3 +1,4 @@
+import { t as tr, useLanguage } from '../../i18n';
 import React from 'react';
 import type { PixelSummaryDto } from '../../api/types';
 
@@ -13,10 +14,11 @@ export interface PixelHoverTooltipProps {
  * 纯展示，pointer-events: none，不拦截 OrbitControls 交互。
  */
 export const PixelHoverTooltip: React.FC<PixelHoverTooltipProps> = ({ pixel, x, y }) => {
+  useLanguage();
   const activity = pixel.latest_activity ?? null;
   const actionLine = activity
     ? `R${activity.round} ${activity.action}${activity.intent ? ` · ${activity.intent}` : ''}`.slice(0, 48)
-    : '暂无活动记录';
+    : (tr("暂无活动记录"));
 
   return (
     <div
@@ -30,7 +32,7 @@ export const PixelHoverTooltip: React.FC<PixelHoverTooltipProps> = ({ pixel, x, 
           {pixel.active ? 'Active' : 'Dead'}
         </span>
       </div>
-      <div className="pixel-tooltip-line">能量: {Number(pixel.energy).toLocaleString()}</div>
+      <div className="pixel-tooltip-line">{tr("能量:") + " "}{Number(pixel.energy).toLocaleString()}</div>
       <div className="pixel-tooltip-line pixel-tooltip-action">{actionLine}</div>
     </div>
   );

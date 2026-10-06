@@ -4,15 +4,17 @@ import {lifeId} from '@emergentinc/protocol';
 import {paymentReference,solanaPayUrl,PaymentInvoice,verifySolanaPayment} from './solana_payment.js';
 import {USDT_CHAINS,PaymentChain,paymentChain,recipientAddress,chainAmount,quotedAmount,tokenAmount,paymentPayload} from './payment_assets.js';
 import {verifyTokenPayment} from './token_payment.js';
+import {migrateInstancePayments} from './public_payment_migration.js';
 const sha=(v:unknown)=>createHash('sha256').update(typeof v==='string'?v:JSON.stringify(v)).digest('hex');
 const only=(v:Record<string,any>,keys:string[])=>{if(!v||Object.keys(v).some(k=>!keys.includes(k)))throw Error('PAYMENT_UNEXPECTED_FIELD');};
 export type Invoice=PaymentInvoice&Record<string,any>&{chain:PaymentChain;decimals:number;asset:'USDT';created_at:number};
 export class PaymentService{
   readonly db:SqliteDatabase;
+  onFinalized?: (invoice: Invoice) => void;
   constructor(file:string,readonly control:WorldRegistryStore,readonly lineage:LineageStore){
     if(!lineage.worldsEnabled)throw Error('V23_WORLD_LINEAGE_REQUIRED');this.db=new SqliteDatabase(file);
     const version=Number(this.db.prepare('PRAGMA user_version').get()!.user_version);
-    if(![0,1,2].includes(version)){this.db.close();throw Error('UNSUPPORTED_PAYMENT_SCHEMA');}
+    if(![0,1,2,3].includes(version)){this.db.close();throw Error('UNSUPPORTED_PAYMENT_SCHEMA');}
     if(version===0&&this.db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'").all().length){this.db.close();throw Error('PAYMENT_EXPLICIT_SCHEMA_MIGRATION_REQUIRED');}
     this.db.transaction(()=>{
       // Preserve the entire old USDC FK graph; it is never relabelled as USDT.
@@ -36,8 +38,10 @@ export class PaymentService{
         CREATE TABLE IF NOT EXISTS payment_outbox(receipt_id TEXT PRIMARY KEY REFERENCES payment_receipts(id),delivered INTEGER NOT NULL DEFAULT 0);
         CREATE TABLE IF NOT EXISTS payment_scan_cursors(invoice_id TEXT PRIMARY KEY REFERENCES payment_invoices(invoice_id),last_seen_signature TEXT,backfill_before TEXT,target_head TEXT,updated_at INTEGER NOT NULL);
         CREATE TABLE IF NOT EXISTS payment_chain_cursors(scope_key TEXT PRIMARY KEY,next_block INTEGER,last_timestamp INTEGER,fingerprint TEXT,updated_at INTEGER NOT NULL);
-        CREATE TABLE IF NOT EXISTS payment_unmatched(chain TEXT NOT NULL,network TEXT NOT NULL,signature TEXT NOT NULL,transfer_index INTEGER NOT NULL,rail_id TEXT NOT NULL,amount_atomic TEXT NOT NULL,decimals INTEGER NOT NULL,raw_hash TEXT NOT NULL,created_at INTEGER NOT NULL,PRIMARY KEY(chain,network,signature,transfer_index));PRAGMA user_version=2;`);
+        CREATE TABLE IF NOT EXISTS payment_unmatched(chain TEXT NOT NULL,network TEXT NOT NULL,signature TEXT NOT NULL,transfer_index INTEGER NOT NULL,rail_id TEXT NOT NULL,amount_atomic TEXT NOT NULL,decimals INTEGER NOT NULL,raw_hash TEXT NOT NULL,created_at INTEGER NOT NULL,PRIMARY KEY(chain,network,signature,transfer_index));`);
+      if(version<3)this.db.exec('PRAGMA user_version=2;');
     });
+    try{migrateInstancePayments(this.db);}catch(error){this.db.close();throw error;}
   }
   close(){this.db.close();}
   rails(){return this.db.prepare('SELECT * FROM payment_rails ORDER BY created_at').all();}
@@ -61,7 +65,14 @@ export class PaymentService{
   createInvoice(input:Record<string,any>,fixedWorldId?:string){
     only(input,['qianji_id','rail_id','amount','expires_at','idempotency_key']);lifeId(input.idempotency_key);
     const world=this.control.worldForQianji(input.qianji_id);if(world.status!=='ACTIVE'||fixedWorldId&&world.world_id!==fixedWorldId)throw Error('INVOICE_WORLD_SCOPE_DENIED');
-    const quote=quotedAmount(input.amount),expires=input.expires_at??Date.now()+86400000,requestKey=`${world.world_id}:${input.idempotency_key}`,requestHash=sha({worldId:world.world_id,railId:input.rail_id,amount:quote,expiresAt:input.expires_at??null});
+    return this.createScopedInvoice(input,world.world_id,world.qianji_id);
+  }
+  createInstanceInvoice(input:Record<string,any>){
+    only(input,['order_id','rail_id','amount','expires_at','idempotency_key']);lifeId(input.order_id);lifeId(input.idempotency_key);
+    return this.createScopedInvoice(input,null,null,input.order_id);
+  }
+  private createScopedInvoice(input:Record<string,any>,worldId:string|null,qianjiId:string|null,orderId?:string){
+    const quote=quotedAmount(input.amount),expires=input.expires_at??Date.now()+86400000,requestKey=`${worldId??'instance'}:${input.idempotency_key}`,requestHash=sha({worldId,railId:input.rail_id,amount:quote,expiresAt:input.expires_at??null,...(orderId?{orderId}:{})});
     const old=this.db.prepare('SELECT invoice_id,request_hash FROM payment_invoices WHERE request_key=?').get(requestKey);if(old){if(old.request_hash!==requestHash)throw Error('INVOICE_IDEMPOTENCY_CONFLICT');return this.invoice(String(old.invoice_id));}
     const rail=this.db.prepare("SELECT * FROM payment_rails WHERE rail_id=? AND status='ENABLED'").get(input.rail_id);if(!rail)throw Error('PAYMENT_RAIL_NOT_ENABLED');
     if(!Number.isSafeInteger(expires)||expires<=Date.now()||expires>Date.now()+30*86400000)throw Error('INVOICE_EXPIRY_INVALID');
@@ -74,8 +85,8 @@ export class PaymentService{
       }
       const id=`invoice_${randomUUID()}`,reference=chain==='solana'?paymentReference():`amount_${randomUUID()}`;
       const payload=chain==='solana'?{qrPayload:solanaPayUrl(String(rail.recipient_address),String(rail.mint),reference,amount.toString(),id),walletUrl:solanaPayUrl(String(rail.recipient_address),String(rail.mint),reference,amount.toString(),id)}:paymentPayload(chain,String(rail.recipient_address),amount.toString());
-      this.db.prepare(`INSERT INTO payment_invoices VALUES(?,?,?,NULL,?,?,?,?,?,?,'USDT',?,?,?,?,?,?,?,'WAITING',?,?,NULL,NULL,?,?,?)`)
-        .run(id,world.world_id,world.qianji_id,rail.rail_id,rail.config_revision,chain,rail.network,rail.mint,rail.recipient_address,quote,amount.toString(),decimals,reference,chain==='solana'?id:null,payload.qrPayload,payload.walletUrl,expires,Date.now(),rail.start_block,requestKey,requestHash);
+      this.db.prepare(`INSERT INTO payment_invoices VALUES(?,?,?,?,?,?,?,?,?,?,'USDT',?,?,?,?,?,?,?,'WAITING',?,?,NULL,NULL,?,?,?)`)
+        .run(id,worldId,qianjiId,orderId??null,rail.rail_id,rail.config_revision,chain,rail.network,rail.mint,rail.recipient_address,quote,amount.toString(),decimals,reference,chain==='solana'?id:null,payload.qrPayload,payload.walletUrl,expires,Date.now(),rail.start_block,requestKey,requestHash);
       return this.invoice(id);
     });
   }
@@ -89,7 +100,7 @@ export class PaymentService{
       .run(invoice.chain,invoice.network,signature,id,commitment,raw,reason,now);return {status:'REJECTED',reason};}
     const paidAt=verified!.paidAt,index=verified!.transferIndex??0;
     const review=Boolean(invoice.cancelled_at)||invoice.status==='CANCELLED'||paidAt===null||paidAt>invoice.expires_at||paidAt<invoice.created_at-1500;
-    return this.db.transaction(()=>{
+    const result=this.db.transaction(()=>{
       const old=this.db.prepare('SELECT * FROM payment_receipts WHERE chain=? AND network=? AND signature=? AND transfer_index=?').get(invoice.chain,invoice.network,signature,index);
       if(old){if(old.invoice_id!==id)throw Error('PAYMENT_SIGNATURE_ALREADY_ATTRIBUTED');return {status:'FINALIZED',receipt:old};}
       if(invoice.status==='FINALIZED')return {status:'DUPLICATE_PAYMENT_REVIEW_REQUIRED'};
@@ -103,14 +114,17 @@ export class PaymentService{
       this.db.prepare('INSERT INTO payment_outbox VALUES(?,0)').run(receiptId);this.db.prepare('DELETE FROM payment_unmatched WHERE chain=? AND network=? AND signature=? AND transfer_index=?').run(invoice.chain,invoice.network,signature,index);
       this.db.prepare('UPDATE payment_invoices SET paid_at=? WHERE invoice_id=?').run(paidAt,id);return {status,receiptId};
     });
+    if(result.status==='FINALIZED')this.onFinalized?.(this.invoice(id));
+    return result;
   }
   deliverMemories(){for(const row of this.db.prepare('SELECT r.* FROM payment_receipts r JOIN payment_outbox o ON o.receipt_id=r.id WHERE o.delivered=0').all()){
     const generation=String(row.generation_id);this.lineage.remember(generation,'business_outcome',{point:`${row.chain} 链上实际收款 ${tokenAmount(String(row.amount_atomic),Number(row.decimals))} USDT`,reason:`链上 finalized 验证通过：${row.signature}`,
-      effect:`归属 World ${row.world_id}；收款事实与原代谱系保留`},`chain-payment-memory:${row.id}`,undefined,4,'chain_finalized',String(row.world_id));
-    this.lineage.lifeEvent(generation,'chain_payment_finalized',{receiptId:row.id,worldId:row.world_id,chain:row.chain,network:row.network,asset:'USDT',amountAtomic:row.amount_atomic,decimals:row.decimals},`chain-payment:${row.id}`,undefined,String(row.world_id));
+      effect:row.world_id===null?'归属整个 EmergentInc 实例；收款事实与原代谱系保留':`归属 World ${row.world_id}；收款事实与原代谱系保留`},`chain-payment-memory:${row.id}`,undefined,4,'chain_finalized',row.world_id===null?undefined:String(row.world_id));
+    this.lineage.lifeEvent(generation,'chain_payment_finalized',{receiptId:row.id,worldId:row.world_id,scope:row.world_id===null?'INSTANCE':'WORLD',orderId:this.invoice(String(row.invoice_id)).order_id,chain:row.chain,network:row.network,asset:'USDT',amountAtomic:row.amount_atomic,decimals:row.decimals},`chain-payment:${row.id}`,undefined,row.world_id===null?undefined:String(row.world_id));
+    this.onFinalized?.(this.invoice(String(row.invoice_id)));
     this.db.prepare('UPDATE payment_outbox SET delivered=1 WHERE receipt_id=?').run(row.id);
   }}
-  revenue(worldId:string){this.control.world(worldId);const rows=this.db.prepare('SELECT chain,network,amount_atomic,decimals FROM world_revenue_events WHERE world_id=?').all(worldId);
-    return {worldId,asset:'USDT',decimals:6,mainnetAtomic:rows.reduce((n,r)=>n+BigInt(String(r.amount_atomic))/10n**BigInt(Number(r.decimals)-6),0n).toString(),
+  revenue(worldId:string|null){if(worldId!==null)this.control.world(worldId);const rows=this.db.prepare('SELECT chain,network,amount_atomic,decimals FROM world_revenue_events WHERE world_id IS ?').all(worldId);
+    return {worldId,scope:worldId===null?'INSTANCE':'WORLD',asset:'USDT',decimals:6,mainnetAtomic:rows.reduce((n,r)=>n+BigInt(String(r.amount_atomic))/10n**BigInt(Number(r.decimals)-6),0n).toString(),
       byChain:Object.keys(USDT_CHAINS).map(chain=>({chain,decimals:USDT_CHAINS[chain as PaymentChain].decimals,amount_atomic:rows.filter(r=>r.chain===chain).reduce((n,r)=>n+BigInt(String(r.amount_atomic)),0n).toString()}))};}
 }

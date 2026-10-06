@@ -1,3 +1,4 @@
+import { t as tr, useLanguage } from '../../i18n';
 import React from 'react';
 
 export interface TechGoggleAvatarProps {
@@ -6,10 +7,11 @@ export interface TechGoggleAvatarProps {
 }
 
 export const TechGoggleAvatar: React.FC<TechGoggleAvatarProps> = ({ className = '', variant = 'compact' }) => {
+  useLanguage();
   const isHero = variant === 'hero';
 
   return (
-    <div className={`qj-tech-avatar ${isHero ? 'qj-tech-avatar-hero' : ''} ${className}`} aria-label="极地双筒机能灵偶">
+    <div className={`qj-tech-avatar ${isHero ? 'qj-tech-avatar-hero' : ''} ${className}`} aria-label={tr("极地双筒机能灵偶")}>
       <svg
         viewBox={isHero ? "0 0 240 280" : "0 0 64 76"}
         fill="none"

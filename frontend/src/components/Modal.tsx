@@ -1,3 +1,4 @@
+import { t as tr, useLanguage } from '../i18n';
 import React, { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 
@@ -22,6 +23,7 @@ export const Modal: React.FC<ModalProps> = ({
   overlayClassName = '',
   keepMounted = false,
 }) => {
+  useLanguage();
   const [mounted, setMounted] = useState(false);
 
   useEffect(() => {
@@ -57,7 +59,7 @@ export const Modal: React.FC<ModalProps> = ({
       >
         <div className="modal-header">
           <h3>{title}</h3>
-          <button className="btn-close" onClick={onClose} aria-label="关闭">
+          <button className="btn-close" onClick={onClose} aria-label={tr("关闭")}>
             &times;
           </button>
         </div>

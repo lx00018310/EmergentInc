@@ -49,7 +49,7 @@ export class LineageStore extends BusinessStore {
   relevantMemories(options: { pixelId?: string; kind?: string; generationId?: string; limit?: number;worldId?:string } = {}) {
     const limit = Math.min(20, Math.max(1, options.limit ?? 20));
     return this.db.prepare(`SELECT * FROM memories WHERE (? IS NULL OR pixel_id IS NULL OR pixel_id=?)
-      AND (? IS NULL OR kind=?) AND (? IS NULL OR generation_id=?) ${options.worldId?"AND (world_id=? OR (world_id IS NULL AND (source='gene' OR kind IN ('generation_birth','generation_failure','generation_rollback','security_boundary'))))":''} ORDER BY importance DESC,created_at DESC,rowid DESC LIMIT ?`)
+      AND (? IS NULL OR kind=?) AND (? IS NULL OR generation_id=?) ${options.worldId?"AND (world_id=? OR (world_id IS NULL AND (source='gene' OR (source='chain_finalized' AND kind='business_outcome') OR kind IN ('generation_birth','generation_failure','generation_rollback','security_boundary'))))":''} ORDER BY importance DESC,created_at DESC,rowid DESC LIMIT ?`)
       .all(options.pixelId ?? null, options.pixelId ?? null, options.kind ?? null, options.kind ?? null,
         options.generationId ?? null, options.generationId ?? null,...(options.worldId?[options.worldId]:[]), limit);
   }

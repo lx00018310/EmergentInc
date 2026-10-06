@@ -1,3 +1,4 @@
+import { t as tr, useLanguage } from '../../i18n';
 import {selectWorld,worldsEnabled} from '../../api/worldScope';
 import {WorldSummary} from '../qianji/WorldSummary';
 import React, { useEffect, useRef, useState } from 'react';
@@ -21,6 +22,7 @@ export interface QianJiHallProps {
 }
 
 export const QianJiHall: React.FC<QianJiHallProps> = ({ selectedQianjiId, onSelectedQianji, onSelectedPixel, onOpenEngine, onOpenGacha, onOpenMeeting }) => {
+  useLanguage();
   const { items, presentation, error: qianjiError, loading, refresh } = useQianjiPolling();
   const { world, runStatus, error: worldError, refreshImmediately } = useWorldPolling();
   const [runError, setRunError] = useState<string | null>(null);
@@ -68,7 +70,7 @@ export const QianJiHall: React.FC<QianJiHallProps> = ({ selectedQianjiId, onSele
     await refreshImmediately();
   };
 
-  const sendBlocked = runStatus?.running ? 'Run 进行中，等本轮结束后可继续发送。' : null;
+  const sendBlocked = runStatus?.running ? (tr("Run 进行中，等本轮结束后可继续发送。")) : null;
 
   useEffect(() => {
     if (!selectedQianjiId && items.length > 0 && items[0]) onSelectedQianji(items[0].profile.qianjiId);
@@ -79,8 +81,8 @@ export const QianJiHall: React.FC<QianJiHallProps> = ({ selectedQianjiId, onSele
     onSelectedPixel(selected?.currentBinding?.pixelId ?? null);
   }, [selected?.currentBinding?.pixelId, selected?.world?.world_id, onSelectedPixel,refreshImmediately]);
 
-  const runState = runStatus?.running ? `运行中 · ${runStatus.completed_rounds}/${runStatus.requested_rounds} 轮`
-    : recoveryRequired ? '需要恢复处理' : runStatus?.result_status === 'FAILED' ? '上次运行失败' : '空闲';
+  const runState = runStatus?.running ? tr("运行中 · {0}/{1} 轮", [runStatus.completed_rounds, runStatus.requested_rounds])
+    : recoveryRequired ? (tr("需要恢复处理")) : runStatus?.result_status === 'FAILED' ? (tr("上次运行失败")) : (tr("空闲"));
 
   return (
     <div className="qianji-hall" data-testid="qianji-hall">
@@ -109,9 +111,9 @@ export const QianJiHall: React.FC<QianJiHallProps> = ({ selectedQianjiId, onSele
       </div>
 
       <header className="hall-header">
-        <div className="hall-brand"><span className="hall-mark">千</span><div><h1>{presentation?.hallName ?? '千机阁'}</h1><p>{presentation?.organizationName ?? 'EmergentInc 元胞会社'}</p></div></div>
-        <div className="hall-run-summary"><span>第 {world?.round ?? runStatus?.current_round ?? 0} 轮</span><span className={runStatus?.running ? 'is-running' : recoveryRequired ? 'is-error' : ''}>{runState}</span></div>
-        <div className="hall-navigation"><button className="btn btn-sm" type="button" onClick={onOpenEngine}>进入 {presentation?.sectionLabels?.engine ?? 'Engine'}</button></div>
+        <div className="hall-brand"><span className="hall-mark">{tr("千")}</span><div><h1>{presentation?.revision ? presentation.hallName : tr(presentation?.hallName ?? '千机阁')}</h1><p>{presentation?.revision ? presentation.organizationName : tr(presentation?.organizationName ?? 'EmergentInc 元胞会社')}</p></div></div>
+        <div className="hall-run-summary"><span>{tr("第") + " "}{world?.round ?? runStatus?.current_round ?? 0} {" " + tr("轮")}</span><span className={runStatus?.running ? 'is-running' : recoveryRequired ? 'is-error' : ''}>{runState}</span></div>
+        <div className="hall-navigation"><button className="btn btn-sm" type="button" onClick={onOpenEngine}>{tr("进入") + " "}{presentation?.sectionLabels?.engine ?? 'Engine'}</button></div>
       </header>
 
       {(qianjiError || worldError || runError) && <div className="hall-error" role="alert">{qianjiError || worldError || runError}</div>}
@@ -133,8 +135,7 @@ export const QianJiHall: React.FC<QianJiHallProps> = ({ selectedQianjiId, onSele
           }}
         >
           <p className="hall-warning" style={{ margin: 0, color: '#f87171', fontSize: '13px', lineHeight: 1.5 }}>
-            存在未决操作。请进入 Engine 的 Recovery 面板处理后再运行。
-          </p>
+            {tr("存在未决操作。请进入 Engine 的 Recovery 面板处理后再运行。")}</p>
           <div style={{ display: 'flex', gap: '8px', flexShrink: 0 }}>
             <button
               type="button"
@@ -150,8 +151,7 @@ export const QianJiHall: React.FC<QianJiHallProps> = ({ selectedQianjiId, onSele
               }}
               onClick={() => setIsRecoveryOpen(true)}
             >
-              立即在此对账决策
-            </button>
+              {tr("立即在此对账决策")}</button>
             <button
               type="button"
               className="btn btn-sm"
@@ -162,27 +162,26 @@ export const QianJiHall: React.FC<QianJiHallProps> = ({ selectedQianjiId, onSele
               }}
               onClick={onOpenEngine}
             >
-              进入 Engine
-            </button>
+              {tr("进入 Engine")}</button>
           </div>
         </div>
       )}
 
       <main className="hall-grid">
-        <section className="hall-roster" aria-label="人物列表">
-          <div className="hall-section-heading"><div><p className="qj-eyebrow">{presentation?.sectionLabels?.members ?? '人物'}</p><h2>千机名录</h2></div><span>{items.length} 位</span></div>
-          {loading && items.length === 0 && <p className="qj-empty">正在读取人物…</p>}
-          {!loading && !qianjiError && items.length === 0 && <p className="qj-empty">暂无人物，点击下方 + 招募第一位人物。</p>}
+        <section className="hall-roster" aria-label={tr("人物列表")}>
+          <div className="hall-section-heading"><div><p className="qj-eyebrow">{presentation?.revision ? presentation.sectionLabels?.members : tr(presentation?.sectionLabels?.members ?? '人物')}</p><h2>{tr("千机名录")}</h2></div><span>{items.length} {" " + tr("位")}</span></div>
+          {loading && items.length === 0 && <p className="qj-empty">{tr("正在读取人物…")}</p>}
+          {!loading && !qianjiError && items.length === 0 && <p className="qj-empty">{tr("暂无人物，点击下方 + 招募第一位人物。")}</p>}
           <div className="qj-roster-list">{items.map(item => (
             <QianjiCard key={item.profile.qianjiId} item={item} selected={selectedQianjiId === item.profile.qianjiId}
               onSelect={selectPerson} onMenuAction={handleMenuAction} showMeetingAction={Boolean(onOpenMeeting)} />
           ))}
             <div className="qj-roster-add" ref={addMenuRef}>
-              <button className="qj-add-button" type="button" aria-label="新建人物位" aria-haspopup="menu" aria-expanded={addMenuOpen} onClick={() => setAddMenuOpen(open => !open)}>+</button>
+              <button className="qj-add-button" type="button" aria-label={tr("新建人物位")} aria-haspopup="menu" aria-expanded={addMenuOpen} onClick={() => setAddMenuOpen(open => !open)}>+</button>
               {addMenuOpen && (
-                <div className="qj-menu-popover qj-add-popover" role="menu" aria-label="新建菜单">
-                  <button type="button" role="menuitem" onClick={() => { setAddMenuOpen(false); onOpenGacha?.(); }}>招募人物</button>
-                  {onOpenMeeting&&<button type="button" role="menuitem" onClick={() => { setAddMenuOpen(false); onOpenMeeting?.(); }}>发起会议</button>}
+                <div className="qj-menu-popover qj-add-popover" role="menu" aria-label={tr("新建菜单")}>
+                  <button type="button" role="menuitem" onClick={() => { setAddMenuOpen(false); onOpenGacha?.(); }}>{tr("招募人物")}</button>
+                  {onOpenMeeting&&<button type="button" role="menuitem" onClick={() => { setAddMenuOpen(false); onOpenMeeting?.(); }}>{tr("发起会议")}</button>}
                 </div>
               )}
             </div>
@@ -192,10 +191,10 @@ export const QianJiHall: React.FC<QianJiHallProps> = ({ selectedQianjiId, onSele
         <section className="hall-detail-column">
           {selected ? <QianjiProfilePanel item={selected} modalRequest={modalRequest} onSent={handleSent} sendBlocked={sendBlocked}
             onRefresh={async () => { await refresh(); await refreshImmediately(); }} />
-            : <div className="qj-panel-placeholder">选择一位人物查看详情。</div>}
+            : <div className="qj-panel-placeholder">{tr("选择一位人物查看详情。")}</div>}
         </section>
 
-        <aside className="hall-side-column" aria-label="需要阁主决定">
+        <aside className="hall-side-column" aria-label={tr("需要阁主决定")}>
           {selected?.world?<WorldSummary item={selected} onRefresh={refresh}/>:!worldsEnabled()&&<ApprovalPanel />}
         </aside>
       </main>

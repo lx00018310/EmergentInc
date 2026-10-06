@@ -1,3 +1,4 @@
+import { t as tr, useLanguage } from '../../i18n';
 import React, { useState, useEffect } from 'react';
 import { Modal } from '../../components/Modal';
 import { fetchPrivateFiles, getPrivateImagePreviewUrl } from '../../api/files';
@@ -14,6 +15,7 @@ export const PrivateFileBrowser: React.FC<PrivateFileBrowserProps> = ({
   onClose,
   onLogMessage,
 }) => {
+  useLanguage();
   const [currentPath, setCurrentPath] = useState<string>('');
   const [files, setFiles] = useState<PrivateFileItemDto[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(false);
@@ -49,13 +51,12 @@ export const PrivateFileBrowser: React.FC<PrivateFileBrowserProps> = ({
   return (
     <Modal
       isOpen={isOpen}
-      title="workspace/private 私有资料管理"
+      title={tr("workspace/private 私有资料管理")}
       onClose={onClose}
       contentClassName="doc-modal-content"
       footer={
         <button className="btn btn-secondary" onClick={onClose}>
-          关闭
-        </button>
+          {tr("关闭")}</button>
       }
     >
       <div style={{ marginBottom: '10px', display: 'flex', gap: '8px', alignItems: 'center' }}>
@@ -68,10 +69,9 @@ export const PrivateFileBrowser: React.FC<PrivateFileBrowserProps> = ({
             loadDirectory(parts.join('/'));
           }}
         >
-          返回上级
-        </button>
+          {tr("返回上级")}</button>
         <span style={{ fontFamily: 'var(--font-mono)', fontSize: '12px', color: 'var(--text-dim)' }}>
-          当前路径: workspace/private/{currentPath || ''}
+          {tr("当前路径: workspace/private/")}{currentPath || ''}
         </span>
       </div>
 
@@ -79,8 +79,7 @@ export const PrivateFileBrowser: React.FC<PrivateFileBrowserProps> = ({
         <div style={{ padding: '10px', textAlign: 'center' }}>
           <div style={{ marginBottom: '8px' }}>
             <button className="btn btn-xs" onClick={() => setPreviewImageSrc(null)}>
-              返回列表
-            </button>
+              {tr("返回列表")}</button>
           </div>
           <img
             src={previewImageSrc}
@@ -95,21 +94,19 @@ export const PrivateFileBrowser: React.FC<PrivateFileBrowserProps> = ({
         </div>
       ) : isLoading ? (
         <div style={{ color: 'var(--text-dim)', padding: '20px', textAlign: 'center' }}>
-          正在加载私有文件目录...
-        </div>
+          {tr("正在加载私有文件目录...")}</div>
       ) : files.length === 0 ? (
         <div style={{ color: 'var(--text-dim)', padding: '20px', textAlign: 'center' }}>
-          私有目录下暂无文件。
-        </div>
+          {tr("私有目录下暂无文件。")}</div>
       ) : (
         <table className="data-table">
           <thead>
             <tr>
-              <th>名称</th>
-              <th>类型</th>
-              <th>大小</th>
-              <th>安全状态</th>
-              <th style={{ textAlign: 'right' }}>操作</th>
+              <th>{tr("名称")}</th>
+              <th>{tr("类型")}</th>
+              <th>{tr("大小")}</th>
+              <th>{tr("安全状态")}</th>
+              <th style={{ textAlign: 'right' }}>{tr("操作")}</th>
             </tr>
           </thead>
           <tbody>
@@ -123,10 +120,9 @@ export const PrivateFileBrowser: React.FC<PrivateFileBrowserProps> = ({
                 <td>
                   {file.is_sensitive ? (
                     <span style={{ color: 'var(--accent-yellow)', fontWeight: 600 }}>
-                      🔒 凭据受限保护
-                    </span>
+                      {tr("🔒 凭据受限保护")}</span>
                   ) : (
-                    <span style={{ color: 'var(--text-dim)' }}>普通材料</span>
+                    <span style={{ color: 'var(--text-dim)' }}>{tr("普通材料")}</span>
                   )}
                 </td>
                 <td style={{ textAlign: 'right' }}>
@@ -135,17 +131,15 @@ export const PrivateFileBrowser: React.FC<PrivateFileBrowserProps> = ({
                       className="btn btn-xs"
                       onClick={() => loadDirectory(file.path)}
                     >
-                      打开
-                    </button>
+                      {tr("打开")}</button>
                   ) : isImage(file.name) && !file.is_sensitive ? (
                     <button
                       className="btn btn-xs btn-primary"
                       onClick={() => setPreviewImageSrc(getPrivateImagePreviewUrl(file.path))}
                     >
-                      预览图片
-                    </button>
+                      {tr("预览图片")}</button>
                   ) : (
-                    <span style={{ color: 'var(--text-dim)', fontSize: '11px' }}>受保护/外部</span>
+                    <span style={{ color: 'var(--text-dim)', fontSize: '11px' }}>{tr("受保护/外部")}</span>
                   )}
                 </td>
               </tr>

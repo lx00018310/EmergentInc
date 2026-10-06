@@ -1,3 +1,4 @@
+import { t as tr, useLanguage } from '../../i18n';
 import React, { useEffect, useRef, useState } from 'react';
 import { PixelMapRenderer } from './PixelMapRenderer';
 import { PixelHoverTooltip } from './PixelHoverTooltip';
@@ -26,6 +27,7 @@ export const PixelMapCanvas: React.FC<PixelMapCanvasProps> = ({
   runStatus,
   onRefresh,
 }) => {
+  useLanguage();
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const rendererRef = useRef<PixelMapRenderer | null>(null);
   const onSelectPixelRef = useRef(onSelectPixel);
@@ -183,38 +185,32 @@ export const PixelMapCanvas: React.FC<PixelMapCanvasProps> = ({
     <div className="right-panel">
       <div className="canvas-toolbar">
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <span className="toolbar-title">活体晶格 · LIVING LATTICE</span>
+          <span className="toolbar-title">{tr("活体晶格 · LIVING LATTICE")}</span>
           {hasUnfinalized && (
             <button
               type="button"
               className="btn btn-xs btn-danger"
               style={{ fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer' }}
               onClick={() => setIsRecoveryDismissed(false)}
-              title="打开待决审计审批弹窗"
+              title={tr("打开待决审计审批弹窗")}
             >
-              <span>⚠️</span> 需审计决策 ({unfinalizedCount})
+              <span>⚠️</span> {" " + tr("需审计决策 (")}{unfinalizedCount})
             </button>
           )}
-          <button className="btn btn-xs" onClick={() => setShowLegend((v) => !v)} title="显示/隐藏图例">
-            图例
-          </button>
+          <button className="btn btn-xs" onClick={() => setShowLegend((v) => !v)} title={tr("显示/隐藏图例")}>
+            {tr("图例")}</button>
           {showLegend && (
             <span className="canvas-legend">
               <span className="legend-item">
-                <span className="dot active-dot" /> 存活活跃
-              </span>
+                <span className="dot active-dot" /> {" " + tr("存活活跃")}</span>
               <span className="legend-item">
-                <span className="dot inactive-dot" /> 零能量失活
-              </span>
+                <span className="dot inactive-dot" /> {" " + tr("零能量失活")}</span>
               <span className="legend-item">
-                <span className="dot" style={{ background: 'var(--accent-yellow)' }} /> 未读提醒
-              </span>
+                <span className="dot" style={{ background: 'var(--accent-yellow)' }} /> {" " + tr("未读提醒")}</span>
               <span className="legend-item">
-                <span className="dot" style={{ border: '2px solid #ff4500', borderRadius: '50%', width: '9px', height: '9px', background: 'transparent' }} /> 选中外环
-              </span>
+                <span className="dot" style={{ border: '2px solid #ff4500', borderRadius: '50%', width: '9px', height: '9px', background: 'transparent' }} /> {" " + tr("选中外环")}</span>
               <span className="legend-item">
-                <span className="dot flow-line-legend" /> 传递方向(≤10)
-              </span>
+                <span className="dot flow-line-legend" /> {" " + tr("传递方向(≤10)")}</span>
             </span>
           )}
         </div>
@@ -222,19 +218,18 @@ export const PixelMapCanvas: React.FC<PixelMapCanvasProps> = ({
           <button
             className={`btn btn-sm ${viewMode === 'list' ? 'btn-primary' : ''}`}
             onClick={() => setViewMode((v) => (v === '3d' ? 'list' : '3d'))}
-            title="切换 3D / 列表视图"
+            title={tr("切换 3D / 列表视图")}
           >
-            {viewMode === '3d' ? '列表' : '3D'}
+            {viewMode === '3d' ? (tr("列表")) : '3D'}
           </button>
-          <button className="btn btn-sm" onClick={handleZoomIn} title="放大">
+          <button className="btn btn-sm" onClick={handleZoomIn} title={tr("放大")}>
             +
           </button>
-          <button className="btn btn-sm" onClick={handleZoomOut} title="缩小">
+          <button className="btn btn-sm" onClick={handleZoomOut} title={tr("缩小")}>
             -
           </button>
           <button className="btn btn-sm" onClick={handleResetView}>
-            重置视角
-          </button>
+            {tr("重置视角")}</button>
         </div>
       </div>
 

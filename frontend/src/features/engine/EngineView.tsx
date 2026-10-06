@@ -1,3 +1,4 @@
+import { t as tr, useLanguage } from '../../i18n';
 import {selectedWorld,worldsEnabled} from '../../api/worldScope';
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useWorldPolling } from '../../hooks/useWorldPolling';
@@ -30,6 +31,7 @@ import { fetchPixelDocument, fetchPixelArtifact, getArtifactDownloadUrl } from '
 import type { PromptDto } from '../../api/types';
 
 export const EngineView: React.FC<{ onBack: () => void; initialPixelId?: string | null; onSelectedPixelChange?: (id: string | null) => void }> = ({ onBack, initialPixelId, onSelectedPixelChange }) => {
+  useLanguage();
   const { world, runStatus, audit, error: pollingError, refreshImmediately } = useWorldPolling();
 
   // 控制台日志
@@ -37,7 +39,7 @@ export const EngineView: React.FC<{ onBack: () => void; initialPixelId?: string 
     {
       id: 'init',
       type: 'system',
-      text: '[SYSTEM] V11 商业元胞自动机控制台 (React + TypeScript) 核心就绪。',
+      text: (tr("[SYSTEM] V11 商业元胞自动机控制台 (React + TypeScript) 核心就绪。")),
       time: new Date().toLocaleTimeString(),
     },
   ]);
@@ -67,7 +69,7 @@ export const EngineView: React.FC<{ onBack: () => void; initialPixelId?: string 
       // surface once as info, not as a recurring error on every page load.
       if (runStatus.result_status === 'RECOVERY_RESOLVED') {
         addLogMessage('info',
-          `[RUN RESOLVED] ${displayStopReason(runStatus.stop_reason)} ${runStatus.error_code ?? ''} — 未决项已逐项审计处理，可正常启动。历史错误: ${runStatus.error_summary ?? runStatus.last_error ?? ''}`);
+          tr("[RUN RESOLVED] {0} {1} — 未决项已逐项审计处理，可正常启动。历史错误: {2}", [displayStopReason(runStatus.stop_reason), runStatus.error_code ?? '', runStatus.error_summary ?? runStatus.last_error ?? '']));
       } else {
         addLogMessage(runStatus.result_status === 'FAILED' ? 'error' : 'warn',
           `[RUN ${runStatus.result_status}] ${displayStopReason(runStatus.stop_reason)} ${runStatus.error_code ?? ''} ${runStatus.error_summary ?? runStatus.last_error ?? ''}`);
@@ -169,7 +171,7 @@ export const EngineView: React.FC<{ onBack: () => void; initialPixelId?: string 
     setPreviewMode('docs');
     setActiveDocKey(docName);
     setIsPreviewLoading(true);
-    setPreviewTitle(`元胞 ${selectedPixelId} - ${docName}`);
+    setPreviewTitle(tr("元胞 {0} - {1}", [selectedPixelId, docName]));
     setPreviewType('text');
     setPreviewDownloadUrl(undefined);
     setPreviewFilename(undefined);
@@ -220,7 +222,7 @@ export const EngineView: React.FC<{ onBack: () => void; initialPixelId?: string 
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       setPreviewContent(
-        `[FAILED TO LOAD ARTIFACT] ${msg}\n\n该交付物可能包含非 UTF-8 编码或为二进制文件，请点击右下角按钮直接下载原始文件查看。`
+        tr("[FAILED TO LOAD ARTIFACT] {0}\n\n该交付物可能包含非 UTF-8 编码或为二进制文件，请点击右下角按钮直接下载原始文件查看。", [msg])
       );
     } finally {
       setIsPreviewLoading(false);
@@ -332,50 +334,50 @@ export const EngineView: React.FC<{ onBack: () => void; initialPixelId?: string 
         onLogMessage={addLogMessage}
       />
 
-      <Modal isOpen={activePromptModal === 'owner'} title="老板窗口" onClose={() => setActivePromptModal(null)} contentClassName="doc-modal-content" keepMounted>
+      <Modal isOpen={activePromptModal === 'owner'} title={tr("老板窗口")} onClose={() => setActivePromptModal(null)} contentClassName="doc-modal-content" keepMounted>
         <OwnerChat />
       </Modal>
 
-      <Modal isOpen={activePromptModal === 'genesis'} title="创世提示词" onClose={() => setActivePromptModal(null)} contentClassName="doc-modal-content" keepMounted>
+      <Modal isOpen={activePromptModal === 'genesis'} title={tr("创世提示词")} onClose={() => setActivePromptModal(null)} contentClassName="doc-modal-content" keepMounted>
         <PromptEditor
           cardId="genesis-card"
-          title="创世提示词 (临时初速度)"
-          hint="当前注入 system 消息的 GENESIS_CONTEXT，作为临时初速度；不是 Pixel Self，也不写入 pixel.md。运行期间不可编辑，清空后后续运行不再注入。"
-          placeholder="可输入创世提示词，清空则完全关闭..."
+          title={tr("创世提示词 (临时初速度)")}
+          hint={tr("当前注入 system 消息的 GENESIS_CONTEXT，作为临时初速度；不是 Pixel Self，也不写入 pixel.md。运行期间不可编辑，清空后后续运行不再注入。")}
+          placeholder={tr("可输入创世提示词，清空则完全关闭...")}
           rows={12}
           promptData={genesisPrompt}
           isRunning={isRunning}
           onSave={async content => {
             const res = await updateGenesisPrompt(content);
             setGenesisPrompt(res);
-            addLogMessage('success', `[GENESIS PROMPT] 创世提示词已保存 (Rev ${res.revision})。`);
+            addLogMessage('success', tr("[GENESIS PROMPT] 创世提示词已保存 (Rev {0})。", [res.revision]));
           }}
           onClear={async () => {
             const res = await updateGenesisPrompt('');
             setGenesisPrompt(res);
-            addLogMessage('info', '[GENESIS PROMPT] 创世提示词已清空并关闭。');
+            addLogMessage('info', (tr("[GENESIS PROMPT] 创世提示词已清空并关闭。")));
           }}
         />
       </Modal>
 
-      <Modal isOpen={activePromptModal === 'temp'} title="临时提示词" onClose={() => setActivePromptModal(null)} contentClassName="doc-modal-content" keepMounted>
+      <Modal isOpen={activePromptModal === 'temp'} title={tr("临时提示词")} onClose={() => setActivePromptModal(null)} contentClassName="doc-modal-content" keepMounted>
         <PromptEditor
           cardId="temp-prompt-card"
-          title="临时提示词 (任务指引)"
-          hint="独立的 TEMPORARY_CONTEXT，当前注入 system 消息，不是单个元胞的 Human Mandate；仅在空闲时编辑，下次运行生效。"
-          placeholder="可输入当前任务的临时提示词 (如 VPS 运维指令)..."
+          title={tr("临时提示词 (任务指引)")}
+          hint={tr("独立的 TEMPORARY_CONTEXT，当前注入 system 消息，不是单个元胞的 Human Mandate；仅在空闲时编辑，下次运行生效。")}
+          placeholder={tr("可输入当前任务的临时提示词 (如 VPS 运维指令)...")}
           rows={12}
           promptData={tempPrompt}
           isRunning={isRunning}
           onSave={async content => {
             const res = await updateTemporaryPrompt(content);
             setTempPrompt(res);
-            addLogMessage('success', `[TEMPORARY PROMPT] 临时提示词已保存 (Rev ${res.revision})。`);
+            addLogMessage('success', tr("[TEMPORARY PROMPT] 临时提示词已保存 (Rev {0})。", [res.revision]));
           }}
           onClear={async () => {
             const res = await updateTemporaryPrompt('');
             setTempPrompt(res);
-            addLogMessage('info', '[TEMPORARY PROMPT] 临时提示词已清空并关闭。');
+            addLogMessage('info', (tr("[TEMPORARY PROMPT] 临时提示词已清空并关闭。")));
           }}
         />
       </Modal>
