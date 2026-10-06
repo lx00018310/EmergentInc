@@ -1,0 +1,73 @@
+import {it,expect} from 'vitest';
+import * as fs from 'node:fs';
+import {join,resolve} from 'node:path';
+import {tmpdir} from 'node:os';
+import {createServer} from 'node:http';
+import {randomBytes} from 'node:crypto';
+import {LineageStore,WorldRegistryStore,CurrentStore,readGenome,writeGenerationPointer} from '@emergentinc/persistence';
+import {WorldRegistryService} from '../src/services/world_registry_service.js';
+import {GenerationSupervisor} from '../../../supervisor/generation_supervisor.js';
+import {LocalWorldRuntime} from '../../../supervisor/local_world_runtime.js';
+
+/** Real server processes and real Supervisor; explicitly fake, zero-price model. Never real wallet/chain acceptance. */
+it.skipIf(process.env.EMERGENTINC_CANDIDATE_MODE==='1')('births all Worlds through real spawned V23 processes and inherits Gene in a fresh World',async()=>{
+  fs.mkdirSync(resolve('cache'),{recursive:true});const root=fs.mkdtempSync(join(resolve('cache'),'v23-process-')),workspace=join(root,'workspace'),releases=join(root,'releases'),state=join(root,'trusted');fs.mkdirSync(state,{recursive:true});
+  const {freezeLocalRelease}=await import('../../../scripts/local-release.mjs');
+  const base=join(releases,'r1');await freezeLocalRelease(resolve('.'),base);
+  const manifestFile=join(base,'genome/manifest.json'),manifest=JSON.parse(fs.readFileSync(manifestFile,'utf8'));manifest.generation=1;fs.writeFileSync(manifestFile,JSON.stringify(manifest));
+  const genome=readGenome(base),lineage=new LineageStore(join(workspace,'system/lineage/lineage.sqlite3'),{v23:true});
+  const generation=lineage.createGeneration({id:'G0001',number:1,geneHash:genome.geneHash,releaseId:'r1',state:'ACTIVE'});writeGenerationPointer(join(workspace,'system'),'G0001');
+  const current=new CurrentStore(join(workspace,'system/generations/G0001/current.sqlite3'));current.initialize(generation,'1');current.close();fs.mkdirSync(join(workspace,'system/generations/G0001/body/skills'),{recursive:true});
+  const control=new WorldRegistryStore(join(workspace,'system/control/control.sqlite3')),registry=new WorldRegistryService(workspace,control,lineage,'1');
+  const narrative=(displayName:string)=>({displayName,title:null,roleLabel:null,traits:{},behaviorProfile:[],flaw:null,shortBio:null,appearanceSpec:null,portraitAsset:null,contentRevision:null});
+  const a=registry.create(narrative('A')),b=registry.create(narrative('B'));fs.writeFileSync(join(workspace,'workspace-layout.json'),JSON.stringify({schema:1,version:23}));
+  lineage.configure({limitMicros:0,draftLimitMicros:0,draftCallLimit:30,draftExpiresAt:Date.now()+86400000});
+  fs.mkdirSync(join(workspace,'private'),{recursive:true});fs.writeFileSync(join(workspace,'private/business_model_pricing.json'),JSON.stringify({models:{test:{currency:'CNY',input_cost_per_million:0,output_cost_per_million:0}}}));
+  const candidate={skill_id:'count_rows',purpose:'count rows',source:'export default input=>({count:input.rows.length})',interface_version:'1',tests:[{input:{rows:[]},expected:{count:0}},{input:{rows:[1,2]},expected:{count:2}}]};
+  let bodyMade=false,sharedAsset:string|undefined;
+  const model=createServer((req,res)=>{let bytes='';req.on('data',chunk=>bytes+=chunk);req.on('end',()=>{
+    const request=JSON.parse(bytes),isDream=String(request.messages[0].content).startsWith('整理新的真实事实');
+    let content;if(isDream){const input=JSON.parse(request.messages[1].content),worlds=[...new Set(input.facts.map((f:any)=>f.world_id).filter(Boolean))];
+      content=JSON.stringify({memories:worlds.map(world_id=>({world_id,point:'Test World experience',reason:'Explicit deterministic test model',effect:'Scoped test memory'})),gene_proposals:input.facts.filter((f:any)=>f.kind==='gene_asset_nominated').map((f:any)=>({candidate_id:f.payload.id,point:'Shared counter',reason:'Frozen used Body skill',effect:'Fresh Worlds inherit'}))});}
+    else{content=JSON.stringify({send_to:'STOP',owner_reply:'test reply',...(sharedAsset&&JSON.stringify(request).includes('use shared gene')?{operations:[{tool:'CALL_GENE_SKILL',args:{asset_id:sharedAsset,input:{rows:[1,2,3]}}}]}:{}),...(!bodyMade?{operations:[{tool:'CREATE_BODY_SKILL',args:{candidate}},{tool:'CALL_BODY_SKILL',args:{skill_id:'count_rows',input:{rows:[1,2,3]}}}],reproduce:{direction:'1_0_0',initial_energy:15000}}:{})});bodyMade=true;}
+    res.setHeader('Content-Type','application/json');res.end(JSON.stringify({choices:[{message:{content}}],usage:{prompt_tokens:50,completion_tokens:50,total_tokens:100}}));
+  });});await new Promise<void>(r=>model.listen(0,'127.0.0.1',r));const modelPort=(model.address() as any).port;
+  const portServer=createServer();await new Promise<void>(r=>portServer.listen(0,'127.0.0.1',r));const port=(portServer.address() as any).port;await new Promise<void>(r=>portServer.close(()=>r()));
+  const secret=randomBytes(32).toString('hex'),activeReleaseFile=join(state,'active.json');fs.writeFileSync(activeReleaseFile,JSON.stringify({directory:base}));
+  const runtime=new LocalWorldRuntime({workspace,releases,stateDirectory:state,activeReleaseFile,appUrl:`http://127.0.0.1:${port}`,ownerEnvironment:{PATH:process.env.PATH,SystemRoot:process.env.SystemRoot,
+    EMERGENTINC_OWNER_SECRET:secret,EMERGENTINC_SECURE_COOKIES:'0',MCL_API_KEY:'explicit-test-key',MCL_MODEL:'test',MCL_BASE_URL:`http://127.0.0.1:${modelPort}/v1`}});
+  const supervisor=new GenerationSupervisor(state,join(workspace,'system'),releases,lineage,runtime,true);let cookie='';
+  const call=async(method:string,url:string,payload?:any)=>{const response=await fetch(runtime.config.appUrl+url,{method,headers:{cookie,'Content-Type':'application/json',Connection:'close'},...(payload?{body:JSON.stringify(payload)}:{})});
+    const result=await response.json() as any;expect(response.status,JSON.stringify(result)).toBeLessThan(300);return result;};
+  const login=async()=>{const response=await fetch(runtime.config.appUrl+'/api/login',{method:'POST',headers:{'Content-Type':'application/json',Connection:'close'},body:JSON.stringify({secret})});cookie=response.headers.get('set-cookie')!.split(';')[0]!;};
+  try{
+    await runtime.start();await runtime.healthy('G0001');await runtime.resume();await login();
+    await call('POST',`/api/qianji/${a.qianji_id}/chat`,{content:'generate capability',idempotencyKey:'chat',rounds:1,runBudgetTokens:80000});
+    for(let i=0;i<100;i++){if(!(await call('GET',`/api/worlds/${a.world_id}/api/run/status`)).running)break;await new Promise(r=>setTimeout(r,30));}
+    expect((await call('GET',`/api/worlds/${a.world_id}`)).pixels.some((p:any)=>p.id==='1_0_0')).toBe(true);
+    expect((await call('GET',`/api/worlds/${b.world_id}`)).pixels).toHaveLength(1);
+    const db=new CurrentStore(join(registry.directory(a.world_id),'generations/G0001/current.sqlite3'),{readOnly:true});const body=db.db.prepare('SELECT id FROM body_candidates').get()!;db.close();
+    const nomination=await call('POST',`/api/worlds/${a.world_id}/promotions`,{pixel_id:'0_0_0',kind:'skill',sourcePath:`generations/G0001/body/skills/count_rows/${body.id}.json`,metadata:{privacy:'PUBLIC'}});
+    await call('POST','/api/evolution/dream',{});
+    const recommended=await call('GET',`/api/evolution/promotions/${nomination.id}`);expect(recommended.proposal_id).toBeTruthy();
+    const blocked=await fetch(runtime.config.appUrl+`/api/evolution/proposals/${recommended.proposal_id}/decision`,{method:'POST',headers:{cookie,'Content-Type':'application/json',Connection:'close'},body:JSON.stringify({decision:'APPROVED'})});expect(blocked.status).toBe(400);
+    const proposal=await call('POST',`/api/evolution/promotions/${nomination.id}/propose`,{shareConsent:true,privacy:'PUBLIC',license:'MIT',genericity:'JSON independent rows',point:'Shared counter',reason:'Tested on two inputs',effect:'Fresh Worlds inherit'});
+    const direction=await call('POST',`/api/evolution/proposals/${proposal.id}/decision`,{decision:'APPROVED'});
+    expect(direction.candidateRequest.patch).toHaveLength(3);supervisor.submit(direction.candidateRequest);
+    const checked=await supervisor.validate(direction.candidateRequest.id);expect(()=>supervisor.approve(checked.id,'wrong')).toThrow('OWNER_CANDIDATE_HASH');
+    supervisor.approve(checked.id,checked.candidate.candidate_hash);await supervisor.birth(checked.id);await login();
+    expect((await call('GET',`/api/worlds/${a.world_id}`)).current.generation_id).toBe('G0002');expect((await call('GET',`/api/worlds/${b.world_id}`)).current.generation_id).toBe('G0002');
+    const fresh=await call('POST','/api/qianji/recruit',{idempotencyKey:'fresh'}),freshWorld=control.worldForQianji(fresh.profile.qianjiId);
+    const info=await call('GET',`/api/worlds/${freshWorld.world_id}`);expect(info.current.generation_id).toBe('G0002');expect(fs.readdirSync(join(registry.directory(freshWorld.world_id),'generations/G0002/body/skills'))).toEqual([]);
+    const catalog=await call('GET','/api/gene/assets'),asset=catalog.assets[0];sharedAsset=asset.id;expect(catalog.provenance[0].world_id).toBe(a.world_id);
+    expect(await call('POST',`/api/gene/assets/${asset.id}/run`,{input:{rows:[1,2,3]}})).toMatchObject({origin:'gene',version:1,result:{count:3}});
+    await call('POST',`/api/qianji/${fresh.profile.qianjiId}/chat`,{content:'use shared gene',idempotencyKey:'inheritance',rounds:1,runBudgetTokens:80000});
+    for(let i=0;i<100;i++){if(!(await call('GET',`/api/worlds/${freshWorld.world_id}/api/run/status`)).running)break;await new Promise(r=>setTimeout(r,30));}
+    const freshCore=new (await import('@emergentinc/persistence')).CoreStore(join(registry.directory(freshWorld.world_id),'ledger/v9_core.sqlite3'),{readOnly:true});
+    try{const executed=freshCore.db.prepare("SELECT result,status FROM tool_executions WHERE tool='CALL_GENE_SKILL'").get();expect(executed?.status).toBe('SUCCESS');expect(String(executed?.result)).toContain('"origin":"gene"');}finally{freshCore.close();}
+    await supervisor.rollback(checked.id,'Explicit test rollback after a new World was born');await login();
+    expect((await call('GET',`/api/worlds/${a.world_id}`)).current.generation_id).toBe('G0001');expect((await call('GET','/api/worlds')).items.find((w:any)=>w.world_id===freshWorld.world_id).blockedReason).toBe('WORLD_CREATED_AFTER_RESTORED_GENERATION');
+    expect(lineage.relevantMemories({kind:'generation_rollback'})).toHaveLength(1);
+  }catch(error){throw new Error((error instanceof Error?error.stack+' Cause: '+String((error as any).cause):String(error))+' State: '+JSON.stringify(supervisor.list())+'\n'+fs.readFileSync(join(state,'server.log'),'utf8').slice(-1500)+'\n'+fs.readdirSync(state).filter(n=>n.startsWith('validation-')).map(n=>fs.readFileSync(join(state,n),'utf8').slice(-2500)).join('\n'));}
+  finally{try{await runtime.stop();}catch{}supervisor.close();control.close();lineage.close();await new Promise<void>(r=>model.close(()=>r()));fs.rmSync(root,{recursive:true,force:true});}
+},180000);

@@ -4,6 +4,7 @@ import * as path from "node:path";
 
 export interface DatabaseOptions {
   timeoutMs?: number;
+  readOnly?: boolean;
 }
 
 /**
@@ -15,15 +16,16 @@ export class SqliteDatabase {
 
   constructor(dbPath: string, options: DatabaseOptions = {}) {
     this.dbPath = dbPath;
-    if (dbPath !== ":memory:") {
+    if (dbPath !== ":memory:" && !options.readOnly) {
       const dir = path.dirname(path.resolve(dbPath));
       if (!fs.existsSync(dir)) {
         fs.mkdirSync(dir, { recursive: true });
       }
     }
 
-    this.db = new DatabaseSync(dbPath);
-    this.initPragmas();
+    this.db = new DatabaseSync(dbPath, { readOnly: options.readOnly ?? false });
+    if (options.readOnly) this.db.exec("PRAGMA query_only=ON; PRAGMA foreign_keys=ON;");
+    else this.initPragmas();
   }
 
   private initPragmas() {

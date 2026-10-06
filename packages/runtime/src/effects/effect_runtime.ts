@@ -36,6 +36,7 @@ export interface EffectRuntimeContext {
   executionScope?: Readonly<ExecutionToolScope>;
   signal?: AbortSignal;
   modelCallId?: string;
+  worldMode?: boolean;
 }
 
 export class EffectRuntime {
@@ -558,6 +559,7 @@ export class EffectRuntime {
           const archiveRelativePath = path.relative(this.ctx.workspaceRoot, archivedPixelDir).split(path.sep).join("/");
           this.ctx.store.qianji.unbindAndRetire(previousBinding.bindingId, archiveRelativePath, "body_replaced", now);
         }
+        if (!this.ctx.worldMode) {
         const seed = BigInt("0x" + createHash("sha256").update(effect.effectId).digest("hex").slice(0, 16)).toString();
         const { primaryBits: _primaryBits, changedBits: _changedBits, ...birthIdentity } = deriveBirthIdentity(seed);
         const newborn = this.ctx.store.qianji.createProfile({
@@ -575,6 +577,7 @@ export class EffectRuntime {
           boundAt: now,
           birthEffectId: effect.effectId,
         });
+        }
         this.ctx.store.ledger.appendEntry({
           entry_id: `${effect.effectId}_parent`, timestamp: now, pixel_id: effect.parentPixelId,
           entry_type: "reproduction_out", amount: -effect.request.initial_energy,
@@ -698,6 +701,23 @@ export class EffectRuntime {
   }
 
   private async applyOwnerReply(effect: OwnerReplyEffect): Promise<void> {
+    if (this.ctx.worldMode) {
+      const inbox = this.ctx.store.db.prepare('SELECT * FROM world_chat_inbox WHERE message_id=?').get(effect.messageId);
+      const message = this.ctx.store.messages.getMessage(effect.messageId);
+      const call = this.ctx.modelCallId ? this.ctx.store.modelCalls.getModelCall(this.ctx.modelCallId) : null;
+      const stateFile = path.join(this.ctx.workspaceRoot,'live/pixels',effect.pixelId,'state.json');
+      const incarnation = fs.existsSync(stateFile) ? JSON.parse(fs.readFileSync(stateFile,'utf8')).incarnation : undefined;
+      const valid = inbox && message && inbox.entry_pixel_id===effect.pixelId && message.recipient===effect.pixelId &&
+        call?.messageId===effect.messageId && call.pixelId===effect.pixelId && incarnation===inbox.entry_incarnation;
+      this.ctx.store.transaction(()=>{
+        const inserted = valid ? this.ctx.store.db.prepare('INSERT OR IGNORE INTO world_outbox VALUES(?,?,?,?,?)')
+          .run(inbox.turn_id,effect.messageId,effect.reply,this.ctx.modelCallId!,Date.now()).changes : 0;
+        this.ctx.store.effects.recordEffect({effect_id:effect.effectId,message_id:effect.messageId,effect_type:effect.effectType,
+          effect_index:effect.effectIndex,payload_hash:effect.payloadHash,status:inserted?'APPLIED':'FAILED',
+          details:inserted?undefined:JSON.stringify({error:'WORLD_REPLY_SCOPE_INVALID_OR_ALREADY_RECORDED'}),created_at:Date.now()/1000});
+      });
+      return;
+    }
     const turn = this.ctx.store.qianjiChat.getTurnForMessage(effect.messageId);
     const message = this.ctx.store.messages.getMessage(effect.messageId);
     const modelCall = this.ctx.modelCallId ? this.ctx.store.modelCalls.getModelCall(this.ctx.modelCallId) : null;

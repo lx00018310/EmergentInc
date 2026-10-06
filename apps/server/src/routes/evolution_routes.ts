@@ -9,13 +9,16 @@ import { recoveryHealth } from "../services/life_overview.js";
 export interface EvolutionServices {
   life: LifeContext; dream: DreamService; memoryGate: MemoryGate; body: BodyGrowthService;
   recoveryOrigin?: string;
+  worldOverview?:()=>unknown[];
+  beforeProposalDecision?:(id:string,decision:string)=>void;
+  onProposalApproved?: (id:string)=>Promise<unknown>|unknown;
   quiesced?: () => boolean; quiesce?: () => Promise<void>; resume?: () => Promise<void>;
 }
 export async function registerEvolutionRoutes(app: FastifyInstance, services: EvolutionServices) {
   const { life, dream, memoryGate, body } = services;
   app.get("/evolution/overview", async () => {
     const overview = life.overview(), status = dream.status();
-    return { ...overview, dream: status, trust: { ...overview.trust, recovery: await recoveryHealth(services.recoveryOrigin) },
+    return { ...overview, body:{...overview.body,...(services.worldOverview?{worlds:services.worldOverview(),projection:true}: {})}, dream: status, trust: { ...overview.trust, recovery: await recoveryHealth(services.recoveryOrigin) },
       evolution: { ...overview.evolution, dream: status } };
   });
   app.post("/evolution/dream", async () => dream.run());
@@ -31,7 +34,9 @@ export async function registerEvolutionRoutes(app: FastifyInstance, services: Ev
   app.post<{ Params: { id: string } }>("/evolution/proposals/:id/decision", async req => {
     const b = req.body as any;
     if (!["APPROVED", "REJECTED"].includes(b?.decision)) throw new Error("INVALID_PROPOSAL_DECISION");
-    return life.lineage.decideProposal(req.params.id, b.decision);
+    services.beforeProposalDecision?.(req.params.id,b.decision);
+    const proposal=life.lineage.decideProposal(req.params.id, b.decision);
+    const request=b.decision==='APPROVED'?await services.onProposalApproved?.(req.params.id):undefined;return {...proposal,...(request?{candidateRequest:request}:{})};
   });
   app.post("/evolution/corrections", async req => {
     const b = req.body as any; lifeId(b?.key); if (b?.pixel_id) lifeId(b.pixel_id);

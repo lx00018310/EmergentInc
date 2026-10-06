@@ -47,7 +47,8 @@ export class BusinessService {
     const system = purpose === "dream"
       ? '整理新的真实事实。只返回严格 JSON {"memories":[{"point":"要点","reason":"原因","effect":"效果"}],"gene_proposals":[{"point":"要点","reason":"原因","effect":"效果"}]}。每项最多1000字。没有值得记住的事实可返回空数组。不能将发布数量视为营收，不能授予权限或修改基因。'
       : '生成一个最小纯 JSON Body Skill，只返回严格 JSON {"skill_id":"标识","purpose":"用途","source":"export default input => JSON结果","interface_version":"1","tests":[{"input":{},"expected":{}}]}。测试是数据，不是程序。接口版本使用输入 genome.body_interface_version。禁止 import/require、网络、文件、进程、全局环境、凭据、安装依赖及修改基因。';
-    const messages = [{ role: "system" as const, content: system }, { role: "user" as const, content: JSON.stringify(input) }];
+    const worldInstruction = purpose === "dream" && ((input as any)?.from?.worlds || (input as any)?.facts?.some((f:any)=>f.world_id)) ? "每条 memory 必须附加 world_id，只能引用输入事实中的真实 world_id；不同世界不得合并私人事实。全局事实可只形成 gene_proposals 方向建议。gene_proposals 可附 candidate_id 关联输入中真实的 gene_asset_nominated 提名；仍须 Owner 隐私审查和两次批准，不授予共享许可。" : "";
+    const messages = [{ role: "system" as const, content: system + worldInstruction }, { role: "user" as const, content: JSON.stringify(input) }];
     if (Buffer.byteLength(messages[1].content) > 65536) throw new Error("LIFE_MODEL_INPUT_LIMIT");
     const id = `life:${this.life?.current.meta().generation_id ?? 'local'}:${purpose}:${key}`, requestHash = businessHash({ purpose, input });
     const previous = this.store.operation(id);

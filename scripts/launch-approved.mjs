@@ -1,3 +1,4 @@
+import {approvedWorldRelease} from './v23-approved-release.mjs';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { spawn } from 'node:child_process';
@@ -9,9 +10,10 @@ export async function launchApproved(projectRoot, args = []) {
   if (env.EMERGENTINC_ACTIVE_GENERATION_FILE || env.EMERGENTINC_CANDIDATE_MODE === '1' || env.EMERGENTINC_LOCAL_UPGRADE_TOKEN)
     throw new Error('LOCAL_LAUNCH_CONFIGURATION_CONFLICT');
   const workspace = path.resolve(env.EMERGENTINC_WORKSPACE_ROOT || path.join(projectRoot, 'workspace'));
-  const existing = fs.existsSync(path.join(workspace, 'lineage/lineage.sqlite3')) || fs.existsSync(path.join(workspace, 'active-generation.json'));
+  if(fs.existsSync(workspace+'.v23-upgrade-pending.json'))throw new Error('V23_UPGRADE_RECOVERY_REQUIRED');
+  const existing = fs.existsSync(path.join(workspace, 'lineage/lineage.sqlite3')) || fs.existsSync(path.join(workspace, 'active-generation.json')) || fs.existsSync(path.join(workspace,'workspace-layout.json'));
   // Fresh installations are explicit; existing lineage never falls back to an unapproved checkout.
-  let approved = existing ? approvedLocalRelease(fs.realpathSync(workspace)) : undefined;
+  let approved = existing ? (env.EMERGENTINC_LOCAL_EVOLUTION_CONFIG?approvedWorldRelease(fs.realpathSync(workspace),env.EMERGENTINC_LOCAL_EVOLUTION_CONFIG):approvedLocalRelease(fs.realpathSync(workspace))) : undefined;
   if (args[0] === '--check') {
     if (approved) console.log(`APPROVED_RELEASE ${approved.generation.id} ${approved.generation.release_id}`);
     else console.log('INITIAL_WORKSPACE_BUILD_REQUIRED');

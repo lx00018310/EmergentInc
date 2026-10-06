@@ -1,3 +1,4 @@
+import {worldsEnabled} from './worldScope';
 import { apiRequest } from './client';
 
 export type QianjiCareerStatus = 'candidate' | 'trial' | 'active' | 'retired';
@@ -52,6 +53,7 @@ export interface QianjiBindingDto {
 }
 
 export interface QianjiListItemDto {
+  world?: {world_id:string;status:string;gateway_pixel_id:string|null;gatewayRevision:number;activePixels?:number;totalPixels?:number};
   profile: QianjiProfileDto;
   currentBinding: QianjiBindingDto | null;
   bindingHistory: QianjiBindingDto[];
@@ -170,7 +172,7 @@ export async function fetchQianjiChat(qianjiId: string, signal?: AbortSignal): P
 
 export async function postQianjiChat(qianjiId: string, content: string, idempotencyKey: string): Promise<{ turn: QianjiChatTurnDto; created: boolean }> {
   return apiRequest(`/api/qianji/${encodeURIComponent(qianjiId)}/chat`, {
-    method: 'POST', body: JSON.stringify({ content, idempotencyKey }),
+    method: 'POST', body: JSON.stringify({ content, idempotencyKey, ...(worldsEnabled()?{rounds:1,runBudgetTokens:100000}:{}) }),
   });
 }
 

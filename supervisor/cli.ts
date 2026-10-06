@@ -32,8 +32,9 @@ export async function runEvolutionCli(args: string[]) {
     const stateStats = fs.statSync(config.stateDirectory);
     if (stateStats.uid !== 0 || stateStats.mode & 0o027) throw new Error("EVOLUTION_STATE_MUST_BE_TRUSTED");
     unlock = lock(config.stateDirectory);
-    lineage = new LineageStore(path.join(config.workspace, "lineage/lineage.sqlite3"));
-    supervisor = new GenerationSupervisor(config.stateDirectory, config.workspace, config.releases, lineage, new LinuxEvolutionRuntime(config), true, config.activePointer);
+    const lifeRoot=config.workspaceVersion===23?path.join(config.workspace,"system"):config.workspace;
+    lineage = new LineageStore(path.join(lifeRoot, "lineage/lineage.sqlite3"),{v23:config.workspaceVersion===23});
+    supervisor = new GenerationSupervisor(config.stateDirectory, lifeRoot, config.releases, lineage, new LinuxEvolutionRuntime(config), true, config.activePointer);
     let result;
     if (action === "submit") result = supervisor.submit(JSON.parse(fs.readFileSync(path.resolve(value!), "utf8")));
     else if (action === "validate") result = await supervisor.validate(value!);

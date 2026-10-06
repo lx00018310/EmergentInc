@@ -22,3 +22,4 @@ export * from "./current_store.js";
 export * from "./migrations/lineage_schema.js";
 export * from "./migrations/current_schema.js";
 export * from "./life_workspace.js";
+export * from './world_registry_store.js';

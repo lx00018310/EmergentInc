@@ -6,13 +6,13 @@ React / TypeScript / Vite 前端，后端为 Node.js / Fastify / SQLite。
 
 | 地址 | 内容 |
 | --- | --- |
-| `/QIAN` | 千机阁：人物、绑定、招募、会议 |
-| `/YUAN` | 元胞界面：世界、消息、Run、协作、历史与交付 |
-| `/GENE` | 完整经营工作台：方向、预算、方案、资料、连接、结果与生命管理 |
+| `/QIAN` | 千机阁：人物、所属 World、招募、对话、入口更换与收入 |
+| `/YUAN` | 元胞界面：选择 World 后查看其元胞、消息、Run、协作、历史与交付 |
+| `/GENE` | 全局经营/生命工作台、Gene 资产审查、来源谱系、四链 USDT 地址设置、实际应付金额与发票 |
 
 默认登录后进入千机阁；只有手动访问 `/GENE` 才进入经营工作台。页面按 URL 选择，不由 session.mode 决定。Body 日常导航不新增 Gene 管理入口。
 
-默认 `business` 运行配置同时注册三页需要的后端接口。旧人物和 Run 继续读取原 Core 库；预算/生命接口使用已有 Lineage / Current。统一跨模块预算和完整进程隔离仍属后续工作。
+V23 `workspace-layout.json` 显式选择 World 运行模式；`session.worldsEnabled` 告知前端使用带 World 路径的运行 API。`/YUAN?world=<id>` 不同选择会卸载原 Engine，文件下载也保留 World 作用域。旧绑定和历史仍可只读查看；跨人物会议入口在 V23 暂不启用。当前真实实例仍为已批准的 G0005，迁移和完整进程隔离需分别验收。
 
 ## 本机启动
 
@@ -24,7 +24,7 @@ node scripts/launch-approved.mjs
 
 日常启动运行 Owner 批准的冻结版本；源码构建须经过受控升级才对正式 workspace 生效。也可使用根目录的 `EmergentInc_UI.bat`。服务已经运行时不要重复启动。访问 `http://127.0.0.1:8765/QIAN`、`/YUAN`、`/GENE`。
 
-已有 workspace 遇到 Gene Hash 不匹配时，按 [受控升级说明](../docs/EmergentInc_V22_整改实施记录.md#本机受控升级与启动恢复) 处理，不能通过清库或覆盖 Hash 解决。
+已有 workspace 遇到 Gene Hash 不匹配时，按 [V23 受控升级说明](../README.md#本机启动和升级) 处理，不能通过清库或覆盖 Hash 解决。
 
 ## 前端开发
 

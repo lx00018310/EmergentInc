@@ -67,12 +67,13 @@ function database(file, callback) {
   const db = new DatabaseSync(file, { readOnly: true });
   try { db.exec('PRAGMA query_only=ON; BEGIN;'); return callback(db); } finally { db.close(); }
 }
-export function dataFingerprint(file) {
+export function dataFingerprint(file, transientTables = []) {
   if (!fs.existsSync(file)) return null;
   return database(file, db => {
     if (db.prepare('PRAGMA integrity_check').get().integrity_check !== 'ok' || db.prepare('PRAGMA foreign_key_check').all().length)
       throw new Error('LOCAL_UPGRADE_DATA_INTEGRITY_FAILED');
     return hash(db.prepare("SELECT name FROM sqlite_schema WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name").all().map(({ name }) => {
+      if(transientTables.includes(name))return [name,{schema:db.prepare("SELECT sql FROM sqlite_schema WHERE type='table' AND name=?").get(name).sql,rows:'TRANSIENT_LEASE'}];
       const columns = db.prepare(`PRAGMA table_info(${quote(name)})`).all().map(c => quote(c.name)).join(',');
       return [name, db.prepare(`SELECT ${columns} FROM ${quote(name)} ORDER BY ${columns}`).all()];
     }));

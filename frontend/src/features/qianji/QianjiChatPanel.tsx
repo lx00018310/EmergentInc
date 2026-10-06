@@ -18,7 +18,7 @@ export const QianjiChatPanel: React.FC<{
   const controller = useRef<AbortController | null>(null);
   const pendingRequest = useRef<{ question: string; key: string } | null>(null);
   const currentBinding = item.currentBinding;
-  const canChat = Boolean(currentBinding && item.physical?.active && (item.physical.refundDeficitTokens ?? 0) === 0 && item.profile.careerStatus !== 'retired') && !sendBlocked;
+  const canChat = Boolean((item.world?.status==='ACTIVE'||currentBinding) && item.physical?.active && (item.physical.refundDeficitTokens ?? 0) === 0 && item.profile.careerStatus !== 'retired') && !sendBlocked;
 
   const refresh = useCallback(async (signal?: AbortSignal) => {
     try {
@@ -65,6 +65,7 @@ export const QianjiChatPanel: React.FC<{
     <section className="qj-chat-panel" aria-label="人物对话">
       <div className="qj-panel-heading"><h3>对话</h3><span>发送即启动 Run</span></div>
       {error && <p className="qj-inline-error" role="alert">{error}</p>}
+      {item.world&&<p>发送后运行本 World 1 轮，额度上限 100,000 Tokens。</p>}
       <div className="qj-chat-history" aria-live="polite">
         {turns.length === 0 && <p className="qj-empty">还没有对话记录。</p>}
         {turns.slice().reverse().map(turn => (
@@ -79,7 +80,7 @@ export const QianjiChatPanel: React.FC<{
       <form onSubmit={submit} className="qj-chat-form">
         <label htmlFor={`qj-chat-${item.profile.qianjiId}`}>发送给 {item.profile.narrative.displayName}</label>
         <textarea id={`qj-chat-${item.profile.qianjiId}`} value={content} onChange={event => setContent(event.target.value)} rows={3} maxLength={4000}
-          placeholder={sendBlocked ?? (canChat ? '输入问题或指令…' : '当前人物未绑定可运行的 Pixel')} disabled={!canChat || submitting} />
+          placeholder={sendBlocked ?? (canChat ? '输入问题或指令…' : item.world?'当前 World 没有活跃入口，请更换入口':'当前人物未绑定可运行的 Pixel')} disabled={!canChat || submitting} />
         <div className="qj-form-footer"><small>{[...content].length}/2000 字</small><button className="btn btn-primary" type="submit" disabled={!canChat || submitting || !content.trim() || [...content].length > 2000}>{submitting ? '正在发送…' : '发送'}</button></div>
       </form>
     </section>

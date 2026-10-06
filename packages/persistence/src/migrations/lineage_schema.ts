@@ -4,9 +4,9 @@ import { migrateBusiness } from "./business_schema.js";
 export const LINEAGE_SCHEMA_VERSION = 2;
 export function migrateLineage(db: SqliteDatabase) {
   const version = Number(db.prepare("PRAGMA user_version").get()!.user_version);
-  if (![0, 1, 2].includes(version)) throw new Error("UNSUPPORTED_LINEAGE_SCHEMA_VERSION");
+  if (![0, 1, 2, 3].includes(version)) throw new Error("UNSUPPORTED_LINEAGE_SCHEMA_VERSION");
   if (version === 0) migrateBusiness(db);
-  if (version === 2) return;
+  if (version === 2 || version === 3) return;
   db.transaction(() => db.exec(`
     CREATE TABLE generations (
       id TEXT PRIMARY KEY, generation_no INTEGER NOT NULL UNIQUE, parent_id TEXT REFERENCES generations(id),

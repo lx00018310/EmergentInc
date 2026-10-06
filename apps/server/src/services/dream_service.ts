@@ -3,7 +3,7 @@ import { memoryPoint, nextBusinessOccurrence } from "@emergentinc/protocol";
 import { LifeContext } from "./life_context.js";
 import { LifeModel } from "./body_growth_service.js";
 
-type Cursor = { current: number; lineage: number; business: number };
+type Cursor = { current: number; lineage: number; business: number; worlds?: Record<string,number> };
 const hash = (v: unknown) => createHash("sha256").update(JSON.stringify(v)).digest("hex");
 const zero = (): Cursor => ({ current: 0, lineage: 0, business: 0 });
 const currentKinds = ["working_state_changed", "objective_changed", "body_need", "body_generated", "body_activated", "body_validation_failed", "body_rolled_back", "body_run_succeeded"];
@@ -14,7 +14,7 @@ export class DreamService {
   private timer?: ReturnType<typeof setInterval>;
   private inFlight?: Promise<unknown>;
   private failure: string | null = null;
-  constructor(readonly life: LifeContext, private model?: LifeModel, readonly time = "03:00", readonly timezone = "Asia/Shanghai") {
+  constructor(readonly life: LifeContext, private model?: LifeModel, readonly time = "03:00", readonly timezone = "Asia/Shanghai", private worldCurrents?: () => {id:string;current:import("@emergentinc/persistence").CurrentStore}[]) {
     if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(time)) throw new Error("INVALID_DREAM_TIME");
     try { new Intl.DateTimeFormat("en", { timeZone: timezone }).format(); } catch { throw new Error("INVALID_DREAM_TIMEZONE"); }
   }
@@ -30,28 +30,35 @@ export class DreamService {
       COALESCE(MAX(CASE WHEN generation_id=? THEN json_extract(to_cursor,'$.current') END),0) current,
       COALESCE(MAX(json_extract(to_cursor,'$.lineage')),0) lineage,
       COALESCE(MAX(json_extract(to_cursor,'$.business')),0) business
-      FROM dream_runs WHERE status='COMPLETED' AND trigger!='post_rollback'`).get(generation) as Cursor;
-    const to = { ...from };
+      FROM dream_runs WHERE status='COMPLETED' AND trigger!='post_rollback'`).get(generation) as unknown as Cursor;
+    if(this.worldCurrents){
+      from.worlds={};
+      for(const row of this.life.lineage.db.prepare("SELECT to_cursor FROM dream_runs WHERE generation_id=? AND status='COMPLETED' AND trigger!='post_rollback'").all(generation))
+        for(const [world,cursor] of Object.entries(JSON.parse(String(row.to_cursor)).worlds??{}))from.worlds[world]=Math.max(from.worlds[world]??0,Number(cursor));
+    }
+    const to = { ...from, ...(from.worlds ? {worlds:{...from.worlds}} : {}) };
     const facts: unknown[] = [];
     const sources = [
       { name: "current" as const, rows: this.life.current.db.prepare(`SELECT sequence cursor,kind,pixel_id,payload,created_at FROM current_events
           WHERE sequence>? AND kind IN (${currentKinds.map(() => "?").join(",")}) ORDER BY sequence LIMIT 40`).all(from.current, ...currentKinds) },
-      { name: "lineage" as const, rows: this.life.lineage.db.prepare(`SELECT sequence cursor,kind,pixel_id,payload,created_at FROM life_events
+      { name: "lineage" as const, rows: this.life.lineage.db.prepare(`SELECT sequence cursor,kind,pixel_id,payload,created_at${this.life.lineage.worldsEnabled?',world_id,generation_id,source_ref':''} FROM life_events
           WHERE sequence>? AND (kind!='gene_proposed' OR json_extract(payload,'$.source')!='dream') ORDER BY sequence LIMIT 40`).all(from.lineage) },
       { name: "business" as const, rows: this.life.lineage.db.prepare(`SELECT rowid cursor,kind,payload,created_at FROM business_events
           WHERE rowid>? AND kind IN (${businessKinds.map(() => "?").join(",")}) ORDER BY rowid LIMIT 40`).all(from.business, ...businessKinds) },
     ];
+    if(this.worldCurrents)for(const world of this.worldCurrents())sources.push({name:'current',rows:world.current.db.prepare(`SELECT sequence cursor,kind,pixel_id,payload,created_at FROM current_events
+      WHERE sequence>? AND kind IN (${currentKinds.map(()=>'?').join(',')}) ORDER BY sequence LIMIT 40`).all(from.worlds![world.id]??0,...currentKinds).map(row=>({...row,world_id:world.id}))});
     let bytes = 0;
     for (const source of sources) for (const row of source.rows) {
       const payload = JSON.parse(String(row.payload));
       const fact = { source: source.name, cursor: Number(row.cursor), kind: row.kind, pixel_id: row.pixel_id ?? "business",
-        payload, created_at: row.created_at };
+        payload, world_id:row.world_id??null,generation_id:row.generation_id??generation,source_ref:row.source_ref??`${source.name}:${generation}:${row.world_id??'global'}:${row.cursor}`, created_at: row.created_at };
       const size = Buffer.byteLength(JSON.stringify(fact));
       // A single large change is reduced to its evidence reference rather than loading the whole state/report.
       const bounded = size > 4000 ? { ...fact, payload: { source_hash: hash(payload), excerpt: JSON.stringify(payload).slice(0, 1500) } } : fact;
       const boundedSize = Buffer.byteLength(JSON.stringify(bounded));
       if (bytes + boundedSize > 24000) break;
-      facts.push(bounded); bytes += boundedSize; to[source.name] = Number(row.cursor);
+      facts.push(bounded); bytes += boundedSize; if(source.name==='current' && row.world_id && to.worlds)to.worlds[String(row.world_id)]=Number(row.cursor);else to[source.name] = Number(row.cursor);
     }
     return { generation, from, to, facts };
   }
@@ -89,10 +96,18 @@ export class DreamService {
       if (!output || Object.keys(output).sort().join(",") !== "gene_proposals,memories" ||
           !Array.isArray(output.memories) || !Array.isArray(output.gene_proposals) || output.memories.length > 20 || output.gene_proposals.length > 5)
         throw new Error("INVALID_DREAM_OUTPUT");
-      const memories = output.memories.map(memoryPoint), proposals = output.gene_proposals.map(memoryPoint);
+      const memories = output.memories.map((m:any)=>({point:memoryPoint(this.worldCurrents?{point:m.point,reason:m.reason,effect:m.effect}:m),worldId:this.worldCurrents?m.world_id:undefined})),
+        proposals = output.gene_proposals.map((p:any)=>({point:memoryPoint(this.worldCurrents?{point:p.point,reason:p.reason,effect:p.effect}:p),candidateId:this.worldCurrents?p.candidate_id:undefined}));
+      if(this.worldCurrents && memories.some((m:any)=>typeof m.worldId!=='string'||!input.facts.some((f:any)=>f.world_id===m.worldId)))throw new Error('DREAM_MEMORY_WORLD_REQUIRED');
       db.transaction(() => {
-        memories.forEach((p: ReturnType<typeof memoryPoint>, i: number) => this.life.lineage.remember(input.generation, "dream", p, `${id}:memory:${i}`, "business", 3, "dream"));
-        proposals.forEach((p: ReturnType<typeof memoryPoint>, i: number) => this.life.lineage.proposeGene(this.life.current.meta().generation_id, "dream", p, `${id}:proposal:${i}`));
+        memories.forEach((m:any, i:number) => this.life.lineage.remember(input.generation,"dream",m.point,`${id}:memory:${i}`,undefined,3,"dream",m.worldId));
+        proposals.forEach((p:any,i:number)=>{
+          if(p.candidateId){const candidate=db.prepare("SELECT * FROM gene_promotion_candidates WHERE id=? AND state='NOMINATED'").get(p.candidateId);
+            if(!candidate||!input.facts.some((fact:any)=>fact.kind==='gene_asset_nominated'&&fact.payload.id===p.candidateId&&fact.world_id===candidate.world_id))throw new Error('DREAM_PROMOTION_EVIDENCE_REQUIRED');
+            if(candidate.proposal_id)return;const proposal=this.life.lineage.proposeGene(String(this.life.current.meta().generation_id),'dream',p.point,`${id}:proposal:${i}`);
+            db.prepare('UPDATE gene_promotion_candidates SET proposal_id=? WHERE id=?').run(proposal.id,p.candidateId);
+          }else this.life.lineage.proposeGene(String(this.life.current.meta().generation_id),'dream',p.point,`${id}:proposal:${i}`);
+        });
         db.prepare("UPDATE dream_runs SET status='COMPLETED',output_hash=?,finished_at=? WHERE id=?").run(hash(output), Date.now(), id);
       });
       this.failure = null;
@@ -141,9 +156,10 @@ export class DreamService {
       if (!output || Object.keys(output).sort().join(",") !== "gene_proposals,memories" ||
           !Array.isArray(output.memories) || !Array.isArray(output.gene_proposals) || output.memories.length > 20 || output.gene_proposals.length > 5)
         throw new Error("INVALID_DREAM_OUTPUT");
-      const memories = output.memories.map(memoryPoint), proposals = output.gene_proposals.map(memoryPoint);
+      const memories = output.memories.map((m:any)=>({point:memoryPoint(this.life.lineage.worldsEnabled?{point:m.point,reason:m.reason,effect:m.effect}:m),worldId:this.life.lineage.worldsEnabled?m.world_id:undefined})),proposals=output.gene_proposals.map(memoryPoint);
+      if(this.life.lineage.worldsEnabled&&memories.some((m:any)=>m.worldId&&!input.facts.some((f:any)=>f.world_id===m.worldId)))throw new Error('DREAM_MEMORY_WORLD_REQUIRED');
       db.transaction(() => {
-        memories.forEach((p: ReturnType<typeof memoryPoint>, i: number) => this.life.lineage.remember(input.source_generation, "dream", p, `${id}:memory:${i}`, "business", 4, "post_rollback"));
+        memories.forEach((m:any,i:number)=>this.life.lineage.remember(input.source_generation,"dream",m.point,`${id}:memory:${i}`,undefined,4,"post_rollback",m.worldId));
         proposals.forEach((p: ReturnType<typeof memoryPoint>, i: number) => this.life.lineage.proposeGene(this.life.current.meta().generation_id, "dream", p, `${id}:proposal:${i}`));
         db.prepare("UPDATE dream_runs SET status='COMPLETED',output_hash=?,finished_at=? WHERE id=?").run(hash(output), Date.now(), id);
         this.life.lineage.lifeEvent(this.life.current.meta().generation_id, "post_rollback_dream_completed", { sourceGeneration: input.source_generation }, `post-rollback-completed:${input.source_generation}`);

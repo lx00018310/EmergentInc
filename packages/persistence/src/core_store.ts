@@ -36,9 +36,9 @@ export class CoreStore {
   public readonly executions: ExecutionRepository;
   public readonly gacha: GachaRepository;
 
-  constructor(dbPath: string = ":memory:") {
-    this.db = new SqliteDatabase(dbPath);
-    try { initSchema(this.db); } catch (error) { this.db.close(); throw error; }
+  constructor(dbPath: string = ":memory:", options: { readOnly?: boolean } = {}) {
+    this.db = new SqliteDatabase(dbPath, options);
+    try { if (!options.readOnly) initSchema(this.db); } catch (error) { this.db.close(); throw error; }
 
     this.runs = new RunRepository(this.db);
     this.pixels = new PixelRepository(this.db);
@@ -56,7 +56,7 @@ export class CoreStore {
     this.gacha = new GachaRepository(this.db);
 
     // 确保全局预算记录存在
-    this.budgets.ensureGlobalBudget();
+    if (!options.readOnly) this.budgets.ensureGlobalBudget();
   }
 
   public transaction<T>(action: () => T): T {

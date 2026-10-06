@@ -1,3 +1,5 @@
+import {selectWorld,worldsEnabled} from '../../api/worldScope';
+import {WorldSummary} from '../qianji/WorldSummary';
 import React, { useEffect, useRef, useState } from 'react';
 import { useWorldPolling } from '../../hooks/useWorldPolling';
 import { useQianjiPolling } from '../../hooks/useQianjiPolling';
@@ -46,6 +48,7 @@ export const QianJiHall: React.FC<QianJiHallProps> = ({ selectedQianjiId, onSele
   }, [addMenuOpen]);
 
   const selectPerson = (id: string) => {
+    const entry=items.find(e=>e.profile.qianjiId===id);if(entry?.world)selectWorld(entry.world.world_id);
     onSelectedQianji(id);
     onSelectedPixel(items.find(entry => entry.profile.qianjiId === id)?.currentBinding?.pixelId ?? null);
   };
@@ -60,7 +63,7 @@ export const QianJiHall: React.FC<QianJiHallProps> = ({ selectedQianjiId, onSele
     await refresh();
     if (runStatus?.running || recoveryRequired) { await refreshImmediately(); return; }
     setRunError(null);
-    try { await startRun(chatRunRequest); }
+    try { if(!worldsEnabled())await startRun(chatRunRequest); }
     catch (err) { setRunError(err instanceof Error ? err.message : String(err)); }
     await refreshImmediately();
   };
@@ -72,8 +75,9 @@ export const QianJiHall: React.FC<QianJiHallProps> = ({ selectedQianjiId, onSele
   }, [items, onSelectedQianji, selectedQianjiId]);
 
   useEffect(() => {
+    if(selected?.world){selectWorld(selected.world.world_id);void refreshImmediately();}
     onSelectedPixel(selected?.currentBinding?.pixelId ?? null);
-  }, [selected?.currentBinding?.pixelId, onSelectedPixel]);
+  }, [selected?.currentBinding?.pixelId, selected?.world?.world_id, onSelectedPixel,refreshImmediately]);
 
   const runState = runStatus?.running ? `运行中 · ${runStatus.completed_rounds}/${runStatus.requested_rounds} 轮`
     : recoveryRequired ? '需要恢复处理' : runStatus?.result_status === 'FAILED' ? '上次运行失败' : '空闲';
@@ -178,7 +182,7 @@ export const QianJiHall: React.FC<QianJiHallProps> = ({ selectedQianjiId, onSele
               {addMenuOpen && (
                 <div className="qj-menu-popover qj-add-popover" role="menu" aria-label="新建菜单">
                   <button type="button" role="menuitem" onClick={() => { setAddMenuOpen(false); onOpenGacha?.(); }}>招募人物</button>
-                  <button type="button" role="menuitem" onClick={() => { setAddMenuOpen(false); onOpenMeeting?.(); }}>发起会议</button>
+                  {onOpenMeeting&&<button type="button" role="menuitem" onClick={() => { setAddMenuOpen(false); onOpenMeeting?.(); }}>发起会议</button>}
                 </div>
               )}
             </div>
@@ -192,7 +196,7 @@ export const QianJiHall: React.FC<QianJiHallProps> = ({ selectedQianjiId, onSele
         </section>
 
         <aside className="hall-side-column" aria-label="需要阁主决定">
-          <ApprovalPanel />
+          {selected?.world?<WorldSummary item={selected} onRefresh={refresh}/>:!worldsEnabled()&&<ApprovalPanel />}
         </aside>
       </main>
 

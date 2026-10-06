@@ -1,3 +1,4 @@
+import { worldApiUrl } from "./worldScope";
 /**
  * 统一前端 HTTP 客户端与异常模型
  */
@@ -39,7 +40,7 @@ export async function apiRequest<T>(endpoint: string, options: RequestOptions = 
     });
   }
 
-  const url = endpoint.startsWith('/') ? endpoint : `/api/${endpoint}`;
+  const url = worldApiUrl(endpoint.startsWith('/') ? endpoint : `/api/${endpoint}`);
 
   try {
     const res = await fetch(url, {

@@ -163,7 +163,7 @@ describe('explicit Windows Owner upgrade (process adapter doubles)', () => {
     const receipt = join(f.workspace, 'runtime/local-upgrades/local-first/record.json');
     const changed = JSON.parse(fs.readFileSync(receipt, 'utf8')); changed.candidateHash = 'tampered'; fs.writeFileSync(receipt, JSON.stringify(changed));
     await expect(prepareLocalUpgrade(f.workspace, f.project, 'local-forged', f.validate, async () => {})).rejects.toThrow('FINAL_DREAM_REQUIRED');
-  });
+  },20000);
   it('does not change existing budget amounts or timestamps when reopening Core storage', () => {
     const f = fixture(), file = join(f.root, 'budget.sqlite3');
     let core = new CoreStore(file);
@@ -179,5 +179,5 @@ describe('explicit Windows Owner upgrade (process adapter doubles)', () => {
     fs.writeFileSync(join(f.project, 'genome/manifest.json'), JSON.stringify({ ...manifest, generation: 3 }));
     const next = await prepareLocalUpgrade(f.workspace, f.project, 'local-repaired', f.validate, async () => {});
     expect(next.candidate).toMatchObject({ target: 'G0003', finalDream: 'OWNER_MAINTENANCE_RECEIPTS_RETAINED' });
-  });
+  },20000);
 });

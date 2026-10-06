@@ -78,8 +78,16 @@ export async function initializeLocalRelease(projectRoot, workspace, install) {
     throw new Error('LOCAL_RELEASE_INITIALIZATION_REQUIRES_EMPTY_LINEAGE');
   const id = 'local-initial-' + randomUUID(), recordDirectory = path.join(workspace, 'runtime/local-upgrades', id);
   const release = await freezeLocalRelease(projectRoot, path.join(recordDirectory, 'release'), install);
-  const { readGenome } = await import(pathToFileURL(path.join(release.directory, 'packages/persistence/dist/index.js')).href);
-  const { geneHash } = readGenome(release.directory);
+  const { readGenome,LineageStore,CurrentStore,WorldRegistryStore,writeGenerationPointer } = await import(pathToFileURL(path.join(release.directory, 'packages/persistence/dist/index.js')).href);
+  const { geneHash,manifest } = readGenome(release.directory);
+  const v23=Boolean(manifest.capability_contracts['world_runtime@1']);
+  if(v23){
+    const system=path.join(workspace,'system'),lineage=new LineageStore(path.join(system,'lineage/lineage.sqlite3'),{v23:true});
+    const generation=lineage.createGeneration({id:'G0001',number:1,geneHash,releaseId:id,state:'ACTIVE'});
+    const current=new CurrentStore(path.join(system,'generations/G0001/current.sqlite3'));current.initialize(generation,manifest.body_interface_version);current.close();lineage.close();
+    const control=new WorldRegistryStore(path.join(system,'control/control.sqlite3'));control.close();fs.mkdirSync(path.join(system,'generations/G0001/body/skills'),{recursive:true});
+    writeGenerationPointer(system,'G0001');fs.writeFileSync(path.join(workspace,'workspace-layout.json'),JSON.stringify({schema:1,version:23}),{flag:'wx'});
+  }
   const candidate = { id, scope: 'windows_owner_initialization', workspace: fs.realpathSync(workspace), projectRoot,
     target: 'G0001', geneHash, release };
   const candidateHash = jsonHash(candidate);
@@ -91,9 +99,12 @@ export async function initializeLocalRelease(projectRoot, workspace, install) {
 /** Select only the committed Owner receipt matching both physical databases and the active pointer. */
 export function approvedLocalRelease(workspace) {
   if (fs.existsSync(path.join(workspace, 'runtime/local-upgrade-pending.json'))) throw new Error('LOCAL_UPGRADE_RECOVERY_REQUIRED');
-  const id = read(path.join(workspace, 'active-generation.json')).generation_id;
+  const layoutFile=path.join(workspace,'workspace-layout.json'),layout=fs.existsSync(layoutFile)?read(layoutFile):undefined;
+  if(layout&&(layout.schema!==1||layout.version!==23))throw new Error('UNSUPPORTED_WORKSPACE_LAYOUT');
+  const lifeRoot=layout?path.join(workspace,'system'):workspace;
+  const id = read(path.join(lifeRoot, 'active-generation.json')).generation_id;
   if (!/^G\d{4,}$/.test(id)) throw new Error('LOCAL_RELEASE_INVALID_POINTER');
-  const lineage = new DatabaseSync(path.join(workspace, 'lineage/lineage.sqlite3'), { readOnly: true });
+  const lineage = new DatabaseSync(path.join(lifeRoot, 'lineage/lineage.sqlite3'), { readOnly: true });
   let generation;
   try {
     const active = lineage.prepare("SELECT * FROM generations WHERE state='ACTIVE'").all();
@@ -104,15 +115,22 @@ export function approvedLocalRelease(workspace) {
   const recordDirectory = path.join(workspace, 'runtime/local-upgrades', generation.release_id);
   const record = read(path.join(recordDirectory, 'record.json')), c = record.candidate;
   if (record.state !== 'COMMITTED' || record.candidateHash !== jsonHash(c) ||
-      record.ownerAuthorization?.candidateHash !== record.candidateHash || !['windows_owner_maintenance', 'windows_owner_initialization'].includes(c.scope) ||
+      record.ownerAuthorization?.candidateHash !== record.candidateHash || !['windows_owner_maintenance', 'windows_owner_initialization','windows_owner_v23'].includes(c.scope) ||
       c.workspace !== workspace || c.id !== generation.release_id || c.target !== id || c.geneHash !== generation.gene_hash)
     throw new Error('LOCAL_RELEASE_RECEIPT_CONFLICT');
-  const current = new DatabaseSync(path.join(workspace, 'generations', id, 'current.sqlite3'), { readOnly: true });
+  const current = new DatabaseSync(path.join(lifeRoot, 'generations', id, 'current.sqlite3'), { readOnly: true });
   try {
     const meta = current.prepare('SELECT * FROM current_meta').get();
     if (!meta || meta.generation_id !== id || meta.gene_hash !== generation.gene_hash || meta.release_id !== generation.release_id)
       throw new Error('LOCAL_RELEASE_STORED_STATE_CONFLICT');
   } finally { current.close(); }
+  if(layout){const control=new DatabaseSync(path.join(lifeRoot,'control/control.sqlite3'),{readOnly:true});
+    try{for(const row of control.prepare("SELECT world_id,workspace_relpath FROM qianji_worlds WHERE status='ACTIVE' AND world_id NOT IN (SELECT world_id FROM world_recovery_blocks)").all()){
+      if(row.workspace_relpath!==`worlds/${row.world_id}`||!/^[a-zA-Z0-9_-]+$/.test(row.world_id))throw new Error('WORLD_REGISTRY_PATH_INVALID');
+      const db=new DatabaseSync(path.join(workspace,row.workspace_relpath,'generations',id,'current.sqlite3'),{readOnly:true});try{
+        const meta=db.prepare('SELECT * FROM current_meta').get();if(meta?.generation_id!==id||meta.gene_hash!==generation.gene_hash||meta.release_id!==generation.release_id)throw new Error('WORLD_RELEASE_IDENTITY_CONFLICT');
+      }finally{db.close();}
+    }}finally{control.close();}}
   return { directory: verifyFrozenRelease(c, recordDirectory), generation };
 }
 

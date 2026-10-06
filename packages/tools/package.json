@@ -16,11 +16,11 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@emergentinc/protocol": "workspace:*"
+    "@emergentinc/protocol": "workspace:*",
+    "typescript": "^5.8.2"
   },
   "devDependencies": {
     "@types/node": "^22.13.9",
-    "typescript": "^5.8.2",
     "vitest": "^3.0.7"
   }
 }

@@ -8,7 +8,7 @@ import { generationDirectory, writeGenerationPointer } from "@emergentinc/persis
 import { lifeOverview } from "./life_overview.js";
 
 export class LifeContext {
-  constructor(readonly workspaceRoot: string, readonly genome: GenomeManifest, readonly lineage: LineageStore, readonly current: CurrentStore) {}
+  constructor(readonly workspaceRoot: string, readonly genome: GenomeManifest, readonly lineage: LineageStore, readonly current: CurrentStore,readonly worldId?:string) {}
   static open(workspace: string, genome: GenomeManifest, geneHash: string, releaseId: string, pointer = path.join(workspace, "active-generation.json")) {
     const lineagePath = path.join(workspace, "lineage/lineage.sqlite3");
     if (!fs.existsSync(lineagePath) && fs.existsSync(path.join(workspace, "ledger/business.sqlite3")))
@@ -52,7 +52,7 @@ export class LifeContext {
   load(pixelId: string, task: unknown, environment: unknown = {}) {
     return { genome: this.genome, current: { ...this.current.meta(), workingState: this.current.state(pixelId),
       objectives: this.current.objectives(pixelId), skills: this.current.skills() },
-      memories: this.lineage.relevantMemories({ pixelId }), task, environment };
+      memories: this.lineage.relevantMemories({ pixelId,worldId:this.worldId }), task, environment };
   }
   overview() {
     return lifeOverview(this);

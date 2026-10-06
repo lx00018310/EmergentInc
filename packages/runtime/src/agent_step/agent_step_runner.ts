@@ -31,6 +31,8 @@ export interface AgentStepRunnerOptions {
   toolRuntime: ToolRuntime;
   promptBuilder: PromptBuilder;
   usageMeter: UsageMeter;
+  worldMode?: boolean;
+  worldPrompt?: (pixelId:string) => string;
 }
 
 export class AgentStepRunner {
@@ -40,6 +42,8 @@ export class AgentStepRunner {
   private toolRuntime: ToolRuntime;
   private promptBuilder: PromptBuilder;
   private usageMeter: UsageMeter;
+  private worldMode: boolean;
+  private worldPrompt?: (pixelId:string) => string;
 
   constructor(options: AgentStepRunnerOptions) {
     this.workspaceRoot = options.workspaceRoot;
@@ -48,6 +52,8 @@ export class AgentStepRunner {
     this.toolRuntime = options.toolRuntime;
     this.promptBuilder = options.promptBuilder;
     this.usageMeter = options.usageMeter;
+    this.worldMode = options.worldMode ?? false;
+    this.worldPrompt = options.worldPrompt;
   }
 
   public isReadOnlyTool(name: string): boolean {
@@ -72,6 +78,8 @@ export class AgentStepRunner {
     }
 
     // 1. 检查当前消息是否已有成功的 ModelCall (响应复用：支持安全重试与崩溃恢复)
+    if(this.worldMode){const inbox=this.store.db.prepare('SELECT entry_pixel_id,entry_incarnation FROM world_chat_inbox WHERE message_id=?').get(message.messageId);
+      if(inbox&&(inbox.entry_pixel_id!==pixelState.pixelId||Number(inbox.entry_incarnation)!==Number(JSON.parse(fs.readFileSync(path.join(this.workspaceRoot,'live/pixels',pixelState.pixelId,'state.json'),'utf8')).incarnation??1)))throw new Error('WORLD_INBOX_INCARNATION_CONFLICT');}
     const existingModelCall = this.store.modelCalls.getLatestByMessageId(message.messageId);
     // Validate a bound message even when replaying a stored response. A response
     // from a prior body must never be applied after that carrier has been reborn.
@@ -172,7 +180,7 @@ export class AgentStepRunner {
         external: {
           humanMandate,
           humanInstructions,
-          environmentInfo,
+          environmentInfo: [environmentInfo, this.worldPrompt?.(pixelState.pixelId)].filter(Boolean).join("\n"),
           humanMaterials: humanMaterial,
           feedback: feedbackLines.length > 0 ? feedbackLines.join("\n\n") : null,
           systemMessages: systemLines.length > 0 ? systemLines.join("\n\n") : null,
@@ -348,6 +356,7 @@ export class AgentStepRunner {
       executionScope,
       signal,
       modelCallId: callId,
+      worldMode: this.worldMode,
     });
     await effectRuntime.applyEffects(effects);
 

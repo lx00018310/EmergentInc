@@ -22,6 +22,10 @@ export interface QianjiRouteOptions {
   store: CoreStore;
   workspaceRoot: string;
   runService: RunService;
+  worlds?: import("../services/world_runtime_manager.js").WorldRuntimeManager;
+  gateway?: import("../services/qianji_world_gateway.js").QianjiWorldGateway;
+  historyStore?: CoreStore;
+  historyWorkspace?:string;
   downloadPortraitUrl?: (url: string) => Promise<{ contentType: string; body: Buffer }>;
 }
 
@@ -181,6 +185,19 @@ export async function registerQianjiRoutes(server: FastifyInstance, options: Qia
   const { store, workspaceRoot, runService } = options;
   const downloadPortraitUrl = options.downloadPortraitUrl ?? requestPublicImage;
   const presentationService = new WorldPresentationService(workspaceRoot);
+  const describe = async (profile: QianjiProfile) => {
+    if (!options.worlds) return profileDto(store, workspaceRoot, profile);
+    const world = options.worlds.registry.control.worldForQianji(profile.qianjiId);
+    const blockedReason=options.worlds.registry.control.db.prepare('SELECT reason FROM world_recovery_blocks WHERE world_id=?').get(world.world_id)?.reason;
+    const runtimeFailure=options.worlds.failure(world.world_id);
+    if(world.status !== 'ACTIVE'||blockedReason||runtimeFailure) return {profile,currentBinding:null,bindingHistory:store.qianji.listBindings(profile.qianjiId),physical:null,world:{...world,blockedReason,runtimeFailure}};
+    const runtime=await options.worlds.open(world.world_id), account=world.gateway_pixel_id?runtime.store.pixels.getPixelAccount(world.gateway_pixel_id):null;
+    const counts=runtime.store.db.prepare('SELECT COUNT(*) total,SUM(active) active FROM pixel_accounts').get();
+    const revision=options.worlds.registry.control.db.prepare('SELECT revision FROM world_gateway_state WHERE world_id=?').get(world.world_id)!.revision;
+    return {profile,currentBinding:null,bindingHistory:store.qianji.listBindings(profile.qianjiId),
+      physical:{accountExists:Boolean(account),active:account?.active??false,energy:account?.energy??null,refundDeficitTokens:account?.refundDeficitTokens??0,stateIncarnation:null,bindingConsistent:true},
+      world:{...world,totalPixels:Number(counts!.total),activePixels:Number(counts!.active??0),gatewayRevision:Number(revision)}};
+  };
 
   server.get("/qianji", async (request, reply) => {
     const query = (request.query ?? {}) as Record<string, unknown>;
@@ -189,7 +206,7 @@ export async function registerQianjiRoutes(server: FastifyInstance, options: Qia
       return reply.status(400).send({ detail: "Invalid careerStatus" });
     }
     const profiles = store.qianji.listProfiles({ careerStatus: careerStatus as any, limit: 200 });
-    return reply.send({ items: profiles.map(profile => profileDto(store, workspaceRoot, profile)) });
+    return reply.send({ items: await Promise.all(profiles.map(describe)) });
   });
 
   server.get("/qianji/:id", async (request, reply) => {
@@ -197,7 +214,7 @@ export async function registerQianjiRoutes(server: FastifyInstance, options: Qia
     try { validatePathSegment(id); } catch { return reply.status(400).send({ detail: "Invalid qianji id" }); }
     const profile = store.qianji.getProfile(id);
     if (!profile) return reply.status(404).send({ detail: "Qianji not found" });
-    return reply.send(profileDto(store, workspaceRoot, profile));
+    return reply.send(await describe(profile));
   });
 
   server.get("/qianji/:id/history", async (request, reply) => {
@@ -212,11 +229,12 @@ export async function registerQianjiRoutes(server: FastifyInstance, options: Qia
     }
     return reply.send({
       qianjiId: id,
-      attributed: store.qianji.getHistory(id, limit),
+      attributed: (options.historyStore ?? store).qianji.getHistory(id, limit),
+      ...(options.worlds ? {worldId:options.worlds.registry.control.worldForQianji(id).world_id,legacyReadOnly:true} : {}),
       events: store.worldEvents.listRecent({ qianjiId: id, limit }),
-      artifacts: bindingArtifactHistory(workspaceRoot, store.qianji.listBindings(id)),
+      artifacts: bindingArtifactHistory(options.historyWorkspace??workspaceRoot, store.qianji.listBindings(id)),
       conclusions: (store.db.prepare(`SELECT turn_id AS turnId,summary,created_at AS createdAt
-        FROM qianji_conclusions WHERE qianji_id=? ORDER BY created_at DESC LIMIT ?`).all(id, limit)),
+        FROM ${options.worlds?'world_conclusions':'qianji_conclusions'} WHERE qianji_id=? ORDER BY created_at DESC LIMIT ?`).all(id, limit)),
       costSemantics: "Model and tool costs remain nullable; carrierLegacy is reference-only and excluded from attributed totals.",
     });
   });
@@ -233,7 +251,7 @@ export async function registerQianjiRoutes(server: FastifyInstance, options: Qia
     if (!binding) return reply.status(404).send({ detail: "Qianji binding not found" });
     let file: string;
     try {
-      const directory = bindingArtifactDirectory(workspaceRoot, binding);
+      const directory = bindingArtifactDirectory(options.historyWorkspace??workspaceRoot, binding);
       if (!directory) return reply.status(404).send({ detail: "Archived artifact path is unavailable" });
       file = containedPath(directory, filename);
     } catch { return reply.status(404).send({ detail: "Artifact not found" }); }
@@ -248,7 +266,7 @@ export async function registerQianjiRoutes(server: FastifyInstance, options: Qia
     const id = String((request.params as any).id ?? "");
     try { validatePathSegment(id); } catch { return reply.status(400).send({ detail: "Invalid qianji id" }); }
     const body = request.body;
-    if (!isRecord(body) || !hasOnlyKeys(body, ["content", "idempotencyKey"]) ||
+    if (!isRecord(body) || !hasOnlyKeys(body, ["content", "idempotencyKey", ...(options.worlds ? ["rounds", "runBudgetTokens"] : [])]) ||
         typeof body.content !== "string" || getUnicodeLength(body.content) < 1 || getUnicodeLength(body.content) > 2000 ||
         typeof body.idempotencyKey !== "string" || body.idempotencyKey.length < 1 || body.idempotencyKey.length > 128 ||
         /[\x00-\x1f]/.test(body.idempotencyKey)) {
@@ -257,6 +275,15 @@ export async function registerQianjiRoutes(server: FastifyInstance, options: Qia
     const profile = store.qianji.getProfile(id);
     if (!profile) return reply.status(404).send({ detail: "Qianji not found" });
     if (profile.careerStatus === "retired") return reply.status(409).send({ detail: "QIANJI_RETIRED" });
+    if(options.gateway && options.worlds){
+      if(!Number.isSafeInteger(body.rounds)||Number(body.rounds)<1||Number(body.rounds)>20||!Number.isSafeInteger(body.runBudgetTokens)||Number(body.runBudgetTokens)<1||Number(body.runBudgetTokens)>1000000)
+        return reply.status(400).send({detail:'CHAT_EXPLICIT_RUN_BUDGET_REQUIRED'});
+      const result=await options.gateway.enqueue(id,String(body.content),String(body.idempotencyKey));
+      const runtime=await options.worlds.open(String(result.world_id));
+      if(!result.run_id && !result.reply && !runtime.run.getStatus().running) await runtime.run.start({rounds:Number(body.rounds),runBudgetTokens:Number(body.runBudgetTokens),onRunCreated:runId=>
+        store.db.prepare('UPDATE world_chat_turns SET run_id=? WHERE turn_id=?').run(runId,result.turn_id)});
+      return reply.status(202).send({status:'queued',turnId:result.turn_id,messageId:result.message_id,worldId:result.world_id});
+    }
     const binding = store.qianji.getCurrentBindingByQianji(id);
     if (!binding) return reply.status(409).send({ detail: "QIANJI_NOT_BOUND" });
     if (store.executions.getOpenExecutionForBinding(binding.bindingId)) return reply.status(409).send({ detail: "QIANJI_OCCUPIED_BY_EXECUTION" });
@@ -285,6 +312,7 @@ export async function registerQianjiRoutes(server: FastifyInstance, options: Qia
     const id = String((request.params as any).id ?? "");
     try { validatePathSegment(id); } catch { return reply.status(400).send({ detail: "Invalid qianji id" }); }
     if (!store.qianji.getProfile(id)) return reply.status(404).send({ detail: "Qianji not found" });
+    if(options.gateway)return reply.send({items:await options.gateway.turns(id)});
     const query = (request.query ?? {}) as Record<string, unknown>;
     const limit = query.limit === undefined ? 50 : Number(query.limit);
     const offset = query.offset === undefined ? 0 : Number(query.offset);
@@ -313,6 +341,9 @@ export async function registerQianjiRoutes(server: FastifyInstance, options: Qia
     if (!isRecord(body) || !hasOnlyKeys(body, ["turnId"]) || typeof body.turnId !== "string") {
       return reply.status(400).send({ detail: "QIANJI_CONCLUSION_INPUT_INVALID" });
     }
+    if(options.gateway){await options.gateway.turns(id);const turn=store.db.prepare('SELECT * FROM world_chat_turns WHERE turn_id=? AND qianji_id=? AND reply IS NOT NULL').get(body.turnId,id);
+      if(!turn)return reply.status(404).send({detail:'REPLIED_TURN_NOT_FOUND'});
+      store.db.prepare('INSERT OR IGNORE INTO world_conclusions VALUES(?,?,?,?)').run(turn.turn_id,id,Array.from(String(turn.reply)).slice(0,300).join(''),Date.now()/1000);return reply.send({turnId:turn.turn_id,marked:true});}
     const turn = store.qianjiChat.getTurn(body.turnId);
     if (!turn || turn.qianjiId !== id || !turn.reply) return reply.status(404).send({ detail: "REPLIED_TURN_NOT_FOUND" });
     store.db.prepare(`INSERT OR IGNORE INTO qianji_conclusions(turn_id,qianji_id,summary,created_at)
@@ -394,6 +425,15 @@ export async function registerQianjiRoutes(server: FastifyInstance, options: Qia
     if (!profile) return reply.status(404).send({ detail: "Qianji not found" });
     if (profile.careerStatus === "retired") return reply.status(409).send({ detail: "QIANJI_ALREADY_RETIRED" });
     if (runService.getStatus().running || store.getUnfinalizedOperations().hasUnfinalized) return reply.status(409).send({ detail: "RUN_OR_RECOVERY_ACTIVE" });
+    if(options.worlds){
+      const manager=options.worlds,world=manager.registry.control.worldForQianji(id);await options.gateway?.turns(id);await manager.close(world.world_id);
+      store.ownerActions.execute(body.idempotencyKey,`qianji.retire:${id}`,body,()=>{
+        store.db.prepare("UPDATE qianji_worlds SET status='ARCHIVED',archived_at=? WHERE world_id=?").run(Date.now(),world.world_id);
+        store.qianji.transitionCareerStatus(id,profile.careerStatus,'retired',retirementReason.trim());
+        manager.registry.control.event('WORLD_ARCHIVED',world.world_id,{reason:retirementReason.trim()});return {worldId:world.world_id};
+      });
+      return reply.send({profile:store.qianji.getProfile(id),world:manager.registry.control.world(world.world_id)});
+    }
     const binding = store.qianji.getCurrentBindingByQianji(id);
     if (!binding) return reply.status(409).send({ detail: "QIANJI_NOT_BOUND" });
     if (store.executions.getOpenExecutionForBinding(binding.bindingId)) return reply.status(409).send({ detail: "QIANJI_OCCUPIED_BY_EXECUTION" });

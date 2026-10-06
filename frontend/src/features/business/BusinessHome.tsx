@@ -1,3 +1,5 @@
+import {worldsEnabled} from '../../api/worldScope';
+import {V23Panel} from './V23Panel';
 import { useCallback, useEffect, useState } from 'react';
 import './business.css';
 import { readTable } from './read_table';
@@ -51,7 +53,7 @@ export function BusinessHome() {
     <nav aria-label="主要导航">{([['life', '生命总览'], ['business', '经营'], ['plans', '方案'], ['resources', '连接与资料']] as const).map(([id, label]) =>
       <button key={id} aria-current={tab === id ? 'page' : undefined} onClick={() => setTab(id)}>{label}</button>)}</nav>
     {error && <p className="business-error" role="alert">{error}</p>}
-    {tab === 'life' && <EvolutionPanel onNavigate={setTab} />}
+    {tab === 'life' && <><EvolutionPanel onNavigate={setTab} />{worldsEnabled()&&<V23Panel/>}</>}
     {tab !== 'life' && (!data ? <p>正在读取经营记录…</p> : <>
       <section className="business-metrics"><div><small>已确认费用</small><strong>{money(data.spentMicros)}</strong></div>
         <div><small>待确认预留</small><strong>{money(data.reservedMicros)}</strong></div>
@@ -59,7 +61,7 @@ export function BusinessHome() {
       {tab === 'business' && <>
         {data.schedulerFailure && <p role="alert" className="business-error">后台调度已停止：数据库或任务状态需要管理员检查。记录已保留；此时请勿重复启动任务。</p>}
         {!!data.proposalProblems?.length && <p role="alert" className="business-error">有 {data.proposalProblems.length} 次请求未形成有效方案，相关费用仍计入累计账。请修改方向后重新拟定；系统不会自动重复付费调用。</p>}
-        <section><h2>你想改善什么业务？</h2><p>当前可处理资料、在已连接的 GitHub 仓库提交经批准的议题，并记录经营凭据。发布动作不等于获客成功，收款尚未接入平台自动核验。</p>
+        <section><h2>你想改善什么业务？</h2><p>当前可处理资料、在已连接的 GitHub 仓库提交经批准的议题，并记录经营凭据。发布动作不等于获客成功；链上收款可在生命总览配置和核验，既有 CNY 手工凭据保留独立来源。</p>
           <form onSubmit={e => { e.preventDefault(); void act(propose); }}><label>业务方向<textarea value={direction} required maxLength={8000}
             placeholder="例如：我想减少每周整理询盘表的时间，先检查现有资料里缺了什么。" onChange={e => setDirection(e.target.value)} /></label>
             <button className="primary" disabled={busy || !data.settings || !data.modelConfigured}>让 Pixel 提方案</button>

@@ -1,3 +1,4 @@
+import { registerWorldRoutes, WorldRouteServices } from "./routes/world_routes.js";
 import fastify, { FastifyInstance } from "fastify";
 import cors from "@fastify/cors";
 import fastifyStatic from "@fastify/static";
@@ -10,6 +11,7 @@ import { registerBusinessRoutes } from "./routes/business_routes.js";
 import { EvolutionServices, registerEvolutionRoutes } from "./routes/evolution_routes.js";
 
 export interface CreateServerOptions extends Partial<ApiRoutesOptions> {
+  worlds?: WorldRouteServices;
   workspaceRoot: string;
   runtimeMode?: "legacy" | "business";
   businessService?: BusinessService;
@@ -43,16 +45,16 @@ export async function createServer(options: CreateServerOptions): Promise<Fastif
   });
 
   const mode = options.runtimeMode ?? "legacy";
-  registerOwnerAuth(app, options.ownerAuth, mode);
+  registerOwnerAuth(app, options.ownerAuth, mode, Boolean(options.worlds));
   app.addHook("onRequest", async (req, reply) => {
     if (options.evolution?.quiesced?.() && req.method !== "GET" && req.url.startsWith("/api/") &&
         !["/api/login", "/api/logout", "/api/evolution/final-dream", "/api/evolution/quiesce", "/api/evolution/resume"].includes(req.url.split("?")[0]!))
       return reply.status(409).send({ detail: "EVOLUTION_QUIESCED" });
   });
-  app.get("/health/live", async () => ({ alive: true }));
+  app.get("/health/live", async () => ({ alive: true, processId:process.pid }));
   app.get("/health/ready", async (_req, reply) => {
-    const ready = !options.businessService?.status().schedulerFailure;
-    return reply.status(ready ? 200 : 503).send({ ready, mode, version: options.evolution ? "v22-life-1" : "v21-business-1",
+    const ready = !options.businessService?.status().schedulerFailure && !options.worlds?.manager.list().some(w=>w.runtimeFailure);
+    return reply.status(ready ? 200 : 503).send({ ready, mode, version: options.worlds ? "v23-world-1" : options.evolution ? "v22-life-1" : "v21-business-1",
       ...(options.evolution ? { generation: options.evolution.life.current.meta().generation_id,
         geneHash: options.evolution.life.current.meta().gene_hash, bodyRevision: options.evolution.life.current.meta().body_revision } : {}) });
   });
@@ -72,7 +74,8 @@ export async function createServer(options: CreateServerOptions): Promise<Fastif
         if (options.evolution) await registerEvolutionRoutes(api, options.evolution);
       }
       // Product routes coexist: Gene workbench does not replace QIAN/YUAN's runtime.
-      if (mode === "legacy" || options.coreStore) {
+      if(options.worlds) await registerWorldRoutes(api,options.worlds);
+      else if (mode === "legacy" || options.coreStore) {
         if (!options.coreStore || !options.worldService || !options.runService || !options.promptService || !options.toolRegistry) throw new Error("LEGACY_SERVICES_REQUIRED");
         await registerApiRoutes(api, options as ApiRoutesOptions);
       }

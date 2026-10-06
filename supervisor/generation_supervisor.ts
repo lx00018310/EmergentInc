@@ -6,7 +6,7 @@ import { CurrentStore, LineageStore, SqliteDatabase, readGenome, generationDirec
 import { lifeId, lifeText } from "@emergentinc/protocol";
 import { GeneRequest, GeneCandidate, EvolutionRuntime } from "./protocol.js";
 import { ReleaseBuilder, releaseHash, evolutionHash } from "./release_builder.js";
-import { snapshotDatabase } from "./migration_runner.js";
+import { snapshotDatabase,copyDirectoryNew } from "./migration_runner.js";
 import { GenerationMigrator } from "./generation_migrator.js";
 
 /** Installed administrator implementation. Its DB and approvals must be inaccessible to the app user. */
@@ -41,7 +41,11 @@ export class GenerationSupervisor {
   }
   list() { return this.db.prepare("SELECT id,state,approval_hash,target_generation,phase,failure_reason,created_at FROM candidates ORDER BY created_at DESC").all(); }
   private event(id: string, kind: string, payload: unknown = {}) {
-    this.db.prepare("INSERT INTO events(candidate_id,kind,payload,created_at) VALUES(?,?,?,?)").run(id, kind, JSON.stringify(payload), Date.now());
+    const row=this.db.prepare("INSERT INTO events(candidate_id,kind,payload,created_at) VALUES(?,?,?,?)").run(id, kind, JSON.stringify(payload), Date.now());
+    if(this.runtime.worlds){const target=this.db.prepare('SELECT target_generation FROM candidates WHERE id=?').get(id)?.target_generation;
+      const generation=target&&this.lineage.db.prepare('SELECT id FROM generations WHERE id=?').get(target)?String(target):String(this.lineage.activeGeneration()!.id);
+      this.lineage.lifeEvent(generation,kind,{candidateId:id,...payload as object},`evolution:${id}:${row.lastInsertRowid}`,undefined,(payload as any)?.worldId);
+    }
   }
   private base(request: GeneRequest) {
     const active = this.lineage.activeGeneration();
@@ -150,24 +154,51 @@ export class GenerationSupervisor {
       const target = this.lineage.createGeneration({ id: generation, number, parentId: previous.id, geneHash: candidate.gene_hash, releaseId: id });
       this.lineage.db.prepare("UPDATE gene_proposals SET target_generation_id=? WHERE id=?").run(generation, candidate.proposal_id);
       current = new CurrentStore(path.join(newDirectory, "current.sqlite3")); current.initialize(target, genome.body_interface_version);
-      old = new CurrentStore(path.join(snapshots, "current-before.sqlite3"));
+      old = new CurrentStore(path.join(snapshots, "current-before.sqlite3"),{readOnly:true});
       new GenerationMigrator().migrate(old, current, path.join(oldDirectory, "body/skills"), path.join(newDirectory, "body/skills"));
       old.close(); old = undefined; current.close(); current = undefined;
       await this.runtime.prepareCurrent?.(newDirectory);
+      const worlds=this.runtime.worlds?.()??[];
+      this.event(id,'world_migration_planned',{total:worlds.length});
+      for(const world of worlds){
+        lifeId(world.id);
+        try{
+          const oldWorld=path.join(world.directory,'generations',previous.id),nextWorld=path.join(world.directory,'generations',generation);
+          const snapshot=path.join(snapshots,'worlds',world.id,'current-before.sqlite3');await snapshotDatabase(path.join(oldWorld,'current.sqlite3'),snapshot);
+          const from=new CurrentStore(snapshot,{readOnly:true}),to=new CurrentStore(path.join(nextWorld,'current.sqlite3'));
+          try{to.initialize(target,genome.body_interface_version);new GenerationMigrator().migrate(from,to,path.join(oldWorld,'body/skills'),path.join(nextWorld,'body/skills'));}
+          finally{from.close();to.close();}
+          await this.runtime.prepareCurrent?.(nextWorld);
+          this.event(id,'world_current_migrated',{worldId:world.id,generation});
+        }catch(error){this.event(id,'world_current_migration_failed',{worldId:world.id,reason:error instanceof Error?error.message:'WORLD_MIGRATION_FAILED'});throw error;}
+      }
 
       // Entirely separate workspace: cloned Lineage, cloned Current, no private credentials.
       const testWorkspace = path.join(this.directory, "candidate-workspaces", id);
-      const testLineagePath = path.join(testWorkspace, "lineage/lineage.sqlite3");
+      const testSystem=this.runtime.worlds?path.join(testWorkspace,'system'):testWorkspace;
+      const testLineagePath = path.join(testSystem, "lineage/lineage.sqlite3");
       await snapshotDatabase(this.lineage.db.dbPath, testLineagePath);
       const testLineage = new LineageStore(testLineagePath);
       try { testLineage.db.transaction(() => {
         testLineage.db.prepare("UPDATE generations SET state='RETIRED' WHERE state='ACTIVE'").run();
         testLineage.db.prepare("UPDATE generations SET state='ACTIVE' WHERE id=?").run(generation);
       }); } finally { testLineage.close(); }
-      const testGeneration = generationDirectory(testWorkspace, generation);
+      const testGeneration = generationDirectory(testSystem, generation);
       await snapshotDatabase(path.join(newDirectory, "current.sqlite3"), path.join(testGeneration, "current.sqlite3"));
-      fs.cpSync(path.join(newDirectory, "body"), path.join(testGeneration, "body"), { recursive: true });
-      writeGenerationPointer(testWorkspace, generation);
+      copyDirectoryNew(path.join(newDirectory, "body"), path.join(testGeneration, "body"));
+      writeGenerationPointer(testSystem, generation);
+      if(this.runtime.worlds){
+        await snapshotDatabase(path.join(this.workspace,'control/control.sqlite3'),path.join(testSystem,'control/control.sqlite3'));
+        for(const world of worlds){const copied=path.join(testWorkspace,'worlds',world.id);
+          copyDirectoryNew(path.join(world.directory,'live'),path.join(copied,'live'));
+          fs.copyFileSync(path.join(world.directory,'world.json'),path.join(copied,'world.json'),fs.constants.COPYFILE_EXCL);
+          await snapshotDatabase(path.join(world.directory,'ledger/v9_core.sqlite3'),path.join(copied,'ledger/v9_core.sqlite3'));
+          const nextWorld=path.join(world.directory,'generations',generation),testWorld=path.join(copied,'generations',generation);
+          await snapshotDatabase(path.join(nextWorld,'current.sqlite3'),path.join(testWorld,'current.sqlite3'));
+          copyDirectoryNew(path.join(nextWorld,'body'),path.join(testWorld,'body'));
+        }
+        fs.writeFileSync(path.join(testWorkspace,'workspace-layout.json'),JSON.stringify({schema:1,version:23,candidate:true}),{flag:'wx'});
+      }
       this.phase(id, "CANDIDATE_SMOKE");
       await this.runtime.smoke(candidate.directory, testWorkspace, generation);
       this.checked(this.get(id)); // Smoke must not alter any approved artifact.
@@ -226,11 +257,30 @@ export class GenerationSupervisor {
     }
     this.db.prepare("UPDATE candidates SET state='ROLLING_BACK',phase='STOPPING',failure_reason=? WHERE id=?").run(reason, id);
     await this.runtime.stop();
-    const frozen = path.join(this.directory, "frozen", `${generation}-${Date.now()}`, "current.sqlite3");
-    const frozenHash = await snapshotDatabase(path.join(generationDirectory(this.workspace, generation), "current.sqlite3"), frozen);
+    const frozen = path.join(this.directory, "frozen", `${generation}-${id}`, "current.sqlite3");
+    const frozenHash = fs.existsSync(frozen)?createHash('sha256').update(fs.readFileSync(frozen)).digest('hex'):await snapshotDatabase(path.join(generationDirectory(this.workspace, generation), "current.sqlite3"), frozen);
+    const frozenWorlds:{worldId:string;file:string;sha256:string}[]=[];
+    for(const world of this.runtime.worlds?.()??[]){
+      const file=path.join(world.directory,'generations',generation,'current.sqlite3');if(fs.existsSync(file)){
+        const target=path.join(this.directory,'frozen',`${generation}-${id}`,'worlds',world.id,'current.sqlite3');
+        const sha256=fs.existsSync(target)?createHash('sha256').update(fs.readFileSync(target)).digest('hex'):await snapshotDatabase(file,target);
+        frozenWorlds.push({worldId:world.id,file:target,sha256});
+      }
+    }
     // Never invoke Dream during emergency recovery and never restore Lineage from a backup.
-    this.lineage.lifeEvent(generation, "POST_ROLLBACK_DREAM_REQUIRED", { frozen_current: frozen, sha256: frozenHash, reason }, `post-rollback:${generation}`);
+    const prior=this.lineage.db.prepare('SELECT payload FROM life_events WHERE source_ref=?').get(`post-rollback:${generation}`);
+    this.lineage.lifeEvent(generation, "POST_ROLLBACK_DREAM_REQUIRED", prior?JSON.parse(String(prior.payload)):{ frozen_current: frozen, sha256: frozenHash, worlds:frozenWorlds, reason }, `post-rollback:${generation}`);
     await this.runtime.switchRelease(path.join(this.releases, previous.release_id));
+    if(this.runtime.worlds){
+      const control=new SqliteDatabase(path.join(this.workspace,'control/control.sqlite3'));
+      try { for(const world of this.runtime.worlds()){
+        if(fs.existsSync(path.join(world.directory,'generations',previous.id,'current.sqlite3')))continue;
+        const identity=JSON.parse(fs.readFileSync(path.join(world.directory,'world.json'),'utf8'));
+        if(identity.created_generation!==generation)throw new Error('PREVIOUS_WORLD_CURRENT_MISSING');
+        control.prepare('INSERT OR IGNORE INTO world_recovery_blocks VALUES(?,?,?,?)').run(world.id,generation,'WORLD_CREATED_AFTER_RESTORED_GENERATION',Date.now());
+        this.lineage.lifeEvent(generation,'world_generation_recovery_required',{worldId:world.id,restored:previous.id},`world-recovery:${world.id}:${generation}`,undefined,world.id);
+      }} finally {control.close();}
+    }
     writeGenerationPointer(this.workspace, previous.id, this.activePointer);
     this.lineage.db.transaction(() => {
       this.lineage.db.prepare("UPDATE generations SET state=?,failure_reason=? WHERE id=?").run(state, reason, generation);
@@ -275,8 +325,16 @@ export class GenerationSupervisor {
     try {
       const last = this.lineage.db.prepare("SELECT to_cursor FROM dream_runs WHERE generation_id=? AND status='COMPLETED' ORDER BY finished_at DESC LIMIT 1").get(candidate.target_generation);
       const cursor = last ? JSON.parse(String(last.to_cursor)).current : 0;
-      const facts = frozen.prepare("SELECT sequence,kind,pixel_id,payload FROM current_events WHERE sequence>? ORDER BY sequence DESC LIMIT 40").all(cursor).reverse()
+      const facts:unknown[] = frozen.prepare("SELECT sequence,kind,pixel_id,payload FROM current_events WHERE sequence>? ORDER BY sequence DESC LIMIT 40").all(cursor).reverse()
         .map(r => ({ sequence: r.sequence, kind: r.kind, pixel_id: r.pixel_id, payload: String(r.payload).slice(0, 300) }));
+      for(const world of snapshot.worlds??[]){
+        if(createHash('sha256').update(fs.readFileSync(world.file)).digest('hex')!==world.sha256)throw new Error('FROZEN_WORLD_HASH_CONFLICT');
+        const db=new DatabaseSync(world.file,{readOnly:true});try{
+          const worldCursor=last?Number(JSON.parse(String(last.to_cursor)).worlds?.[world.worldId]??0):0;
+          for(const row of db.prepare('SELECT sequence,kind,pixel_id,payload FROM current_events WHERE sequence>? ORDER BY sequence LIMIT 40').all(worldCursor))
+            if(facts.length<40)facts.push({...row,payload:String(row.payload).slice(0,300),world_id:world.worldId});
+        }finally{db.close();}
+      }
       this.busy = true;
       await this.runtime.postRollbackDream({ source_generation: candidate.target_generation, sha256: snapshot.sha256, facts });
     } finally { frozen.close(); this.busy = false; }

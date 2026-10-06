@@ -1,10 +1,12 @@
 import { spawn } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { randomUUID } from "node:crypto";
 import { EvolutionRuntime } from "./protocol.js";
 
 export interface LinuxEvolutionConfig {
+  workspaceVersion?:23;
   releases: string; workspace: string; currentLink: string; trustedRoot: string; unit: string;
   activePointer: string;
   appUrl: string; ownerSecret: string; validatorUser: string; pnpmPath: string; pnpmStore: string;
@@ -17,12 +19,18 @@ const execute = (executable: string, args: string[], timeoutMs = 30000) => new P
 });
 export class LinuxEvolutionRuntime implements EvolutionRuntime {
   private cookie?: string;
+  worlds?:()=>{id:string;directory:string}[];
   constructor(readonly config: LinuxEvolutionConfig) {
     if (process.platform !== "linux" || process.getuid?.() !== 0) throw new Error("TRUSTED_ROOT_LINUX_REQUIRED");
     for (const p of [config.releases, config.workspace, config.currentLink, config.activePointer, config.trustedRoot, config.pnpmPath, config.pnpmStore])
       if (!/^\/[A-Za-z0-9_./-]+$/.test(p) || p.split("/").includes("..")) throw new Error("INVALID_EVOLUTION_PATH");
     if (!/^emergentinc[a-z0-9_-]*\.service$/.test(config.unit) || !/^[a-z][a-z0-9_-]*$/.test(config.validatorUser) ||
         !/^http:\/\/127\.0\.0\.1:\d+$/.test(config.appUrl) || config.ownerSecret.length < 32) throw new Error("INVALID_EVOLUTION_CONFIGURATION");
+    if(config.workspaceVersion===23)this.worlds=()=>{
+      const db=new DatabaseSync(path.join(config.workspace,'system/control/control.sqlite3'),{readOnly:true});try{
+        return db.prepare("SELECT world_id,workspace_relpath FROM qianji_worlds WHERE status='ACTIVE' AND world_id NOT IN (SELECT world_id FROM world_recovery_blocks)").all().map(row=>{
+          if(String(row.workspace_relpath)!==`worlds/${row.world_id}`||!/^[a-zA-Z0-9_-]+$/.test(String(row.world_id)))throw new Error('WORLD_REGISTRY_PATH_INVALID');return {id:String(row.world_id),directory:path.join(config.workspace,String(row.workspace_relpath))};});
+      }finally{db.close();}};
     const trusted = fs.statSync(config.trustedRoot);
     if (trusted.uid !== 0 || trusted.mode & 0o022 || fs.realpathSync(config.trustedRoot) !== config.trustedRoot)
       throw new Error("ROOT_OF_TRUST_INSTALLATION_INVALID");
@@ -80,7 +88,9 @@ export class LinuxEvolutionRuntime implements EvolutionRuntime {
   async finalDream() { await this.owner("final-dream"); }
   async resume() { await this.owner("resume"); }
   async prepareCurrent(directory: string) {
-    if (!path.relative(path.join(this.config.workspace, "generations"), directory).match(/^G\d{4,}$/)) throw new Error("INVALID_CURRENT_PATH");
+    const relative=path.relative(this.config.workspace,directory);
+    const allowed=this.config.workspaceVersion===23?/^(?:system|worlds\/[a-zA-Z0-9_-]+)\/generations\/G\d{4,}$/:/^generations\/G\d{4,}$/;
+    if(!allowed.test(relative)||fs.realpathSync(directory)!==directory)throw new Error('INVALID_CURRENT_PATH');
     await execute("/usr/bin/chown", ["-R", "emergentinc:emergentinc", directory]);
   }
   async postRollbackDream(input: unknown) { await this.owner("post-rollback-dream", input); }

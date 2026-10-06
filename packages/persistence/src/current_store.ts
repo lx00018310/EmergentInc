@@ -4,9 +4,9 @@ import { migrateCurrent } from "./migrations/current_schema.js";
 import { LifeRow } from "./lineage_store.js";
 export class CurrentStore {
   readonly db: SqliteDatabase;
-  constructor(filename = ":memory:") {
-    this.db = new SqliteDatabase(filename);
-    try { migrateCurrent(this.db); } catch (e) { this.db.close(); throw e; }
+  constructor(filename = ":memory:",options:{readOnly?:boolean}={}) {
+    this.db = new SqliteDatabase(filename,options);
+    try { if(!options.readOnly)migrateCurrent(this.db); } catch (e) { this.db.close(); throw e; }
   }
   close() { this.db.close(); }
   meta(): LifeRow { const m = this.db.prepare("SELECT * FROM current_meta WHERE id=1").get(); if (!m) throw new Error("CURRENT_NOT_INITIALIZED"); return m; }

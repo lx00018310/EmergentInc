@@ -56,7 +56,7 @@ export const QianjiProfilePanel: React.FC<{
     return () => controller.abort();
   }, [openModal, reloadHistory]);
 
-  const physicalText = !item.currentBinding ? '未绑定 Pixel'
+  const physicalText = item.world?`World ${item.world.status} · ${item.world.activePixels??0} 活跃元胞` : !item.currentBinding ? '未绑定 Pixel'
     : item.physical?.active ? `载体活跃 · ${item.physical.energy ?? '未知'} Token`
       : `载体失活 · ${item.physical?.energy ?? '未知'} Token`;
 
@@ -130,11 +130,11 @@ export const QianjiProfilePanel: React.FC<{
           <div className="qj-ortho-specs">
             <div className="qj-ortho-header">
               <span>正交机能规格 // SCHEMATIC SPECS</span>
-              <span className="qj-ortho-code">{item.currentBinding ? `${item.currentBinding.pixelId} · 第 ${item.currentBinding.incarnation} 代` : '未绑定 PIXEL'}</span>
+              <span className="qj-ortho-code">{item.world?item.world.world_id:item.currentBinding ? `${item.currentBinding.pixelId} · 第 ${item.currentBinding.incarnation} 代` : '未绑定 PIXEL'}</span>
             </div>
             <div className="qj-ortho-grid">
               <div className="qj-ortho-cell">
-                <small>载体运行状态</small>
+                <small>{item.world?'所属世界':'载体运行状态'}</small>
                 <strong>{physicalText}</strong>
               </div>
               <div className="qj-ortho-cell">

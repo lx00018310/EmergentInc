@@ -2,10 +2,13 @@ import { randomUUID } from "node:crypto";
 import { GenerationState, MemoryPoint, lifeId, lifeText, memoryPoint } from "@emergentinc/protocol";
 import { BusinessStore, businessHash } from "./business_store.js";
 import { migrateLineage } from "./migrations/lineage_schema.js";
+import { migrateWorldLife } from './migrations/world_life_schema.js';
 
 export type LifeRow = Record<string, any>;
 export class LineageStore extends BusinessStore {
-  constructor(filename = ":memory:") { super(filename, migrateLineage); }
+  readonly worldsEnabled:boolean;
+  constructor(filename = ":memory:",options:{v23?:boolean}={}) { super(filename, migrateLineage);if(options.v23)migrateWorldLife(this.db);
+    this.worldsEnabled=this.db.prepare('PRAGMA table_info(memories)').all().some(c=>c.name==='world_id'); }
   generation(id: string): LifeRow {
     const row = this.db.prepare("SELECT * FROM generations WHERE id=?").get(id);
     if (!row) throw new Error("GENERATION_NOT_FOUND");
@@ -22,29 +25,33 @@ export class LineageStore extends BusinessStore {
         input.state ?? "BIRTHING", input.state === "ACTIVE" ? Date.now() : null);
     return this.generation(input.id);
   }
-  lifeEvent(generation: string, kind: string, payload: unknown, sourceRef: string = randomUUID(), pixelId?: string) {
+  lifeEvent(generation: string, kind: string, payload: unknown, sourceRef: string = randomUUID(), pixelId?: string,worldId?:string) {
+    if(worldId&&!this.worldsEnabled)throw new Error('V23_WORLD_LINEAGE_REQUIRED');
+    if(this.worldsEnabled){this.db.prepare('INSERT OR IGNORE INTO life_events(generation_id,pixel_id,kind,payload,source_ref,created_at,world_id) VALUES(?,?,?,?,?,?,?)')
+      .run(generation,pixelId??null,lifeText(kind,100),JSON.stringify(payload),sourceRef,Date.now(),worldId??null);return;}
     this.db.prepare(`INSERT OR IGNORE INTO life_events(generation_id,pixel_id,kind,payload,source_ref,created_at) VALUES(?,?,?,?,?,?)`)
       .run(generation, pixelId ?? null, lifeText(kind, 100), JSON.stringify(payload), sourceRef, Date.now());
   }
-  remember(generation: string, kind: string, point: MemoryPoint, sourceRef: string, pixelId?: string, importance = 3, source = "gate") {
+  remember(generation: string, kind: string, point: MemoryPoint, sourceRef: string, pixelId?: string, importance = 3, source = "gate",worldId?:string) {
+    if(worldId&&!this.worldsEnabled)throw new Error('V23_WORLD_LINEAGE_REQUIRED');
     const p = memoryPoint(point);
     if (!Number.isInteger(importance) || importance < 1 || importance > 5) throw new Error("INVALID_MEMORY_IMPORTANCE");
     const old = this.db.prepare("SELECT * FROM memories WHERE source_ref=?").get(sourceRef);
     if (old) {
       if (old.generation_id !== generation || old.kind !== kind || old.pixel_id !== (pixelId ?? null) || old.point !== p.point ||
-          old.reason !== p.reason || old.effect !== p.effect) throw new Error("MEMORY_IDEMPOTENCY_CONFLICT");
+          old.reason !== p.reason || old.effect !== p.effect || (this.worldsEnabled&&old.world_id!==(worldId??null))) throw new Error("MEMORY_IDEMPOTENCY_CONFLICT");
       return old;
     }
-    this.db.prepare("INSERT OR IGNORE INTO memories VALUES(?,?,?,?,?,?,?,?,?,?,?)")
-      .run(randomUUID(), generation, pixelId ?? null, lifeText(kind, 100), p.point, p.reason, p.effect, importance, source, sourceRef, Date.now());
+    this.db.prepare(`INSERT OR IGNORE INTO memories(id,generation_id,pixel_id,kind,point,reason,effect,importance,source,source_ref,created_at${this.worldsEnabled?',world_id':''}) VALUES(?,?,?,?,?,?,?,?,?,?,?${this.worldsEnabled?',?':''})`)
+      .run(randomUUID(), generation, pixelId ?? null, lifeText(kind, 100), p.point, p.reason, p.effect, importance, source, sourceRef, Date.now(),...(this.worldsEnabled?[worldId??null]:[]));
     return this.db.prepare("SELECT * FROM memories WHERE source_ref=?").get(sourceRef)!;
   }
-  relevantMemories(options: { pixelId?: string; kind?: string; generationId?: string; limit?: number } = {}) {
+  relevantMemories(options: { pixelId?: string; kind?: string; generationId?: string; limit?: number;worldId?:string } = {}) {
     const limit = Math.min(20, Math.max(1, options.limit ?? 20));
     return this.db.prepare(`SELECT * FROM memories WHERE (? IS NULL OR pixel_id IS NULL OR pixel_id=?)
-      AND (? IS NULL OR kind=?) AND (? IS NULL OR generation_id=?) ORDER BY importance DESC,created_at DESC,rowid DESC LIMIT ?`)
+      AND (? IS NULL OR kind=?) AND (? IS NULL OR generation_id=?) ${options.worldId?"AND (world_id=? OR (world_id IS NULL AND (source='gene' OR kind IN ('generation_birth','generation_failure','generation_rollback','security_boundary'))))":''} ORDER BY importance DESC,created_at DESC,rowid DESC LIMIT ?`)
       .all(options.pixelId ?? null, options.pixelId ?? null, options.kind ?? null, options.kind ?? null,
-        options.generationId ?? null, options.generationId ?? null, limit);
+        options.generationId ?? null, options.generationId ?? null,...(options.worldId?[options.worldId]:[]), limit);
   }
   proposeGene(generation: string, source: "dream" | "owner", point: MemoryPoint, sourceRef: string = randomUUID()) {
     const p = memoryPoint(point);

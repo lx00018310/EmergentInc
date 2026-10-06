@@ -14,6 +14,7 @@ export function BodyLayer({ body, proposals, onNavigate }: {
     <LayerSummary current={<>{current.generation_id} · Body Revision R{current.body_revision} · DB {body.database}<br />Active Skills {skills.filter(s => s.state === 'ACTIVE').length} · Running Tasks {business.runningTasks}</>}
       recent={body.currentEvents[0]?.title ?? (business.recentResults[0] ? `${business.recentResults[0].capability} · ${business.recentResults[0].state}` : '尚无身体活动或经营结果。')}
       next={pending.length ? `${pending.length} 个 Body Need 待处理 · ${needs.filter(n => n.state === 'GENE_PROPOSED').length} 个已转 Gene Proposal` : business.waitingResources ? `${business.waitingResources} 个资源请求待提供` : '等待新的任务或 Body Need。'} />
+    {body.projection&&<div><p>下方 Current 是全局管理投影。实际身体状态由各 World 的 Current 提供。</p>{body.worlds?.map(w=><p key={w.world_id}>{w.world_id} · {w.current?.generation_id??'未打开'} · Body R{w.current?.body_revision??'未知'} · {w.skills?.length??0} 技能 {String(w.runtimeFailure??w.blockedReason??'')}</p>)}</div>}
     <details className="life-detail"><summary>查看能力、需求、身体候选与当前工作</summary>
       <h3>当前身体 · Body Revision R{current.body_revision}</h3>
       <p>Current DB：{body.database} · Body Needs {needs.length} 项（最近）</p>

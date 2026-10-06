@@ -1,3 +1,4 @@
+import {worldApiUrl} from './worldScope';
 import { apiRequest } from './client';
 import type {
   PixelDocumentResponseDto,
@@ -43,9 +44,9 @@ export async function fetchPrivateFiles(
 }
 
 export function getArtifactDownloadUrl(pixelId: string, filename: string): string {
-  return `/api/pixels/${encodeURIComponent(pixelId)}/artifacts/${encodeURIComponent(filename)}/download`;
+  return worldApiUrl(`/api/pixels/${encodeURIComponent(pixelId)}/artifacts/${encodeURIComponent(filename)}/download`);
 }
 
 export function getPrivateImagePreviewUrl(path: string): string {
-  return `/api/private-files/preview?path=${encodeURIComponent(path)}`;
+  return worldApiUrl(`/api/private-files/preview?path=${encodeURIComponent(path)}`);
 }

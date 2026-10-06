@@ -32,6 +32,7 @@ export interface LifeOverview {
     memories: { id: string; point: string; reason: string; effect: string; source: string; kind: string; generation_id: string }[];
   };
   body: {
+    projection?:boolean;worlds?:{world_id:string;runtimeFailure:string|null;blockedReason:unknown;current?:{generation_id:string;body_revision:number};skills?:unknown[]}[];
     current: { generation_id: string; body_revision: number; gene_hash: string; body_interface_version: string };
     database: string;
     skills: { skill_id: string; name: string; state: string; body_revision: number | null; successful_runs: number; failed_runs: number }[];

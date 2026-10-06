@@ -1,3 +1,4 @@
+import { bootstrapWorlds } from "./world_bootstrap.js";
 import * as path from "node:path";
 import * as fs from "node:fs";
 import { createServer } from "./app.js";
@@ -63,6 +64,7 @@ async function bootstrap() {
   const privateDir = path.resolve(workspaceRoot, "private");
   const releaseLock = acquireWorkspaceLock(workspaceRoot, process.env.EMERGENTINC_LOCAL_UPGRADE_TOKEN);
   process.once("exit", releaseLock);
+  if(fs.existsSync(path.join(workspaceRoot,"workspace-layout.json"))){await bootstrapWorlds(projectRoot,config,releaseLock);return;}
 
   let businessService: BusinessService | undefined;
   let evolution: EvolutionServices | undefined;

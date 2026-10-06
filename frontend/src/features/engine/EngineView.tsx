@@ -1,3 +1,4 @@
+import {selectedWorld,worldsEnabled} from '../../api/worldScope';
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useWorldPolling } from '../../hooks/useWorldPolling';
 import { RunStatus } from '../../features/run/RunStatus';
@@ -94,7 +95,7 @@ export const EngineView: React.FC<{ onBack: () => void; initialPixelId?: string 
 
   // Tips 已读状态：仅存 localStorage（Owner UI 显示状态，不属于世界真值）
   const [tipsReadRevision, setTipsReadRevision] = useState(0);
-  const tipsReadKey = (pixelId: string) => `emergentinc.tips.read.${pixelId}`;
+  const tipsReadKey = (pixelId: string) => `emergentinc.tips.read.${worldsEnabled()?selectedWorld()+'.':''}${pixelId}`;
   const isTipsUnread = useCallback((pixel: { id: string; tips_md?: string; tips_version?: string }) => {
     return Boolean(
       (pixel.tips_md ?? '').trim() &&

@@ -3,7 +3,7 @@ import { FastifyInstance } from "fastify";
 
 export interface OwnerAuthOptions { secret: string; secureCookies: boolean }
 const digest = (value: string) => createHash("sha256").update(value).digest();
-export function registerOwnerAuth(app: FastifyInstance, options: OwnerAuthOptions | undefined, mode: string) {
+export function registerOwnerAuth(app: FastifyInstance, options: OwnerAuthOptions | undefined, mode: string, worldsEnabled = false) {
   // Existing integration tests construct the server without a production bootstrap.
   if (!options && process.env.NODE_ENV === "test") return;
   if (!options || options.secret.length < 32) throw new Error("OWNER_SECRET_REQUIRED_MIN_32_CHARS");
@@ -20,7 +20,7 @@ export function registerOwnerAuth(app: FastifyInstance, options: OwnerAuthOption
       return reply.status(401).send({ detail: "OWNER_LOGIN_REQUIRED" });
     }
   });
-  app.get("/api/session", async req => ({ authenticated: valid(req.headers.cookie), mode }));
+  app.get("/api/session", async req => ({ authenticated: valid(req.headers.cookie), mode, worldsEnabled }));
   app.post("/api/login", async (req, reply) => {
     const now = Date.now();
     if (now - windowStart > 60000) { attempts = 0; windowStart = now; }
@@ -33,7 +33,7 @@ export function registerOwnerAuth(app: FastifyInstance, options: OwnerAuthOption
     if (sessions.size >= 20) sessions.delete(sessions.keys().next().value!);
     const id = randomBytes(32).toString("hex");
     sessions.set(id, now + 8 * 3600000);
-    return reply.header("set-cookie", cookie(id, 8 * 3600)).send({ authenticated: true, mode });
+    return reply.header("set-cookie", cookie(id, 8 * 3600)).send({ authenticated: true, mode, worldsEnabled });
   });
   app.post("/api/logout", async (req, reply) => {
     sessions.delete(token(req.headers.cookie) ?? "");

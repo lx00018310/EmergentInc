@@ -29,6 +29,7 @@ export interface ApiRoutesOptions {
   gachaModelName?: string;
   gachaImageProvider?: GachaImageProvider;
   downloadPortraitUrl?: (url: string) => Promise<{ contentType: string; body: Buffer }>;
+  worldMode?: boolean;
 }
 
 export async function registerApiRoutes(
@@ -50,12 +51,14 @@ export async function registerApiRoutes(
     downloadPortraitUrl,
   } = options;
 
+  if (!options.worldMode) {
   await registerQianjiRoutes(server, { store: coreStore, workspaceRoot, runService, downloadPortraitUrl });
   await registerGachaRoutes(server, new GachaService({ store: coreStore, workspaceRoot, provider: gachaProvider,
     usageMeter: gachaUsageMeter, modelName: gachaModelName }), coreStore,
     new GachaImageService(coreStore, workspaceRoot, gachaImageProvider));
   await registerMeetingRoutes(server,
     new MeetingService(coreStore, runService, gachaProvider, gachaUsageMeter, gachaModelName), coreStore);
+  }
 
   server.addHook("preHandler", async (req, reply) => {
     const pixelId = (req.params as any)?.pixel_id;

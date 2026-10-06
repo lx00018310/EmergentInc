@@ -1,19 +1,103 @@
 {
   "schema_version": 1,
   "gene_hash_version": 2,
-  "generation": 5,
+  "generation": 6,
   "body_interface_version": "1",
   "protected_paths": [
-    "genome/**", "apps/server/**", "packages/**", "frontend/**", "supervisor/**",
-    "scripts/**", "deploy/linux/**", "package.json", "pnpm-lock.yaml", "pnpm-workspace.yaml",
-    "tsconfig.json", "tsconfig.base.json", "vitest.config.ts", "vitest.workspace.ts"
+    "genome/**",
+    "apps/server/**",
+    "packages/**",
+    "frontend/**",
+    "supervisor/**",
+    "scripts/**",
+    "deploy/linux/**",
+    "package.json",
+    "pnpm-lock.yaml",
+    "pnpm-workspace.yaml",
+    "tsconfig.json",
+    "tsconfig.base.json",
+    "vitest.config.ts",
+    "vitest.workspace.ts"
   ],
   "capability_contracts": {
     "body_skill@1": {
-      "input": "JSON", "output": "JSON", "network": false, "host_files": false,
-      "credentials": false, "child_process": false, "package_install": false,
-      "max_source_bytes": 65536, "max_json_bytes": 65536
+      "input": "JSON",
+      "output": "JSON",
+      "network": false,
+      "host_files": false,
+      "credentials": false,
+      "child_process": false,
+      "package_install": false,
+      "max_source_bytes": 65536,
+      "max_json_bytes": 65536
     },
-    "business": ["data_report@1", "review_feedback@1", "github_issue_create@1"]
+    "business": [
+      "data_report@1",
+      "review_feedback@1",
+      "github_issue_create@1"
+    ],
+    "world_runtime@1": {
+      "namespace": "world_id",
+      "global": [
+        "Root",
+        "Genome",
+        "Evolution",
+        "Lineage"
+      ],
+      "private": [
+        "Core",
+        "Current",
+        "live",
+        "outbox"
+      ],
+      "generation_switch": "all_or_nothing"
+    },
+    "pure_skill@1": {
+      "engine": "pure-ast-json@1",
+      "input": "JSON",
+      "output": "JSON",
+      "network": false,
+      "host_files": false,
+      "credentials": false,
+      "child_process": false,
+      "package_install": false,
+      "max_source_bytes": 65536,
+      "max_json_bytes": 65536,
+      "max_steps": 20000
+    },
+    "gene_promotion@1": {
+      "kinds": [
+        "knowledge",
+        "template",
+        "dataset",
+        "skill",
+        "code"
+      ],
+      "snapshot": "immutable_sha256",
+      "approval": [
+        "Owner_direction",
+        "Owner_exact_candidate_hash"
+      ],
+      "private_customer_data": "reject_default",
+      "permissions": []
+    },
+    "payment_invoice@2": {
+      "chains": [
+        "solana",
+        "bsc",
+        "polygon",
+        "tron"
+      ],
+      "network": "mainnet",
+      "asset": "USDT",
+      "reference": "Solana: unique reference; others: permanent unique payable amount",
+      "amount_input_decimals": 6,
+      "tail_max_usdt": "0.009999",
+      "credit": "chain_finalized_only",
+      "private_keys": false,
+      "signing": false,
+      "spending": false,
+      "previous_USDC": "read_only_archive"
+    }
   }
 }

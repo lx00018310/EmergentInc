@@ -83,6 +83,7 @@ export interface GachaServiceOptions {
   provider?: ModelProvider;
   usageMeter?: UsageMeter;
   modelName?: string;
+  createWorld?: (narrative: QianjiNarrativeSpec, birth: import("@emergentinc/protocol").QianjiBirthIdentity) => string;
   githubSearch?: (role: string) => Promise<GithubRepo[]>;
 }
 
@@ -100,6 +101,11 @@ export class GachaService {
     const { primaryBits: _primaryBits, changedBits: _changedBits, ...birthIdentity } = birth;
     const naming = await this.chooseIdentity(birthIdentity);
     const self = naming?.identity ?? null;
+    if(this.options.createWorld){
+      const id=store.ownerActions.execute(idempotencyKey,"qianji.recruit",{},()=>this.options.createWorld!({displayName:self?.displayName??`未名·${birth.birthSeed.slice(-6)}`,
+        title:null,roleLabel:null,traits:{},behaviorProfile:[],flaw:null,shortBio:self?.shortBio??null,appearanceSpec:self?.appearanceSpec??null,portraitAsset:null,contentRevision:null},birthIdentity));
+      if(naming)this.recordNamingCall(id,naming);return store.qianji.getProfile(id)!;
+    }
     const qianjiId = store.ownerActions.execute(idempotencyKey, "qianji.recruit", {}, () => {
       let ordinal = 0;
       let pixelId = "";
