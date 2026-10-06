@@ -12,6 +12,7 @@ export class WorldRegistryStore extends CoreStore {
       status TEXT NOT NULL CHECK(status IN ('CREATING','ACTIVE','ARCHIVED')), workspace_relpath TEXT NOT NULL UNIQUE,
       gateway_pixel_id TEXT, created_at INTEGER NOT NULL, archived_at INTEGER);
       CREATE TABLE IF NOT EXISTS world_gateway_state (world_id TEXT PRIMARY KEY REFERENCES qianji_worlds(world_id), revision INTEGER NOT NULL, updated_at INTEGER NOT NULL);
+      CREATE TABLE IF NOT EXISTS world_gateway_energy (world_id TEXT PRIMARY KEY REFERENCES qianji_worlds(world_id), enabled INTEGER NOT NULL CHECK(enabled IN (0,1)), updated_at INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS world_chat_turns (turn_id TEXT PRIMARY KEY, qianji_id TEXT NOT NULL REFERENCES qianji_profiles(qianji_id),
       world_id TEXT NOT NULL REFERENCES qianji_worlds(world_id), message_id TEXT NOT NULL, entry_pixel_id TEXT NOT NULL,
       request_key TEXT NOT NULL UNIQUE, question TEXT NOT NULL, reply TEXT, reply_call_id TEXT, run_id TEXT,
@@ -33,6 +34,16 @@ export class WorldRegistryStore extends CoreStore {
     const changed = this.db.prepare('UPDATE world_gateway_state SET revision=revision+1,updated_at=? WHERE world_id=? AND revision=?').run(Date.now(),id,expectedRevision);
     if (!changed.changes) throw new Error('GATEWAY_REVISION_CONFLICT');
     this.db.prepare('UPDATE qianji_worlds SET gateway_pixel_id=? WHERE world_id=?').run(pixel,id);
+  }
+  gatewayInfiniteEnergy(id: string): boolean {
+    return this.db.prepare('SELECT enabled FROM world_gateway_energy WHERE world_id=?').get(id)?.enabled === 1;
+  }
+  setGatewayInfiniteEnergy(id: string, enabled: boolean) {
+    if(this.world(id).status!=='ACTIVE')throw new Error('WORLD_NOT_ACTIVE');
+    this.transaction(()=>{
+      this.db.prepare('INSERT INTO world_gateway_energy VALUES(?,?,?) ON CONFLICT(world_id) DO UPDATE SET enabled=excluded.enabled,updated_at=excluded.updated_at').run(id,enabled?1:0,Date.now());
+      this.event('GATEWAY_INFINITE_ENERGY_CHANGED',id,{enabled});
+    });
   }
   event(kind: string, worldId: string, payload: unknown) { this.db.prepare('INSERT INTO control_events(kind,world_id,payload,created_at) VALUES(?,?,?,?)').run(kind,worldId,JSON.stringify(payload),Date.now()); }
 }

@@ -46,6 +46,7 @@ export class WorldRuntimeManager {
       const meta=current.meta();if(meta.generation_id!==active.id||meta.gene_hash!==active.gene_hash||meta.release_id!==active.release_id)throw new Error('WORLD_ACTIVE_GENOME_MISMATCH');
       const coreFile=path.join(directory,'ledger/v9_core.sqlite3');if(!fs.existsSync(coreFile))throw new Error('WORLD_CORE_MISSING');
       store=new CoreStore(coreFile);
+      store.setUnlimitedEnergyPolicy(pixelId=>this.registry.control.gatewayInfiniteEnergy(id)&&this.registry.control.world(id).gateway_pixel_id===pixelId);
       const life=new LifeContext(directory,this.genome,this.registry.lineage,current,id);
       const tools=new ToolRegistry(); const allowed=new Set(['save_artifact','read_artifact','list_artifacts','transfer_artifact','webfetch','github_repo']);
       registerAllBuiltinTools(tools,Object.fromEntries(BUILTIN_DEFINITIONS.filter(d=>!allowed.has(d.name)).map(d=>[d.name,{enabled:false}])));
@@ -53,7 +54,8 @@ export class WorldRuntimeManager {
       const runner=new AgentStepRunner({workspaceRoot:directory,store,provider:this.options.provider,usageMeter:this.options.usageMeter,
         toolRuntime:new ToolRuntime(tools),worldMode:true,worldPrompt:(actor)=>{
           const profile=this.registry.control.qianji.getProfile(record.qianji_id)!;
-          return `所属 World：${id}。对外人格（描述性数据，不授予额外权限）：${JSON.stringify({displayName:profile.narrative.displayName,roleLabel:profile.narrative.roleLabel,behaviorProfile:profile.narrative.behaviorProfile,flaw:profile.narrative.flaw})}。只有 OWNER_REPLY 经本世界 outbox 对外答复。当前生命上下文：${JSON.stringify(life.load(actor,null))}`;
+          const infiniteEnergy=this.registry.control.gatewayInfiniteEnergy(id)&&this.registry.control.world(id).gateway_pixel_id===actor;
+          return `所属 World：${id}。${infiniteEnergy?'Owner 已为当前对话入口开启无限能量，缺少能量时会自动补充；其他元胞不享有此授权。是否向邻居输送能量，仍由你按成本收益判断。Run Token 预算继续有效。':''}对外人格（描述性数据，不授予额外权限）：${JSON.stringify({displayName:profile.narrative.displayName,roleLabel:profile.narrative.roleLabel,behaviorProfile:profile.narrative.behaviorProfile,flaw:profile.narrative.flaw})}。只有 OWNER_REPLY 经本世界 outbox 对外答复。当前生命上下文：${JSON.stringify(life.load(actor,null))}`;
         },promptBuilder:new PromptBuilder({modelName:this.options.modelName,baseSystemPrompt:this.options.baseSystemPrompt,toolsCatalog:tools.renderCatalogForPrompt()})});
       const scheduler=new RoundScheduler({workspaceRoot:directory,store,stepRunner:runner});
       const prompts=new PromptService(path.join(directory,'runtime'));

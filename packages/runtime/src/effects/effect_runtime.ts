@@ -328,10 +328,11 @@ export class EffectRuntime {
     }
     const fromAccount = this.ctx.store.pixels.getPixelAccount(effect.fromPixelId);
     const toAccount = this.ctx.store.pixels.getPixelAccount(effect.transfer.target);
+    const automaticEnergy = this.ctx.store.hasUnlimitedEnergy(effect.fromPixelId) && fromAccount?.active && fromAccount.refundDeficitTokens===0;
 
     const validation = validateEnergyTransfer({
       fromPixelId: effect.fromPixelId,
-      fromEnergy: fromAccount?.energy || 0,
+      fromEnergy: automaticEnergy ? Number.MAX_SAFE_INTEGER : fromAccount?.energy || 0,
       fromActive: Boolean(fromAccount?.active),
       toPixelId: effect.transfer.target,
       toExists: Boolean(toAccount),
@@ -364,6 +365,7 @@ export class EffectRuntime {
 
     // 原子划转
     this.ctx.store.transaction(() => {
+      this.ctx.store.ensureUnlimitedEnergy(effect.fromPixelId,effect.transfer.amount,`transfer:${effect.effectId}`);
       const newFrom = this.ctx.store.pixels.updateEnergy(
         effect.fromPixelId,
         -effect.transfer.amount
@@ -414,12 +416,13 @@ export class EffectRuntime {
       return;
     }
     const parentAccount = this.ctx.store.pixels.getPixelAccount(effect.parentPixelId);
+    const automaticEnergy = this.ctx.store.hasUnlimitedEnergy(effect.parentPixelId) && parentAccount?.active && parentAccount.refundDeficitTokens===0;
     const activePixels = this.ctx.store.pixels.listActivePixels();
     const occupiedPositions = new Set(activePixels.map((p) => p.pixelId));
 
     const validation = validateReproduction({
       parentPixelId: effect.parentPixelId,
-      parentEnergy: parentAccount?.energy || 0,
+      parentEnergy: automaticEnergy ? Number.MAX_SAFE_INTEGER : parentAccount?.energy || 0,
       parentActive: Boolean(parentAccount?.active),
       direction: effect.request.direction,
       initialEnergy: effect.request.initial_energy,
@@ -538,6 +541,7 @@ export class EffectRuntime {
         if (current?.active || (current && (current.energy !== 0 || current.refundDeficitTokens > 0))) {
           throw new Error("Reproduction target changed during reset");
         }
+        this.ctx.store.ensureUnlimitedEnergy(effect.parentPixelId,effect.request.initial_energy,`reproduce:${effect.effectId}`);
         const parent = this.ctx.store.pixels.getPixelAccount(effect.parentPixelId);
         if (!parent?.active || parent.energy < effect.request.initial_energy) {
           throw new Error("Reproduction parent no longer has enough energy");

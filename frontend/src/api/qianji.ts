@@ -53,7 +53,7 @@ export interface QianjiBindingDto {
 }
 
 export interface QianjiListItemDto {
-  world?: {world_id:string;status:string;gateway_pixel_id:string|null;gatewayRevision:number;activePixels?:number;totalPixels?:number};
+  world?: {world_id:string;status:string;gateway_pixel_id:string|null;gatewayRevision:number;activePixels?:number;totalPixels?:number;infiniteEnergy?:boolean};
   profile: QianjiProfileDto;
   currentBinding: QianjiBindingDto | null;
   bindingHistory: QianjiBindingDto[];
@@ -99,6 +99,7 @@ export interface QianjiChatTurnDto {
   createdAt: number;
   repliedAt: number | null;
   status: 'queued' | 'processing' | 'replied' | 'no_reply' | 'blocked' | 'failed';
+  blockReason?: string | null;
   isMilestone?: boolean;
 }
 
@@ -128,6 +129,9 @@ export interface QianjiHistoryDto {
 export async function fetchQianjiList(signal?: AbortSignal, careerStatus?: QianjiCareerStatus): Promise<QianjiListItemDto[]> {
   const response = await apiRequest<{ items: QianjiListItemDto[] }>(`/api/qianji${careerStatus ? `?careerStatus=${careerStatus}` : ''}`, { signal });
   return response.items;
+}
+export async function setQianjiInfiniteEnergy(qianjiId: string, enabled: boolean): Promise<void> {
+  await apiRequest(`/api/qianji/${encodeURIComponent(qianjiId)}/infinite-energy`, {method:'PUT',body:JSON.stringify({enabled})});
 }
 
 export async function recruitQianji(idempotencyKey: string): Promise<QianjiProfileDto> {

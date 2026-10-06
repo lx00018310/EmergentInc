@@ -1,4 +1,7 @@
 export const en: Record<string, string> = {
+  "无限能量": "Unlimited energy",
+  "仅当前对话入口自动补能；本次运行预算仍然有效。": "Only the current chat gateway replenishes energy automatically. The Run budget still applies.",
+  "元胞能量不足，等待补充后重试。": "The Pixel has insufficient energy. Replenish it, then retry.",
   "Publish upgrade": "Publish upgrade",
   "错误提示": "Error",
   "V11 五层上下文说明": "V11: five context layers",

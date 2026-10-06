@@ -35,6 +35,7 @@ export class CoreStore {
   public readonly qianjiChat: QianjiChatRepository;
   public readonly executions: ExecutionRepository;
   public readonly gacha: GachaRepository;
+  private unlimitedEnergyPolicy: (pixelId: string) => boolean = () => false;
 
   constructor(dbPath: string = ":memory:", options: { readOnly?: boolean } = {}) {
     this.db = new SqliteDatabase(dbPath, options);
@@ -43,7 +44,7 @@ export class CoreStore {
     this.runs = new RunRepository(this.db);
     this.pixels = new PixelRepository(this.db);
     this.messages = new MessageRepository(this.db);
-    this.budgets = new BudgetRepository(this.db);
+    this.budgets = new BudgetRepository(this.db, (pixelId, required, key) => this.ensureUnlimitedEnergy(pixelId, required, key));
     this.modelCalls = new ModelCallRepository(this.db);
     this.toolExecutions = new ToolExecutionRepository(this.db);
     this.effects = new EffectRepository(this.db);
@@ -61,6 +62,24 @@ export class CoreStore {
 
   public transaction<T>(action: () => T): T {
     return this.db.transaction(action);
+  }
+
+  /** Trusted Owner policy; World agents cannot enable this through runtime APIs. */
+  public setUnlimitedEnergyPolicy(policy: (pixelId: string) => boolean): void {
+    this.unlimitedEnergyPolicy = policy;
+  }
+  public hasUnlimitedEnergy(pixelId: string): boolean { return this.unlimitedEnergyPolicy(pixelId); }
+
+  public ensureUnlimitedEnergy(pixelId: string, required: number, key: string): void {
+    if (!this.unlimitedEnergyPolicy(pixelId)) return;
+    if (!Number.isSafeInteger(required) || required < 0 || required >= Number.MAX_SAFE_INTEGER) throw new Error('INVALID_ENERGY_REQUIREMENT');
+    const account = this.pixels.getPixelAccount(pixelId);
+    if (!account?.active || account.refundDeficitTokens > 0 || account.energy > required) return;
+    if (this.db.prepare('SELECT 1 FROM external_reward_requests WHERE idempotency_key=?').get(`infinite-energy:${key}`)) return;
+    // Restore the normal initial balance, or enough for a larger authorized action.
+    const target = Math.max(100000, required + 1);
+    this.applyExternalReward({ pixelId, amount: target - account.energy, idempotencyKey: `infinite-energy:${key}`,
+      source: 'owner_infinite_energy', reason: 'Owner enabled automatic energy replenishment for the current gateway' });
   }
 
   /**

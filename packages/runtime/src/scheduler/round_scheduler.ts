@@ -46,7 +46,6 @@ export class RoundScheduler {
    */
   public beginRound(currentRound: number, runId: string | null, executionId: string | null = null): void {
     // 1. 尝试激活已补充能量的元胞等待消息
-    this.store.messages.tryRecoverWaitingPixelBudgetMessages(100, executionId);
 
     // 2. 自然唤醒只作用于当前调度范围内的合格成员。
     const execution = executionId ? this.store.executions.get(executionId) : null;
@@ -57,6 +56,10 @@ export class RoundScheduler {
           .filter((pixel): pixel is NonNullable<typeof pixel> => Boolean(pixel?.active))
       : this.store.pixels.listActivePixels().filter(pixel => this.store.executions.isWorldPixelEligible(pixel.pixelId));
 
+    for (const pixel of activePixels) {
+      this.store.ensureUnlimitedEnergy(pixel.pixelId,99,`wake:${runId}:${currentRound}:${pixel.pixelId}`);
+    }
+    this.store.messages.tryRecoverWaitingPixelBudgetMessages(100, executionId);
     for (const pixel of activePixels) {
       const pendingCount = this.store.messages.countPendingMessages(pixel.pixelId, executionId);
 

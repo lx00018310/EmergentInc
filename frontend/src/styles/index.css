@@ -2123,6 +2123,10 @@ select:focus {
   background: var(--tj-accent);
   color: #ffffff;
 }
+.qj-menu-energy { display: flex; flex-direction: column; gap: 4px; padding: 7px 12px; width: 220px; color: var(--tj-text-main); font-size: 11px; cursor: pointer; }
+.qj-menu-energy span { display: flex; align-items: center; gap: 6px; }
+.qj-menu-energy input { width: auto; margin: 0; }
+.qj-menu-energy small { font-size: 10px; line-height: 1.5; color: var(--tj-text-dim); }
 .qj-roster-add {
   position: relative;
   display: flex;

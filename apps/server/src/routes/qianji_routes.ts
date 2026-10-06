@@ -188,15 +188,16 @@ export async function registerQianjiRoutes(server: FastifyInstance, options: Qia
   const describe = async (profile: QianjiProfile) => {
     if (!options.worlds) return profileDto(store, workspaceRoot, profile);
     const world = options.worlds.registry.control.worldForQianji(profile.qianjiId);
+    const infiniteEnergy=options.worlds.registry.control.gatewayInfiniteEnergy(world.world_id);
     const blockedReason=options.worlds.registry.control.db.prepare('SELECT reason FROM world_recovery_blocks WHERE world_id=?').get(world.world_id)?.reason;
     const runtimeFailure=options.worlds.failure(world.world_id);
-    if(world.status !== 'ACTIVE'||blockedReason||runtimeFailure) return {profile,currentBinding:null,bindingHistory:store.qianji.listBindings(profile.qianjiId),physical:null,world:{...world,blockedReason,runtimeFailure}};
+    if(world.status !== 'ACTIVE'||blockedReason||runtimeFailure) return {profile,currentBinding:null,bindingHistory:store.qianji.listBindings(profile.qianjiId),physical:null,world:{...world,blockedReason,runtimeFailure,infiniteEnergy}};
     const runtime=await options.worlds.open(world.world_id), account=world.gateway_pixel_id?runtime.store.pixels.getPixelAccount(world.gateway_pixel_id):null;
     const counts=runtime.store.db.prepare('SELECT COUNT(*) total,SUM(active) active FROM pixel_accounts').get();
     const revision=options.worlds.registry.control.db.prepare('SELECT revision FROM world_gateway_state WHERE world_id=?').get(world.world_id)!.revision;
     return {profile,currentBinding:null,bindingHistory:store.qianji.listBindings(profile.qianjiId),
       physical:{accountExists:Boolean(account),active:account?.active??false,energy:account?.energy??null,refundDeficitTokens:account?.refundDeficitTokens??0,stateIncarnation:null,bindingConsistent:true},
-      world:{...world,totalPixels:Number(counts!.total),activePixels:Number(counts!.active??0),gatewayRevision:Number(revision)}};
+      world:{...world,totalPixels:Number(counts!.total),activePixels:Number(counts!.active??0),gatewayRevision:Number(revision),infiniteEnergy}};
   };
 
   server.get("/qianji", async (request, reply) => {
@@ -237,6 +238,19 @@ export async function registerQianjiRoutes(server: FastifyInstance, options: Qia
         FROM ${options.worlds?'world_conclusions':'qianji_conclusions'} WHERE qianji_id=? ORDER BY created_at DESC LIMIT ?`).all(id, limit)),
       costSemantics: "Model and tool costs remain nullable; carrierLegacy is reference-only and excluded from attributed totals.",
     });
+  });
+
+  server.put("/qianji/:id/infinite-energy", async (request, reply) => {
+    const id=String((request.params as any).id??''),body=request.body;
+    if(!options.worlds)return reply.status(404).send({detail:'WORLD_MODE_REQUIRED'});
+    if(!isRecord(body)||!hasOnlyKeys(body,['enabled'])||typeof body.enabled!=='boolean')return reply.status(400).send({detail:'INFINITE_ENERGY_INPUT_INVALID'});
+    const profile=store.qianji.getProfile(id);
+    if(!profile)return reply.status(404).send({detail:'Qianji not found'});
+    if(profile.careerStatus==='retired')return reply.status(409).send({detail:'QIANJI_RETIRED'});
+    const world=options.worlds.registry.control.worldForQianji(id);
+    if(world.status!=='ACTIVE')return reply.status(409).send({detail:'WORLD_NOT_ACTIVE'});
+    options.worlds.registry.control.setGatewayInfiniteEnergy(world.world_id,body.enabled);
+    return reply.send({enabled:body.enabled});
   });
 
   server.get("/qianji/:id/history/artifacts/:bindingId/:filename", async (request, reply) => {
@@ -329,7 +343,7 @@ export async function registerQianjiRoutes(server: FastifyInstance, options: Qia
       } else status = "failed";
       const { messageStatus: _messageStatus, modelOutcome, ...publicTurn } = turn;
       const marked = store.db.prepare("SELECT 1 AS marked FROM qianji_conclusions WHERE turn_id=?").get(turn.turnId);
-      return { ...publicTurn, status, modelOutcome, isMilestone: Boolean(marked) };
+      return { ...publicTurn, status, blockReason: turn.messageStatus, modelOutcome, isMilestone: Boolean(marked) };
     });
     return reply.send({ items, limit, offset, nextOffset: items.length === limit ? offset + items.length : null });
   });

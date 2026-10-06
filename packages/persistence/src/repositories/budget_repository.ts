@@ -41,7 +41,7 @@ export interface TokenCapacity {
 }
 
 export class BudgetRepository {
-  constructor(private db: SqliteDatabase) {}
+  constructor(private db: SqliteDatabase, private ensureEnergy?: (pixelId: string, required: number, key: string) => void) {}
 
   /** Current token capacity across every limit that will be enforced by reserve(). */
   public getAvailableTokenCapacity(params: { runId: string; pixelId: string; executionId?: string | null }): TokenCapacity {
@@ -144,7 +144,7 @@ export class BudgetRepository {
         SELECT energy, active, refund_deficit_tokens, spend_blocked_reason
         FROM pixel_accounts WHERE pixel_id = ?
       `);
-      const pixel = pixelStmt.get(pixelId) as any;
+      let pixel = pixelStmt.get(pixelId) as any;
       if (!pixel) {
         throw new Error(`Pixel ${pixelId} not found`);
       }
@@ -153,6 +153,8 @@ export class BudgetRepository {
           `Pixel ${pixelId} spend blocked by refund deficit (${pixel.refund_deficit_tokens} tokens)`
         );
       }
+      this.ensureEnergy?.(pixelId, estimatedTokens, `reserve:${callId}`);
+      pixel = pixelStmt.get(pixelId) as any;
       if (pixel.energy < estimatedTokens) {
         throw new BudgetExceededError(
           `Pixel ${pixelId} insufficient energy: balance ${pixel.energy} < estimated ${estimatedTokens}`,
@@ -236,6 +238,7 @@ export class BudgetRepository {
       const pixelId = res.pixel_id;
 
       // 1. 扣减 Pixel 能量
+      this.ensureEnergy?.(pixelId, actualTokens, `settle:${callId}`);
       this.db.prepare(`
         UPDATE pixel_accounts 
         SET energy = MAX(0, energy - ?),

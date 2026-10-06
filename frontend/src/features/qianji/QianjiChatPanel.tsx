@@ -75,7 +75,7 @@ export const QianjiChatPanel: React.FC<{
             <p className="qj-chat-question"><b>{tr("阁主")}</b>{turn.question}</p>
             {turn.status === 'replied' && turn.reply !== null
               ? <p className="qj-chat-reply"><b>{item.profile.narrative.displayName}</b>{turn.reply}</p>
-              : <p className={`qj-chat-state state-${turn.status}`}>{turn.status === 'queued' ? (tr("等待本轮处理")) : turn.status === 'processing' ? (tr("运行中")) : turn.status === 'no_reply' ? (tr("本次没有直接回复")) : turn.status === 'blocked' ? (tr("运行暂停，待处理")) : (tr("本次失败，可查看 Engine 状态"))}</p>}
+              : <p className={`qj-chat-state state-${turn.status}`}>{turn.status === 'queued' ? (tr("等待本轮处理")) : turn.status === 'processing' ? (tr("运行中")) : turn.status === 'no_reply' ? (tr("本次没有直接回复")) : turn.status === 'blocked' ? tr(turn.blockReason === 'WAITING_PIXEL_BUDGET' ? "元胞能量不足，等待补充后重试。" : "运行暂停，待处理") : (tr("本次失败，可查看 Engine 状态"))}</p>}
           </article>
         ))}
       </div>

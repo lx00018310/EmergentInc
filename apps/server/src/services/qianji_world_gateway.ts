@@ -38,7 +38,7 @@ export class QianjiWorldGateway {
       else if(message && ['PROCESSING','RESERVED','CALLING','RESPONSE_STORED'].includes(message.status))status=runtime?.run.getStatus().running?'processing':'blocked';
       return {turnId:row.turn_id,qianjiId:row.qianji_id,worldId:row.world_id,
         bindingId:null,messageId:row.message_id,question:row.question,reply:row.reply,createdAt:Number(row.created_at)/1000,repliedAt:row.replied_at?Number(row.replied_at)/1000:null,
-        entryPixelId:row.entry_pixel_id,isMilestone:Boolean(control.db.prepare('SELECT turn_id FROM world_conclusions WHERE turn_id=?').get(row.turn_id)),status};
+        entryPixelId:row.entry_pixel_id,isMilestone:Boolean(control.db.prepare('SELECT turn_id FROM world_conclusions WHERE turn_id=?').get(row.turn_id)),status,blockReason:message?.status??null};
     });
   }
 }

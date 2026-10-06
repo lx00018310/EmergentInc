@@ -30,6 +30,36 @@ async function fixture(){const root=fs.mkdtempSync(join(tmpdir(),'v23-product-')
   return {root,lineage,control,registry,manager,a,b,genome,payments,promotion,app,request,narrative,generation};
 }
 describe('authenticated V23 product and life integration',()=>{
+  it('authorizes infinite energy only for the current gateway, persists it across runtime reopen and follows gateway replacement',async()=>{
+    const f=await fixture(),a=await f.manager.open(f.a.world_id),b=await f.manager.open(f.b.world_id);
+    a.store.db.prepare('UPDATE pixel_accounts SET energy=10').run();
+    b.store.db.prepare('UPDATE pixel_accounts SET energy=10').run();
+    a.store.pixels.upsertPixelAccount({pixelId:'1_0_0',energy:0,active:false,refundDeficitTokens:0,spendBlockedReason:null});
+    const url=`/api/qianji/${f.a.qianji_id}/infinite-energy`;
+    expect((await f.app.inject({method:'PUT',url,payload:{enabled:true}})).statusCode).toBe(401);
+    expect((await f.request('PUT',url,{enabled:'true'})).statusCode).toBe(400);
+    expect((await f.request('PUT',url,{enabled:true})).statusCode).toBe(200);
+    f.manager.options.provider.call=async()=>({rawText:JSON.stringify({send_to:'STOP',owner_reply:'done',energy_transfer:[{target:'1_0_0',amount:120000}]}),usage:{promptTokens:50,completionTokens:40}});
+    const chat=await f.request('POST',`/api/qianji/${f.a.qianji_id}/chat`,{content:'choose whether to help',idempotencyKey:'unlimited',rounds:1,runBudgetTokens:100000});
+    expect(chat.statusCode,chat.body).toBe(202);
+    while(a.run.getStatus().running)await new Promise(r=>setTimeout(r,10));
+    expect((await f.request('GET',`/api/qianji/${f.a.qianji_id}/chat`)).json().items[0].status).toBe('replied');
+    expect(a.store.pixels.getPixelAccount('1_0_0')).toMatchObject({energy:120000,active:true});
+    expect(b.store.pixels.getPixelAccount('0_0_0')?.energy).toBe(10);
+    expect(a.store.ledger.listEntriesByPixel('1_0_0').filter(entry=>entry.entry_type==='external_reward')).toHaveLength(0);
+    await f.manager.close(f.a.world_id);const reopened=await f.manager.open(f.a.world_id);
+    expect((await f.request('GET',`/api/qianji/${f.a.qianji_id}`)).json().world.infiniteEnergy).toBe(true);
+    expect((await f.request('PUT',`/api/worlds/${f.a.world_id}/gateway`,{pixel_id:'1_0_0',expected_revision:0})).statusCode).toBe(200);
+    reopened.store.db.prepare('UPDATE pixel_accounts SET energy=10').run();
+    reopened.store.ensureUnlimitedEnergy('0_0_0',500,'old-gateway');
+    reopened.store.ensureUnlimitedEnergy('1_0_0',500,'new-gateway');
+    expect(reopened.store.pixels.getPixelAccount('0_0_0')?.energy).toBe(10);
+    expect(reopened.store.pixels.getPixelAccount('1_0_0')?.energy).toBe(100000);
+    await f.request('PUT',url,{enabled:false});
+    reopened.store.db.prepare("UPDATE pixel_accounts SET energy=10 WHERE pixel_id='1_0_0'").run();
+    reopened.store.ensureUnlimitedEnergy('1_0_0',500,'disabled');
+    expect(reopened.store.pixels.getPixelAccount('1_0_0')?.energy).toBe(10);
+  });
   it('stops a 100-round run when Pixel energy cannot fund a call and reports blocked chat',async()=>{
     const f=await fixture(),runtime=await f.manager.open(f.a.world_id);
     runtime.store.db.prepare('UPDATE pixel_accounts SET energy=322').run();

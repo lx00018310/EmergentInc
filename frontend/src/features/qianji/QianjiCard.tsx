@@ -15,16 +15,18 @@ export interface QianjiCardProps {
   onSelect: (qianjiId: string) => void;
   onMenuAction?: (qianjiId: string, action: QianjiMenuAction) => void;
   showMeetingAction?: boolean;
+  onInfiniteEnergyChange?: (qianjiId: string, enabled: boolean) => Promise<void>;
 }
 
 import { TechGoggleAvatar } from './TechGoggleAvatar';
 
 
-export const QianjiCard: React.FC<QianjiCardProps> = ({ item, selected, onSelect, onMenuAction, showMeetingAction }) => {
+export const QianjiCard: React.FC<QianjiCardProps> = ({ item, selected, onSelect, onMenuAction, showMeetingAction, onInfiniteEnergyChange }) => {
   useLanguage();
   const { profile, currentBinding, physical } = item;
   const [imageFailed, setImageFailed] = React.useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [energySaving, setEnergySaving] = useState(false);
   const menuRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -95,6 +97,11 @@ export const QianjiCard: React.FC<QianjiCardProps> = ({ item, selected, onSelect
           <div className="qj-menu-popover" role="menu" aria-label={tr("{0}操作菜单", [profile.narrative.displayName])}>
             <button type="button" role="menuitem" onClick={() => fire('history')}>{tr("经历")}</button>
             <button type="button" role="menuitem" onClick={() => fire('narrative')}>{tr("出生")}</button>
+            {item.world?.status==='ACTIVE' && profile.careerStatus!=='retired' && onInfiniteEnergyChange && <label className="qj-menu-energy">
+              <span><input type="checkbox" role="menuitemcheckbox" aria-label={tr("无限能量")} checked={Boolean(item.world.infiniteEnergy)} disabled={energySaving}
+                onChange={async event=>{const enabled=event.target.checked;setEnergySaving(true);try{await onInfiniteEnergyChange(profile.qianjiId,enabled);}finally{setEnergySaving(false);}}}/>{tr("无限能量")}</span>
+              <small>{tr("仅当前对话入口自动补能；本次运行预算仍然有效。")}</small>
+            </label>}
             {showMeetingAction && <button type="button" role="menuitem" onClick={() => fire('meeting')}>{tr("发起会议")}</button>}
             {profile.careerStatus !== 'retired' && <button type="button" role="menuitem" onClick={() => fire('retire')}>{tr("办理退役")}</button>}
           </div>
