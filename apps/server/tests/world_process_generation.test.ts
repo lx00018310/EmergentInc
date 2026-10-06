@@ -60,7 +60,7 @@ it.skipIf(process.env.EMERGENTINC_CANDIDATE_MODE==='1')('preserves public busine
   try{
     await runtime.start();await runtime.healthy('G0001');await runtime.resume();await login();
     const initial=(await call('GET','/api/public-site')).settings,{product_id:_product,updated_at:_updated,...settings}=initial;
-    await call('PUT','/api/public-site',{...settings,product_enabled:true,product_price:'10'});
+    await call('PUT','/api/public-site',{...settings,product_enabled:true,product_price:'10',product_name_en:'Process test service',product_name_zh:'进程测试服务',product_description_en:'Test service',product_description_zh:'测试服务'});
     const checkout={product_id:'custom-service',customer_name:'Process test customer',customer_contact:'test@example.invalid',customer_requirement:'V24 data continuity',rail_id:'bsc',language:'en',idempotency_key:'process-order-before-upgrade-00000001'};
     const publicOrder=await publicCall('POST','/api/public/orders',checkout);
     await runtime.stop();await runtime.start();await runtime.healthy('G0001');await runtime.resume();await login();

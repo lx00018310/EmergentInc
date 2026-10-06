@@ -31,6 +31,7 @@ describe('V24 public and bilingual entry', () => {
   it.each(['/GENE', '/QIAN', '/YUAN'])('switches language at Owner entry %s', async path => {
     window.history.replaceState(null, '', path); localStorage.removeItem('emergentinc.language');
     render(<Entry />);
+    for(const page of ['QIAN','YUAN','GENE'])expect(screen.getByRole('link',{name:page}).getAttribute('href')).toBe('/'+page);
     expect(screen.getByRole('heading', { name: 'Log in to EmergentInc' })).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: '中文' }));
     expect(screen.getByRole('heading', { name: '登录元胞会社' })).toBeTruthy();

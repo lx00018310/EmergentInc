@@ -4,7 +4,8 @@ export interface Site {
 }
 export interface Product {
   product_id: string; product_name_en: string; product_name_zh: string;
-  product_description_en: string; product_description_zh: string; product_price: string; product_currency: 'USDT';
+  product_description_en: string; product_description_zh: string; product_price: string | null; product_currency: 'USDT';
+  product_enabled?: number | boolean;
 }
 export interface Payment {
   order_id: string; status: string; invoice_status: string; chain: string; amount: string;

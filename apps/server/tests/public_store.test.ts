@@ -37,7 +37,7 @@ async function fixture() {
   clean.push(async () => { await app.close(); await manager.closeAll(); store.close(); payments.close(); control.close(); lineage.close(); fs.rmSync(root, { recursive: true, force: true }); });
   const settings = () => {
     const { product_id: _id, updated_at: _at, ...input } = store.settings();
-    return { ...input, product_enabled: true, product_price: '10', product_currency: 'USDT' };
+    return { ...input, product_enabled: true, product_price: '10', product_currency: 'USDT',product_name_en:'Custom Service',product_name_zh:'定制服务',product_description_en:'Test service',product_description_zh:'测试服务' };
   };
   const owner = (method: any, url: string, payload?: unknown) => app.inject({ method, url, payload, headers: { cookie } });
   const body = (key = 'k'.repeat(40)) => ({ product_id: 'custom-service', customer_name: 'Ada', customer_contact: 'ada@example.com', customer_requirement: 'Help deploy my business', rail_id: 'bsc', idempotency_key: key, language: 'en' });
@@ -61,6 +61,38 @@ function wire(invoice: any) {
   return { signature, evidence, rpc };
 }
 describe('V24 anonymous store with an instance treasury', () => {
+  it('shows two empty products, denies placeholder checkout, and prices orders from the selected product',async()=>{
+    const f=await fixture();
+    const initial=(await f.app.inject('/api/public/products')).json().items;
+    expect(initial).toHaveLength(2);expect(initial.every((p:any)=>!p.product_enabled&&p.product_price===null&&!p.product_name_en&&!p.product_name_zh)).toBe(true);
+    expect((await f.app.inject({method:'POST',url:'/api/public/orders',payload:{...f.body(),product_id:'product-2'}})).statusCode).toBe(404);
+    expect(f.control.db.prepare('SELECT count(*) n FROM orders').get()!.n).toBe(0);
+    const second={product_enabled:true,product_price:'23',product_currency:'USDT',product_name_en:'Second service',product_name_zh:'第二项服务',product_description_en:'Second description',product_description_zh:'第二项说明'};
+    expect((await f.app.inject({method:'PUT',url:'/api/public-site/products/product-2',payload:second})).statusCode).toBe(401);
+    expect((await f.owner('PUT','/api/public-site/products/product-2',{...second,product_name_zh:''})).statusCode).toBe(400);
+    expect((await f.owner('PUT','/api/public-site/products/product-2',second)).statusCode).toBe(200);
+    const response=await f.app.inject({method:'POST',url:'/api/public/orders',payload:{...f.body(),product_id:'product-2'}});expect(response.statusCode).toBe(201);
+    const old=f.control.db.prepare('SELECT * FROM orders').get()!;expect(old).toMatchObject({product_id:'product-2',product_name_snapshot:'Second service',amount:'23.000000'});
+    expect((await f.owner('PUT','/api/public-site/products/product-2',{...second,product_enabled:false,product_price:'50'})).statusCode).toBe(200);
+    expect((await f.payment(response.json())).json().quoted_amount).toBe('23.000000');
+    expect((await f.owner('POST','/api/public-site/products',{})).statusCode).toBe(200);expect(f.store.products().items).toHaveLength(3);
+    expect(f.control.db.prepare('SELECT * FROM orders').get()).toEqual(old);
+  });
+  it('migrates the single-product constraint while retaining an existing paid order and invoice graph',async()=>{
+    const f=await fixture();await f.publish();const order=await f.order(),invoice=f.payments.invoice(String(f.control.db.prepare('SELECT invoice_id FROM orders').get()!.invoice_id)),evidence=wire(invoice);
+    f.payments.observe(invoice.invoice_id,evidence.signature,'finalized',evidence.evidence);
+    const copy=join(f.root,'legacy-control.sqlite3');await snapshotDatabase(join(f.root,'system/control/control.sqlite3'),copy);
+    const old=new SqliteDatabase(copy);old.exec('PRAGMA foreign_keys=OFF;');old.transaction(()=>{
+      old.exec("DELETE FROM public_products WHERE product_id='product-2';");
+      const sql=String(old.prepare("SELECT sql FROM sqlite_master WHERE name='public_products'").get()!.sql);
+      old.exec(sql.replace(/^CREATE TABLE\s+"?public_products"?/i,'CREATE TABLE public_products_old').replace('product_id TEXT PRIMARY KEY',"product_id TEXT PRIMARY KEY CHECK(product_id='custom-service')"));
+      old.exec('INSERT INTO public_products_old SELECT * FROM public_products; DROP TABLE public_products; ALTER TABLE public_products_old RENAME TO public_products;');
+    });const before=old.prepare('SELECT * FROM orders').all(),product=old.prepare('SELECT * FROM public_products').get();old.close();
+    const control=new WorldRegistryStore(copy),upgraded=new PublicStore(control,f.payments);
+    try{expect(control.db.prepare('SELECT * FROM orders').all()).toEqual(before);expect(upgraded.product(false)).toEqual(product);expect(upgraded.products().items).toHaveLength(2);
+      expect(control.db.prepare('PRAGMA foreign_key_check').all()).toEqual([]);expect(upgraded.payment(order.order_id,order.public_order_token).status).toBe('PAID');
+    }finally{upgraded.close();control.close();}
+  });
   it('reverses V24 attribution preserving historical receipts, but refuses any instance invoice', async () => {
     const f=await fixture(),legacy=join(f.root,'legacy');fs.mkdirSync(join(legacy,'genome'),{recursive:true});
     fs.writeFileSync(join(legacy,'genome/manifest.json'),JSON.stringify({capability_contracts:{}}));
@@ -108,7 +140,8 @@ describe('V24 anonymous store with an instance treasury', () => {
   it('serves public entry and only the exact anonymous allowlist; never leaks Owner data or permits public settings mutations', async () => {
     const f = await fixture(); await f.publish();
     for (const url of ['/', '/api/public/site', '/api/public/products', '/api/public/products/custom-service', '/api/public/payment-rails']) expect((await f.app.inject(url)).statusCode).toBe(200);
-    for (const url of ['/api/evolution/overview', '/api/worlds', '/api/business/overview', '/api/public-site', '/api/payments/rails', '/api/public/private', '/api/public/orders', '/api/public/products/unknown']) expect((await f.app.inject(url)).statusCode).toBe(401);
+    for (const url of ['/api/evolution/overview', '/api/worlds', '/api/business/overview', '/api/public-site', '/api/payments/rails', '/api/public/private', '/api/public/orders']) expect((await f.app.inject(url)).statusCode).toBe(401);
+    expect((await f.app.inject('/api/public/products/unknown')).statusCode).toBe(404);
     expect((await f.app.inject({ method: 'PUT', url: '/api/public/site', payload: {} })).statusCode).toBe(401);
     expect((await f.app.inject({ url: '/api/public/site', headers: { origin: 'https://attacker.example' } })).statusCode).toBe(403);
     expect(JSON.stringify((await f.app.inject('/api/public/payment-rails')).json())).not.toMatch(/rpc_id|recipient_address|secret|credential|qianji_id|world_id/);
@@ -125,7 +158,7 @@ describe('V24 anonymous store with an instance treasury', () => {
     expect((await f.app.inject({ method: 'POST', url: '/api/public/orders', payload: { ...f.body('new'.repeat(12)), amount: '0.01', world_id: f.a.world_id } })).statusCode).toBe(400);
     expect((await f.app.inject({ method: 'POST', url: '/api/public/orders', payload: { ...f.body(), customer_name: 'Changed' } })).statusCode).toBe(409);
     await f.owner('PUT', '/api/public-site', { ...f.settings(), product_enabled: false, product_name_en: 'Changed name', product_price: '20' });
-    expect((await f.app.inject('/api/public/products')).json().items).toEqual([]);
+    expect((await f.app.inject('/api/public/products')).json().items.every((p:any)=>!p.product_enabled)).toBe(true);
     expect(first).toEqual(await f.order()); expect((await f.payment(first)).json().quoted_amount).toBe('10.000000');
     expect(f.control.db.prepare('SELECT COUNT(*) n FROM products').get()!.n).toBe(0);
   });
@@ -161,7 +194,7 @@ describe('V24 anonymous store with an instance treasury', () => {
       expect(reopenedPayment.revenue(null).mainnetAtomic).toBe('10000001'); expect(reopenedPayment.db.prepare('SELECT COUNT(*) n FROM payment_receipts').get()!.n).toBe(1);
       expect(f.lineage.db.prepare("SELECT COUNT(*) n FROM memories WHERE source='chain_finalized'").get()!.n).toBe(1);
     } finally { restarted.close(); reopenedPayment.close(); recovered.close(); }
-  });
+  },15000); // Database reopen + WAL writes can exceed the default 5s on Windows.
   it('propagates Owner cancellation to the order and leaves subsequent money in review without recognizing revenue', async () => {
     const f = await fixture(); await f.publish(); const order = await f.order();
     const invoice = f.payments.invoice(String(f.control.db.prepare('SELECT invoice_id FROM orders').get()!.invoice_id));

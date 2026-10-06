@@ -3,14 +3,15 @@ import QRCode from 'qrcode';
 import { PublicError, PublicStore } from '../services/public_store.js';
 
 export function isAnonymousStoreRoute(method: string, path: string) {
-  return method === 'GET' && ['/api/public/site', '/api/public/products', '/api/public/products/custom-service', '/api/public/payment-rails'].includes(path) ||
+  return method === 'GET' && ['/api/public/site', '/api/public/products', '/api/public/payment-rails'].includes(path) ||
+    method === 'GET' && /^\/api\/public\/products\/[a-zA-Z0-9_-]{1,100}$/.test(path) ||
     method === 'POST' && path === '/api/public/orders' || method === 'GET' && /^\/api\/public\/orders\/order_[a-f0-9-]{36}\/payment$/.test(path);
 }
 export function registerPublicRoutes(app: FastifyInstance, store: PublicStore) {
   const attempts = new Map<string, { start: number; count: number }>();
   app.get('/api/public/site', async () => store.site());
   app.get('/api/public/products', async () => store.products());
-  app.get('/api/public/products/custom-service', async () => store.product());
+  app.get<{Params:{id:string}}>('/api/public/products/:id', async req => store.product(false,req.params.id));
   app.get('/api/public/payment-rails', async () => ({ items: store.rails() }));
   app.post('/api/public/orders', { bodyLimit: 16000 }, async (req, reply) => {
     const now = Date.now();
@@ -27,4 +28,6 @@ export function registerPublicRoutes(app: FastifyInstance, store: PublicStore) {
   });
   app.get('/api/public-site', async () => store.overview());
   app.put('/api/public-site', async req => store.configure(req.body));
+  app.post('/api/public-site/products', async req => store.addProduct(req.body));
+  app.put<{Params:{id:string}}>('/api/public-site/products/:id', async req => store.configureProduct(req.params.id,req.body));
 }

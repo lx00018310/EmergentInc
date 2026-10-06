@@ -14,7 +14,7 @@ You provide the idea, resources and final decisions. EmergentInc provides AI-pow
 
 | Address | Purpose |
 | --- | --- |
-| `/` | Public marketing, Custom Service and checkout; no Owner login required |
+| `/` | Public store, product details, checkout and order lookup; no Owner login required |
 | `/QIAN` | Internal characters, conversations, Worlds and character income |
 | `/YUAN?world=<world_id>` | Internal Pixels, Runs, messages, artifacts, Body and collaboration |
 | `/GENE` | Internal business operations, Root of Trust, Gene, Evolution, Memory, payments and Public Site settings |
@@ -23,7 +23,7 @@ All four entries support English and Chinese. English is the initial language; a
 
 The public website belongs to the instance. All characters and Worlds work for the same business and may divide work or collaborate using existing capabilities. Public orders and revenue belong to the instance, without an arbitrary character attribution. Existing World invoices and revenue retain their original attribution.
 
-The initial product is **Custom Service**: help deploying, configuring or customizing EmergentInc for a customer's own AI-powered online business. The Owner controls both language versions, price and availability in `/GENE`. There is no cart, customer account, inventory or CMS.
+The store supports multiple products and initially displays two blank placeholders with empty names, descriptions and prices, and purchasing disabled. Edit both languages, price and availability for each product, or add a blank product, in `/GENE` → Public Site. The homepage Backend button requires the existing `.env` `EMERGENTINC_OWNER_SECRET`, validated by the server before opening `/QIAN`; the secret never enters the frontend bundle. QIAN / YUAN / GENE each provide all three page links in their top bar.
 
 ## World, Qianji and Pixel
 
@@ -43,7 +43,7 @@ Self-evolution stays within verified contracts and approvals. Agents cannot edit
 
 ## Orders and USDT payments
 
-Website → Custom Service → customer details → Order → USDT Invoice / QR → existing Payment Monitor → confirmed payment → paid Order → instance revenue visible in `/GENE`.
+Store → select a listed product → customer details → Order → USDT Invoice / QR → existing Payment Monitor → confirmed payment → paid Order → instance revenue visible in `/GENE`.
 
 Enable a payment rail in `/GENE`. No merchant address is supplied by default. The server stores no wallet private key, signs no transaction and sends no funds. Supported rails reuse existing mainnet Solana USDT, BSC Binance-Peg USDT, Polygon PoS USDT0 and TRON TRC-20 USDT.
 

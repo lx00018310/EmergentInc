@@ -57,12 +57,12 @@ describe('V24 checkout and Owner product settings', () => {
     setLanguage('en');
     const settings = { ...product, product_enabled: 1, site_name: 'EmergentInc', headline_en: 'Business', headline_zh: '生意', description_en: 'Description', description_zh: '介绍',
       github_url: '', contact_text_en: 'Contact', contact_text_zh: '联系', updated_at: Date.now() };
-    const fetch = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => response({ settings, rails: [], revenue: { mainnetAtomic: '10000001', byChain: [] }, orders: [] }));
+    const fetch = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => response({ settings, products:[{...product,product_enabled:1}], rails: [], revenue: { mainnetAtomic: '10000001', byChain: [] }, orders: [] }));
     render(<PublicSiteSettings />); await screen.findByLabelText('Price (USDT)');
     fireEvent.change(screen.getByLabelText('Price (USDT)'), { target: { value: '25.5' } });
     fireEvent.click(screen.getByLabelText('Product available for purchase'));
-    fireEvent.submit(screen.getByRole('button', { name: 'Save public site and product' }).closest('form')!);
-    await screen.findByText('Site settings saved.');
+    fireEvent.submit(screen.getByRole('button', { name: 'Save product' }).closest('form')!);
+    await screen.findByText('Product saved.');
     const request = fetch.mock.calls.find(([, init]) => init?.method === 'PUT')!;
     expect(JSON.parse(String(request[1]!.body))).toMatchObject({ product_enabled: false, product_price: '25.5', product_currency: 'USDT' });
     expect(JSON.parse(String(request[1]!.body))).not.toHaveProperty('product_id'); expect(JSON.parse(String(request[1]!.body))).not.toHaveProperty('updated_at');

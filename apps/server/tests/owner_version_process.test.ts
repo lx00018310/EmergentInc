@@ -39,7 +39,7 @@ it.skipIf(!process.env.EMERGENTINC_TEST_V23_RELEASE||process.env.EMERGENTINC_CAN
   try{
     await runtime.start();await runtime.healthy('G0001');await runtime.resume();expect(paymentVersion()).toBe(2);
     await prepare('r2',2);await supervisor.birth('r2');expect(paymentVersion()).toBe(3);
-    expect((await (await fetch(runtime.config.appUrl+'/api/public/products')).json() as any).items).toEqual([]);
+    expect((await (await fetch(runtime.config.appUrl+'/api/public/products')).json() as any).items.every((product:any)=>!product.product_enabled)).toBe(true);
     for(const world of worlds){const current=new CurrentStore(join(registry.directory(world.world_id),'generations/G0002/current.sqlite3'),{readOnly:true});try{expect(current.meta().generation_id).toBe('G0002');}finally{current.close();}}
     expect(lineage.db.prepare("SELECT * FROM dream_runs WHERE status='COMPLETED'").all()).toHaveLength(0);
     await supervisor.rollback('r2','Explicit rollback rehearsal');expect(paymentVersion()).toBe(2);expect(lineage.activeGeneration()?.id).toBe('G0001');
