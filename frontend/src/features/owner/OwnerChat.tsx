@@ -4,6 +4,7 @@ import { askOwner, type OwnerChatTurn } from '../../api/ownerChat';
 import { ApiError } from '../../api/client';
 import { askMissionOwner, ownerError, type OwnerActionProposal } from '../../api/owner';
 import { OwnerActionCard } from './OwnerActionCard';
+import { OwnerMarkdown } from './OwnerMarkdown';
 
 const STORAGE_KEY = 'emergentinc.ownerChat.history';
 type Message = OwnerChatTurn & { proposals?: OwnerActionProposal[]; sources?: string[]; as_of?: string; usage?: { tokens: number | null; cost_cny: number | null } };
@@ -27,10 +28,12 @@ export const OwnerChat: React.FC<{missionControl?:boolean;onDone?:()=>void}> = (
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const endRef = useRef<HTMLDivElement>(null);
+  const answerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     try { localStorage.setItem(STORAGE_KEY, JSON.stringify(messages.slice(-40))); } catch { /* 浏览器存储不可用时仅保留当前页面 */ }
-    endRef.current?.scrollIntoView?.({ block: 'end' });
+    if (messages.at(-1)?.role === 'assistant') answerRef.current?.scrollIntoView?.({ block: 'start' });
+    else endRef.current?.scrollIntoView?.({ block: 'end' });
   }, [messages]);
 
   const send = async () => {
@@ -61,9 +64,9 @@ export const OwnerChat: React.FC<{missionControl?:boolean;onDone?:()=>void}> = (
       <div className="owner-chat-history" aria-label={tr("老板窗口对话记录")}>
         {messages.length === 0 && <p className="form-hint">{tr(missionControl ? 'Ask about progress, or propose a person chat, plan approval or resource decision. Actions need confirmation.' : "可询问项目进度、运行状态和 Pixel 工作。回答会读取提问时的最新数据，并列出依据。")}</p>}
         {messages.map((message, index) => (
-          <div className={`owner-chat-message ${message.role}`} key={index}>
+          <div className={`owner-chat-message ${message.role}`} key={index} ref={message.role === 'assistant' && index === messages.length - 1 ? answerRef : undefined}>
             <strong>{message.role === 'user' ? (tr("老板")) : (tr("助手"))}</strong>
-            <div className="owner-chat-content">{message.content}</div>
+            {message.role === 'assistant' ? <OwnerMarkdown content={message.content} /> : <div className="owner-chat-content">{message.content}</div>}
             {message.role === 'assistant' && (
               <div className="owner-chat-evidence">
                 {message.as_of && <div>{tr("读取时间：")}{new Date(message.as_of).toLocaleString()}</div>}

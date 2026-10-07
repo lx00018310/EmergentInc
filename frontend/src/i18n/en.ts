@@ -1,4 +1,6 @@
 export const en: Record<string, string> = {
+  "脚注": "Footnotes",
+  "返回引用": "Back to reference",
   "Time not recorded.": "Time not recorded.",
   "模型返回的文件选择内容不是有效 JSON。": "The model did not return valid JSON for file selection.",
   "模型未返回文件选择内容。": "The model returned no file selection.",

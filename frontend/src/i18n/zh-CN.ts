@@ -1,4 +1,6 @@
 export const zhCN: Record<string, string> = {
+  "脚注": "脚注",
+  "返回引用": "返回引用",
   "Time not recorded.": "未记录时间。",
   "模型返回的文件选择内容不是有效 JSON。": "模型返回的文件选择内容不是有效 JSON。",
   "模型未返回文件选择内容。": "模型未返回文件选择内容。",
