@@ -4,8 +4,17 @@ import { OwnerEntry } from '../src/OwnerEntry';
 
 vi.mock('../src/App', () => ({ App: () => <h1>人物与元胞界面</h1> }));
 vi.mock('../src/features/business/BusinessHome', () => ({ BusinessHome: () => <h1>完整经营工作台</h1> }));
+vi.mock('../src/features/owner/OwnerConsole', () => ({ OwnerConsole: () => <h1>Owner Mission Control</h1> }));
 afterEach(() => { cleanup(); vi.restoreAllMocks(); window.history.replaceState(null, '', '/'); });
 describe('product URL ownership', () => {
+  it.each(['/OWNER','/owner/'])('opens Mission Control at %s after login',async path=>{
+    window.history.replaceState(null,'',path);
+    vi.spyOn(globalThis,'fetch').mockResolvedValueOnce({ok:true,json:async()=>({authenticated:false,mode:'business'})} as Response).mockResolvedValue({ok:true,json:async()=>({authenticated:true,mode:'business',worldsEnabled:true})} as Response);
+    render(<OwnerEntry/>);await screen.findByRole('button',{name:'登录'});
+    fireEvent.change(screen.getByLabelText('Owner 口令'),{target:{value:'test-owner-secret'}});
+    fireEvent.submit(screen.getByRole('button',{name:'登录'}).closest('form')!);
+    expect(await screen.findByRole('heading',{name:'Owner Mission Control'})).toBeTruthy();expect(window.location.pathname).toBe('/OWNER');
+  });
   it.each(['/','/QIAN','/YUAN'])('shows Body at %s even when the server runs business mode', async path => {
     window.history.replaceState(null, '', path);
     vi.spyOn(globalThis, 'fetch').mockResolvedValue({ ok: true, json: async () => ({ authenticated: true, mode: 'business' }) } as Response);

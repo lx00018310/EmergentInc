@@ -78,6 +78,17 @@ describe("OwnerChatService", () => {
     });
     await expect(service.ask("进度？")).rejects.toThrow("耗尽输出 Token 上限");
   });
+  it('uses bounded global evidence and the requested language while keeping metering independent',async()=>{
+    const root=fs.mkdtempSync(path.join(os.tmpdir(),'owner-global-')),store=new CoreStore(':memory:'),requests:string[]=[];
+    cleanup.push(()=>{store.close();fs.rmSync(root,{recursive:true,force:true});});
+    const service=new OwnerChatService({projectRoot:root,workspaceRoot:root,store,modelName:'test',isModelConfigured:true,usageMeter:new UsageMeter({models:{}}),
+      snapshot:async()=>({data:{people:[{name:'A',work:'Report'},{name:'B',work:'Interview'}],inbox:[{type:'plan',title:'Research'}]},sources:['Owner global overview']}),
+      provider:{async call(r){requests.push(JSON.stringify(r.messages));return {rawText:requests.length===1?' {"files":[]}':'Report and interview underway.',usage:{promptTokens:10,completionTokens:5}};}}});
+    const answer=await service.ask('What is everyone doing?',[{role:'user',content:'Previous question'}],'en');
+    expect(requests[1]).toContain('Report');expect(requests[1]).toContain('Interview');expect(requests[1]).toContain('英文');expect(requests[1]).toContain('Previous question');
+    expect(answer.sources).toEqual(['Owner global overview']);expect(answer.usage.tokens).toBe(30);
+    expect(store.db.prepare('SELECT COUNT(*) n FROM ledger_entries').get()!.n).toBe(0);
+  });
 
   it("/api/owner/chat 接收问题并拒绝无效历史", async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "owner_chat_route_"));

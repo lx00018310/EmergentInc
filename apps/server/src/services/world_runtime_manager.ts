@@ -26,6 +26,7 @@ export class WorldRuntimeManager {
   private opening = new Map<string, Promise<WorldRuntime>>();
   constructor(readonly registry: WorldRegistryService, readonly genome: GenomeManifest, readonly options: WorldRuntimeOptions) {if(!registry.lineage.worldsEnabled)throw new Error('V23_WORLD_LINEAGE_REQUIRED');}
   currents(){return [...this.opened.values()].map(r=>({id:r.id,current:r.life.current}));}
+  peek(id:string){return this.opened.get(id);}
   list() { return this.registry.list().map(row=>({...row,runtimeFailure:this.failures.get(row.world_id)??null,blockedReason:this.registry.control.db.prepare('SELECT reason FROM world_recovery_blocks WHERE world_id=?').get(row.world_id)?.reason??null, opened:this.opened.has(row.world_id), running:this.opened.get(row.world_id)?.run.getStatus().running??false})); }
   async open(id: string): Promise<WorldRuntime> {
     const old=this.opened.get(id); if(old)return old;

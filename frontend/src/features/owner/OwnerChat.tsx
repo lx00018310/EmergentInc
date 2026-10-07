@@ -2,9 +2,11 @@ import { t as tr, useLanguage } from '../../i18n';
 import React, { useEffect, useRef, useState } from 'react';
 import { askOwner, type OwnerChatTurn } from '../../api/ownerChat';
 import { ApiError } from '../../api/client';
+import { askMissionOwner, ownerError, type OwnerActionProposal } from '../../api/owner';
+import { OwnerActionCard } from './OwnerActionCard';
 
 const STORAGE_KEY = 'emergentinc.ownerChat.history';
-type Message = OwnerChatTurn & { sources?: string[]; as_of?: string; usage?: { tokens: number | null; cost_cny: number | null } };
+type Message = OwnerChatTurn & { proposals?: OwnerActionProposal[]; sources?: string[]; as_of?: string; usage?: { tokens: number | null; cost_cny: number | null } };
 
 function loadHistory(): Message[] {
   try {
@@ -18,7 +20,7 @@ function loadHistory(): Message[] {
   }
 }
 
-export const OwnerChat: React.FC = () => {
+export const OwnerChat: React.FC<{missionControl?:boolean;onDone?:()=>void}> = ({missionControl=false,onDone}) => {
   useLanguage();
   const [messages, setMessages] = useState<Message[]>(loadHistory);
   const [draft, setDraft] = useState('');
@@ -40,13 +42,13 @@ export const OwnerChat: React.FC = () => {
     setError(null);
     setBusy(true);
     try {
-      const response = await askOwner(question, history);
+      const response = missionControl ? await askMissionOwner(question, history) : await askOwner(question, history);
       setMessages(previous => [...previous, {
         role: 'assistant' as const, content: response.answer, sources: response.sources,
-        as_of: response.as_of, usage: response.usage,
+        as_of: response.as_of, usage: response.usage, proposals: 'proposals' in response ? response.proposals as OwnerActionProposal[] : undefined,
       }].slice(-40));
     } catch (err) {
-      setError(err instanceof ApiError
+      setError(missionControl ? ownerError(err) : err instanceof ApiError
         ? (err.status === 404 ? (tr("当前服务尚未加载老板窗口接口；请在运行结束后重启服务。")) : err.detail)
         : err instanceof Error ? err.message : String(err));
     } finally {
@@ -57,7 +59,7 @@ export const OwnerChat: React.FC = () => {
   return (
     <div className="owner-chat">
       <div className="owner-chat-history" aria-label={tr("老板窗口对话记录")}>
-        {messages.length === 0 && <p className="form-hint">{tr("可询问项目进度、运行状态和 Pixel 工作。回答会读取提问时的最新数据，并列出依据。")}</p>}
+        {messages.length === 0 && <p className="form-hint">{tr(missionControl ? 'Ask about progress, or propose a person chat, plan approval or resource decision. Actions need confirmation.' : "可询问项目进度、运行状态和 Pixel 工作。回答会读取提问时的最新数据，并列出依据。")}</p>}
         {messages.map((message, index) => (
           <div className={`owner-chat-message ${message.role}`} key={index}>
             <strong>{message.role === 'user' ? (tr("老板")) : (tr("助手"))}</strong>
@@ -69,6 +71,7 @@ export const OwnerChat: React.FC = () => {
                 {message.usage?.tokens != null && <div>{tr("本次消耗：")}{message.usage.tokens} Tokens</div>}
               </div>
             )}
+            {missionControl && message.proposals?.map(p=><OwnerActionCard key={p.id} proposal={p} onDone={onDone}/>)}
           </div>
         ))}
         {busy && <p role="status">{tr("正在读取并回答...")}</p>}

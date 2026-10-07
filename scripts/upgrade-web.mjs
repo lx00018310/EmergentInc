@@ -27,7 +27,7 @@ export function readUpgradeStatus(root, config) {
   };
   const active = readDb(path.join(config.workspace, 'system/lineage/lineage.sqlite3'), "SELECT id,release_id FROM generations WHERE state='ACTIVE'")[0];
   const file = path.join(config.stateDirectory, 'evolution.sqlite3');
-  const candidates = fs.existsSync(file) ? readDb(file, 'SELECT id,state,phase,failure_reason,candidate_json,request_json FROM candidates ORDER BY created_at DESC LIMIT 30')
+  const candidates = fs.existsSync(file) ? readDb(file, 'SELECT id,state,phase,failure_reason,created_at,candidate_json,request_json FROM candidates ORDER BY created_at DESC LIMIT 30')
     .map(row => ({ ...row, candidate: row.candidate_json ? JSON.parse(row.candidate_json) : null, request: JSON.parse(row.request_json) }))
     .filter(row => row.request.owner_release).map(({ candidate_json, request_json, ...row }) => ({ ...row,
       validationLog: /^[a-zA-Z0-9_-]+$/.test(row.id) ? logTail(path.join(config.stateDirectory, 'validation-' + row.id + '.log')) : '' })) : [];
@@ -63,6 +63,14 @@ export async function createUpgradeWeb({ root, config, secret, runCommand = runU
   });
   app.get('/', async (_req, reply) => reply.type('text/html').send(fs.readFileSync(path.join(root, 'resources/upgrade-web.html'), 'utf8')));
   app.get('/health/live', async () => ({ alive: true, service: 'owner-upgrade', projectRoot: root }));
+  // Loopback read-only projection. Never expose private paths, logs, credentials or approval capabilities.
+  app.get('/status', async () => {
+    const current = status(root, config);
+    return { service: 'owner-upgrade', active: current.active?.id ?? null, busy, startedAt: job?.startedAt ?? 0,
+      candidates: current.candidates.map(row => ({ id: row.id, state: row.state, createdAt: Number(row.created_at ?? 0),
+        sourceCommit: row.request?.owner_release?.source_commit ?? row.candidate?.source_commit ?? null,
+        hash: row.candidate?.candidate_hash ?? null, baseGeneration: row.candidate?.base_generation ?? null })) };
+  });
   app.get('/api/upgrades', async () => ({ ...status(root, config), job, busy }));
   app.post('/api/upgrades', async (req, reply) => {
     if (busy) return reply.status(409).send({ detail: 'UPGRADE_ALREADY_RUNNING' });

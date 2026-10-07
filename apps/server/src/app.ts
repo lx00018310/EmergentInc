@@ -11,6 +11,9 @@ import { registerBusinessRoutes } from "./routes/business_routes.js";
 import { EvolutionServices, registerEvolutionRoutes } from "./routes/evolution_routes.js";
 import { PublicStore } from './services/public_store.js';
 import { registerPublicRoutes } from './routes/public_routes.js';
+import { OwnerOverviewService } from './services/owner_overview_service.js';
+import { OwnerChatService } from './services/owner_chat_service.js';
+import { registerOwnerRoutes } from './routes/owner_routes.js';
 
 export interface CreateServerOptions extends Partial<ApiRoutesOptions> {
   worlds?: WorldRouteServices;
@@ -23,6 +26,7 @@ export interface CreateServerOptions extends Partial<ApiRoutesOptions> {
   frontendDistDir?: string;
   development?: boolean;
   allowedOrigins?: string[];
+  ownerUpgradeOrigin?: string;
 }
 
 export async function createServer(options: CreateServerOptions): Promise<FastifyInstance> {
@@ -81,7 +85,22 @@ export async function createServer(options: CreateServerOptions): Promise<Fastif
         if (options.evolution) await registerEvolutionRoutes(api, options.evolution);
       }
       // Product routes coexist: Gene workbench does not replace QIAN/YUAN's runtime.
-      if(options.worlds) await registerWorldRoutes(api,options.worlds);
+      if(options.worlds) {
+        await registerWorldRoutes(api,options.worlds);
+        const overview = new OwnerOverviewService(options.worlds, options.businessService, options.ownerUpgradeOrigin);
+        const manager = options.worlds.manager;
+        const chat = manager.options.projectRoot && manager.options.isModelConfigured ? new OwnerChatService({projectRoot:manager.options.projectRoot,workspaceRoot:options.workspaceRoot,
+          store:manager.registry.control,provider:manager.options.provider,usageMeter:manager.options.usageMeter,modelName:manager.options.modelName,isModelConfigured:Boolean(manager.options.isModelConfigured),
+          snapshot:async()=>{
+            const data=await overview.overview();
+            const people=data.people.slice(0,20).map(p=>({...p,pixels:p.pixels?.slice(0,5).map((pixel:any)=>({...pixel,mind:String(pixel.mind).slice(0,300),tips:String(pixel.tips).slice(0,160)}))}));
+            return {data:{...data,people,inbox:data.inbox.slice(0,30).map(({actions,...i})=>({...i,summary:i.summary.slice(0,500)})),
+              limits:{people:20,pixelsPerWorld:5,inbox:30,activity:50},truncated:{people:data.people.length>20,inbox:data.inbox.length>30}},
+              sources:['Owner overview / control (qianji_worlds / qianji_profiles)','control_events','runs / pixel_accounts / world_outbox / tips.md','life_events / current_events','world_revenue_events',
+                ...(data.availability.business?['business_plans / business_requests / business_events']:[]),...(data.availability.upgrade==='available'?['Upgrade Service /status']:[])]};
+          }}) : undefined;
+        registerOwnerRoutes(api,overview,chat);
+      }
       else if (mode === "legacy" || options.coreStore) {
         if (!options.coreStore || !options.worldService || !options.runService || !options.promptService || !options.toolRegistry) throw new Error("LEGACY_SERVICES_REQUIRED");
         await registerApiRoutes(api, options as ApiRoutesOptions);

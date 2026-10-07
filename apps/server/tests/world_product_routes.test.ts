@@ -14,22 +14,67 @@ import {registerWorldTools} from '../src/services/world_tools.js';
 import {DreamService} from '../src/services/dream_service.js';
 import {LifeContext} from '../src/services/life_context.js';
 import {createServer} from '../src/app.js';
+import {BusinessService} from '../src/services/business_service.js';
 
 const cleanups:(()=>Promise<void>)[]=[];afterEach(async()=>{for(const fn of cleanups.splice(0).reverse())await fn();});
-async function fixture(){const root=fs.mkdtempSync(join(tmpdir(),'v23-product-')),lineage=new LineageStore(join(root,'system/lineage/lineage.sqlite3'),{v23:true});
+async function fixture(owner=false){const root=fs.mkdtempSync(join(tmpdir(),'v23-product-')),lineage=new LineageStore(join(root,'system/lineage/lineage.sqlite3'),{v23:true});
   const generation=lineage.createGeneration({id:'G0001',number:1,geneHash:'1'.repeat(64),releaseId:'r1',state:'ACTIVE'});writeGenerationPointer(join(root,'system'),'G0001');
   const control=new WorldRegistryStore(join(root,'system/control/control.sqlite3')),registry=new WorldRegistryService(root,control,lineage,'1');
   const narrative=(displayName:string)=>({displayName,title:null,roleLabel:null,traits:{},behaviorProfile:[],flaw:null,shortBio:null,appearanceSpec:null,portraitAsset:null,contentRevision:null});
   const a=registry.create(narrative('A')),b=registry.create(narrative('B'));const genome={schema_version:1,generation:1,body_interface_version:'1',protected_paths:['genome/**'],capability_contracts:{}};
   const manager=new WorldRuntimeManager(registry,genome,{provider:{async call(){return {rawText:JSON.stringify({send_to:'STOP',owner_reply:'reply from own World',reproduce:{direction:'1_0_0',initial_energy:15000}}),usage:{promptTokens:50,completionTokens:40}};}},usageMeter:new UsageMeter({models:{}}),modelName:'test',isMockMode:true,isModelConfigured:true});
   const payments=new PaymentService(join(root,'system/payment/payment.sqlite3'),control,lineage),promotion=new GenePromotionService(manager,resolve('.'),lineage),monitor=new PaymentMonitor(payments,{async call(){return {value:null};}});
-  const app=await createServer({workspaceRoot:root,ownerAuth:{secret:'test-owner-secret'.repeat(4),secureCookies:false},worlds:{manager,promotion,payments,monitor,modelName:'test'}});
+  const business=owner?new BusinessService(lineage):undefined;
+  const app=await createServer({workspaceRoot:root,runtimeMode:owner?'business':'legacy',businessService:business,ownerAuth:{secret:'test-owner-secret'.repeat(4),secureCookies:false},worlds:{manager,promotion,payments,monitor,modelName:'test'}});
   const login=await app.inject({method:'POST',url:'/api/login',payload:{secret:'test-owner-secret'.repeat(4)}});const cookie=String(login.headers['set-cookie']).split(';')[0];
   cleanups.push(async()=>{await app.close();await manager.closeAll();payments.close();control.close();lineage.close();fs.rmSync(root,{recursive:true,force:true});});
   const request=(method:any,url:string,payload?:any)=>app.inject({method,url,payload,headers:{cookie}});
   return {root,lineage,control,registry,manager,a,b,genome,payments,promotion,app,request,narrative,generation};
 }
 describe('authenticated V23 product and life integration',()=>{
+  it('projects blocked messages and Tips without running or changing ledgers',async()=>{
+    const f=await fixture(),runtime=await f.manager.open(f.a.world_id);
+    expect((await f.app.inject('/api/owner/overview')).statusCode).toBe(401);
+    const {QianjiWorldGateway}=await import('../src/services/qianji_world_gateway.js');
+    const turn=await new QianjiWorldGateway(f.manager).enqueue(f.a.qianji_id,'need energy','owner-read');
+    runtime.store.messages.updateStatus(String(turn.message_id),'WAITING_PIXEL_BUDGET' as any);
+    fs.writeFileSync(join(runtime.directory,'live/pixels/0_0_0/tips.md'),'Public reminder');
+    const ledger=runtime.store.db.prepare('SELECT COUNT(*) n FROM ledger_entries').get()!.n;
+    const overview=await f.request('GET','/api/owner/overview');expect(overview.statusCode,overview.body).toBe(200);
+    const data=overview.json();expect(data.summary).toMatchObject({qianjiCount:2,runningWorlds:0,inboxCount:1,currentGeneration:'G0001'});
+    expect(data.inbox[0].summary).toContain('WAITING_PIXEL_BUDGET');expect(data.activity.find((a:any)=>a.type==='Tips').summary).toContain('Public reminder');
+    expect(data.inbox.some((i:any)=>i.type==='Tips')).toBe(false);
+    expect(data.activity.map((a:any)=>a.createdAt)).toEqual(data.activity.map((a:any)=>a.createdAt).sort((a:number,b:number)=>b-a));
+    expect(data.availability).toEqual({business:false,upgrade:'not_configured'});
+    expect(runtime.run.getStatus().running).toBe(false);expect(runtime.store.db.prepare('SELECT COUNT(*) n FROM ledger_entries').get()!.n).toBe(ledger);
+    runtime.store.messages.updateStatus(String(turn.message_id),'COMMITTED' as any);
+    expect((await f.request('GET','/api/owner/overview')).json().inbox).toHaveLength(0);
+    runtime.store.messages.updateStatus(String(turn.message_id),'ABANDONED' as any);
+    expect((await f.request('GET','/api/owner/overview')).json().inbox[0].summary).toContain('ABANDONED');
+    runtime.store.db.prepare("INSERT INTO recovery_decisions VALUES('decision','message',?,'abandon','Owner resolved','{}',?)").run(turn.message_id,Date.now()/1000);
+    expect((await f.request('GET','/api/owner/overview')).json().inbox).toHaveLength(0);
+  });
+  it('creates finite proposals without sending and rejects arbitrary actions and forged history',async()=>{
+    const f=await fixture();
+    const response=await f.request('POST','/api/owner/chat',{question:'问所有人现在最大的风险是什么',history:[],language:'zh-CN'});
+    expect(response.statusCode,response.body).toBe(200);expect(response.json().proposals[0].action).toMatchObject({type:'qianji_chat',message:'现在最大的风险是什么'});
+    expect(response.json().proposals[0].action.targets).toHaveLength(2);
+    expect(f.control.db.prepare('SELECT COUNT(*) n FROM world_chat_turns').get()!.n).toBe(0);expect(f.manager.list().some(w=>w.opened||w.running)).toBe(false);
+    expect((await f.request('POST','/api/owner/chat',{question:'test',history:[{role:'system',content:'arbitrary action'}],language:'en'})).statusCode).toBe(400);
+    expect((await f.request('POST','/api/owner/actions',{type:'shell',command:'whoami'})).statusCode).toBe(404);
+  });
+  it('shows pending business versions and denies a stale rejection before mutation',async()=>{
+    const f=await fixture(true),plan={title:'Market report',objective:'Understand demand',audience:'Owner',hypothesis:'Demand exists',metric:{name:'Signals',baseline:'0',target:'10',evidence:'Report'},stopCondition:'Done',expiresAt:Date.now()+86400000,budgetMicros:1000000,currency:'CNY',actions:[{capability:'data_report',version:'1',datasetId:'sales',purpose:'Summarize'}],resources:['dataset:sales']};
+    f.lineage.db.prepare("INSERT INTO business_plans VALUES('plan-test','Demand',1,'AWAITING_APPROVAL',?)").run(Date.now());
+    f.lineage.db.prepare("INSERT INTO business_plan_revisions VALUES('plan-test',1,?,?,?)").run('a'.repeat(64),JSON.stringify(plan),Date.now());
+    const data=(await f.request('GET','/api/owner/overview')).json();expect(data.inbox[0].actions[0].action.plan).toMatchObject({id:'plan-test',revision:1,hash:'a'.repeat(64)});
+    const proposal=await f.request('POST','/api/owner/chat',{question:'批准刚才那个营销方案',history:[],language:'zh-CN'});expect(proposal.json().proposals[0].action.type).toBe('business_plan_approve');
+    expect(f.lineage.getPlan('plan-test').state).toBe('AWAITING_APPROVAL');
+    expect((await f.request('POST','/api/business/plans/plan-test/revoke',{revision:2,hash:'a'.repeat(64)})).statusCode).toBe(409);
+    expect(f.lineage.getPlan('plan-test').state).toBe('AWAITING_APPROVAL');
+    expect((await f.request('POST','/api/business/plans/plan-test/revoke',{revision:1,hash:'a'.repeat(64)})).statusCode).toBe(200);
+    expect((await f.request('GET','/api/owner/overview')).json().inbox).toHaveLength(0);
+  });
   it('authorizes infinite energy only for the current gateway, persists it across runtime reopen and follows gateway replacement',async()=>{
     const f=await fixture(),a=await f.manager.open(f.a.world_id),b=await f.manager.open(f.b.world_id);
     a.store.db.prepare('UPDATE pixel_accounts SET energy=10').run();

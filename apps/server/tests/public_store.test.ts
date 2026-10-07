@@ -171,6 +171,8 @@ describe('V24 anonymous store with an instance treasury', () => {
     expect((await f.payment(order)).json()).toMatchObject({ invoice_status: 'PAID', status: 'PAID' });
     const overview = (await f.owner('GET', '/api/public-site')).json();
     expect(overview.revenue).toMatchObject({ scope: 'INSTANCE', mainnetAtomic: '10000001' });
+    const mission=(await f.owner('GET','/api/owner/overview')).json();
+    expect(mission.activity.find((e:any)=>e.type==='Payment received')).toMatchObject({source:'world_revenue_events',href:'/GENE?view=public-site'});
     expect(overview.orders[0].customer_requirement).toBe('Help deploy my business'); expect(JSON.stringify(overview)).not.toContain(order.public_order_token);
     expect(f.payments.revenue(f.a.world_id).mainnetAtomic).toBe('0'); expect(f.payments.revenue(f.b.world_id).mainnetAtomic).toBe('0');
     for (const world of [f.a, f.b]) expect(f.lineage.relevantMemories({ worldId: world.world_id, kind: 'business_outcome' })).toHaveLength(1);

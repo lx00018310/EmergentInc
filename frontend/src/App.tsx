@@ -16,7 +16,7 @@ const viewFromPath = (pathname: string): 'hall' | 'engine' =>
 export const App: React.FC = () => {
   const [route, setRoute] = useState<'hall' | 'engine'>(() => viewFromPath(window.location.pathname));
   const [aux, setAux] = useState<'gacha' | 'meeting' | null>(null);
-  const [selectedQianjiId, setSelectedQianjiId] = useState<string | null>(null);
+  const [selectedQianjiId, setSelectedQianjiId] = useState<string | null>(()=>new URLSearchParams(window.location.search).get('qianji'));
   const [selectedPixelId, setSelectedPixelId] = useState<string | null>(null);
 
   useEffect(() => {

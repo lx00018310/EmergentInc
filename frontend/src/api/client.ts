@@ -19,10 +19,11 @@ export class ApiError extends Error {
 
 export interface RequestOptions extends RequestInit {
   timeoutMs?: number;
+  worldScoped?: boolean;
 }
 
 export async function apiRequest<T>(endpoint: string, options: RequestOptions = {}): Promise<T> {
-  const { timeoutMs = 30000, signal: callerSignal, ...fetchOptions } = options;
+  const { timeoutMs = 30000, worldScoped = true, signal: callerSignal, ...fetchOptions } = options;
 
   const controller = new AbortController();
   let timer: ReturnType<typeof setTimeout> | null = null;
@@ -40,7 +41,8 @@ export async function apiRequest<T>(endpoint: string, options: RequestOptions = 
     });
   }
 
-  const url = worldApiUrl(endpoint.startsWith('/') ? endpoint : `/api/${endpoint}`);
+  const rawUrl = endpoint.startsWith('/') ? endpoint : `/api/${endpoint}`;
+  const url = worldScoped ? worldApiUrl(rawUrl) : rawUrl;
 
   try {
     const res = await fetch(url, {

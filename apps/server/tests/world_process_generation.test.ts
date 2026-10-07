@@ -106,4 +106,5 @@ it.skipIf(process.env.EMERGENTINC_CANDIDATE_MODE==='1')('preserves public busine
     expect(lineage.relevantMemories({kind:'generation_rollback'})).toHaveLength(1);
   }catch(error){throw new Error((error instanceof Error?error.stack+' Cause: '+String((error as any).cause):String(error))+' State: '+JSON.stringify(supervisor.list())+'\n'+fs.readFileSync(join(state,'server.log'),'utf8').slice(-1500)+'\n'+fs.readdirSync(state).filter(n=>n.startsWith('validation-')).map(n=>fs.readFileSync(join(state,n),'utf8').slice(-2500)).join('\n'));}
   finally{try{await runtime.stop();}catch{}supervisor.close();control.close();lineage.close();await new Promise<void>(r=>model.close(()=>r()));await new Promise<void>(r=>rpc.close(()=>r()));fs.rmSync(root,{recursive:true,force:true});}
-},240000);
+// Includes an offline release install, the full single-worker candidate suite and process rollback on Windows.
+},600000);

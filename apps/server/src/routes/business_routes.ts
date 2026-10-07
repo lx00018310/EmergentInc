@@ -33,6 +33,12 @@ export async function registerBusinessRoutes(app: FastifyInstance, service: Busi
   });
   for (const action of ["pause", "resume", "revoke"] as const) {
     app.post<{ Params: { id: string } }>(`/business/plans/:id/${action}`, async req => {
+      const b=req.body as any;
+      // Mission Control rejects only the exact pending version shown to the Owner.
+      if(action==='revoke'&&(b?.revision!==undefined||b?.hash!==undefined)){
+        const plan=store.getPlan(req.params.id);
+        if(plan.state!=='AWAITING_APPROVAL'||plan.revision!==b.revision||plan.hash!==b.hash)throw new Error('APPROVAL_VERSION_CONFLICT');
+      }
       const result = store.control(req.params.id, action); service.syncLifePlan(req.params.id); return result;
     });
   }
@@ -67,6 +73,10 @@ export async function registerBusinessRoutes(app: FastifyInstance, service: Busi
   app.post<{ Params: { id: string } }>("/business/requests/:id/decision", async req => {
     const b = req.body as any;
     if (!["provided", "reject"].includes(b?.decision) || typeof b?.note !== "string") throw new Error("INVALID_RESOURCE_DECISION");
+    if(b.revision!==undefined||b.planId!==undefined){
+      const request=store.db.prepare('SELECT plan_id,revision,state FROM business_requests WHERE id=?').get(req.params.id);
+      if(!request||request.state!=='OPEN'||request.plan_id!==b.planId||request.revision!==b.revision)throw new Error('REVISION_CONFLICT');
+    }
     store.resolveResource(req.params.id, b.decision, b.note);
     return { ok: true };
   });

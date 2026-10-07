@@ -24,6 +24,12 @@ async function fixture() {
 }
 
 describe('Owner web upgrade', () => {
+  it('exposes only read-only candidate metadata to Mission Control',async()=>{
+    const f=await fixture(),response=await f.app.inject('/status');expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({service:'owner-upgrade',active:'G0008',busy:false,candidates:[{id:'local-v24-test',state:'VALIDATED',hash:'a'.repeat(64),baseGeneration:'G0008'}]});
+    expect(response.body).not.toMatch(/validationLog|request_json|projectRoot|stateDirectory|owner_release/);expect(f.run).not.toHaveBeenCalled();
+    expect((await f.app.inject({method:'POST',url:'/status',payload:{action:'publish'}})).statusCode).toBe(404);
+  });
   it('requires an independent Owner session and rejects cross-origin actions', async () => {
     const f = await fixture();
     expect(f.cookie.startsWith('emergent_upgrade_owner=')).toBe(true);

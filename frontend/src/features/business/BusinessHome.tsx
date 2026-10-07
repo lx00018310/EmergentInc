@@ -25,7 +25,10 @@ type Plan = { id: string; revision: number; hash: string; direction: string; sta
 export function BusinessHome() {
   useLanguage();
   const [data, setData] = useState<any>(null), [error, setError] = useState(''), [busy, setBusy] = useState(false);
-  const [direction, setDirection] = useState(''), [tab, setTab] = useState<BusinessTab | 'life' | 'public-site'>('life');
+  const [direction, setDirection] = useState(''), [tab, setTab] = useState<BusinessTab | 'life' | 'public-site'>(()=>{
+    const view=new URLSearchParams(window.location.search).get('view');
+    return ['business','plans','resources','public-site'].includes(view??'') ? view as BusinessTab|'public-site' : 'life';
+  });
   const [total, setTotal] = useState('10'), [draft, setDraft] = useState('2'), [calls, setCalls] = useState('10');
   const [days, setDays] = useState('7'), [uploadId, setUploadId] = useState('');
   const [feedback, setFeedback] = useState<Record<string, string>>({});
@@ -35,6 +38,7 @@ export function BusinessHome() {
     const timer = setInterval(() => { void refresh().catch(e => setError(e.message)); }, 5000);
     return () => clearInterval(timer);
   }, [refresh]);
+  useEffect(()=>{const id=new URLSearchParams(window.location.search).get('id');if(id&&data)document.getElementById(`owner-detail:${id}`)?.scrollIntoView?.({block:'start'});},[Boolean(data),tab]);
   async function act(fn: () => Promise<unknown>) {
     setBusy(true); setError('');
     try { await fn(); await refresh(); } catch (e) { setError((e as Error).message); } finally { setBusy(false); }
@@ -94,7 +98,7 @@ export function BusinessHome() {
         </div>) : <p>{tr("还没有已授权任务。批准方案后，这里会显示结果。")}</p>}</section>
         <BusinessOutcomes data={data} busy={busy} act={act} />
       </>}
-      {tab === 'plans' && <>{!plans.length && <section><p>{tr("先在经营页输入方向，Pixel 会提出可批准的方案。")}</p></section>}{plans.map(view => <section key={view.id}>
+      {tab === 'plans' && <>{!plans.length && <section><p>{tr("先在经营页输入方向，Pixel 会提出可批准的方案。")}</p></section>}{plans.map(view => <section key={view.id} id={`owner-detail:${view.id}`}>
         <div className="business-title"><h2>{view.plan.title}</h2><span>{states[view.state]} {" " + tr("· 第") + " "}{view.revision} {" " + tr("版")}</span></div>
         <p>{view.plan.objective}</p><dl><dt>{tr("服务对象")}</dt><dd>{view.plan.audience}</dd><dt>{tr("待验证假设")}</dt><dd>{view.plan.hypothesis}</dd>
           <dt>{tr("衡量结果")}</dt><dd>{view.plan.metric.name}：{view.plan.metric.baseline} → {view.plan.metric.target}{tr("；证据：")}{view.plan.metric.evidence}</dd>
@@ -133,7 +137,7 @@ export function BusinessHome() {
         <label>{tr("请求中的资料标识（没有指定可留空）")}<input value={uploadId} onChange={e => setUploadId(e.target.value)} /></label>
         <label>{tr("选择资料")}<input type="file" accept=".csv,.json,text/csv,application/json" disabled={busy} onChange={e => { const file = e.target.files?.[0]; if (file) void act(() => upload(file)); e.target.value = ''; }} /></label>
         {data.datasets.map((d: any) => <p key={d.id}>{d.name} · <code>{d.id}</code></p>)}</section>
-        <section><h2>{tr("需要你提供的资源")}</h2>{!data.requests.length && <p>{tr("当前没有待处理资源请求。")}</p>}{data.requests.map((r: any) => <div key={r.id} className="business-task">
+        <section><h2>{tr("需要你提供的资源")}</h2>{!data.requests.length && <p>{tr("当前没有待处理资源请求。")}</p>}{data.requests.map((r: any) => <div key={r.id} id={`owner-detail:${r.id}`} className="business-task">
           <strong>{r.resource.startsWith('task:') ? (tr("任务需要处理")) : r.resource}</strong><p>{tr("只确认已实际提供的资料或判断。涉及新账号或新能力时，需要后续实现并重新批准范围。")}</p>
           {r.resource.startsWith('task:') ? <form onSubmit={e => { e.preventDefault(); const f = new FormData(e.currentTarget);
             void act(() => businessApi(`business/tasks/${encodeURIComponent(r.resource.slice(5))}/retry`, { note: f.get('note') })); }}>

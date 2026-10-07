@@ -28,9 +28,11 @@ describe('V24 public and bilingual entry', () => {
     fireEvent.click(screen.getByRole('button', { name: 'EN' }));
     expect(await screen.findByRole('heading', { name: 'AI that helps anyone start and run an online business.' })).toBeTruthy();
   });
-  it.each(['/GENE', '/QIAN', '/YUAN'])('switches language at Owner entry %s', async path => {
+  it.each(['/OWNER','/GENE', '/QIAN', '/YUAN'])('switches language at Owner entry %s', async path => {
     window.history.replaceState(null, '', path); localStorage.removeItem('emergentinc.language');
     render(<Entry />);
+    expect(screen.getByRole('link',{name:'OWNER'}).getAttribute('href')).toBe('/OWNER');
+    fireEvent.click(screen.getByText('Advanced'));
     for(const page of ['QIAN','YUAN','GENE'])expect(screen.getByRole('link',{name:page}).getAttribute('href')).toBe('/'+page);
     expect(screen.getByRole('heading', { name: 'Log in to EmergentInc' })).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: '中文' }));

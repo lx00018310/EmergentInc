@@ -65,7 +65,8 @@ export async function bootstrapWorlds(projectRoot:string,config:ReturnType<typeo
     resume:async()=>{if(candidate||lineage.activeGeneration()?.id!==current.meta().generation_id)throw new Error('GENERATION_NOT_ACTIVE');if(!paused)return;paused=false;promotion.reconcileInherited();monitor.start();dream.start();business.start({exclusiveWorkspaceLockHeld:true});}};
   const legacyFile=path.join(system,'legacy/v22/snapshots/ledger/v9_core.sqlite3'),legacy=fs.existsSync(legacyFile)?new CoreStore(legacyFile,{readOnly:true}):undefined;
   const app=await createServer({workspaceRoot:workspace,runtimeMode:'business',ownerAuth:config.ownerAuth,trustLoopbackProxy:config.trustLoopbackProxy,development:process.env.EMERGENT_DEV==='1',allowedOrigins:(process.env.EMERGENT_ALLOWED_ORIGINS||'').split(',').map(v=>v.trim()).filter(Boolean),businessService:business,evolution,
-    worlds:{manager,promotion,payments,monitor,legacy,provider:modelConfigured?provider:undefined,meter:usageMeter,modelName},frontendDistDir:path.join(projectRoot,'frontend/dist')});
+    worlds:{manager,promotion,payments,monitor,legacy,provider:modelConfigured?provider:undefined,meter:usageMeter,modelName},frontendDistDir:path.join(projectRoot,'frontend/dist'),
+    ownerUpgradeOrigin:!candidate&&config.host==='127.0.0.1'&&process.env.EMERGENTINC_LOCAL_EVOLUTION_CONFIG?`http://127.0.0.1:${Number(process.env.PORT||8765)+1}`:undefined});
   app.addHook('onClose',async()=>{paused=true;await monitor.stop();await dream.stop();await business.stop();await manager.closeAll();legacy?.close();payments.close();control.close();life.close();unlock();});
   for(const signal of ['SIGINT','SIGTERM'] as const)process.once(signal,()=>{void app.close();});
   await app.listen({port:Number(process.env.PORT||8765),host:config.host});
