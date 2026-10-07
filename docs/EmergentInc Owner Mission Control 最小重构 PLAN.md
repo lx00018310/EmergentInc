@@ -1733,3 +1733,14 @@ Upgrade
 初次完整测试遇到进程测试超时；另一次指令回归是在代码修复过程中启动的旧测试进程中失败。修复后的独立回归与新一轮候选全量均通过，不将旧失败计为通过。
 
 交付边界：本次交付代码、测试及本 PLAN 的本地 V25 提交；没有发布、推送或切换正式 Generation。自然语言操作采用有限规则，不支持通用工具执行。
+
+
+# 34. 网页准备失败修复（2026-10-07）
+
+用户首次从 Windows 启动窗口准备 V25，约 2 秒即报 `LOCAL_RELEASE_OFFLINE_INSTALL_FAILED`。确认普通 Machine / User PATH 找不到 `pnpm.cmd`，而此前 Codex 的工具 PATH 提供了 pnpm，因此原测试没有暴露普通启动环境缺少工具的问题。失败发生于冻结发行目录的依赖安装，尚未提交候选或切换 G0010。
+
+- 将已验证的 pnpm 11.19.0 安装到用户原有且已在普通 PATH 中的 npm 前缀 `C:/Users/ASUS/AppData/Roaming/npm`；普通环境解析到此目录，使用相同的 `D:/.pnpm-store/v11`。
+- `installReleaseDependencies` 仅将 stdout / stderr 从丢弃改为继承，使具体安装错误传入网页校验日志。依然离线、固定锁文件、忽略依赖脚本；不改变依赖清单、锁文件或升级审批。
+- 普通 Machine / User PATH 下执行实际发行目录离线安装通过；独立错误锁文件 fixture 验证具体 `ERR_PNPM_OUTDATED_LOCKFILE` 与总体失败码都能传出。
+- `local_upgrade.test.ts` 和 `upgrade_web.test.ts` 共 18 项通过。
+- 提交后重新准备 V25 候选，完成状态以独立升级服务的校验记录为准；发布仍需 Owner 在网页审查并确认精确候选。

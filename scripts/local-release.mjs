@@ -37,8 +37,8 @@ export async function installReleaseDependencies(directory) {
     // Constant command, cwd passed separately: no path or user text is interpolated into cmd.exe.
     const child = process.platform === 'win32'
       ? spawn(process.env.ComSpec || 'cmd.exe', ['/d', '/s', '/c', 'pnpm.cmd install --offline --frozen-lockfile --ignore-scripts'],
-          { cwd: directory, windowsHide: true, shell: false, env: { ...process.env, CI: '1' }, stdio: 'ignore' })
-      : spawn('pnpm', ['install', '--offline', '--frozen-lockfile', '--ignore-scripts'], { cwd: directory, shell: false, stdio: 'ignore' });
+          { cwd: directory, windowsHide: true, shell: false, env: { ...process.env, CI: '1' }, stdio: 'inherit' })
+      : spawn('pnpm', ['install', '--offline', '--frozen-lockfile', '--ignore-scripts'], { cwd: directory, shell: false, stdio: 'inherit' });
     const timer = setTimeout(() => child.kill(), 120000);
     child.once('error', error => { clearTimeout(timer); reject(error); });
     child.once('exit', code => { clearTimeout(timer); code === 0 ? resolve() : reject(new Error('LOCAL_RELEASE_OFFLINE_INSTALL_FAILED')); });
