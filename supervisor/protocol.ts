@@ -28,8 +28,13 @@ export interface EvolutionRuntime {
 }
 export function classifyChange(paths: string[]): "BODY" | "GENE" | "ROOT" {
   if (!paths.length) throw new Error("EMPTY_CHANGE");
-  if (paths.some(p => p.startsWith("supervisor/") || p === "scripts/generation-supervisor.mjs" || p === "scripts/local-upgrade.mjs" ||
-    p === "scripts/version-upgrade.mjs" || p === "scripts/upgrade-web.mjs" || p === "resources/upgrade-web.html" || p === "EmergentInc_Upgrade.bat" || p === "scripts/local-release.mjs" || p === "scripts/launch-approved.mjs" || p === "EmergentInc_UI.bat" || p === "EmergentInc_UI.ps1" ||
+  const normalized=paths.map(p=>p.toLowerCase());
+  const shared=new Set(['apps/server/src/owner_auth.ts','apps/server/src/routes/public_routes.ts','apps/server/src/services/public_store.ts',
+    'apps/server/src/services/public_products_migration.ts','apps/server/src/services/payment_assets.ts','apps/server/src/services/solana_payment.ts',
+    'apps/server/src/services/app_code_policy.ts','apps/server/src/services/app_code_service.ts','scripts/prepare-app-code.mjs']);
+  if(normalized.some(p=>shared.has(p)||p.startsWith('packages/persistence/')||p.startsWith('packages/protocol/')))return 'ROOT';
+  if (normalized.some(p => p.startsWith("supervisor/") || p === "scripts/generation-supervisor.mjs" || p === "scripts/local-upgrade.mjs" ||
+    p === "scripts/version-upgrade.mjs" || p === "scripts/upgrade-web.mjs" || p === "resources/upgrade-web.html" || p === "emergentinc_upgrade.bat" || p === "scripts/local-release.mjs" || p === "scripts/launch-approved.mjs" || p === "emergentinc_ui.bat" || p === "emergentinc_ui.ps1" ||
     p === "scripts/v23-migration-dry-run.mjs" || p === "scripts/v23-world-migrate.mjs" || p === "scripts/v23-generation.mjs" || p === "scripts/v23-upgrade.mjs" || p === "scripts/v23-approved-release.mjs" ||
     p === "apps/recovery" || p.startsWith("apps/recovery/"))) return "ROOT";
   return paths.every(p => /^workspace\/generations\/G\d{4,}\/body\/skills\/[a-zA-Z0-9_/-]+\.json$/.test(p)) ? "BODY" : "GENE";

@@ -4,10 +4,10 @@ import type { OwnerChatAnswer, OwnerChatTurn } from './ownerChat';
 import { language, t } from '../i18n';
 import { explanations } from '../features/business/business_api';
 import { postQianjiChat } from './qianji';
-export type { OwnerActionProposal, OwnerOverview, OwnerInboxItem, OwnerActivityItem } from '../../../packages/protocol/src/types/owner';
+export type { OwnerActionProposal, OwnerOverview, OwnerInboxItem, OwnerActivityItem, OwnerWork } from '../../../packages/protocol/src/types/owner';
 export const fetchOwnerOverview=()=>apiRequest<OwnerOverview>('owner/overview',{worldScoped:false});
-export const askMissionOwner=(question:string,history:OwnerChatTurn[])=>apiRequest<OwnerChatAnswer&{proposals?:OwnerActionProposal[]}>('owner/chat',{
-  worldScoped:false,method:'POST',body:JSON.stringify({question,history,language:language()}),timeoutMs:2*60*60*1000});
+export const askMissionOwner=(question:string,history:OwnerChatTurn[],requestKey:string=crypto.randomUUID(),requestLanguage=language())=>apiRequest<OwnerChatAnswer&{proposals?:OwnerActionProposal[]}>('owner/chat',{
+  worldScoped:false,method:'POST',body:JSON.stringify({question,history,language:requestLanguage,requestKey}),timeoutMs:2*60*60*1000});
 export function ownerError(error:unknown):string {
   if(error instanceof ApiError){
     const labels:Record<string,string>={MODEL_NOT_CONFIGURED:'Configure a real model before asking project questions.',INVALID_OWNER_CHAT:'The question or chat history is invalid.',EVOLUTION_QUIESCED:'The instance is paused for upgrade. Try again after it resumes.',OWNER_ACTION_DENIED:'Unsupported action'};
@@ -33,6 +33,7 @@ export async function executeOwnerAction(proposal:OwnerActionProposal):Promise<{
   }
   const post=(path:string,body:unknown)=>apiRequest(path,{worldScoped:false,method:'POST',body:JSON.stringify(body)});
   if(a.type==='business_plan_approve'||a.type==='business_plan_reject')await post(`business/plans/${encodeURIComponent(a.plan.id)}/${a.type==='business_plan_approve'?'approve':'revoke'}`,{revision:a.plan.revision,hash:a.plan.hash});
+  else if(a.type==='recruit_approve'||a.type==='recruit_reject')await post(`owner/requests/${encodeURIComponent(a.requestId)}/decision`,{decision:a.type==='recruit_approve'?'approve':'reject',hash:a.hash});
   else if(a.type==='resource_provided'||a.type==='resource_reject')await post(`business/requests/${encodeURIComponent(a.requestId)}/decision`,{decision:a.type==='resource_provided'?'provided':'reject',note:a.note,planId:a.planId,revision:a.revision});
   else throw new Error('OWNER_ACTION_DENIED');
   return [{id:proposal.id,ok:true}];

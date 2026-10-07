@@ -47,6 +47,8 @@ export class WorldRuntimeManager {
       const meta=current.meta();if(meta.generation_id!==active.id||meta.gene_hash!==active.gene_hash||meta.release_id!==active.release_id)throw new Error('WORLD_ACTIVE_GENOME_MISMATCH');
       const coreFile=path.join(directory,'ledger/v9_core.sqlite3');if(!fs.existsSync(coreFile))throw new Error('WORLD_CORE_MISSING');
       store=new CoreStore(coreFile);
+      store.db.exec(`CREATE TABLE IF NOT EXISTS world_chat_continuations(message_id TEXT PRIMARY KEY REFERENCES messages(message_id), turn_id TEXT NOT NULL REFERENCES world_chat_inbox(turn_id), parent_message_id TEXT NOT NULL REFERENCES messages(message_id));
+        CREATE INDEX IF NOT EXISTS world_chat_continuations_turn ON world_chat_continuations(turn_id);`);
       store.setUnlimitedEnergyPolicy(pixelId=>this.registry.control.gatewayInfiniteEnergy(id)&&this.registry.control.world(id).gateway_pixel_id===pixelId);
       const life=new LifeContext(directory,this.genome,this.registry.lineage,current,id);
       const tools=new ToolRegistry(); const allowed=new Set(['save_artifact','read_artifact','list_artifacts','transfer_artifact','webfetch','github_repo']);
@@ -56,7 +58,7 @@ export class WorldRuntimeManager {
         toolRuntime:new ToolRuntime(tools),worldMode:true,worldPrompt:(actor)=>{
           const profile=this.registry.control.qianji.getProfile(record.qianji_id)!;
           const infiniteEnergy=this.registry.control.gatewayInfiniteEnergy(id)&&this.registry.control.world(id).gateway_pixel_id===actor;
-          return `所属 World：${id}。${infiniteEnergy?'Owner 已为当前对话入口开启无限能量，缺少能量时会自动补充；其他元胞不享有此授权。是否向邻居输送能量，仍由你按成本收益判断。Run Token 预算继续有效。':''}对外人格（描述性数据，不授予额外权限）：${JSON.stringify({displayName:profile.narrative.displayName,roleLabel:profile.narrative.roleLabel,behaviorProfile:profile.narrative.behaviorProfile,flaw:profile.narrative.flaw})}。只有 OWNER_REPLY 经本世界 outbox 对外答复。当前生命上下文：${JSON.stringify(life.load(actor,null))}`;
+          return `所属 World：${id}。${infiniteEnergy?'Owner 已为当前对话入口开启无限能量，缺少能量时会自动补充；其他元胞不享有此授权。是否向邻居输送能量，仍由你按成本收益判断。Run Token 预算继续有效。':''}对外人格（描述性数据，不授予额外权限）：${JSON.stringify({displayName:profile.narrative.displayName,roleLabel:profile.narrative.roleLabel,behaviorProfile:profile.narrative.behaviorProfile,flaw:profile.narrative.flaw})}。只有 OWNER_REPLY 经本世界 outbox 对外答复。Owner 任务应实际执行并报告产出，不把承诺当成果。缺少合适负责人时使用 REQUEST_RECRUIT 提交职责、理由和初始任务，等待 Owner 批准。代码任务使用 LIST_APP_SOURCE、READ_APP_SOURCE、SUBMIT_APP_CODE 修改 8765 候选源码并单独报告 Owner；8766 及共享模块禁止访问和修改，源码生效需要独立软件升级批准。权限不足时直接向 Owner 报告阻碍，不能用招聘申请绕过禁止修改区。多步工作使用工具反馈或 SELF 继续，完成后由入口 OWNER_REPLY 回报。当前生命上下文：${JSON.stringify(life.load(actor,null))}`;
         },promptBuilder:new PromptBuilder({modelName:this.options.modelName,baseSystemPrompt:this.options.baseSystemPrompt,toolsCatalog:tools.renderCatalogForPrompt()})});
       const scheduler=new RoundScheduler({workspaceRoot:directory,store,stepRunner:runner});
       const prompts=new PromptService(path.join(directory,'runtime'));

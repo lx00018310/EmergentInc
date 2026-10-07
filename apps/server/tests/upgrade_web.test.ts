@@ -24,6 +24,15 @@ async function fixture() {
 }
 
 describe('Owner web upgrade', () => {
+  it('requires an independent Owner session for source reports and prepares them without publication',async()=>{
+    const f=await fixture(),id=`code_${'a'.repeat(32)}`,hash='b'.repeat(64);
+    expect((await f.app.inject(`/api/code-reports/${id}`)).statusCode).toBe(401);
+    expect((await f.app.inject({method:'POST',url:'/api/upgrades',payload:{action:'prepare-code',id,hash}})).statusCode).toBe(401);
+    expect((await f.request({action:'prepare-code',id:'../secret',hash})).statusCode).toBe(400);
+    expect((await f.request({action:'prepare-code',id,hash})).statusCode).toBe(202);
+    await vi.waitFor(()=>expect(f.run).toHaveBeenCalledTimes(1));expect(f.run.mock.calls[0][1]).toEqual(['prepare-code',id,hash]);
+    expect(f.run.mock.calls.flatMap(c=>c[1])).not.toContain('approve');expect(f.run.mock.calls.flatMap(c=>c[1])).not.toContain('apply');
+  });
   it('exposes only read-only candidate metadata to Mission Control',async()=>{
     const f=await fixture(),response=await f.app.inject('/status');expect(response.statusCode).toBe(200);
     expect(response.json()).toMatchObject({service:'owner-upgrade',active:'G0008',busy:false,candidates:[{id:'local-v24-test',state:'VALIDATED',hash:'a'.repeat(64),baseGeneration:'G0008'}]});

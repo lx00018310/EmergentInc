@@ -1,6 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
   Effect,
   UpdateMindEffect,
@@ -40,16 +40,19 @@ export interface EffectRuntimeContext {
 }
 
 export class EffectRuntime {
+  private originMessageId?: string;
   constructor(private ctx: EffectRuntimeContext) {}
 
   private enqueueMessage(params: EnqueueMessageParams): void {
-    this.ctx.store.messages.enqueueMessage({
-      ...params,
-      executionId: this.ctx.executionScope?.executionId ?? null,
+    this.ctx.store.transaction(()=>{
+      const inbox=this.ctx.worldMode&&this.originMessageId?this.ctx.store.db.prepare(`SELECT turn_id FROM world_chat_inbox WHERE message_id=? UNION ALL SELECT turn_id FROM world_chat_continuations WHERE message_id=?`).get(this.originMessageId,this.originMessageId):undefined;
+      const message=this.ctx.store.messages.enqueueMessage({...params,...(inbox?{messageId:`msg_${randomUUID()}`}:{ }),executionId:this.ctx.executionScope?.executionId??null});
+      if(inbox)this.ctx.store.db.prepare('INSERT INTO world_chat_continuations VALUES(?,?,?)').run(message.messageId,inbox.turn_id,this.originMessageId!);
     });
   }
 
   public async applyEffects(effects: Effect[]): Promise<void> {
+    this.originMessageId=effects[0]?.messageId;
     let priorToolFailed = false;
     let actorDeactivated = false;
     const toolExecutions: Array<{ tool: string; status: string; outputOrError: any }> = [];
@@ -706,7 +709,7 @@ export class EffectRuntime {
 
   private async applyOwnerReply(effect: OwnerReplyEffect): Promise<void> {
     if (this.ctx.worldMode) {
-      const inbox = this.ctx.store.db.prepare('SELECT * FROM world_chat_inbox WHERE message_id=?').get(effect.messageId);
+      const inbox = this.ctx.store.db.prepare(`SELECT * FROM world_chat_inbox WHERE message_id=? OR turn_id IN (SELECT turn_id FROM world_chat_continuations WHERE message_id=?)`).get(effect.messageId,effect.messageId);
       const message = this.ctx.store.messages.getMessage(effect.messageId);
       const call = this.ctx.modelCallId ? this.ctx.store.modelCalls.getModelCall(this.ctx.modelCallId) : null;
       const stateFile = path.join(this.ctx.workspaceRoot,'live/pixels',effect.pixelId,'state.json');
@@ -715,7 +718,7 @@ export class EffectRuntime {
         call?.messageId===effect.messageId && call.pixelId===effect.pixelId && incarnation===inbox.entry_incarnation;
       this.ctx.store.transaction(()=>{
         const inserted = valid ? this.ctx.store.db.prepare('INSERT OR IGNORE INTO world_outbox VALUES(?,?,?,?,?)')
-          .run(inbox.turn_id,effect.messageId,effect.reply,this.ctx.modelCallId!,Date.now()).changes : 0;
+          .run(inbox.turn_id,inbox.message_id,effect.reply,this.ctx.modelCallId!,Date.now()).changes : 0;
         this.ctx.store.effects.recordEffect({effect_id:effect.effectId,message_id:effect.messageId,effect_type:effect.effectType,
           effect_index:effect.effectIndex,payload_hash:effect.payloadHash,status:inserted?'APPLIED':'FAILED',
           details:inserted?undefined:JSON.stringify({error:'WORLD_REPLY_SCOPE_INVALID_OR_ALREADY_RECORDED'}),created_at:Date.now()/1000});

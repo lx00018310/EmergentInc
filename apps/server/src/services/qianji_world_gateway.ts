@@ -29,7 +29,11 @@ export class QianjiWorldGateway {
       control.db.prepare('UPDATE world_chat_turns SET reply=?,reply_call_id=?,replied_at=? WHERE turn_id=? AND world_id=? AND message_id=? AND reply IS NULL')
         .run(outbox.reply,outbox.model_call_id,outbox.created_at,outbox.turn_id,world.world_id,outbox.message_id);
     return control.db.prepare('SELECT * FROM world_chat_turns WHERE qianji_id=? ORDER BY created_at LIMIT 200').all(qianjiId).map(row=>{
-      const message=runtime?.store.messages.getMessage(String(row.message_id));
+      let message=runtime?.store.messages.getMessage(String(row.message_id));
+      if(runtime&&row.reply===null&&message?.status==='COMMITTED'){
+        const pending=runtime.store.db.prepare(`SELECT m.message_id FROM world_chat_continuations c JOIN messages m USING(message_id) WHERE c.turn_id=? AND m.status NOT IN ('COMMITTED','MODEL_RESPONSE_INVALID') ORDER BY m.created_at DESC LIMIT 1`).get(row.turn_id);
+        if(pending)message=runtime.store.messages.getMessage(String(pending.message_id));
+      }
       let status: 'queued'|'processing'|'replied'|'no_reply'|'blocked'|'failed' = 'failed';
       if(row.reply!==null)status='replied';
       else if(message?.status==='COMMITTED')status='no_reply';

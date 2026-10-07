@@ -25,6 +25,10 @@ export async function versionUpgrade(args){
     console.log('Owner software upgrade (V23-layout workspace):\n  status\n  prepare <version-label> <reason>\n  show <id>\n  approve <id> <exact-candidate-hash>\n  apply <id>\n  rollback <id> <reason>\n  recover\nPreparation freezes this clean checkout and validates it. Approval binds the exact hash; apply switches all Worlds.');return;
   }
   const {configFile,config}=upgradeConfig(root);
+  if(action==='prepare-code'){
+    const {prepareAppCode}=await import('./prepare-app-code.mjs');
+    return prepareAppCode(root,configFile,config,values[0],values[1],generation);
+  }
   if(action==='status'){
     const {approvedWorldRelease}=await import('./v23-approved-release.mjs');
     const active=approvedWorldRelease(config.workspace,configFile);

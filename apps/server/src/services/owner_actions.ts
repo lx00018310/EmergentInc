@@ -20,6 +20,12 @@ export function proposeOwnerAction(question:string, data:OwnerOverview, language
     return reply('已生成对话提案，请检查收件人和内容后确认。','Review the recipients and message, then confirm.',[{id:randomUUID(),requiresApproval:true,action:{type:'qianji_chat',targets:people.map(p=>({id:p.id,name:p.name})),message}}]);
   }
   const plan=/^(拒绝资源|reject resource)/i.test(question)?null:/^(批准|拒绝|approve|reject)\s*(.*)$/i.exec(question);
+  const hire=/^(批准招聘(?:申请)?|同意招聘(?:申请)?|拒绝招聘(?:申请)?|批准新建|同意新建|拒绝新建|approve recruitment(?: request)?|reject recruitment(?: request)?)\s*(.*)$/i.exec(question);
+  if(hire){const key=hire[2]!.trim(),matches=data.work?.requests.filter(r=>r.state==='PENDING'&&(!key||r.id===key||r.role===key))??[];
+    if(matches.length!==1)return reply('请指定唯一的招聘申请 ID 或职责名称。','Specify a unique recruitment request ID or role.');
+    const r=matches[0]!,type=/^(批准|同意|approve)/i.test(hire[1]!)?'recruit_approve':'recruit_reject';
+    return reply('已识别招聘决定。','Recruitment decision identified.',[{id:randomUUID(),requiresApproval:true,action:{type,requestId:r.id,hash:r.hash,role:r.role,reason:r.reason,instruction:r.instruction}}]);
+  }
   if(plan){
     const key=plan[2]!.trim(), pending=data.inbox.filter(i=>i.type==='plan');
     const matches=/^(刚才那个(?:营销)?方案|这个方案|方案|the plan)?$/i.test(key)?pending:pending.filter(i=>i.id===`plan:${key}`||i.summary===key);

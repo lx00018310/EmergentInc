@@ -16,7 +16,7 @@ export function OwnerConsole(){
     {data&&!data.availability.business&&<p role="status">{t('Business data unavailable.')}</p>}
     {data&&data.availability.upgrade!=='available'&&<p role="status">{t(data.availability.upgrade==='unavailable'?'Upgrade service unavailable.':'Upgrade service not configured.')}</p>}
     {data?.upgrade&&<p>{t('Upgrade service')}: {t(data.upgrade.busy?'Working':'Idle')} · Generation: {data.upgrade.active}</p>}
-    <section className="owner-mission"><h2>{t('Owner Chat')}</h2><OwnerChat missionControl onDone={()=>void refresh()}/></section>
+    <section className="owner-mission"><h2>{t('Owner Chat')}</h2><OwnerChat missionControl work={data?.work} onDone={()=>void refresh()}/></section>
     {data&&<div className="owner-columns"><OwnerInbox items={data.inbox} onDone={()=>void refresh()}/><OwnerActivity items={data.activity}/></div>}
   </main>;
 }

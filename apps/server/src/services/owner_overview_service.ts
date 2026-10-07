@@ -1,10 +1,11 @@
 import type { OwnerOverview, OwnerInboxItem, OwnerActivityItem, OwnerActionProposal } from '@emergentinc/protocol';
 import type { WorldRouteServices } from '../routes/world_routes.js';
 import type { BusinessService } from './business_service.js';
+import type { OwnerWorkService } from './owner_work_service.js';
 
 /** Owner projections use existing records; they never start, settle or recover a Run. Times are milliseconds. */
 export class OwnerOverviewService {
-  constructor(private worlds: WorldRouteServices, private business?: BusinessService, private upgradeOrigin?: string) {}
+  constructor(private worlds: WorldRouteServices, private business?: BusinessService, private upgradeOrigin?: string, private work?:OwnerWorkService) {}
   async overview(): Promise<OwnerOverview> {
     const { manager, payments } = this.worlds, { control, lineage } = manager.registry;
     const records = manager.list(), inbox: OwnerInboxItem[] = [], activity: OwnerActivityItem[] = [];
@@ -39,6 +40,7 @@ export class OwnerOverviewService {
           add(`current:${row.world_id}:${r.sequence}`, String(r.kind), name, Number(r.created_at), 'current_events', href);
       }
       return { id: row.qianji_id, name, worldId: row.world_id, status: row.status, running: row.running,
+        role:profile?.narrative.roleLabel,behaviorProfile:profile?.narrative.behaviorProfile,infiniteEnergy:control.gatewayInfiniteEnergy(row.world_id),gatewayPixelId:row.gateway_pixel_id,
         runStatus: row.blockedReason ?? row.runtimeFailure ?? run?.result_status ?? 'NOT_OPEN', round: world?.round,
         energy: world?.metrics.total_energy, pixels: world?.pixels.slice(0, 30).map((p:any)=>({id:p.id,active:p.active,energy:p.energy,mind:String(p.pixel_md??'').slice(0,1000),tips:String(p.tips_md??'').slice(0,400)})) };
     });
@@ -51,6 +53,12 @@ export class OwnerOverviewService {
     for (const r of payments.db.prepare('SELECT receipt_id,world_id,asset,amount_atomic,decimals,created_at FROM world_revenue_events ORDER BY created_at DESC LIMIT 20').all())
       add(`payment:${r.receipt_id}`, 'Payment received', `${r.asset}: ${Number(r.amount_atomic)/10**Number(r.decimals)}`, Number(r.created_at), 'world_revenue_events', r.world_id===null?'/GENE?view=public-site':`/YUAN?world=${encodeURIComponent(String(r.world_id))}`);
     const generation = manager.registry.effectiveGeneration().id;
+    const work=this.work?.view();
+    if(work){
+      for(const r of work.requests.filter(r=>r.state==='PENDING'))inbox.push({id:`recruit:${r.id}`,type:'recruit',title:'Recruitment approval',summary:`${r.requester}: ${r.role} — ${r.reason}`,priority:'normal',createdAt:r.createdAt,source:'owner_recruit_requests',href:'/OWNER',actions:['recruit_approve','recruit_reject'].map(type=>({id:`${type}:${r.id}`,requiresApproval:true,action:{type:type as 'recruit_approve'|'recruit_reject',requestId:r.id,hash:r.hash,role:r.role,reason:r.reason,instruction:r.instruction}}))});
+      for(const r of work.codeReports.filter(r=>r.baseGeneration===generation))inbox.push({id:`code:${r.id}`,type:'code',title:'Source change report',summary:`${r.personName}: ${r.title} — ${r.summary}`,priority:'normal',createdAt:r.createdAt,source:'owner_code_reports',href:`/OWNER?report=${r.id}`});
+      for(const task of work.tasks){add(`task:${task.id}`,'Assigned task',`${task.personName}: ${task.state} — ${task.instruction}`,task.updatedAt,'owner_work_tasks','/OWNER');if(task.state==='BLOCKED'||task.state==='NO_REPLY')inbox.push({id:`task:${task.id}`,type:'run',title:'Assigned task needs attention',summary:`${task.personName}: ${task.reason}`,priority:'normal',createdAt:task.updatedAt,source:'owner_work_tasks',href:`/QIAN?qianji=${encodeURIComponent(task.personId)}`});}
+    }
     for (const p of lineage.proposals().filter(p=>p.state==='PROPOSED' && p.generation_id===generation)) inbox.push({ id:`gene:${p.id}`,type:'gene',title:'Gene proposal',summary:String(p.point),priority:'normal',createdAt:Number(p.created_at),source:'gene_proposals',href:'/GENE' });
     if (this.business) {
       const data=this.business.store.overview();
@@ -80,6 +88,6 @@ export class OwnerOverviewService {
     } catch { /* A disconnected independent service is explicitly reported, never projected as idle. */ }
     inbox.sort((a,b)=>Number(b.priority==='critical')-Number(a.priority==='critical')||(b.createdAt??0)-(a.createdAt??0)||a.id.localeCompare(b.id));
     activity.sort((a,b)=>b.createdAt-a.createdAt||a.id.localeCompare(b.id));
-    return {asOf:Date.now(),summary:{qianjiCount:people.length,activeWorlds:records.filter(r=>r.status==='ACTIVE').length,runningWorlds:records.filter(r=>r.running).length,inboxCount:inbox.length,currentGeneration:generation},inbox,activity:activity.slice(0,50),people,availability,...(upgrade?{upgrade}:{})};
+    return {asOf:Date.now(),summary:{qianjiCount:people.length,activeWorlds:records.filter(r=>r.status==='ACTIVE').length,runningWorlds:records.filter(r=>r.running).length,inboxCount:inbox.length,currentGeneration:generation},inbox,activity:activity.slice(0,50),people,availability,...(upgrade?{upgrade}:{}),...(work?{work}:{})};
   }
 }

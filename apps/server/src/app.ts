@@ -14,6 +14,7 @@ import { registerPublicRoutes } from './routes/public_routes.js';
 import { OwnerOverviewService } from './services/owner_overview_service.js';
 import { OwnerChatService } from './services/owner_chat_service.js';
 import { registerOwnerRoutes } from './routes/owner_routes.js';
+import { OwnerWorkService } from './services/owner_work_service.js';
 
 export interface CreateServerOptions extends Partial<ApiRoutesOptions> {
   worlds?: WorldRouteServices;
@@ -30,6 +31,7 @@ export interface CreateServerOptions extends Partial<ApiRoutesOptions> {
 }
 
 export async function createServer(options: CreateServerOptions): Promise<FastifyInstance> {
+  let ownerWork:OwnerWorkService|undefined;
   const app = fastify({
     logger: false,
     trustProxy: options.trustLoopbackProxy ? ["127.0.0.1", "::1"] : false,
@@ -64,7 +66,7 @@ export async function createServer(options: CreateServerOptions): Promise<Fastif
   });
   app.get("/health/live", async () => ({ alive: true, processId:process.pid }));
   app.get("/health/ready", async (_req, reply) => {
-    const ready = !options.businessService?.status().schedulerFailure && !options.worlds?.manager.list().some(w=>w.runtimeFailure);
+    const ready = !options.businessService?.status().schedulerFailure && !options.worlds?.manager.list().some(w=>w.runtimeFailure) && !ownerWork?.hasFailure();
     return reply.status(ready ? 200 : 503).send({ ready, mode, version: options.worlds ? "v24-public-1" : options.evolution ? "v22-life-1" : "v21-business-1",
       ...(options.evolution ? { generation: options.evolution.life.current.meta().generation_id,
         geneHash: options.evolution.life.current.meta().gene_hash, bodyRevision: options.evolution.life.current.meta().body_revision } : {}) });
@@ -86,20 +88,24 @@ export async function createServer(options: CreateServerOptions): Promise<Fastif
       }
       // Product routes coexist: Gene workbench does not replace QIAN/YUAN's runtime.
       if(options.worlds) {
-        await registerWorldRoutes(api,options.worlds);
-        const overview = new OwnerOverviewService(options.worlds, options.businessService, options.ownerUpgradeOrigin);
         const manager = options.worlds.manager;
+        const work = options.worlds.ownerWork ?? new OwnerWorkService(manager,()=>Boolean(options.evolution?.quiesced?.()),options.ownerUpgradeOrigin);
+        ownerWork=work;
+        if(!options.worlds.ownerWork){const previous=manager.options.configureTools;manager.options.configureTools=(id,tools)=>{previous?.(id,tools);work.registerTools(tools,id);};}
+        app.addHook('onReady',async()=>work.start());app.addHook('onClose',async()=>work.close());
+        await registerWorldRoutes(api,options.worlds);
+        const overview = new OwnerOverviewService(options.worlds, options.businessService, options.ownerUpgradeOrigin,work);
         const chat = manager.options.projectRoot && manager.options.isModelConfigured ? new OwnerChatService({projectRoot:manager.options.projectRoot,workspaceRoot:options.workspaceRoot,
           store:manager.registry.control,provider:manager.options.provider,usageMeter:manager.options.usageMeter,modelName:manager.options.modelName,isModelConfigured:Boolean(manager.options.isModelConfigured),
           snapshot:async()=>{
             const data=await overview.overview();
             const people=data.people.slice(0,20).map(p=>({...p,pixels:p.pixels?.slice(0,5).map((pixel:any)=>({...pixel,mind:String(pixel.mind).slice(0,300),tips:String(pixel.tips).slice(0,160)}))}));
-            return {data:{...data,people,inbox:data.inbox.slice(0,30).map(({actions,...i})=>({...i,summary:i.summary.slice(0,500)})),
+            return {data:{...data,people,work:data.work?{...data.work,tasks:data.work.tasks.slice(0,10).map(t=>({...t,instruction:t.instruction.slice(0,300),reply:t.reply?.slice(0,500)})),codeReports:data.work.codeReports.map(r=>({...r,summary:r.summary.slice(0,500)}))}:undefined,inbox:data.inbox.slice(0,30).map(({actions,...i})=>({...i,summary:i.summary.slice(0,500)})),
               limits:{people:20,pixelsPerWorld:5,inbox:30,activity:50},truncated:{people:data.people.length>20,inbox:data.inbox.length>30}},
               sources:['Owner overview / control (qianji_worlds / qianji_profiles)','control_events','runs / pixel_accounts / world_outbox / tips.md','life_events / current_events','world_revenue_events',
                 ...(data.availability.business?['business_plans / business_requests / business_events']:[]),...(data.availability.upgrade==='available'?['Upgrade Service /status']:[])]};
           }}) : undefined;
-        registerOwnerRoutes(api,overview,chat);
+        registerOwnerRoutes(api,overview,chat,work);
       }
       else if (mode === "legacy" || options.coreStore) {
         if (!options.coreStore || !options.worldService || !options.runService || !options.promptService || !options.toolRegistry) throw new Error("LEGACY_SERVICES_REQUIRED");

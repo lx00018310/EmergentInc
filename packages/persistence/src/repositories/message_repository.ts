@@ -42,7 +42,7 @@ export class MessageRepository {
 
     // 幂等去重：同元胞同内容的未消费 environment 消息或未消费 SELF 消息直接复用，防止队列堆积
     if (
-      (sourceType === "environment" || (params.sender === params.recipient && sourceType === "pixel")) &&
+      !params.messageId && (sourceType === "environment" || (params.sender === params.recipient && sourceType === "pixel")) &&
       status === "QUEUED"
     ) {
       const existing = this.db.prepare(`

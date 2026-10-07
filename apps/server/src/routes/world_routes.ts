@@ -14,9 +14,10 @@ import { GachaImageService } from '../services/gacha_image.js';
 import { registerGachaRoutes } from './gacha_routes.js';
 import { ModelProvider,UsageMeter } from '@emergentinc/model';
 import { RunService } from '../services/run_service.js';
+import type { OwnerWorkService } from '../services/owner_work_service.js';
 
 export interface WorldRouteServices {manager:WorldRuntimeManager;promotion:GenePromotionService;payments:PaymentService;monitor:PaymentMonitor;
-  legacy?:CoreStore;provider?:ModelProvider;meter?:UsageMeter;modelName:string}
+  legacy?:CoreStore;provider?:ModelProvider;meter?:UsageMeter;modelName:string;ownerWork?:OwnerWorkService}
 export async function registerWorldRoutes(app:FastifyInstance,s:WorldRouteServices){
   const {manager,promotion,payments,monitor}=s,control=manager.registry.control,gateway=new QianjiWorldGateway(manager);
   // Existing portrait/narrative endpoints keep their contracts; physical identity is explicitly replaced by World.

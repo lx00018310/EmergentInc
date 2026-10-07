@@ -7,6 +7,7 @@ import { pathToFileURL } from 'node:url';
 import { registerOwnerAuth } from '../apps/server/dist/owner_auth.js';
 import { ownerEnvironment } from './local-release.mjs';
 import { upgradeConfig } from './version-upgrade.mjs';
+import { readAppCodeReport } from './prepare-app-code.mjs';
 
 const require = createRequire(new URL('../apps/server/package.json', import.meta.url));
 const fastify = require('fastify');
@@ -29,7 +30,7 @@ export function readUpgradeStatus(root, config) {
   const file = path.join(config.stateDirectory, 'evolution.sqlite3');
   const candidates = fs.existsSync(file) ? readDb(file, 'SELECT id,state,phase,failure_reason,created_at,candidate_json,request_json FROM candidates ORDER BY created_at DESC LIMIT 30')
     .map(row => ({ ...row, candidate: row.candidate_json ? JSON.parse(row.candidate_json) : null, request: JSON.parse(row.request_json) }))
-    .filter(row => row.request.owner_release).map(({ candidate_json, request_json, ...row }) => ({ ...row,
+    .filter(row => row.request.owner_release || row.request.app_code_report).map(({ candidate_json, request_json, ...row }) => ({ ...row,
       validationLog: /^[a-zA-Z0-9_-]+$/.test(row.id) ? logTail(path.join(config.stateDirectory, 'validation-' + row.id + '.log')) : '' })) : [];
   const dirty = Boolean(execFileSync('git', ['status', '--porcelain'], { cwd: root, encoding: 'utf8', windowsHide: true }).trim());
   return { active, candidates, dirty, appUrl: config.appUrl };
@@ -52,6 +53,7 @@ export async function createUpgradeWeb({ root, config, secret, runCommand = runU
   let job = fs.existsSync(jobFile) ? JSON.parse(fs.readFileSync(jobFile, 'utf8')) : null;
   if (job?.state === 'running') job = { ...job, state: 'interrupted', error: 'UPGRADE_INTERRUPTED_CHECK_RECOVERY' };
   let busy = false;
+  const appReportSession = {};
   app.addHook('onRequest', async (req, reply) => {
     if (req.headers.origin && req.headers.origin !== `http://${req.headers.host}` || req.headers['sec-fetch-site'] === 'cross-site')
       return reply.status(403).send({ detail: 'ORIGIN_FORBIDDEN' });
@@ -72,6 +74,9 @@ export async function createUpgradeWeb({ root, config, secret, runCommand = runU
         hash: row.candidate?.candidate_hash ?? null, baseGeneration: row.candidate?.base_generation ?? null })) };
   });
   app.get('/api/upgrades', async () => ({ ...status(root, config), job, busy }));
+  app.get('/api/code-reports/:id',async(req,reply)=>{
+    try{return await readAppCodeReport(config,req.params.id,secret,fetch,appReportSession);}catch(error){return reply.status(409).send({detail:error.message});}
+  });
   app.post('/api/upgrades', async (req, reply) => {
     if (busy) return reply.status(409).send({ detail: 'UPGRADE_ALREADY_RUNNING' });
     const body = req.body ?? {}, current = status(root, config);
@@ -81,6 +86,9 @@ export async function createUpgradeWeb({ root, config, secret, runCommand = runU
         return reply.status(400).send({ detail: 'VERSION_LABEL_AND_OWNER_REASON_REQUIRED' });
       if (current.dirty) return reply.status(409).send({ detail: 'OWNER_RELEASE_REQUIRES_CLEAN_COMMITTED_CHECKOUT' });
       commands = [['prepare', body.version, body.reason.trim()]];
+    } else if (body.action === 'prepare-code') {
+      if(!/^code_[a-f0-9]{32}$/.test(body.id??'')||!/^[a-f0-9]{64}$/.test(body.hash??''))return reply.status(400).send({detail:'APP_CODE_REPORT_INVALID'});
+      commands=[['prepare-code',body.id,body.hash]];
     } else if (body.action === 'publish') {
       const candidate = current.candidates.find(item => item.id === body.id);
       if (!candidate || !['VALIDATED', 'APPROVED'].includes(candidate.state) || candidate.candidate?.base_generation !== current.active?.id ||
