@@ -27,6 +27,7 @@ const TEXT_EXTENSIONS = new Set([".md", ".txt", ".json", ".ts", ".tsx", ".js", "
 const BLOCKED_SEGMENTS = new Set([".git", ".codex", ".ssh", "node_modules", "dist", "build", "coverage", "__pycache__"]);
 const SELECT_MAX_TOKENS = 128 * 1024;
 const ANSWER_MAX_TOKENS = 128 * 1024;
+const DISPATCH_MAX_TOKENS = 128 * 1024;
 
 export class OwnerChatService {
   constructor(private options: OwnerChatServiceOptions) {}
@@ -38,12 +39,15 @@ export class OwnerChatService {
 输出以下一种严格结构：
 {"kind":"answer"}：查询事实、进度或代码解释。
 {"kind":"clarify","answer":"一个必须明确的问题"}：目标或对象不明确；不能把明确的内部派工当成需要确认。
-{"kind":"dispatch","tasks":[{"personId":"真实ID","instruction":"具体任务、产出和验收要求"}]}：最多5项，每位人物至多一项，同人子任务合并，按职责派工，每项限20轮和100000 Run Tokens。营销先产出方案素材，外发须授权。代码任务使用 LIST_APP_SOURCE、READ_APP_SOURCE、SUBMIT_APP_CODE 在候选副本修改并单独报告 Owner，必须经过8766软件升级校验和发布批准才生效。
+{"kind":"dispatch","rounds":10,"tasks":[{"personId":"真实ID","instruction":"具体任务、产出和验收要求"}]}：最多5项，每位人物至多一项，同人子任务合并，按职责派工。rounds 是可选的1–20整数；老板指定轮数时必须原样使用，未指定则省略，默认最多20轮，每项100000 Run Tokens。“运行10轮并汇报进度、需要老板做什么”属于一次派工，把汇报要求写入 instruction，不额外输出 answer 或另一种结构。超出轮数范围先澄清。营销先产出方案素材，外发须授权。代码任务使用 LIST_APP_SOURCE、READ_APP_SOURCE、SUBMIT_APP_CODE 在候选副本修改并单独报告 Owner，必须经过8766软件升级校验和发布批准才生效。
 {"kind":"energy","personId":"真实ID","refill":true,"infinite":true}：仅老板明确要求时；refill补到100000，infinite只给当前入口自动补能。能量语境的“无线能量”按“无限能量”处理。未指定的字段省略。关闭为infinite:false。无限能量不取消Run预算。若明确指定其他数额，本接口不支持，先澄清，不能擅自改为默认数额。
 {"kind":"recruit","role":"缺少的职责","reason":"现有人物为何不能胜任","instruction":"招聘后要执行的具体任务"}：没有合适人物或明确招聘要求时，先产生待Owner批准的申请。`},
-      {role:'user',content:JSON.stringify({question,history,people:data.people.map(p=>({...p,pixels:p.pixels?.slice(0,3).map((v:any)=>({id:v.id,mind:String(v.mind??'').slice(0,300),tips:String(v.tips??'').slice(0,160)}))})),work:data.work?.tasks.slice(0,10).map(t=>({...t,instruction:t.instruction.slice(0,300),reply:t.reply?.slice(0,300)}))})}], 4096);
+      {role:'user',content:JSON.stringify({question,history,people:data.people.map(p=>({...p,pixels:p.pixels?.slice(0,3).map((v:any)=>({id:v.id,mind:String(v.mind??'').slice(0,300),tips:String(v.tips??'').slice(0,160)}))})),work:data.work?.tasks.slice(0,10).map(t=>({...t,instruction:t.instruction.slice(0,300),reply:t.reply?.slice(0,300)}))})}], DISPATCH_MAX_TOKENS);
     let intent: unknown;
-    try { intent=JSON.parse(extractJsonString(result.text)); } catch { throw new Error('OWNER_DISPATCH_INVALID'); }
+    try { intent=JSON.parse(extractJsonString(result.text)); } catch {
+      if (result.usage.completionTokens !== null && result.usage.completionTokens >= DISPATCH_MAX_TOKENS) throw new Error('OWNER_DISPATCH_OUTPUT_LIMIT');
+      throw new Error(result.text.trim() ? 'OWNER_DISPATCH_INVALID' : 'OWNER_DISPATCH_EMPTY');
+    }
     return {intent,usage:{tokens:result.usage.actualTokens,cost_cny:result.usage.costCny}};
   }
 

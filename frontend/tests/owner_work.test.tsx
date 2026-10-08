@@ -10,6 +10,12 @@ beforeEach(()=>{localStorage.clear();setLanguage('en');});afterEach(()=>{cleanup
 const work:Work={tasks:[{id:'task1',personId:'qj_a',personName:'一苇',instruction:'Inspect source and report',state:'REPLIED',turnId:'turn1',runId:'run1',reply:'# Actual result\n\n**Source read**.',reason:null,createdAt:1,updatedAt:2}],requests:[],codeReports:[]};
 const response=(data:unknown)=>new Response(JSON.stringify(data),{status:200,headers:{'content-type':'application/json'}});
 describe('Owner execution evidence UI',()=>{
+  it.each(['OWNER_DISPATCH_INVALID','OWNER_DISPATCH_OUTPUT_LIMIT','OWNER_DISPATCH_EMPTY'])('starts a new request after a known rejected dispatch: %s',async code=>{
+    const fetch=vi.spyOn(globalThis,'fetch').mockResolvedValueOnce(new Response(JSON.stringify({detail:code}),{status:500,headers:{'content-type':'application/json'}})).mockResolvedValueOnce(response({answer:'Queued',sources:[],as_of:new Date().toISOString(),usage:{tokens:0,cost_cny:0}}));
+    render(<OwnerChat missionControl/>);fireEvent.change(screen.getByLabelText('Ask the Owner assistant'),{target:{value:'Run 10 rounds and report'}});
+    await act(async()=>fireEvent.click(screen.getByRole('button',{name:'Send'})));expect(localStorage.getItem('emergentinc.ownerChat.pending')).toBeNull();expect(screen.getByRole('alert')).toBeTruthy();
+    await act(async()=>fireEvent.click(screen.getByRole('button',{name:'Send'})));const payloads=fetch.mock.calls.map(c=>JSON.parse(String(c[1]!.body)));expect(payloads[1].requestKey).not.toBe(payloads[0].requestKey);
+  });
   it('shows actual task state and Markdown results in both languages, without labelling a reply as completed',()=>{
     render(<OwnerWork work={work}/>);expect(screen.getByText('一苇 · Person replied')).toBeTruthy();expect(screen.getByRole('heading',{name:'Actual result'})).toBeTruthy();
     act(()=>setLanguage('zh-CN'));expect(screen.getByText('一苇 · 人物已回复')).toBeTruthy();expect(screen.getByRole('heading',{name:'已派工作与人物回复'})).toBeTruthy();

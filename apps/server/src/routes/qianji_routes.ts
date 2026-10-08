@@ -292,8 +292,10 @@ export async function registerQianjiRoutes(server: FastifyInstance, options: Qia
     if(options.gateway && options.worlds){
       if(!Number.isSafeInteger(body.rounds)||Number(body.rounds)<1||Number(body.rounds)>20||!Number.isSafeInteger(body.runBudgetTokens)||Number(body.runBudgetTokens)<1||Number(body.runBudgetTokens)>1000000)
         return reply.status(400).send({detail:'CHAT_EXPLICIT_RUN_BUDGET_REQUIRED'});
+      const world=options.worlds.registry.control.worldForQianji(id),runtime=await options.worlds.open(world.world_id);
+      const status=runtime.run.getStatus();
+      if(status.unfinalized_operations&&!status.running)return reply.status(409).send({detail:'PAUSED_RECOVERY_REQUIRED'});
       const result=await options.gateway.enqueue(id,String(body.content),String(body.idempotencyKey));
-      const runtime=await options.worlds.open(String(result.world_id));
       if(!result.run_id && !result.reply && !runtime.run.getStatus().running) await runtime.run.start({rounds:Number(body.rounds),runBudgetTokens:Number(body.runBudgetTokens),onRunCreated:runId=>
         store.db.prepare('UPDATE world_chat_turns SET run_id=? WHERE turn_id=?').run(runId,result.turn_id)});
       return reply.status(202).send({status:'queued',turnId:result.turn_id,messageId:result.message_id,worldId:result.world_id});

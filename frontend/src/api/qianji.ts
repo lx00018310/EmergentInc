@@ -174,9 +174,9 @@ export async function fetchQianjiChat(qianjiId: string, signal?: AbortSignal): P
   return response.items;
 }
 
-export async function postQianjiChat(qianjiId: string, content: string, idempotencyKey: string): Promise<{ turn: QianjiChatTurnDto; created: boolean }> {
+export async function postQianjiChat(qianjiId: string, content: string, idempotencyKey: string, rounds=20): Promise<{ turn: QianjiChatTurnDto; created: boolean }> {
   return apiRequest(`/api/qianji/${encodeURIComponent(qianjiId)}/chat`, {
-    method: 'POST', body: JSON.stringify({ content, idempotencyKey, ...(worldsEnabled()?{rounds:1,runBudgetTokens:100000}:{}) }),
+    method: 'POST', body: JSON.stringify({ content, idempotencyKey, ...(worldsEnabled()?{rounds,runBudgetTokens:100000}:{}) }),
   });
 }
 

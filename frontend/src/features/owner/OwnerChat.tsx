@@ -66,6 +66,9 @@ export const OwnerChat: React.FC<{missionControl?:boolean;onDone?:()=>void;work?
       }].slice(-40));
       pending.current=null;if(missionControl)try{localStorage.removeItem(PENDING_KEY);}catch{/* The response is already recorded by the server. */}onDone?.();
     } catch (err) {
+      if(missionControl&&err instanceof ApiError&&['OWNER_DISPATCH_INVALID','OWNER_DISPATCH_OUTPUT_LIMIT','OWNER_DISPATCH_EMPTY'].includes(err.detail)){
+        pending.current=null;try{localStorage.removeItem(PENDING_KEY);}catch{/* This rejected dispatch executed no action. */}
+      }
       if(missionControl)setDraft(question);
       setError(missionControl ? ownerError(err) : err instanceof ApiError
         ? (err.status === 404 ? (tr("当前服务尚未加载老板窗口接口；请在运行结束后重启服务。")) : err.detail)

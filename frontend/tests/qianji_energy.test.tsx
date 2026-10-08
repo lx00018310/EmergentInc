@@ -26,8 +26,8 @@ it.each([['zh-CN','无限能量','入口更多操作'],['en','Unlimited energy',
 });
 
 it.each([
-  ['zh-CN','元胞能量不足，等待补充后重试。','运行暂停，待处理'],
-  ['en','The Pixel has insufficient energy. Replenish it, then retry.','Run paused; needs attention'],
+  ['zh-CN','元胞能量不足，等待补充后重试。','存在未决调用，请进入 World 恢复处理后再运行。'],
+  ['en','The Pixel has insufficient energy. Replenish it, then retry.','Unresolved calls require review in World recovery before running again.'],
 ])('shows the specific energy message without mislabeling other blocked states in %s', async (lang,energy,other) => {
   localStorage.setItem('emergentinc.language',lang);
   vi.mocked(fetchQianjiChat).mockResolvedValue([

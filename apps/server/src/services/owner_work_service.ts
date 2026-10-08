@@ -26,6 +26,7 @@ export class OwnerWorkService {
       CREATE TABLE IF NOT EXISTS owner_work_tasks(id TEXT PRIMARY KEY, request_key TEXT NOT NULL, person_id TEXT NOT NULL, person_name TEXT NOT NULL, instruction TEXT NOT NULL, state TEXT NOT NULL, turn_id TEXT, run_id TEXT, reply TEXT, reason TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, UNIQUE(request_key,person_id));
       CREATE TABLE IF NOT EXISTS owner_recruit_requests(id TEXT PRIMARY KEY, operation_key TEXT UNIQUE NOT NULL, request_json TEXT NOT NULL, state TEXT NOT NULL, person_id TEXT, created_at INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS owner_dispatch_calls(request_key TEXT PRIMARY KEY, payload_hash TEXT NOT NULL, state TEXT NOT NULL, response_json TEXT, error TEXT, created_at INTEGER NOT NULL);
+      CREATE TABLE IF NOT EXISTS owner_work_run_limits(task_id TEXT PRIMARY KEY REFERENCES owner_work_tasks(id), rounds INTEGER NOT NULL CHECK(rounds BETWEEN 1 AND 20));
     `);
     if (manager.options.projectRoot) this.code = new AppCodeService(manager, manager.options.projectRoot);
   }
@@ -60,16 +61,18 @@ export class OwnerWorkService {
       register('SUBMIT_APP_CODE','提交实际源码候选副本，并单独报告 Owner。files 每项须含 path、完整 content（删除为 null）及 READ_APP_SOURCE 的 baseHash（新增为 null）。不改变当前服务；等待独立软件升级校验和批准。',{title:{type:'string'},summary:{type:'string'},files:{type:'array',items:{type:'object',properties:{path:{type:'string'},content:{type:['string','null']},baseHash:{type:['string','null']}},required:['path','content','baseHash'],additionalProperties:false}}},['title','summary','files'],'write',(a,p,k)=>this.code!.submit(worldId,p,a,k));
     }
   }
-  async dispatch(tasks:{personId:string;instruction:string}[],key:string) {
+  async dispatch(tasks:{personId:string;instruction:string}[],key:string,rounds=20) {
     if(this.schedulerError)throw new Error('OWNER_WORKER_FAILED');
-    if (!Array.isArray(tasks)||!tasks.length||tasks.length>5||new Set(tasks.map(t=>t.personId)).size!==tasks.length)throw new Error('OWNER_DISPATCH_INVALID');
+    if (!Number.isSafeInteger(rounds)||rounds<1||rounds>20||!Array.isArray(tasks)||!tasks.length||tasks.length>5||new Set(tasks.map(t=>t?.personId)).size!==tasks.length)throw new Error('OWNER_DISPATCH_INVALID');
     // Validate the entire batch before creating any work.
     const profiles=tasks.map(t=>{if(!record(t)||!only(t,['personId','instruction'])||!text(t.personId,100)||!text(t.instruction,2000))throw new Error('OWNER_DISPATCH_INVALID');const p=this.manager.registry.control.qianji.getProfile(t.personId);if(!p||p.careerStatus==='retired'||this.manager.registry.control.worldForQianji(t.personId).status!=='ACTIVE')throw new Error('OWNER_PERSON_UNAVAILABLE');return p;});
     const db=this.manager.registry.control.db;
     this.manager.registry.control.transaction(()=>tasks.forEach((t,i)=>{
-      const old=db.prepare('SELECT instruction FROM owner_work_tasks WHERE request_key=? AND person_id=?').get(key,t.personId);
-      if(old){if(old.instruction!==t.instruction)throw new Error('IDEMPOTENCY_CONFLICT');return;}
-      const now=Date.now();db.prepare("INSERT INTO owner_work_tasks VALUES(?,?,?,?,?,'QUEUED',NULL,NULL,NULL,NULL,?,?)").run(`task_${randomUUID().replaceAll('-','')}`,key,t.personId,profiles[i]!.narrative.displayName,t.instruction,now,now);
+      const old=db.prepare('SELECT t.instruction,COALESCE(l.rounds,20) requested_rounds FROM owner_work_tasks t LEFT JOIN owner_work_run_limits l ON l.task_id=t.id WHERE t.request_key=? AND t.person_id=?').get(key,t.personId);
+      if(old){if(old.instruction!==t.instruction||old.requested_rounds!==rounds)throw new Error('IDEMPOTENCY_CONFLICT');return;}
+      const now=Date.now(),id=`task_${randomUUID().replaceAll('-','')}`;
+      db.prepare("INSERT INTO owner_work_tasks VALUES(?,?,?,?,?,'QUEUED',NULL,NULL,NULL,NULL,?,?)").run(id,key,t.personId,profiles[i]!.narrative.displayName,t.instruction,now,now);
+      db.prepare('INSERT INTO owner_work_run_limits VALUES(?,?)').run(id,rounds);
     }));
     await this.tick(); return this.view().tasks.filter(t=>tasks.some(a=>a.personId===t.personId)&&db.prepare('SELECT request_key FROM owner_work_tasks WHERE id=?').get(t.id)?.request_key===key);
   }
@@ -128,7 +131,7 @@ export class OwnerWorkService {
         } else if(hire&&i.kind==='recruit_decision'){
           await this.decide(hire.id,hire.hash,hire.decision);answer=hire.decision==='approve'?say('招聘已批准。新人物及其实际任务会显示在下方。','Recruitment was approved. The new person and their actual work appear below.'):say('招聘申请已拒绝，未创建人物。','Recruitment was rejected. No person was created.');
         } else if(i.kind==='clarify'&&only(i,['kind','answer'])&&text(i.answer,2000))answer=i.answer;
-        else if(i.kind==='dispatch'&&only(i,['kind','tasks'])){extra.tasks=await this.dispatch(i.tasks,key);answer=say('已按分工派发任务并进入运行队列。下方会显示实际运行、阻塞和人物回复；每项任务最多 20 轮、100000 Run Tokens。','Tasks were assigned and queued for execution. Actual runs, blockers and person replies appear below. Each task is limited to 20 rounds and 100000 Run tokens.');}
+        else if(i.kind==='dispatch'&&only(i,['kind','tasks','rounds'])){const rounds=i.rounds===undefined?20:i.rounds;extra.tasks=await this.dispatch(i.tasks,key,rounds);answer=say(`已按分工派发任务并进入运行队列。下方会显示实际运行、阻塞和人物回复；每项任务最多 ${rounds} 轮、100000 Run Tokens。`,`Tasks were assigned and queued for execution. Actual runs, blockers and person replies appear below. Each task is limited to ${rounds} rounds and 100000 Run tokens.`);}
         else if(i.kind==='energy'&&only(i,['kind','personId','refill','infinite'])&&typeof i.personId==='string'&&(i.refill===undefined||typeof i.refill==='boolean')&&(i.infinite===undefined||typeof i.infinite==='boolean')&&(i.refill===true||typeof i.infinite==='boolean')){
           const result=await this.energy(i.personId,i.refill===true,i.infinite,key);extra.energy=result;answer=say(`${result.name}：当前入口元胞 ${result.pixelId} 的能量为 ${result.energy}，无限能量${result.infiniteEnergy?'已开启':'已关闭'}。其他元胞是否获能仍由入口自主决定，Run 预算和实际计费继续有效。`,`${result.name}: gateway ${result.pixelId} has ${result.energy} energy; automatic replenishment is ${result.infiniteEnergy?'enabled':'disabled'}. The gateway decides whether to supply other cells. Run budgets and actual billing remain in effect.`);
         } else if(i.kind==='recruit'&&only(i,['kind','role','reason','instruction'])){extra.request=this.requestRecruit({role:i.role,reason:i.reason,instruction:i.instruction},say('老板窗口助手','Owner assistant'),`dispatch:${key}`);answer=say('已提出招聘申请。请在待办中查看职责、理由和初始任务；批准后才创建人物并派发任务。','A recruitment request was created. Review the role, reason and initial task in Inbox. Approval creates the person and dispatches the task.');}
@@ -145,7 +148,7 @@ export class OwnerWorkService {
   private async runTick() {
     if(this.closed||this.quiesced())return;
     const db=this.manager.registry.control.db;
-    for(const row of db.prepare("SELECT * FROM owner_work_tasks WHERE state IN ('QUEUED','RUNNING') ORDER BY created_at").all()) {
+    for(const row of db.prepare("SELECT t.*,COALESCE(l.rounds,20) requested_rounds FROM owner_work_tasks t LEFT JOIN owner_work_run_limits l ON l.task_id=t.id WHERE t.state IN ('QUEUED','RUNNING') ORDER BY t.created_at").all()) {
       if(this.closed||this.quiesced())return;
       try {
         const personId=String(row.person_id),world=this.manager.registry.control.worldForQianji(personId),runtime=await this.manager.open(world.world_id);
@@ -158,7 +161,7 @@ export class OwnerWorkService {
         if(turn?.status==='no_reply'||turn?.status==='failed'){db.prepare("UPDATE owner_work_tasks SET state=?,reason=?,updated_at=? WHERE id=?").run(turn.status==='failed'?'FAILED':'NO_REPLY',turn.blockReason??'Run ended without an Owner reply',Date.now(),row.id);continue;}
         if(!row.run_id&&!runtime.run.getStatus().running){
           if(this.closed||this.quiesced())return;
-          await runtime.run.start({rounds:20,runBudgetTokens:100000,onRunCreated:runId=>{db.prepare("UPDATE owner_work_tasks SET state='RUNNING',run_id=?,updated_at=? WHERE id=?").run(runId,Date.now(),row.id);db.prepare('UPDATE world_chat_turns SET run_id=? WHERE turn_id=?').run(runId,turnId);}});
+          await runtime.run.start({rounds:Number(row.requested_rounds),runBudgetTokens:100000,onRunCreated:runId=>{db.prepare("UPDATE owner_work_tasks SET state='RUNNING',run_id=?,updated_at=? WHERE id=?").run(runId,Date.now(),row.id);db.prepare('UPDATE world_chat_turns SET run_id=? WHERE turn_id=?').run(runId,turnId);}});
         } else if(row.run_id&&!runtime.run.getStatus().running) {
           const blocked=turn?.status==='blocked'||turn?.status==='queued'||turn?.status==='processing';
           db.prepare('UPDATE owner_work_tasks SET state=?,reason=?,updated_at=? WHERE id=?').run(blocked?'BLOCKED':'NO_REPLY',turn?.blockReason??runtime.run.getStatus().stop_reason??'No owner reply',Date.now(),row.id);

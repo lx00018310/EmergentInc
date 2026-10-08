@@ -337,7 +337,8 @@ export class RunService {
         this.lastStopReason === "MODEL_RESPONSE_INVALID" ||
         this.lastStopReason === "NO_ACTIVE_MESSAGES";
       const isFailed = this.lastStopReason === "INFRASTRUCTURE_FAILURE";
-      const finalStatus = isFailed ? "FAILED" : (isStopped || this.lastStopReason === "PAUSED_RECOVERY_REQUIRED") ? "STOPPED" : "COMPLETED";
+      const needsRecovery = ["CALL_OUTCOME_UNKNOWN", "TOOL_OUTCOME_UNKNOWN", "PAUSED_RECOVERY_REQUIRED"].includes(this.lastStopReason ?? "");
+      const finalStatus = isFailed ? "FAILED" : (isStopped || needsRecovery) ? "STOPPED" : "COMPLETED";
       const finalReason = this.lastStopReason || (signal.aborted ? "USER_STOPPED" : "ROUND_LIMIT_REACHED");
 
       this.lastStopReason = finalReason;
