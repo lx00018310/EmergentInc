@@ -62,6 +62,46 @@ function fixture() {
   return { directory, releases, workspace, lineage, runtime, supervisor, prepare, app: () => app! };
 }
 describe("trusted Generation lifecycle (local runtime contract doubles)", () => {
+  it('rolls back multiple published generations and deletes only their code while retaining facts and approvals',async()=>{
+    const f=fixture();for(const id of ['r2','r3']){const c=await f.prepare(id);f.supervisor.approve(id,c.candidate.candidate_hash);await f.supervisor.birth(id);}
+    f.app().current.setObjective('new-fact','business','Fact after publication','OPEN',true);
+    const c3=f.supervisor.get('r3');await expect(f.supervisor.rollbackTo('G0001','G0002','Stale request')).rejects.toThrow('RELEASE_ACTIVE_CHANGED');
+    expect(f.lineage.activeGeneration()!.id).toBe('G0003');
+    expect(()=>f.supervisor.deleteRelease('r3','G0003',c3.candidate.candidate_hash,'Before rollback')).toThrow('RELEASE_DELETE_DENIED');
+    expect(await f.supervisor.rollbackTo('G0001','G0003','Owner selected historical release')).toMatchObject({activeGeneration:'G0001',rolledBack:['r3','r2']});
+    const c2=f.supervisor.get('r2');expect(f.supervisor.deleteRelease('r3','G0001',c3.candidate.candidate_hash,'Remove newer code')).toEqual({id:'r3',state:'DELETED'});
+    expect(f.supervisor.deleteRelease('r2','G0001',c2.candidate.candidate_hash,'Remove newer code').state).toBe('DELETED');
+    expect(fs.existsSync(join(f.releases,'r3'))).toBe(false);expect(fs.existsSync(join(f.releases,'r2'))).toBe(false);expect(fs.existsSync(join(f.releases,'r1'))).toBe(true);
+    expect(fs.existsSync(join(f.workspace,'generations/G0003/current.sqlite3'))).toBe(true);expect(f.lineage.generations()).toHaveLength(3);
+    expect(f.supervisor.get('r3').approval_hash).toBe(c3.approval_hash);expect(f.lineage.relevantMemories({kind:'generation_rollback'})).toHaveLength(2);
+    expect(f.supervisor.deleteRelease('r3','G0001',c3.candidate.candidate_hash,'Retry deleted code').state).toBe('DELETED');
+    await f.supervisor.postRollbackDream('r3');expect(f.runtime.postRollbackDream).toHaveBeenCalled();
+  });
+  it('checks the entire compatibility path before changing any generation',async()=>{
+    const f=fixture();for(const id of ['r2','r3']){const c=await f.prepare(id);f.supervisor.approve(id,c.candidate.candidate_hash);await f.supervisor.birth(id);}
+    vi.mocked(f.runtime.quiesce).mockClear();vi.mocked(f.runtime.stop).mockClear();
+    f.runtime.checkRollback=directory=>{if(directory===join(f.releases,'r1'))throw new Error('INSTANCE_PAYMENT_FACTS');};
+    await expect(f.supervisor.rollbackTo('G0001','G0003','Historical rollback')).rejects.toThrow('INSTANCE_PAYMENT_FACTS');
+    expect(f.lineage.activeGeneration()!.id).toBe('G0003');expect(f.runtime.quiesce).not.toHaveBeenCalled();expect(f.runtime.stop).not.toHaveBeenCalled();
+  });
+  it('rejects unapproved, non-ancestor and modified historical targets before quiescence',async()=>{
+    const f=fixture(),c2=await f.prepare('r2');f.supervisor.approve('r2',c2.candidate.candidate_hash);await f.supervisor.birth('r2');
+    await f.supervisor.rollbackTo('G0001','G0002','Return to base');const c3=await f.prepare('r3');f.supervisor.approve('r3',c3.candidate.candidate_hash);await f.supervisor.birth('r3');
+    vi.mocked(f.runtime.quiesce).mockClear();await expect(f.supervisor.rollbackTo('G0002','G0003','Other branch')).rejects.toThrow();expect(f.runtime.quiesce).not.toHaveBeenCalled();
+    fs.writeFileSync(join(f.releases,'r3/apps/server/core.txt'),'tampered');await expect(f.supervisor.rollbackTo('G0001','G0003','Historical rollback')).rejects.toThrow('GENE_CANDIDATE_INTEGRITY_CONFLICT');expect(f.runtime.quiesce).not.toHaveBeenCalled();
+  });
+  it('rejects deletion paths outside the release root and can recover a partially deleted code directory',async()=>{
+    const f=fixture(),c=await f.prepare('r2');f.supervisor.approve('r2',c.candidate.candidate_hash);await f.supervisor.birth('r2');await f.supervisor.rollbackTo('G0001','G0002','Rollback');
+    f.runtime.activeRelease=()=>join(f.releases,'r2');expect(()=>f.supervisor.deleteRelease('r2','G0001',c.candidate.candidate_hash,'Wrong active pointer')).toThrow('ACTIVE_TRUSTED_RELEASE_CONFLICT');
+    f.runtime.activeRelease=()=>join(f.releases,'r1');
+    const outside=join(f.directory,'business-data');fs.mkdirSync(outside);fs.writeFileSync(join(outside,'keep.txt'),'business facts');
+    const db=new SqliteDatabase(join(f.directory,'trusted/evolution.sqlite3'));
+    db.prepare('UPDATE candidates SET directory=? WHERE id=?').run(outside,'r2');
+    expect(()=>f.supervisor.deleteRelease('r2','G0001',c.candidate.candidate_hash,'Unsafe alias')).toThrow('RELEASE_DELETE_PATH_DENIED');expect(fs.readFileSync(join(outside,'keep.txt'),'utf8')).toBe('business facts');
+    db.prepare("UPDATE candidates SET directory=?,state='DELETING' WHERE id='r2'").run(join(f.releases,'r2'));
+    db.prepare("INSERT INTO events(candidate_id,kind,payload,created_at) VALUES('r2','release_deletion_started',?,?)").run(JSON.stringify({activeGeneration:'G0001',versionNumber:2,identity:c.candidate.candidate_hash,reason:'Interrupted delete'}),Date.now());db.close();
+    fs.unlinkSync(join(f.releases,'r2/genome/manifest.json'));await f.supervisor.recover();expect(f.supervisor.get('r2').state).toBe('DELETED');expect(fs.existsSync(join(f.releases,'r2'))).toBe(false);expect(fs.readFileSync(join(outside,'keep.txt'),'utf8')).toBe('business facts');
+  });
   it("retains exact approval when the main service is offline before publication and permits an explicit retry",async()=>{
     const f=fixture(),c=await f.prepare("r2");f.supervisor.approve("r2",c.candidate.candidate_hash);
     f.runtime.checkRunning=vi.fn(async()=>{}).mockRejectedValueOnce(new Error("MAIN_SERVICE_UNAVAILABLE"));

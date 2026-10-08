@@ -8,6 +8,7 @@ import { GeneRequest, GeneCandidate, EvolutionRuntime } from "./protocol.js";
 import { ReleaseBuilder, releaseHash, evolutionHash } from "./release_builder.js";
 import { snapshotDatabase,copyDirectoryNew } from "./migration_runner.js";
 import { GenerationMigrator } from "./generation_migrator.js";
+import { rollbackPlan, canDeleteRelease, ReleaseGeneration } from './release_history.js';
 
 /** Installed administrator implementation. Its DB and approvals must be inaccessible to the app user. */
 export class GenerationSupervisor {
@@ -345,14 +346,90 @@ export class GenerationSupervisor {
     if (c.state === "ROLLED_BACK") return c;
     if (c.state !== "BORN" || this.lineage.activeGeneration()?.id !== c.target_generation) throw new Error("GENERATION_NOT_ACTIVE");
     this.busy = true;
-    try {
+    try { return await this.rollbackCandidate(c,reason); } finally { this.busy = false; }
+  }
+  private async rollbackCandidate(c:Record<string,any>,reason:string) {
+      if(c.state!=='BORN'||this.lineage.activeGeneration()?.id!==c.target_generation)throw new Error('GENERATION_NOT_ACTIVE');
       this.runtime.checkRollback?.(path.join(this.releases, c.request.base_release));
       await this.runtime.quiesce();
       try { this.runtime.checkRollback?.(path.join(this.releases, c.request.base_release)); } catch (e) { await this.runtime.resume(); throw e; }
-      await this.restore(id, reason, "ROLLED_BACK"); return this.get(id); } finally { this.busy = false; }
+      await this.restore(c.id, reason, "ROLLED_BACK"); return this.get(c.id);
+  }
+  private maintenanceActive(expectedId:string) {
+    const active=this.lineage.activeGeneration();if(!active||active.id!==expectedId)throw new Error('RELEASE_ACTIVE_CHANGED');
+    if(JSON.parse(fs.readFileSync(this.activePointer,'utf8')).generation_id!==active.id||this.runtime.activeRelease&&this.runtime.activeRelease()!==fs.realpathSync(path.join(this.releases,active.release_id)))throw new Error('ACTIVE_TRUSTED_RELEASE_CONFLICT');
+    return active;
+  }
+  async rollbackTo(targetId:string,expectedActive:string,reason:string) {
+    if(this.busy)throw new Error('EVOLUTION_BUSY');lifeId(targetId);lifeId(expectedActive);lifeText(reason,1000);
+    this.maintenanceActive(expectedActive);
+    if(this.db.prepare("SELECT id FROM candidates WHERE state IN ('BIRTHING','ROLLING_BACK','DELETING')").get())throw new Error('EVOLUTION_RECOVERY_REQUIRED');
+    const generations=this.lineage.generations() as unknown as ReleaseGeneration[],records=this.list().map(r=>this.get(String(r.id)));
+    const steps=rollbackPlan(generations,records as any,expectedActive,targetId);
+    // Preflight the complete path before the first service stop. Recheck every step under quiescence.
+    for(const step of steps){
+      this.checked(this.get(step.id));
+      const previous=this.lineage.generation(step.request.base_generation),directory=path.join(this.releases,previous.release_id);
+      if(readGenome(directory).geneHash!==previous.gene_hash)throw new Error('HISTORICAL_RELEASE_INTEGRITY_CONFLICT');
+      const previousRecord=records.find(r=>r.id===previous.release_id);
+      if(previousRecord){this.checked(previousRecord);if(previousRecord.approval_hash!==previousRecord.candidate.candidate_hash)throw new Error('V23_OWNER_APPROVAL_REQUIRED');}
+      else {
+        const receiptFile=path.join(this.directory,'initial-v23.json');
+        if(fs.existsSync(receiptFile)){
+          const receipt=JSON.parse(fs.readFileSync(receiptFile,'utf8')),initial=receipt.candidate;
+          if(initial?.id!==previous.release_id||receipt.state!=='COMMITTED'||evolutionHash(initial)!==receipt.candidateHash||receipt.ownerAuthorization?.candidateHash!==receipt.candidateHash||initial.target!==previous.id||initial.geneHash!==previous.gene_hash||initial.release.directory!==directory||initial.release.hash!==releaseHash(directory))throw new Error('HISTORICAL_RELEASE_INTEGRITY_CONFLICT');
+        }
+      }
+      this.runtime.checkRollback?.(directory);
+    }
+    this.busy=true;
+    try{await this.runtime.checkRunning?.(expectedActive);for(const step of steps)await this.rollbackCandidate(this.get(step.id),reason);
+      return {activeGeneration:this.lineage.activeGeneration()!.id,rolledBack:steps.map(s=>s.id)};
+    }finally{this.busy=false;}
+  }
+  private restoredToActive():boolean {
+    const event=this.db.prepare("SELECT payload FROM events WHERE kind='generation_restored' ORDER BY sequence DESC LIMIT 1").get();
+    return Boolean(event&&JSON.parse(String(event.payload)).previous===this.lineage.activeGeneration()?.id);
+  }
+  private releaseDirectory(c:Record<string,any>):string {
+    lifeId(c.id);const root=fs.realpathSync(this.releases),directory=path.join(root,c.id);
+    if(path.resolve(c.directory)!==directory||path.dirname(directory)!==root||directory===root)throw new Error('RELEASE_DELETE_PATH_DENIED');
+    const stat=fs.lstatSync(directory,{throwIfNoEntry:false});
+    if(stat&&(stat.isSymbolicLink()||fs.realpathSync(directory)!==directory))throw new Error('RELEASE_DELETE_PATH_DENIED');
+    return directory;
+  }
+  deleteRelease(id:string,expectedActive:string,identity:string,reason:string) {
+    if(this.busy)throw new Error('EVOLUTION_BUSY');lifeText(reason,1000);const c=this.get(id),known=c.candidate?.candidate_hash??c.request_hash;
+    if(identity!==known)throw new Error('RELEASE_IDENTITY_CHANGED');if(c.state==='DELETED')return {id,state:'DELETED'};
+    const active=this.maintenanceActive(expectedActive) as unknown as ReleaseGeneration;
+    if(this.db.prepare("SELECT id FROM candidates WHERE state IN ('BIRTHING','ROLLING_BACK')").get())throw new Error('EVOLUTION_RECOVERY_REQUIRED');
+    const directory=this.releaseDirectory(c),pending=this.db.prepare("SELECT payload FROM events WHERE candidate_id=? AND kind='release_deletion_started' ORDER BY sequence DESC LIMIT 1").get(id);
+    const intent=c.state==='DELETING'&&pending?JSON.parse(String(pending.payload)):null;
+    const versionNumber=intent?.versionNumber??(c.target_generation?Number(this.lineage.generation(c.target_generation).generation_no):readGenome(directory).manifest.generation);
+    if(!canDeleteRelease(c.state==='DELETING'?'FAILED':c.state,id,versionNumber,active,this.restoredToActive())||intent&&intent.activeGeneration!==active.id)throw new Error('RELEASE_DELETE_DENIED');
+    if(!intent)this.db.transaction(()=>{this.event(id,'release_deletion_started',{activeGeneration:active.id,versionNumber,identity,reason});this.db.prepare("UPDATE candidates SET state='DELETING' WHERE id=?").run(id);});
+    // Both the configured release root and this exact child were resolved above. Business data lives elsewhere.
+    fs.rmSync(directory,{recursive:true,force:true});
+    this.db.transaction(()=>{this.db.prepare("UPDATE candidates SET state='DELETED' WHERE id=?").run(id);this.event(id,'release_code_deleted',{activeGeneration:active.id,versionNumber,identity,reason});});
+    return {id,state:'DELETED'};
+  }
+  deleteNewerReleases(expectedActive:string,reason:string) {
+    const active=this.maintenanceActive(expectedActive) as unknown as ReleaseGeneration;
+    if(!this.restoredToActive())throw new Error('RELEASE_DELETE_DENIED');
+    const records=this.list().map(r=>this.get(String(r.id))),eligible=records.filter(c=>{
+      if(!['SUBMITTED','VALIDATED','APPROVED','BORN','ROLLED_BACK','FAILED'].includes(c.state)||c.id===active.release_id)return false;
+      const directory=this.releaseDirectory(c),number=c.target_generation?Number(this.lineage.generation(c.target_generation).generation_no):readGenome(directory).manifest.generation;
+      return canDeleteRelease(c.state,c.id,number,active,true);
+    });
+    return eligible.map(c=>this.deleteRelease(c.id,expectedActive,c.candidate?.candidate_hash??c.request_hash,reason));
   }
   async recover() {
     if (this.busy) throw new Error("EVOLUTION_BUSY");
+    for(const row of this.db.prepare("SELECT id FROM candidates WHERE state='DELETING' ORDER BY created_at").all()){
+      const c=this.get(String(row.id)),event=this.db.prepare("SELECT payload FROM events WHERE candidate_id=? AND kind='release_deletion_started' ORDER BY sequence DESC LIMIT 1").get(c.id);
+      if(!event)throw new Error('RELEASE_DELETE_INTENT_MISSING');const intent=JSON.parse(String(event.payload));
+      this.deleteRelease(c.id,intent.activeGeneration,intent.identity,intent.reason);
+    }
     this.busy = true;
     try {
       for (const row of this.db.prepare("SELECT id FROM candidates WHERE state IN ('BIRTHING','ROLLING_BACK') ORDER BY created_at").all())
@@ -364,7 +441,7 @@ export class GenerationSupervisor {
   async postRollbackDream(id: string) {
     if (this.busy) throw new Error("EVOLUTION_BUSY");
     const candidate = this.get(id);
-    if (!["FAILED", "ROLLED_BACK"].includes(candidate.state) || !candidate.target_generation || !this.runtime.postRollbackDream)
+    if (!["FAILED", "ROLLED_BACK", "DELETED"].includes(candidate.state) || !candidate.target_generation || !this.runtime.postRollbackDream)
       throw new Error("POST_ROLLBACK_DREAM_NOT_AVAILABLE");
     const pending = this.lineage.db.prepare("SELECT * FROM life_events WHERE source_ref=?").get(`post-rollback:${candidate.target_generation}`);
     if (!pending) throw new Error("FROZEN_CURRENT_NOT_FOUND");

@@ -17,6 +17,7 @@ import { BodyGrowthService } from './services/body_growth_service.js';
 import { DreamService } from './services/dream_service.js';
 import { MemoryGate } from './services/memory_gate.js';
 import { OwnerWorkService } from './services/owner_work_service.js';
+import { ReleaseMaintenanceClient } from './services/release_maintenance_client.js';
 
 /** V23 is an explicit workspace format. Never reinterpret a V22 database at normal startup. */
 export async function bootstrapWorlds(projectRoot:string,config:ReturnType<typeof runtimeConfig>,unlock:()=>void){
@@ -47,7 +48,7 @@ export async function bootstrapWorlds(projectRoot:string,config:ReturnType<typeo
   const manager=new WorldRuntimeManager(registry,{...manifest,generation:Number(active.generation_no)},{provider,usageMeter,modelName,isModelConfigured:modelConfigured,isMockMode:mock,
     projectRoot,baseSystemPrompt:fs.readFileSync(path.join(projectRoot,'resources/prompts/v9_system_prompt.md'),'utf8'),configureTools:(id,tools)=>{registerWorldTools(tools,id,promotion,payments);ownerWork.registerTools(tools,id);}});
   promotion=new GenePromotionService(manager,projectRoot,lineage);
-  ownerWork=new OwnerWorkService(manager,()=>paused,ownerUpgradeOrigin);
+  ownerWork=new OwnerWorkService(manager,()=>paused,ownerUpgradeOrigin,ownerUpgradeOrigin?new ReleaseMaintenanceClient(ownerUpgradeOrigin,config.ownerAuth.secret):undefined);
   for(const world of manager.list().filter(w=>w.status==='ACTIVE'&&!w.blockedReason)){
     try{await manager.open(world.world_id);}catch(error){const e=error as any;if(candidate||!['WORLD_ACTIVE_CURRENT_MISSING','CURRENT_NOT_INITIALIZED','WORLD_ACTIVE_GENOME_MISMATCH','WORLD_IDENTITY_CONFLICT','WORLD_CORE_MISSING'].includes(e.message)&&!['ERR_SQLITE_ERROR'].includes(e.code))throw error;manager.diagnose(world.world_id,e.code==='ERR_SQLITE_ERROR'?'WORLD_DATABASE_UNAVAILABLE':e.message);}
   }

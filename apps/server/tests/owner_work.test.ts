@@ -15,10 +15,11 @@ import fastify from 'fastify';
 import {registerQianjiRoutes} from '../src/routes/qianji_routes.js';
 import {QianjiWorldGateway} from '../src/services/qianji_world_gateway.js';
 import {OutcomeUnknownError} from '@emergentinc/model';
+import {ReleaseMaintenanceClient,pixelReleaseToken} from '../src/services/release_maintenance_client.js';
 
 const cleanups:(()=>Promise<void>)[]=[];
 afterEach(async()=>{for(const fn of cleanups.splice(0).reverse())await fn();});
-function fixture(){
+function fixture(maintenance?:ReleaseMaintenanceClient){
   const root=fs.mkdtempSync(join(tmpdir(),'owner-work-')),project=join(root,'project');fs.mkdirSync(join(project,'frontend/src'),{recursive:true});fs.writeFileSync(join(project,'frontend/src/sample.ts'),'export const value = 1;');
   const lineage=new LineageStore(join(root,'system/lineage/lineage.sqlite3'),{v23:true});lineage.createGeneration({id:'G0001',number:1,geneHash:'1'.repeat(64),releaseId:'r1',state:'ACTIVE'});writeGenerationPointer(join(root,'system'),'G0001');
   const control=new WorldRegistryStore(join(root,'system/control/control.sqlite3')),registry=new WorldRegistryService(root,control,lineage,'1');
@@ -27,13 +28,27 @@ function fixture(){
   const calls:any[]=[];let work:OwnerWorkService;
   const provider={async call(request:any){calls.push(request);return {rawText:JSON.stringify(request.messages[0].content.startsWith('你是 Owner')?intent:request.messages[0].content.includes('人物设定编辑')?{displayName:'新同事',shortBio:'负责指定工作',appearanceSpec:'人物画像'}:worldReply),usage:{promptTokens:20,completionTokens:10}};}};
   const manager=new WorldRuntimeManager(registry,{schema_version:1,generation:1,body_interface_version:'1',protected_paths:['genome/**'],capability_contracts:{}},{provider,usageMeter:new UsageMeter({models:{}}),modelName:'test',isMockMode:true,isModelConfigured:true,projectRoot:project,configureTools:(id,tools)=>work.registerTools(tools,id)});
-  work=new OwnerWorkService(manager);const chat=new OwnerChatService({projectRoot:project,workspaceRoot:root,store:control,provider,usageMeter:manager.options.usageMeter,modelName:'test',isModelConfigured:true});
+  work=new OwnerWorkService(manager,undefined,undefined,maintenance);const chat=new OwnerChatService({projectRoot:project,workspaceRoot:root,store:control,provider,usageMeter:manager.options.usageMeter,modelName:'test',isModelConfigured:true});
   const data=()=>({people:manager.list().map(r=>({id:r.qianji_id,name:control.qianji.getProfile(r.qianji_id)!.narrative.displayName,role:control.qianji.getProfile(r.qianji_id)!.narrative.roleLabel,status:'ACTIVE',worldId:r.world_id,running:false,runStatus:'READY'})),inbox:[],work:work.view()}) as any;
   cleanups.push(async()=>{await work.close();await manager.closeAll();control.close();lineage.close();fs.rmSync(root,{recursive:true,force:true});});
   const finish=async()=>{await vi.waitFor(async()=>{await work.tick();expect(manager.list().some(w=>w.running)).toBe(false);expect(work.view().tasks.every(t=>!['RUNNING','QUEUED'].includes(t.state))).toBe(true);},{timeout:5000});};
   return {root,project,manager,registry,control,lineage,work,chat,a,b,calls,data,finish,intent:(v:any)=>intent=v,reply:(v:any)=>worldReply=v};
 }
 describe('Owner role dispatch and actual execution',()=>{
+  it('registers live Pixel rollback/deletion tools with a scoped credential and bound actor, without exposing Owner login',async()=>{
+    const secret='test-maintenance-secret'.repeat(3),requests:any[]=[],fetcher=vi.fn(async(url:any,init:any)=>{requests.push({url,init});return new Response(JSON.stringify({accepted:true,active:'G0002',versions:[]}),{headers:{'Content-Type':'application/json'}});});
+    const f=fixture(new ReleaseMaintenanceClient('http://127.0.0.1:8766',secret,fetcher as any)),tools=new ToolRegistry();f.work.registerTools(tools,f.a.world_id);const runtime=new ToolRuntime(tools);
+    const context={workspaceRoot:f.registry.directory(f.a.world_id),pixelId:'0_0_0',operationId:'rollback-op',round:1} as any;
+    expect((await runtime.execute('LIST_RELEASE_VERSIONS',{},context)).status).toBe('SUCCESS');
+    expect((await runtime.execute('ROLLBACK_RELEASE',{targetGeneration:'G0001',expectedActive:'G0002',reason:'Restore stable code',deleteNewer:true},context)).status).toBe('SUCCESS');
+    expect(requests[1].url).toBe('http://127.0.0.1:8766/pixel/releases/rollback');expect(requests[1].init.headers.Authorization).toBe(`Bearer ${pixelReleaseToken(secret)}`);
+    expect(JSON.parse(requests[1].init.body)).toMatchObject({worldId:f.a.world_id,pixelId:'0_0_0',operationKey:`${f.a.world_id}:rollback-op`,deleteNewer:true});
+    expect((await runtime.execute('DELETE_RELEASE',{releaseId:'r2',expectedActive:'G0001',identity:'a'.repeat(64),reason:'Remove newer code'},{...context,operationId:'delete-op'})).status).toBe('SUCCESS');
+    expect(requests[2].url).toBe('http://127.0.0.1:8766/pixel/releases/delete');expect(JSON.stringify(requests)).not.toContain(secret);expect(JSON.stringify(tools.renderCatalogForPrompt())).not.toContain(pixelReleaseToken(secret));
+    expect((await runtime.execute('ROLLBACK_RELEASE',{targetGeneration:'G0001',expectedActive:'G0002',reason:'Wrong actor'},{...context,workspaceRoot:f.registry.directory(f.b.world_id)})).status).toBe('FAILED');
+    const world=await f.manager.open(f.a.world_id);world.store.pixels.setActive('0_0_0',false);
+    expect((await runtime.execute('DELETE_RELEASE',{releaseId:'r2',expectedActive:'G0001',identity:'a'.repeat(64),reason:'Inactive actor'},context)).status).toBe('FAILED');expect(requests).toHaveLength(3);
+  });
   it.each(['zh-CN','en'] as const)('preserves a requested 10-round limit and the reporting task in %s',async language=>{
     const f=fixture();f.intent({kind:'dispatch',rounds:10,tasks:[{personId:f.a.qianji_id,instruction:'Run and report current work and required Owner actions'}]});
     const response=await f.work.ask('ten-rounds','很好 运行10轮 告诉我现在你们在做什么，需要我做什么',[],language,f.data(),f.chat);await f.finish();
@@ -169,7 +184,7 @@ describe('Owner role dispatch and actual execution',()=>{
   });
 });
 describe('8765 source candidate permission boundary',()=>{
-  it.each(['scripts/upgrade-web.mjs','scripts/prepare-app-code.mjs','supervisor/protocol.ts','apps/server/src/owner_auth.ts','apps/server/src/routes/public_routes.ts','apps/server/src/services/public_store.ts','apps/server/src/services/payment_assets.ts','apps/server/src/services/app_code_policy.ts','packages/persistence/src/core_store.ts','packages/protocol/src/types/owner.ts','package.json','pnpm-lock.yaml','genome/manifest.json','frontend/src/../../scripts/upgrade-web.mjs','Frontend/src/app.ts','frontend/src/file.ts:secret','frontend/src/CON.ts'])('denies protected/shared/alias path %s',p=>expect(()=>appCodePath(p)).toThrow('APP_CODE_PATH_DENIED'));
+  it.each(['scripts/upgrade-web.mjs','scripts/prepare-app-code.mjs','supervisor/protocol.ts','apps/server/src/owner_auth.ts','apps/server/src/routes/public_routes.ts','apps/server/src/services/public_store.ts','apps/server/src/services/payment_assets.ts','apps/server/src/services/app_code_policy.ts','apps/server/src/services/release_maintenance_client.ts','packages/persistence/src/core_store.ts','packages/protocol/src/types/owner.ts','package.json','pnpm-lock.yaml','genome/manifest.json','frontend/src/../../scripts/upgrade-web.mjs','Frontend/src/app.ts','frontend/src/file.ts:secret','frontend/src/CON.ts'])('denies protected/shared/alias path %s',p=>expect(()=>appCodePath(p)).toThrow('APP_CODE_PATH_DENIED'));
   it('writes real candidate source and a separate immutable report without changing the active source',async()=>{
     const f=fixture(),before=f.work.code!.read('frontend/src/sample.ts'),input={title:'Change value',summary:'Change application value to 2',files:[{path:before.path,content:'export const value = 2;',baseHash:before.baseHash}]};
     const result=await f.work.code!.submit(f.a.world_id,'0_0_0',input,'source1');const report=f.work.code!.get(result.id);

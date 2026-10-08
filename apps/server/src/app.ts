@@ -15,6 +15,7 @@ import { OwnerOverviewService } from './services/owner_overview_service.js';
 import { OwnerChatService } from './services/owner_chat_service.js';
 import { registerOwnerRoutes } from './routes/owner_routes.js';
 import { OwnerWorkService } from './services/owner_work_service.js';
+import { ReleaseMaintenanceClient } from './services/release_maintenance_client.js';
 
 export interface CreateServerOptions extends Partial<ApiRoutesOptions> {
   worlds?: WorldRouteServices;
@@ -89,7 +90,8 @@ export async function createServer(options: CreateServerOptions): Promise<Fastif
       // Product routes coexist: Gene workbench does not replace QIAN/YUAN's runtime.
       if(options.worlds) {
         const manager = options.worlds.manager;
-        const work = options.worlds.ownerWork ?? new OwnerWorkService(manager,()=>Boolean(options.evolution?.quiesced?.()),options.ownerUpgradeOrigin);
+        const work = options.worlds.ownerWork ?? new OwnerWorkService(manager,()=>Boolean(options.evolution?.quiesced?.()),options.ownerUpgradeOrigin,
+          options.ownerUpgradeOrigin&&options.ownerAuth?new ReleaseMaintenanceClient(options.ownerUpgradeOrigin,options.ownerAuth.secret):undefined);
         ownerWork=work;
         if(!options.worlds.ownerWork){const previous=manager.options.configureTools;manager.options.configureTools=(id,tools)=>{previous?.(id,tools);work.registerTools(tools,id);};}
         app.addHook('onReady',async()=>work.start());app.addHook('onClose',async()=>work.close());

@@ -6,9 +6,9 @@ import {LocalWorldRuntime} from '../supervisor/dist/local_world_runtime.js';
 import {ownerEnvironment} from './local-release.mjs';
 
 // Explicit local Owner CLI. No Body/HTTP caller can approve an exact candidate through this interface.
-const [configFile,action,value,exactHash]=process.argv.slice(2);let supervisor,lineage,lock;
+const [configFile,action,value,exactHash,...extra]=process.argv.slice(2);let supervisor,lineage,lock;
 try{
-  if(!['submit','submit-owner-release','validate','approve','birth','rollback','recover','show','list','post-rollback-dream'].includes(action))throw new Error('Usage: v23-generation <owner-config.json> submit <request.json> | validate/show/birth <id> | approve <id> <exact-hash> | rollback <id> <reason> | recover | list');
+  if(!['submit','submit-owner-release','validate','approve','birth','rollback','rollback-to','delete-release','delete-newer','recover','show','list','post-rollback-dream'].includes(action))throw new Error('Usage: v23-generation <owner-config.json> submit <request.json> | validate/show/birth <id> | approve <id> <exact-hash> | rollback <id> <reason> | rollback-to <generation> <expected-active> <reason> | delete-release <id> <expected-active> <identity> <reason> | delete-newer <expected-active> <reason> | recover | list');
   const config=JSON.parse(fs.readFileSync(path.resolve(configFile),'utf8'));
   if(!config.ownerProjectRoot)throw new Error('OWNER_PROJECT_ROOT_REQUIRED');
   for(const key of ['workspace','releases','stateDirectory','activeReleaseFile'])config[key]=path.resolve(config.ownerProjectRoot,config[key]);
@@ -22,6 +22,9 @@ try{
   else if(action==='submit-owner-release')result=supervisor.submitOwnerRelease(JSON.parse(fs.readFileSync(path.resolve(value),'utf8')));
   else if(action==='list')result=supervisor.list();else if(action==='show')result=supervisor.get(value);
   else if(action==='approve')result=supervisor.approve(value,exactHash);else if(action==='rollback')result=await supervisor.rollback(value,exactHash);
+  else if(action==='rollback-to')result=await supervisor.rollbackTo(value,exactHash,extra[0]);
+  else if(action==='delete-release')result=supervisor.deleteRelease(value,exactHash,extra[0],extra[1]);
+  else if(action==='delete-newer')result=supervisor.deleteNewerReleases(value,exactHash);
   else if(action==='recover')result=await supervisor.recover();else if(action==='post-rollback-dream')result=await supervisor.postRollbackDream(value);
   else result=await supervisor[action](value);console.log(JSON.stringify(result,null,2));
 }catch(error){console.error(error.message);process.exitCode=1;}

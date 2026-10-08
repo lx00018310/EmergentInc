@@ -9,6 +9,10 @@ import { ownerEnvironment } from './local-release.mjs';
 import { upgradeConfig, ownerReleaseInput } from './version-upgrade.mjs';
 import { readAppCodeReport } from './prepare-app-code.mjs';
 import { LocalWorldRuntime } from '../supervisor/dist/local_world_runtime.js';
+import { rollbackPlan, canDeleteRelease } from '../supervisor/dist/release_history.js';
+import { pixelReleaseToken } from '../apps/server/dist/services/release_maintenance_client.js';
+import { createHash, timingSafeEqual } from 'node:crypto';
+import { checkPaymentRollback } from '../supervisor/dist/payment_compatibility.js';
 
 const require = createRequire(new URL('../apps/server/package.json', import.meta.url));
 const fastify = require('fastify');
@@ -27,18 +31,37 @@ export function readUpgradeStatus(root, config) {
     const db = new DatabaseSync(file, { readOnly: true });
     try { return db.prepare(sql).all(...params); } finally { db.close(); }
   };
-  const active = readDb(path.join(config.workspace, 'system/lineage/lineage.sqlite3'), "SELECT id,release_id FROM generations WHERE state='ACTIVE'")[0];
+  const generations=readDb(path.join(config.workspace,'system/lineage/lineage.sqlite3'),'SELECT id,generation_no,parent_id,release_id,state FROM generations ORDER BY generation_no DESC');
+  const active=generations.find(g=>g.state==='ACTIVE');
   const file = path.join(config.stateDirectory, 'evolution.sqlite3');
   if(active&&fs.existsSync(file)){
     const request=readDb(file,'SELECT request_json FROM candidates WHERE id=?',[active.release_id])[0];
     if(request)active.label=JSON.parse(request.request_json).owner_release?.label;
   }
-  const candidates = fs.existsSync(file) ? readDb(file, 'SELECT id,state,phase,failure_reason,created_at,candidate_json,request_json FROM candidates ORDER BY created_at DESC LIMIT 30')
+  const restored=fs.existsSync(file)?readDb(file,"SELECT payload FROM events WHERE kind='generation_restored' ORDER BY sequence DESC LIMIT 1")[0]:null;
+  const afterRollback=Boolean(active&&restored&&JSON.parse(restored.payload).previous===active.id);
+  const records = fs.existsSync(file) ? readDb(file, 'SELECT id,state,phase,failure_reason,created_at,target_generation,request_hash,candidate_json,request_json FROM candidates ORDER BY created_at DESC')
     .map(row => ({ ...row, candidate: row.candidate_json ? JSON.parse(row.candidate_json) : null, request: JSON.parse(row.request_json) }))
-    .filter(row => row.request.owner_release || row.request.app_code_report).map(({ candidate_json, request_json, ...row }) => ({ ...row,
-      validationLog: /^[a-zA-Z0-9_-]+$/.test(row.id) ? logTail(path.join(config.stateDirectory, 'validation-' + row.id + '.log')) : '' })) : [];
+    : [];
+  const candidates=records.filter(row=>row.request.owner_release||row.request.app_code_report).map(({candidate_json,request_json,...row})=>{
+    let versionNumber=generations.find(g=>g.id===row.target_generation)?.generation_no;
+    if(versionNumber===undefined&&!['DELETED','DELETING'].includes(row.state)&&config.releases&&/^[a-zA-Z0-9_-]+$/.test(row.id)){
+      const manifest=path.join(config.releases,row.id,'genome/manifest.json');if(fs.existsSync(manifest))versionNumber=JSON.parse(fs.readFileSync(manifest,'utf8')).generation;
+    }
+    return {...row,versionNumber,identity:row.candidate?.candidate_hash??row.request_hash,
+      canDelete:Boolean(active&&canDeleteRelease(row.state,row.id,versionNumber,active,afterRollback)),
+      validationLog:/^[a-zA-Z0-9_-]+$/.test(row.id)?logTail(path.join(config.stateDirectory,'validation-'+row.id+'.log')):''};
+  });
+  const versions=generations.map(g=>{
+    const record=records.find(r=>r.id===g.release_id),directory=config.releases&&path.join(config.releases,g.release_id);
+    const available=Boolean(directory&&/^[a-zA-Z0-9_-]+$/.test(g.release_id)&&fs.existsSync(directory)&&!fs.lstatSync(directory).isSymbolicLink());
+    let canRollback=false,rollbackBlockedReason=null;
+    if(active&&g.id!==active.id&&available){try{rollbackPlan(generations,records,active.id,g.id);checkPaymentRollback(path.join(config.workspace,'system/payment/payment.sqlite3'),directory);canRollback=true;}catch(error){rollbackBlockedReason=error.message;}}
+    return {...g,label:record?.request.owner_release?.label??record?.request.app_code_report?.title??g.release_id,available,canRollback,rollbackBlockedReason,
+      identity:record?.candidate?.candidate_hash??record?.request_hash,canDelete:Boolean(active&&record&&canDeleteRelease(record.state,g.release_id,g.generation_no,active,afterRollback))};
+  });
   const dirty = Boolean(execFileSync('git', ['status', '--porcelain'], { cwd: root, encoding: 'utf8', windowsHide: true }).trim());
-  return { active, candidates, dirty, appUrl: config.appUrl };
+  return { active, candidates, versions, afterRollback, dirty, appUrl: config.appUrl };
 }
 
 export function runUpgradeCommand(root, args, onOutput) {
@@ -52,7 +75,7 @@ export function runUpgradeCommand(root, args, onOutput) {
     }); }
     child.once('error', reject);
     child.once('exit', code => {
-      const detail = diagnostic.split(/\r?\n/).find(line => ['MAIN_SERVICE_UNAVAILABLE', 'MAIN_SERVICE_NOT_READY', 'LOCAL_CONTROL_PROCESS_IDENTITY_CONFLICT'].includes(line));
+      const detail = diagnostic.split(/\r?\n/).find(line => ['MAIN_SERVICE_UNAVAILABLE','MAIN_SERVICE_NOT_READY','LOCAL_CONTROL_PROCESS_IDENTITY_CONFLICT','ROLLBACK_TARGET_INVALID','ROLLBACK_TARGET_NOT_ANCESTOR','ROLLBACK_HISTORY_UNAVAILABLE','RELEASE_DELETE_DENIED','RELEASE_ACTIVE_CHANGED','RELEASE_IDENTITY_CHANGED','RELEASE_DELETE_PATH_DENIED','EVOLUTION_RECOVERY_REQUIRED','HISTORICAL_RELEASE_INTEGRITY_CONFLICT','ACTIVE_TRUSTED_RELEASE_CONFLICT','V23_ROLLBACK_DENIED_INSTANCE_PAYMENT_FACTS','PAYMENT_ROLLBACK_SCHEMA_UNSUPPORTED'].includes(line));
       code === 0 ? resolve() : reject(new Error(detail ?? `UPGRADE_COMMAND_FAILED:${args[0]}`));
     });
   });
@@ -67,9 +90,14 @@ export async function createUpgradeWeb({ root, config, secret, runCommand = runU
   if (job?.state === 'running') job = { ...job, state: 'interrupted', error: 'UPGRADE_INTERRUPTED_CHECK_RECOVERY' };
   let busy = false;
   const appReportSession = {};
+  const delegatedToken=pixelReleaseToken(secret);
   app.addHook('onRequest', async (req, reply) => {
     if (req.headers.origin && req.headers.origin !== `http://${req.headers.host}` || req.headers['sec-fetch-site'] === 'cross-site')
       return reply.status(403).send({ detail: 'ORIGIN_FORBIDDEN' });
+    if(req.url.split('?')[0].startsWith('/pixel/releases')){
+      const supplied=req.headers.authorization?.replace(/^Bearer /,'')??'';
+      if(!/^[a-f0-9]{64}$/.test(supplied)||!timingSafeEqual(Buffer.from(supplied),Buffer.from(delegatedToken)))return reply.status(401).send({detail:'PIXEL_RELEASE_AUTH_REQUIRED'});
+    }
   });
   registerOwnerAuth(app, { secret, secureCookies: false, cookieName: 'emergent_upgrade_owner' }, 'upgrade');
   app.addHook('onSend', async (_req, reply) => {
@@ -77,7 +105,7 @@ export async function createUpgradeWeb({ root, config, secret, runCommand = runU
       .header('Content-Security-Policy', "frame-ancestors 'none'; object-src 'none'; base-uri 'self'");
   });
   app.get('/', async (_req, reply) => reply.type('text/html').send(fs.readFileSync(path.join(root, 'resources/upgrade-web.html'), 'utf8')));
-  app.get('/health/live', async () => ({ alive: true, service: 'owner-upgrade', projectRoot: root }));
+  app.get('/health/live', async () => ({ alive: true, service: 'owner-upgrade', projectRoot: root,processId:process.pid,capabilities:['rollback','delete','pixel-release-maintenance-v1'] }));
   // Loopback read-only projection. Never expose private paths, logs, credentials or approval capabilities.
   app.get('/status', async () => {
     const current = status(root, config);
@@ -90,9 +118,14 @@ export async function createUpgradeWeb({ root, config, secret, runCommand = runU
   app.get('/api/code-reports/:id',async(req,reply)=>{
     try{return await readAppCodeReport(config,req.params.id,secret,fetch,appReportSession);}catch(error){return reply.status(409).send({detail:error.message});}
   });
-  app.post('/api/upgrades', async (req, reply) => {
+  const handleAction=async (body,reply,actor=null) => {
+    const requestHash=createHash('sha256').update(JSON.stringify({body,actor})).digest('hex');
+    if(actor&&job?.operationKey===actor.operationKey){
+      if(job.requestHash!==requestHash)return reply.status(409).send({detail:'IDEMPOTENCY_CONFLICT'});
+      return reply.status(202).send({accepted:true,operationKey:actor.operationKey,state:job.state});
+    }
     if (busy) return reply.status(409).send({ detail: 'UPGRADE_ALREADY_RUNNING' });
-    const body = req.body ?? {}, current = status(root, config);
+    const current = status(root, config);
     let commands,version;
     if (body.action === 'prepare') {
       let input;
@@ -108,22 +141,50 @@ export async function createUpgradeWeb({ root, config, secret, runCommand = runU
         typeof body.hash !== 'string' || !/^[a-f0-9]{64}$/.test(body.hash) || body.hash !== candidate.candidate?.candidate_hash)
         return reply.status(409).send({ detail: 'UPGRADE_CANDIDATE_CONFLICT' });
       commands = [['approve', body.id, body.hash], ['apply', body.id]];
+    } else if(body.action==='rollback'){
+      const target=current.versions?.find(v=>v.id===body.targetGeneration);
+      if(!target?.canRollback||body.expectedActive!==current.active?.id)return reply.status(409).send({detail:'ROLLBACK_TARGET_INVALID'});
+      if(typeof body.reason!=='string'||!body.reason.trim()||body.reason.length>800||body.reason.includes('\0')||body.deleteNewer!==undefined&&typeof body.deleteNewer!=='boolean')return reply.status(400).send({detail:'RELEASE_ACTION_INVALID'});
+      const reason=actor?`Pixel ${actor.worldId}/${actor.pixelId}: ${body.reason}`:body.reason;
+      commands=[['rollback-to',body.targetGeneration,body.expectedActive,reason]];
+      if(body.deleteNewer===true)commands.push(['delete-newer',body.targetGeneration,reason]);
+    } else if(body.action==='delete'){
+      const release=current.candidates.find(c=>c.id===body.releaseId)??current.versions?.find(v=>v.release_id===body.releaseId);
+      if(!release?.canDelete||body.expectedActive!==current.active?.id||typeof body.identity!=='string'||body.identity!==release.identity)return reply.status(409).send({detail:'RELEASE_DELETE_DENIED'});
+      if(typeof body.reason!=='string'||!body.reason.trim()||body.reason.length>800||body.reason.includes('\0'))return reply.status(400).send({detail:'RELEASE_ACTION_INVALID'});
+      commands=[['delete-release',body.releaseId,body.expectedActive,body.identity,actor?`Pixel ${actor.worldId}/${actor.pixelId}: ${body.reason}`:body.reason]];
     } else if (body.action === 'recover') commands = [['recover']];
     else return reply.status(400).send({ detail: 'VERSION_UPGRADE_ACTION_INVALID' });
     busy = true;
-    job = { action: body.action, id: body.id ?? null, ...(version?{version}:{}), state: 'running', startedAt: Date.now(), log: '', error: null };
+    job = { action: body.action, id: body.id ?? body.releaseId??null, targetGeneration:body.targetGeneration??null,
+      ...(actor?{requester:actor,operationKey:actor.operationKey,requestHash}:{}),...(version?{version}:{}), state: 'running', startedAt: Date.now(), log: '', error: null };
     const save = () => fs.writeFileSync(jobFile, JSON.stringify(job, null, 2));
     try { save(); } catch (error) { busy = false; throw error; }
     const execute = async () => {
       try {
-        if (body.action === 'publish') await checkRunning(current.active.id);
+        if (['publish','rollback'].includes(body.action)) await checkRunning(current.active.id);
         for (const args of commands) await runCommand(root, args, chunk => { job.log = (job.log + chunk).slice(-8000); });
         job.state = 'succeeded';
       } catch (error) { job.state = 'failed'; job.error = error.message; }
       finally { job.finishedAt = Date.now(); busy = false; save(); }
     };
     void execute();
-    return reply.status(202).send({ accepted: true });
+    return reply.status(202).send({ accepted: true,...(actor?{operationKey:actor.operationKey}: {}) });
+  };
+  app.post('/api/upgrades',(req,reply)=>handleAction(req.body??{},reply));
+  app.get('/pixel/releases',()=>{
+    const current=status(root,config);
+    return {active:current.active?.id??null,busy,afterRollback:current.afterRollback??false,
+      versions:(current.versions??[]).map(v=>({generation:v.id,number:v.generation_no,releaseId:v.release_id,label:v.label,available:v.available,canRollback:v.canRollback,canDelete:v.canDelete,identity:v.identity})),
+      candidates:current.candidates.map(c=>({releaseId:c.id,state:c.state,identity:c.identity,number:c.versionNumber,canDelete:c.canDelete??false})),
+      job:job?{operationKey:job.operationKey??null,action:job.action,state:job.state,targetGeneration:job.targetGeneration,error:job.error}:null};
+  });
+  for(const action of ['rollback','delete'])app.post('/pixel/releases/'+action,(req,reply)=>{
+    const b=req.body,keys=action==='rollback'?['targetGeneration','expectedActive','reason','deleteNewer']:['releaseId','expectedActive','identity','reason'];
+    if(!b||typeof b!=='object'||Array.isArray(b)||Object.keys(b).some(k=>![...keys,'worldId','pixelId','operationKey'].includes(k))||
+      typeof b.worldId!=='string'||!/^[a-zA-Z0-9_-]{1,100}$/.test(b.worldId)||typeof b.pixelId!=='string'||b.pixelId.length>80||!/^[-]?[0-9]+_[-]?[0-9]+_[-]?[0-9]+$/.test(b.pixelId)||typeof b.operationKey!=='string'||!b.operationKey||b.operationKey.length>240||/[\x00-\x1f]/.test(b.operationKey))return reply.status(400).send({detail:'RELEASE_ACTION_INVALID'});
+    const {worldId,pixelId,operationKey,...input}=b;
+    return handleAction({action,...input},reply,{worldId,pixelId,operationKey});
   });
   app.setErrorHandler((error, _req, reply) => reply.status(500).send({ detail: error.message }));
   await app.ready();

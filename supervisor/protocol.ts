@@ -32,7 +32,7 @@ export function classifyChange(paths: string[]): "BODY" | "GENE" | "ROOT" {
   const normalized=paths.map(p=>p.toLowerCase());
   const shared=new Set(['apps/server/src/owner_auth.ts','apps/server/src/routes/public_routes.ts','apps/server/src/services/public_store.ts',
     'apps/server/src/services/public_products_migration.ts','apps/server/src/services/payment_assets.ts','apps/server/src/services/solana_payment.ts',
-    'apps/server/src/services/app_code_policy.ts','apps/server/src/services/app_code_service.ts','scripts/prepare-app-code.mjs']);
+    'apps/server/src/services/app_code_policy.ts','apps/server/src/services/app_code_service.ts','apps/server/src/services/release_maintenance_client.ts','scripts/prepare-app-code.mjs']);
   if(normalized.some(p=>shared.has(p)||p.startsWith('packages/persistence/')||p.startsWith('packages/protocol/')))return 'ROOT';
   if (normalized.some(p => p.startsWith("supervisor/") || p === "scripts/generation-supervisor.mjs" || p === "scripts/local-upgrade.mjs" ||
     p === "scripts/version-upgrade.mjs" || p === "scripts/upgrade-web.mjs" || p === "resources/upgrade-web.html" || p === "emergentinc_upgrade.bat" || p === "scripts/local-release.mjs" || p === "scripts/launch-approved.mjs" || p === "emergentinc_ui.bat" || p === "emergentinc_ui.ps1" || p === "emergentinc_ui.sh" ||

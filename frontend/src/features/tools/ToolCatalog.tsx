@@ -96,7 +96,7 @@ export const ToolCatalog: React.FC<ToolCatalogProps> = ({
                     {t.effect}
                   </span>
                 </td>
-                <td style={{ maxWidth: '300px', lineHeight: 1.4 }}>{t.description}</td>
+                <td style={{ maxWidth: '300px', lineHeight: 1.4 }}>{tr(t.description)}</td>
                 <td>{t.timeout_seconds}s</td>
                 <td>
                   <span style={{ color: t.enabled ? 'var(--accent-green)' : 'var(--accent-red)' }}>

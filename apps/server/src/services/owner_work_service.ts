@@ -6,6 +6,7 @@ import { QianjiWorldGateway } from './qianji_world_gateway.js';
 import { GachaService } from './gacha_service.js';
 import { AppCodeService } from './app_code_service.js';
 import type { OwnerChatService } from './owner_chat_service.js';
+import type { ReleaseMaintenanceClient } from './release_maintenance_client.js';
 
 const digest = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const text = (value: unknown, max: number): value is string => typeof value === 'string' && Boolean(value.trim()) && value.length <= max;
@@ -20,7 +21,7 @@ export class OwnerWorkService {
   private schedulerError?:string;
   private requestFlights = new Map<string, Promise<any>>();
   private decisions = new Map<string, {hash:string;decision:string;promise:Promise<any>}>();
-  constructor(readonly manager: WorldRuntimeManager, private quiesced: () => boolean = () => false, private upgradeOrigin?: string) {
+  constructor(readonly manager: WorldRuntimeManager, private quiesced: () => boolean = () => false, private upgradeOrigin?: string,private releaseMaintenance?:ReleaseMaintenanceClient) {
     this.gateway = new QianjiWorldGateway(manager);
     manager.registry.control.db.exec(`
       CREATE TABLE IF NOT EXISTS owner_work_tasks(id TEXT PRIMARY KEY, request_key TEXT NOT NULL, person_id TEXT NOT NULL, person_name TEXT NOT NULL, instruction TEXT NOT NULL, state TEXT NOT NULL, turn_id TEXT, run_id TEXT, reply TEXT, reason TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, UNIQUE(request_key,person_id));
@@ -59,6 +60,16 @@ export class OwnerWorkService {
       register('LIST_APP_SOURCE','列出可修改的 8765 应用源码。8766、共享鉴权/持久化/协议、依赖与配置禁止访问和修改。',{},[],'read',()=>this.code!.listFiles());
       register('READ_APP_SOURCE','读取允许修改的当前应用源码及 baseHash。',{path:{type:'string'}},['path'],'read',a=>this.code!.read(a.path));
       register('SUBMIT_APP_CODE','提交实际源码候选副本，并单独报告 Owner。files 每项须含 path、完整 content（删除为 null）及 READ_APP_SOURCE 的 baseHash（新增为 null）。不改变当前服务；等待独立软件升级校验和批准。',{title:{type:'string'},summary:{type:'string'},files:{type:'array',items:{type:'object',properties:{path:{type:'string'},content:{type:['string','null']},baseHash:{type:['string','null']}},required:['path','content','baseHash'],additionalProperties:false}}},['title','summary','files'],'write',(a,p,k)=>this.code!.submit(worldId,p,a,k));
+    }
+    if(this.releaseMaintenance){
+      const generation={type:'string',pattern:'^G[0-9]{4,}$'},reason={type:'string',minLength:1,maxLength:800};
+      const actor=async(pixelId:string,operationKey:string)=>{
+        const runtime=await this.manager.open(worldId);if(!runtime.store.pixels.getPixelAccount(pixelId)?.active)throw new Error('RELEASE_ACTOR_INACTIVE');
+        return {worldId,pixelId,operationKey:`${worldId}:${operationKey}`};
+      };
+      register('LIST_RELEASE_VERSIONS','查看历史版本、可回退目标、回退后可删除的较新代码版本和维护任务状态。返回受限元数据，不含口令或私有路径。',{},[],'read',()=>this.releaseMaintenance!.list());
+      register('ROLLBACK_RELEASE','按发布代次回退到 LIST_RELEASE_VERSIONS 中可回退的 targetGeneration；expectedActive 必须来自最新列表。无需 Owner 再批准。返回接受状态后维护服务执行并重启 8765；不能把接受当完成。deleteNewer=true 会在回退成功后删除所有较新代码版本，保留业务数据和审计；旧版本可能不含本工具，可在同一次调用中明确选择清理。',{targetGeneration:generation,expectedActive:generation,reason,deleteNewer:{type:'boolean'}},['targetGeneration','expectedActive','reason'],'write',async(a,p,k)=>this.releaseMaintenance!.rollback(a,await actor(p,k)));
+      register('DELETE_RELEASE','仅在回退后删除列表中可删除的较新代码版本。releaseId、identity、expectedActive 必须来自最新列表。无需 Owner 再批准；不删除业务数据、账本、Current 快照或谱系。',{releaseId:{type:'string'},expectedActive:generation,identity:{type:'string',pattern:'^[a-f0-9]{64}$'},reason},['releaseId','expectedActive','identity','reason'],'write',async(a,p,k)=>this.releaseMaintenance!.delete(a,await actor(p,k)));
     }
   }
   async dispatch(tasks:{personId:string;instruction:string}[],key:string,rounds=20) {
