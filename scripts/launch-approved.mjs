@@ -3,6 +3,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { spawn } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
+import { DatabaseSync } from 'node:sqlite';
 import { approvedLocalRelease, initializeLocalRelease, ownerEnvironment } from './local-release.mjs';
 
 export function applicationUrl(env) {
@@ -60,6 +61,37 @@ export async function openBrowser(url, env) {
   });
 }
 
+export async function confirmUpgradeHandoff(projectRoot, workspace, env, previous, {startedAt,exitedAt,previousPid,timeoutMs=120000}) {
+  if(!env.EMERGENTINC_LOCAL_EVOLUTION_CONFIG)return null;
+  const configFile=path.resolve(projectRoot,env.EMERGENTINC_LOCAL_EVOLUTION_CONFIG),config=JSON.parse(fs.readFileSync(configFile,'utf8'));
+  const file=path.resolve(config.ownerProjectRoot,config.stateDirectory,'evolution.sqlite3');
+  if(!fs.existsSync(file))return null;
+  const db=new DatabaseSync(file,{readOnly:true});
+  try{
+    // A recorded switch during this launch distinguishes controlled replacement from a crash.
+    const switches=db.prepare("SELECT c.id,c.request_json,c.target_generation FROM candidates c JOIN events e ON e.candidate_id=c.id WHERE e.kind='SWITCHING' AND e.created_at>=? AND e.created_at<=? ORDER BY e.created_at DESC").all(startedAt,exitedAt);
+    const transition=switches.find(row=>{const request=JSON.parse(row.request_json);return request.base_generation===previous.generation.id&&request.base_release===previous.generation.release_id;});
+    if(!transition)return null;
+    console.log('旧进程正在交接，等待批准版本接管 / The old process is handing over; waiting for the approved release.');
+    const deadline=Date.now()+timeoutMs;
+    while(Date.now()<deadline){
+      const state=db.prepare('SELECT state,phase FROM candidates WHERE id=?').get(transition.id);
+      if(state?.state==='BORN'&&state.phase==='COMPLETED'){
+        const next=approvedWorldRelease(workspace,configFile);
+        if(next.generation.id!==transition.target_generation||next.generation.release_id!==transition.id)throw new Error('LOCAL_LAUNCH_HANDOFF_APPROVAL_CONFLICT');
+        const lock=JSON.parse(fs.readFileSync(path.join(workspace,'runtime/instance.lock'),'utf8'));
+        if(!Number.isSafeInteger(lock.pid)||lock.pid<1||lock.pid===previousPid)throw new Error('LOCAL_LAUNCH_HANDOFF_PROCESS_INVALID');
+        const url=applicationUrl(env);
+        await waitForWebReady(url,lock.pid,next.generation.id,{timeoutMs:Math.max(1,deadline-Date.now())});
+        return {generation:next.generation.id,url,logFile:path.resolve(config.ownerProjectRoot,config.stateDirectory,'server.log')};
+      }
+      if(!state||!['BIRTHING','BORN'].includes(state.state))throw new Error('LOCAL_LAUNCH_HANDOFF_FAILED');
+      await new Promise(resolve=>setTimeout(resolve,250));
+    }
+    throw new Error('LOCAL_LAUNCH_HANDOFF_TIMEOUT');
+  }finally{db.close();}
+}
+
 export async function launchApproved(projectRoot, args = [], {openPage=openBrowser,startupTimeoutMs=120000}={}) {
   const env = ownerEnvironment(projectRoot);
   if (env.EMERGENTINC_ACTIVE_GENERATION_FILE || env.EMERGENTINC_CANDIDATE_MODE === '1' || env.EMERGENTINC_LOCAL_UPGRADE_TOKEN)
@@ -87,14 +119,15 @@ export async function launchApproved(projectRoot, args = [], {openPage=openBrows
     if (readGenome(directory).geneHash !== approved.generation.gene_hash) throw new Error('LOCAL_RELEASE_GENOME_MISMATCH');
     console.log(`启动已批准版本：${approved.generation.id} / ${approved.generation.release_id}`);
   }
+  const startedAt=Date.now();let exitedAt,interrupted=false;
   const child = spawn(process.execPath, [path.join(directory, 'apps/server/dist/main.js'), ...runtimeArgs], {
     cwd: directory, windowsHide: true, shell: false, stdio: 'inherit', env: { ...env,
       EMERGENTINC_WORKSPACE_ROOT: workspace, EMERGENTINC_RELEASE_ID: approved.generation.release_id,
       EMERGENTINC_RUNTIME_MODE: 'business', EMERGENTINC_CANDIDATE_MODE: '0' },
   });
-  const stop = () => child.kill(); process.once('SIGINT', stop); process.once('SIGTERM', stop);
+  const stop = () => child.kill(),cancel=()=>{interrupted=true;stop();}; process.once('SIGINT', cancel); process.once('SIGTERM', cancel);
   const finished=new Promise((resolve, reject) => {
-    child.once('error', reject); child.once('exit', code => { process.off('SIGINT', stop); process.off('SIGTERM', stop); resolve(code ?? 1); });
+    child.once('error', reject); child.once('exit', code => { exitedAt=Date.now();process.off('SIGINT',cancel);process.off('SIGTERM',cancel);resolve(code ?? 1); });
   });
   const waiting=new AbortController();
   try{
@@ -105,9 +138,20 @@ export async function launchApproved(projectRoot, args = [], {openPage=openBrows
       console.log('服务已就绪 / Service ready: '+url);
       try{await openPage(url,env);}catch(error){console.error('无法自动打开浏览器 / Cannot open browser: '+error.message+'; '+url);}
     }
-    return await finished;
+    const code=await finished;
+    if(!interrupted){
+      try{
+        const handoff=await confirmUpgradeHandoff(projectRoot,workspace,env,approved,{startedAt,exitedAt,previousPid:child.pid});
+        if(handoff){
+          console.log('升级交接完成，新进程已接管 / Upgrade handoff completed; the new process is serving: '+handoff.generation+' · '+handoff.url);
+          console.log('运行日志 / Runtime log: '+handoff.logFile);
+          return 0;
+        }
+      }catch(error){console.error('升级交接确认失败 / Upgrade handoff verification failed: '+error.message);return code||1;}
+    }
+    return code;
   }catch(error){stop();await finished.catch(()=>{});throw error;}
-  finally{waiting.abort();process.off('SIGINT',stop);process.off('SIGTERM',stop);}
+  finally{waiting.abort();process.off('SIGINT',cancel);process.off('SIGTERM',cancel);}
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
   try { process.exitCode = await launchApproved(path.resolve(import.meta.dirname, '..'), process.argv.slice(2)); }

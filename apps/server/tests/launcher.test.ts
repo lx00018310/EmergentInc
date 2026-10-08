@@ -6,9 +6,10 @@ import {createHash} from 'node:crypto';
 import {createServer} from 'node:net';
 import {execFileSync,spawn} from 'node:child_process';
 import {pathToFileURL} from 'node:url';
-import {LineageStore,CurrentStore,writeGenerationPointer} from '@emergentinc/persistence';
+import {DatabaseSync} from 'node:sqlite';
+import {LineageStore,CurrentStore,WorldRegistryStore,writeGenerationPointer} from '@emergentinc/persistence';
 // @ts-ignore Standalone Owner launcher.
-import {applicationUrl,browserCommand,waitForWebReady} from '../../../scripts/launch-approved.mjs';
+import {applicationUrl,browserCommand,waitForWebReady,confirmUpgradeHandoff} from '../../../scripts/launch-approved.mjs';
 // @ts-ignore Standalone Owner release helper.
 import {freezeLocalRelease} from '../../../scripts/local-release.mjs';
 
@@ -34,6 +35,7 @@ async function fixture(){
       else if(req.url==='/health/ready'){readyChecks++;const ready=Date.now()-began>=200;res.statusCode=ready?200:503;res.end(JSON.stringify({ready,generation:'G0001'}));}
       else if(req.url==='/'){homeChecks++;res.statusCode=Date.now()-began>=700?200:503;res.setHeader('Content-Type','text/html');res.end('<html>Actual homepage</html>');}
       else if(req.url==='/stop'){res.setHeader('Connection','close');res.end('{}');server.close(()=>process.exit(0));}
+      else if(req.url==='/crash'){res.setHeader('Connection','close');res.end('{}');server.close(()=>process.exit(7));}
       else res.end(JSON.stringify({readyChecks,homeChecks}));
     });server.listen(Number(process.env.PORT),'127.0.0.1');process.on('SIGTERM',()=>server.close(()=>process.exit(0)));
   `);
@@ -83,6 +85,10 @@ describe('approved UI launcher readiness',()=>{
     const f=await fixture(),run=startLauncher(f,['--open-browser'],5000,true);await vi.waitFor(()=>expect(fs.existsSync(run.record),run.diagnostics()).toBe(true),{timeout:4000});
     const pid=JSON.parse(fs.readFileSync(f.pidFile,'utf8')).pid;expect(()=>process.kill(pid,0)).not.toThrow();await fetch(`http://127.0.0.1:${f.port}/stop`);expect(await run.finished).toBe(0);
   });
+  it('preserves a real crash after readiness as a nonzero launcher exit',async()=>{
+    const f=await fixture(),run=startLauncher(f,['--open-browser']);await vi.waitFor(()=>expect(fs.existsSync(run.record),run.diagnostics()).toBe(true),{timeout:4000});
+    await fetch(`http://127.0.0.1:${f.port}/crash`);expect(await run.finished).toBe(7);expect(run.diagnostics()).not.toContain('Upgrade handoff completed');
+  });
   it('uses the configured port and handles Linux desktop and headless sessions explicitly',()=>{
     expect(applicationUrl({PORT:'9000',HOST:'0.0.0.0'})).toBe('http://127.0.0.1:9000/');expect(applicationUrl({HOST:'::1'})).toBe('http://[::1]:8765/');
     expect(()=>applicationUrl({PORT:'0'})).toThrow('PORT_INVALID');expect(()=>applicationUrl({HOST:'user@localhost'})).toThrow('HOST_INVALID');
@@ -93,6 +99,52 @@ describe('approved UI launcher readiness',()=>{
     await expect(waitForWebReady('http://127.0.0.1:8765/',42,'G0001')).rejects.toThrow('PROCESS_IDENTITY_CONFLICT');
     fetcher.mockResolvedValueOnce(new Response(JSON.stringify({alive:true,processId:42}))).mockResolvedValueOnce(new Response(JSON.stringify({ready:true,generation:'G0002'})));
     await expect(waitForWebReady('http://127.0.0.1:8765/',42,'G0001')).rejects.toThrow('GENERATION_CONFLICT');
+  });
+});
+
+async function handoffFixture(){
+  const f=await fixture(),workspace=join(f.root,'world-workspace'),state=join(f.root,'trusted'),releases=join(f.root,'releases'),id='local-handoff';fs.mkdirSync(state);
+  const release=await freezeLocalRelease(f.project,join(releases,id),async()=>{}),geneHash='1'.repeat(64);
+  const lineage=new LineageStore(join(workspace,'system/lineage/lineage.sqlite3'),{v23:true});
+  const generation=lineage.createGeneration({id:'G0002',number:2,geneHash,releaseId:id,state:'ACTIVE'});lineage.close();
+  const current=new CurrentStore(join(workspace,'system/generations/G0002/current.sqlite3'));current.initialize(generation,'1');current.close();writeGenerationPointer(join(workspace,'system'),'G0002');
+  const control=new WorldRegistryStore(join(workspace,'system/control/control.sqlite3'));control.close();fs.writeFileSync(join(workspace,'workspace-layout.json'),'{"schema":1,"version":23}');
+  fs.mkdirSync(join(workspace,'runtime'));fs.writeFileSync(join(workspace,'runtime/instance.lock'),'{"pid":42}');
+  const activeReleaseFile=join(state,'active.json');fs.writeFileSync(activeReleaseFile,JSON.stringify({directory:release.directory}));
+  const configFile=join(f.root,'owner-config.json');fs.writeFileSync(configFile,JSON.stringify({ownerProjectRoot:f.project,workspace,releases,stateDirectory:state,activeReleaseFile}));
+  const request={base_generation:'G0001',base_release:'local-old'},bound={id,release_id:id,gene_hash:geneHash,candidate_release_hash:release.hash},hash=createHash('sha256').update(JSON.stringify(bound)).digest('hex');
+  const db=new DatabaseSync(join(state,'evolution.sqlite3'));
+  db.exec('CREATE TABLE candidates(id TEXT,request_json TEXT,target_generation TEXT,state TEXT,phase TEXT,candidate_json TEXT,approval_hash TEXT);CREATE TABLE events(candidate_id TEXT,kind TEXT,created_at INTEGER)');
+  db.prepare('INSERT INTO candidates VALUES(?,?,?,?,?,?,?)').run(id,JSON.stringify(request),'G0002','BORN','COMPLETED',JSON.stringify({...bound,directory:release.directory,candidate_hash:hash}),hash);
+  db.prepare('INSERT INTO events VALUES(?,?,?)').run(id,'SWITCHING',1500);
+  cleanups.push(async()=>db.close());
+  const fetcher=vi.spyOn(globalThis,'fetch').mockImplementation(async(input)=>{
+    const route=new URL(String(input)).pathname;
+    return route==='/health/live'?new Response(JSON.stringify({alive:true,processId:42})):route==='/health/ready'?new Response(JSON.stringify({ready:true,generation:'G0002'})):new Response('<html>new release</html>',{headers:{'content-type':'text/html'}});
+  });
+  const confirm=(timeoutMs=1000)=>confirmUpgradeHandoff(f.project,workspace,{EMERGENTINC_LOCAL_EVOLUTION_CONFIG:configFile,PORT:String(f.port)},{generation:{id:'G0001',release_id:'local-old'}},{startedAt:1000,exitedAt:2000,previousPid:41,timeoutMs});
+  return {...f,workspace,state,release,db,fetcher,confirm};
+}
+describe('controlled upgrade exit handling',()=>{
+  it('recognizes an approved completed switch only after the new process and homepage are healthy',async()=>{
+    const f=await handoffFixture();expect(await f.confirm()).toEqual({generation:'G0002',url:`http://127.0.0.1:${f.port}/`,logFile:join(f.state,'server.log')});expect(f.fetcher).toHaveBeenCalledTimes(3);
+  });
+  it.each(['old event','another base'])('does not hide an ordinary exit when the transition belongs to %s',async kind=>{
+    const f=await handoffFixture();if(kind==='old event')f.db.exec('UPDATE events SET created_at=500');else f.db.prepare('UPDATE candidates SET request_json=?').run(JSON.stringify({base_generation:'G0099',base_release:'another'}));
+    expect(await f.confirm()).toBeNull();expect(f.fetcher).not.toHaveBeenCalled();
+  });
+  it('waits for the switch to finish before reading its approval and process identity',async()=>{
+    const f=await handoffFixture();f.db.exec("UPDATE candidates SET state='BIRTHING',phase='STARTING'");
+    const done=f.confirm();expect(f.fetcher).not.toHaveBeenCalled();f.db.exec("UPDATE candidates SET state='BORN',phase='COMPLETED'");expect((await done)?.generation).toBe('G0002');
+  });
+  it('preserves a failed or interrupted handoff as an error',async()=>{
+    const f=await handoffFixture();f.db.exec("UPDATE candidates SET state='FAILED'");await expect(f.confirm()).rejects.toThrow('HANDOFF_FAILED');expect(f.fetcher).not.toHaveBeenCalled();
+    f.db.exec("UPDATE candidates SET state='BIRTHING',phase='STARTING'");await expect(f.confirm(20)).rejects.toThrow('HANDOFF_TIMEOUT');
+  });
+  it('does not accept tampered release bytes or an unrelated listening process',async()=>{
+    const f=await handoffFixture();f.fetcher.mockResolvedValueOnce(new Response(JSON.stringify({alive:true,processId:99})));
+    await expect(f.confirm()).rejects.toThrow('PROCESS_IDENTITY_CONFLICT');fs.writeFileSync(join(f.release.directory,'frontend/dist/index.html'),'<html>tampered</html>');
+    await expect(f.confirm()).rejects.toThrow('RELEASE_INTEGRITY_FAILED');
   });
 });
 

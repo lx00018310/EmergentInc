@@ -95,6 +95,8 @@ node scripts/launch-approved.mjs
 
 Windows launchers open the page only after the launched process reports readiness and its homepage responds. On Linux, run `bash ./EmergentInc_UI.sh` for the same foreground startup. A desktop session uses `xdg-open`; a headless session prints the URL. Install Node.js 24 and pnpm, and configure Linux paths in `.env` and the Owner release configuration. This local launcher does not replace the production systemd units or migrate a Windows workspace.
 
+After a controlled upgrade replaces the launched process, the launcher checks the switch record, exact approval and new process readiness before reporting a successful handoff. The new service runs independently, with output in the displayed runtime log. An ordinary crash still returns an error.
+
 Daily upgrades use the independent page at `http://127.0.0.1:8766/`. `EmergentInc_Upgrade.bat` remains an optional command-line entry for status, rollback and recovery; the web upgrade service does not depend on this batch file.
 
 Version labels accept free text, including Chinese, spaces and symbols (up to 200 characters). Leave the label blank to generate a timestamp label; a change description is still required. Display labels are stored separately from the system-generated release IDs.
