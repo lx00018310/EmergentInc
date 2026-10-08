@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { createServer, request as httpRequest, Server } from 'node:http';
 import { once } from 'node:events';
-import { AddressInfo } from 'node:net';
+import { listenTestHttp, reserveTestHttpPort } from '../../../tests/http_port.js';
 import { randomBytes } from 'node:crypto';
 import { fork, ChildProcess } from 'node:child_process';
 import { mkdtempSync, writeFileSync, mkdirSync, rmSync } from 'node:fs';
@@ -22,16 +22,10 @@ afterEach(async () => {
 
 async function listen(server: Server) {
   servers.push(server);
-  server.listen(0, '127.0.0.1'); await once(server, 'listening');
-  return (server.address() as AddressInfo).port;
+  return listenTestHttp(server);
 }
-async function reservePort() {
-  const server = createServer();
-  server.listen(0, '127.0.0.1'); await once(server, 'listening');
-  const port = (server.address() as AddressInfo).port;
-  await new Promise<void>(resolve => server.close(() => resolve()));
-  return port;
-}
+const reservePort = reserveTestHttpPort;
+
 async function setup() {
   const secret = randomBytes(32).toString('hex');
   const port = await reservePort();
@@ -101,8 +95,8 @@ describe('independent recovery host', () => {
     mkdirSync(join(directory, 'generations/G0001'), { recursive: true });
     writeFileSync(join(directory, 'generations/G0001/current.sqlite3'), 'broken database');
     const fixture = join(directory, 'body.cjs');
-    writeFileSync(fixture, "const http=require('node:http');const s=http.createServer((q,r)=>{r.writeHead(q.url==='/health/ready'?200:503,{'Content-Type':'application/json'});r.end(JSON.stringify({ready:true}));});s.listen(0,'127.0.0.1',()=>process.send({port:s.address().port}));");
-    const body = fork(fixture, [], { stdio: ['ignore', 'ignore', 'ignore', 'ipc'] }); children.push(body);
+    writeFileSync(fixture, "const http=require('node:http');const s=http.createServer((q,r)=>{r.writeHead(q.url==='/health/ready'?200:503,{'Content-Type':'application/json'});r.end(JSON.stringify({ready:true}));});s.listen(Number(process.env.TEST_BODY_PORT),'127.0.0.1',()=>process.send({port:s.address().port}));");
+    const body = fork(fixture, [], { env: { ...process.env, TEST_BODY_PORT: String(await reservePort()) }, stdio: ['ignore', 'ignore', 'ignore', 'ipc'] }); children.push(body);
     const [message] = await once(body, 'message') as [{ port: number }];
     const port = await reservePort(), secret = randomBytes(32).toString('hex'), origin = `http://localhost:${port}`;
     const recovery = fork(resolve(import.meta.dirname, '../dist/main.js'), [], {

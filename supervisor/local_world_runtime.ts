@@ -60,12 +60,13 @@ export class LocalWorldRuntime implements EvolutionRuntime {
   async smoke(directory:string,workspace:string,generation:string){await this.execute(process.execPath,[path.join(directory,'supervisor/candidate_harness.mjs'),'smoke',directory,workspace,generation],directory,this.cleanEnv(),30000);}
   async stop(){
     // A failed start may never open HTTP or write its lock. Stop only the child we spawned.
-    if(this.started){const child=this.started;if(child.exitCode===null&&child.signalCode===null){
+    if(this.started){const child=this.started,ownedRunning=child.exitCode===null&&child.signalCode===null;if(ownedRunning){
       await new Promise<void>((resolve,reject)=>{const timer=setTimeout(()=>reject(new Error('WORLD_SERVER_STOP_TIMEOUT')),15000);
         child.once('exit',()=>{clearTimeout(timer);resolve();});child.kill();});
-    }this.started=undefined;this.cookie=undefined;return;}
+    }this.started=undefined;this.cookie=undefined;if(ownedRunning)return;}
     const file=path.join(this.config.workspace,'runtime/instance.lock');if(!fs.existsSync(file)){this.cookie=undefined;return;}
     const record=JSON.parse(fs.readFileSync(file,'utf8'));if(!Number.isSafeInteger(record.pid)||record.pid<1)throw new Error('WORKSPACE_LOCK_INVALID');
+    try{process.kill(record.pid,0);}catch(error){if((error as NodeJS.ErrnoException).code==='ESRCH'){this.cookie=undefined;return;}throw error;}
     const status=await fetch(this.config.appUrl+'/health/live',{headers:{Connection:'close'},signal:AbortSignal.timeout(3000)}),identity=await status.json() as any;if(!status.ok||identity.alive!==true||identity.processId!==record.pid)throw new Error('LOCAL_CONTROL_PROCESS_IDENTITY_CONFLICT');
     process.kill(record.pid);this.cookie=undefined;
     for(let i=0;i<150;i++){try{process.kill(record.pid,0);}catch(e){if((e as NodeJS.ErrnoException).code==='ESRCH')return;throw e;}await new Promise(r=>setTimeout(r,100));}throw new Error('WORLD_SERVER_STOP_TIMEOUT');

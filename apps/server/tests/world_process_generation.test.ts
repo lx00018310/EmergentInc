@@ -3,6 +3,7 @@ import * as fs from 'node:fs';
 import {join,resolve} from 'node:path';
 import {tmpdir} from 'node:os';
 import {createServer} from 'node:http';
+import {listenTestHttp,reserveTestHttpPort} from '../../../tests/http_port.js';
 import {createServer as createHttpsServer} from 'node:https';
 import {mockRpcKey,mockRpcCertificate} from './mock_rpc_tls';
 import {randomBytes} from 'node:crypto';
@@ -41,9 +42,9 @@ it.skipIf(process.env.EMERGENTINC_CANDIDATE_MODE==='1')('preserves public busine
     else{content=JSON.stringify({send_to:'STOP',owner_reply:'test reply',...(sharedAsset&&JSON.stringify(request).includes('use shared gene')?{operations:[{tool:'CALL_GENE_SKILL',args:{asset_id:sharedAsset,input:{rows:[1,2,3]}}}]}:{}),...(!bodyMade?{operations:[{tool:'CREATE_BODY_SKILL',args:{candidate}},{tool:'CALL_BODY_SKILL',args:{skill_id:'count_rows',input:{rows:[1,2,3]}}}],reproduce:{direction:'1_0_0',initial_energy:15000}}:{})});bodyMade=true;}
     res.setHeader('Content-Type','application/json');res.end(JSON.stringify({choices:[{message:{content}}],usage:{prompt_tokens:50,completion_tokens:50,total_tokens:100}}));
   });};const model=createServer(mockHandler),rpc=createHttpsServer({key:mockRpcKey,cert:mockRpcCertificate},mockHandler);
-  await new Promise<void>(r=>model.listen(0,'127.0.0.1',r));const modelPort=(model.address() as any).port;
-  await new Promise<void>(r=>rpc.listen(0,'127.0.0.1',r));const rpcPort=(rpc.address() as any).port,caFile=join(root,'mock-rpc-ca.pem');fs.writeFileSync(caFile,mockRpcCertificate);
-  const portServer=createServer();await new Promise<void>(r=>portServer.listen(0,'127.0.0.1',r));const port=(portServer.address() as any).port;await new Promise<void>(r=>portServer.close(()=>r()));
+  const modelPort=await listenTestHttp(model);
+  const rpcPort=await listenTestHttp(rpc),caFile=join(root,'mock-rpc-ca.pem');fs.writeFileSync(caFile,mockRpcCertificate);
+  const port=await reserveTestHttpPort();
   const secret=randomBytes(32).toString('hex'),activeReleaseFile=join(state,'active.json');fs.writeFileSync(activeReleaseFile,JSON.stringify({directory:base}));
   const runtime=new LocalWorldRuntime({workspace,releases,stateDirectory:state,activeReleaseFile,appUrl:`http://127.0.0.1:${port}`,ownerEnvironment:{PATH:process.env.PATH,SystemRoot:process.env.SystemRoot,
     EMERGENTINC_OWNER_SECRET:secret,EMERGENTINC_SECURE_COOKIES:'0',MCL_API_KEY:'explicit-test-key',MCL_MODEL:'test',MCL_BASE_URL:`http://127.0.0.1:${modelPort}/v1`,EMERGENTINC_BSC_RPC_MAINNET:`https://127.0.0.1:${rpcPort}/rpc`,NODE_EXTRA_CA_CERTS:caFile}});

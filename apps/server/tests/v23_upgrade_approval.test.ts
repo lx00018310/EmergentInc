@@ -2,7 +2,7 @@ import {it,expect} from 'vitest';
 import * as fs from 'node:fs';
 import {join,resolve} from 'node:path';
 import {tmpdir} from 'node:os';
-import {createServer} from 'node:net';
+import {reserveTestHttpPort} from '../../../tests/http_port.js';
 import {spawn} from 'node:child_process';
 import {randomBytes,createHash} from 'node:crypto';
 import {CoreStore,LineageStore,CurrentStore,writeGenerationPointer,readGenome} from '@emergentinc/persistence';
@@ -63,7 +63,7 @@ it.each([false,true])('publishes initial V23 or restores V22 when resume fails (
       else{req.resume();res.end('{}');}
     });app.listen(Number(process.env.PORT),'127.0.0.1');
   `);
-  const listener=createServer();await new Promise<void>(r=>listener.listen(0,'127.0.0.1',r));const port=(listener.address() as any).port;await new Promise<void>(r=>listener.close(()=>r()));
+  const port=await reserveTestHttpPort();
   fs.writeFileSync(join(project,'.env'),`PORT=${port}\nEMERGENTINC_OWNER_SECRET=${randomBytes(32).toString('hex')}\nEMERGENTINC_SECURE_COOKIES=0\n`);
   const id='local-fixture-old',recordDirectory=join(workspace,'runtime/local-upgrades',id),old=await freezeLocalRelease(project,join(recordDirectory,'release'),async()=>{});
   const geneHash=readGenome(project).geneHash,core=new CoreStore(join(workspace,'ledger/v9_core.sqlite3'));core.qianji.createProfile({qianjiId:'qj_cutover',careerStatus:'active'});

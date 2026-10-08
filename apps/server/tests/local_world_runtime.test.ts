@@ -3,6 +3,8 @@ import * as fs from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createServer } from 'node:http';
+import { listenTestHttp } from '../../../tests/http_port.js';
+import { spawn } from 'node:child_process';
 import { LocalWorldRuntime } from '../../../supervisor/local_world_runtime.js';
 
 const cleanups: (() => Promise<void>)[] = [];
@@ -18,8 +20,7 @@ async function fixture() {
     if (req.url === '/health/live') res.end(JSON.stringify({ alive: true, processId: state.processId }));
     else { res.statusCode = state.ready ? 200 : 503;res.end(JSON.stringify({ ready: state.ready, generation: state.generation })); }
   });
-  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
-  const port = (server.address() as { port: number }).port;
+  const port = await listenTestHttp(server);
   const close = () => new Promise<void>((resolve, reject) => { server.close(error => error ? reject(error) : resolve()); });
   cleanups.push(async () => { if (server.listening) await close(); });
   const runtime = new LocalWorldRuntime({ workspace, releases: join(directory, 'releases'), stateDirectory: join(directory, 'state'),
@@ -27,6 +28,17 @@ async function fixture() {
   return { runtime, state, requests, close, workspace };
 }
 describe('local publication preflight', () => {
+  it('finishes stopping an already exited process without requiring an HTTP response',async()=>{
+    const f=await fixture(),child=spawn(process.execPath,['-e',''],{windowsHide:true,stdio:'ignore'});
+    await new Promise<void>((done,reject)=>{child.once('exit',()=>done());child.once('error',reject);});
+    fs.writeFileSync(join(f.workspace,'runtime/instance.lock'),JSON.stringify({pid:child.pid}));await f.close();
+    await expect(f.runtime.stop()).resolves.toBeUndefined();expect(f.requests).toHaveLength(0);
+  });
+  it('keeps a live process untouched when its HTTP identity differs from the lock',async()=>{
+    const f=await fixture();f.state.processId++;
+    await expect(f.runtime.stop()).rejects.toThrow('LOCAL_CONTROL_PROCESS_IDENTITY_CONFLICT');
+    expect(()=>process.kill(process.pid,0)).not.toThrow();
+  });
   it('accepts only a ready service matching the workspace lock and generation without Owner actions', async () => {
     const f = await fixture();await f.runtime.checkRunning('G0014');
     expect(f.requests).toEqual(['/health/live', '/health/ready']);

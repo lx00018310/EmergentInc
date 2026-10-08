@@ -1,7 +1,7 @@
 import {it,expect} from 'vitest';
 import * as fs from 'node:fs';
 import {join,resolve} from 'node:path';
-import {createServer} from 'node:net';
+import {reserveTestHttpPort} from '../../../tests/http_port.js';
 import {randomBytes} from 'node:crypto';
 import {DatabaseSync} from 'node:sqlite';
 import {LineageStore,WorldRegistryStore,CurrentStore,readGenome,writeGenerationPointer} from '@emergentinc/persistence';
@@ -23,7 +23,7 @@ it.skipIf(!process.env.EMERGENTINC_TEST_V23_RELEASE||process.env.EMERGENTINC_CAN
   const control=new WorldRegistryStore(join(workspace,'system/control/control.sqlite3')),registry=new WorldRegistryService(workspace,control,lineage,'1');
   const worlds=['A','B','C'].map(displayName=>registry.create({displayName,traits:{},behaviorProfile:[]}));
   fs.writeFileSync(join(workspace,'workspace-layout.json'),JSON.stringify({schema:1,version:23}));
-  const listener=createServer();await new Promise<void>(r=>listener.listen(0,'127.0.0.1',r));const port=(listener.address() as any).port;await new Promise<void>(r=>listener.close(()=>r()));
+  const port=await reserveTestHttpPort();
   const activeReleaseFile=join(state,'active.json');fs.writeFileSync(activeReleaseFile,JSON.stringify({directory:base}));
   const runtime=new LocalWorldRuntime({workspace,releases,stateDirectory:state,activeReleaseFile,appUrl:`http://127.0.0.1:${port}`,ownerEnvironment:{PATH:process.env.PATH,SystemRoot:process.env.SystemRoot,
     EMERGENTINC_OWNER_SECRET:randomBytes(32).toString('hex'),EMERGENTINC_SECURE_COOKIES:'0'}});

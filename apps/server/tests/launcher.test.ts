@@ -3,7 +3,7 @@ import * as fs from 'node:fs';
 import {join,resolve,relative} from 'node:path';
 import {tmpdir} from 'node:os';
 import {createHash} from 'node:crypto';
-import {createServer} from 'node:net';
+import {reserveTestHttpPort} from '../../../tests/http_port.js';
 import {execFileSync,spawn} from 'node:child_process';
 import {pathToFileURL} from 'node:url';
 import {DatabaseSync} from 'node:sqlite';
@@ -18,7 +18,7 @@ afterEach(async()=>{for(const cleanup of cleanups.splice(0).reverse())await clea
 async function fixture(){
   const root=fs.mkdtempSync(join(tmpdir(),'launcher-ready-')),project=join(root,'project'),workspace=join(root,'workspace');
   for(const dir of ['genome','apps/server/dist','packages/persistence/dist','frontend/dist'])fs.mkdirSync(join(project,dir),{recursive:true});
-  const listener=createServer();await new Promise<void>(r=>listener.listen(0,'127.0.0.1',r));const port=(listener.address() as any).port;await new Promise<void>(r=>listener.close(()=>r()));
+  const port=await reserveTestHttpPort();
   vi.stubEnv('EMERGENTINC_WORKSPACE_ROOT',workspace);vi.stubEnv('PORT',String(port));vi.stubEnv('HOST','127.0.0.1');
   for(const key of ['EMERGENTINC_LOCAL_EVOLUTION_CONFIG','EMERGENTINC_ACTIVE_GENERATION_FILE','EMERGENTINC_CANDIDATE_MODE','EMERGENTINC_LOCAL_UPGRADE_TOKEN'])vi.stubEnv(key,'');
   const geneHash='1'.repeat(64),pidFile=join(root,'fixture-pid.json');vi.stubEnv('FIXTURE_PID_FILE',pidFile);

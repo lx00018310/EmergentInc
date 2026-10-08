@@ -1,7 +1,7 @@
 import {it,expect,vi} from 'vitest';
 import * as fs from 'node:fs';
 import {join,resolve,relative,sep} from 'node:path';
-import {createServer} from 'node:net';
+import {reserveTestHttpPort} from '../../../tests/http_port.js';
 import {spawn} from 'node:child_process';
 import {createRequire} from 'node:module';
 import {DatabaseSync} from 'node:sqlite';
@@ -20,7 +20,7 @@ it.skipIf(process.env.EMERGENTINC_TEST_UPGRADE_WEB!=='1'||process.env.EMERGENTIN
   const root=resolve('.'),testRoot=fs.mkdtempSync(resolve('cache/upgrade-web-process-')),workspace=join(testRoot,'workspace'),state=join(testRoot,'owner'),releases=join(testRoot,'releases'),base=join(releases,'r1');
   const secret='isolated-upgrade-web-test-secret-'.repeat(2),configFile=join(testRoot,'config.json');fs.mkdirSync(state,{recursive:true});
   const env={PATH:process.env.PATH,SystemRoot:process.env.SystemRoot,ComSpec:process.env.ComSpec,LOCALAPPDATA:process.env.LOCALAPPDATA,CI:'1',EMERGENTINC_OWNER_SECRET:secret,EMERGENTINC_SECURE_COOKIES:'0',EMERGENTINC_LOCAL_EVOLUTION_CONFIG:configFile};
-  const listener=createServer();await new Promise<void>(r=>listener.listen(0,'127.0.0.1',r));const port=(listener.address() as any).port;await new Promise<void>(r=>listener.close(()=>r()));
+  const port=await reserveTestHttpPort();
   const config={ownerProjectRoot:testRoot,workspace,stateDirectory:state,releases,activeReleaseFile:join(state,'active.json'),appUrl:`http://127.0.0.1:${port}`};fs.writeFileSync(configFile,JSON.stringify(config));
   await freezeLocalRelease(root,base);fs.writeFileSync(join(base,'apps/server/upgrade-page-rehearsal.txt'),'Isolated baseline version');const file=join(base,'genome/manifest.json'),manifest=JSON.parse(fs.readFileSync(file,'utf8'));manifest.generation=1;fs.writeFileSync(file,JSON.stringify(manifest));
   const genome=readGenome(base),lineage=new LineageStore(join(workspace,'system/lineage/lineage.sqlite3'),{v23:true});const initial=lineage.createGeneration({id:'G0001',number:1,geneHash:genome.geneHash,releaseId:'r1',state:'ACTIVE'});writeGenerationPointer(join(workspace,'system'),'G0001');
@@ -31,8 +31,8 @@ it.skipIf(process.env.EMERGENTINC_TEST_UPGRADE_WEB!=='1'||process.env.EMERGENTIN
   const run=(_root:string,args:string[],output:(s:string)=>void)=>new Promise<void>((resolveRun,reject)=>{const child=spawn(process.execPath,[join(root,'scripts/version-upgrade.mjs'),...args],{cwd:root,env,windowsHide:true,shell:false,stdio:['ignore','pipe','pipe']});let diagnostic='';for(const stream of [child.stdout,child.stderr])stream.on('data',chunk=>{const value=String(chunk);output(value);diagnostic=(diagnostic+value).slice(-8000);});child.once('error',reject);child.once('exit',code=>code===0?resolveRun():reject(new Error(diagnostic)));});
   try{
     await runtime.start();await runtime.healthy('G0001');await runtime.resume();
-    app=await createUpgradeWeb({root,config,secret,runCommand:run});await app.listen({host:'127.0.0.1',port:0});const webUrl=app.listeningOrigin;fs.writeFileSync(resolve('cache/upgrade-web-process-live.json'),JSON.stringify({isolated:true,url:webUrl.replace('127.0.0.1','localhost'),testRoot}));
-    dom=new JSDOM((await app.inject('/')).body,{url:`http://localhost:${port+1}/`,runScripts:'outside-only'});let cookie='',poll!:()=>Promise<void>;
+    app=await createUpgradeWeb({root,config,secret,runCommand:run});await app.listen({host:'127.0.0.1',port:await reserveTestHttpPort()});const webUrl=app.listeningOrigin;fs.writeFileSync(resolve('cache/upgrade-web-process-live.json'),JSON.stringify({isolated:true,url:webUrl.replace('127.0.0.1','localhost'),testRoot}));
+    dom=new JSDOM((await app.inject('/')).body,{url:webUrl.replace('127.0.0.1','localhost')+'/',runScripts:'outside-only'});let cookie='',poll!:()=>Promise<void>;
     dom.window.HTMLDialogElement.prototype.showModal=function(){this.open=true;};dom.window.HTMLDialogElement.prototype.close=function(){this.open=false;};dom.window.setInterval=(fn:()=>Promise<void>)=>{poll=fn;return 0;};
     dom.window.fetch=async(url:string,init:any={})=>{const response=await fetch(webUrl+url,{...init,headers:{...init.headers,cookie,origin:webUrl}});if(response.headers.get('set-cookie'))cookie=response.headers.get('set-cookie')!.split(';')[0];return response;};
     await dom.window.eval(`(async()=>{${dom.window.document.querySelector('script').textContent}})()`);const doc=dom.window.document;
@@ -58,5 +58,5 @@ it.skipIf(process.env.EMERGENTINC_TEST_UPGRADE_WEB!=='1'||process.env.EMERGENTIN
     expect((await app.inject({method:'POST',url:'/api/upgrades',headers:{cookie},payload:{action:'recover'}})).statusCode).toBe(202);await done('recover');doc.getElementById('logout').click();await vi.waitFor(()=>expect(doc.getElementById('login').hidden).toBe(false));
     fs.writeFileSync(resolve('cache/upgrade-web-process-evidence.json'),JSON.stringify({passed:true,realProcesses:true,fullFrozenValidation:true,operations:evidence,dataRetained:true},null,2));
   }catch(error){const validators=fs.readdirSync(state).filter(n=>n.startsWith('validation-')).map(n=>n+'\n'+fs.readFileSync(join(state,n),'utf8').slice(-18000)).join('\n');fs.writeFileSync(resolve('cache/upgrade-web-process-failure.log'),String(error)+'\n'+validators+'\n'+(fs.existsSync(join(state,'server.log'))?fs.readFileSync(join(state,'server.log'),'utf8').slice(-8000):''));throw error;}
-  finally{dom?.window.close();await app?.close();await new LocalWorldRuntime({...config,ownerEnvironment:env}).stop();control.close();lineage.close();const target=relative(resolve('cache'),testRoot);if(!target||target==='..'||target.startsWith('..'+sep))throw new Error('TEST_CLEANUP_PATH_INVALID');fs.rmSync(testRoot,{recursive:true,force:true});}
+  finally{dom?.window.close();await app?.close();await new LocalWorldRuntime({...config,ownerEnvironment:env}).stop();control.close();lineage.close();const target=relative(resolve('cache'),testRoot);if(!target||target==='..'||target.startsWith('..'+sep))throw new Error('TEST_CLEANUP_PATH_INVALID');await fs.promises.rm(testRoot,{recursive:true,force:true,maxRetries:100,retryDelay:100});}
 },900000);
