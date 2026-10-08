@@ -96,5 +96,13 @@ it.each([false,true])('publishes initial V23 or restores V22 when resume fails (
       expect(approvedWorldRelease(workspace,join(operator,'owner-config.json')).generation.id).toBe('G0006');expect(fs.existsSync(workspace+'.v22-before-'+receipt.candidate.id)).toBe(true);}
     expect(fs.existsSync(workspace+'.v23-upgrade-pending.json')).toBe(false);expect(fs.existsSync(join(workspace,'runtime/local-upgrade-pending.json'))).toBe(false);
     expect(fs.readFileSync(join(workspace,'private/owner-note.txt'),'utf8')).toBe('private original');
-  }finally{try{await new LocalWorldRuntime(config).stop();}catch{if(child.exitCode===null)child.kill();}fs.rmSync(root,{recursive:true,force:true,maxRetries:100,retryDelay:100});}
+  }finally{
+    try { await new LocalWorldRuntime(config).stop(); }
+    catch (error) {
+      if (child.exitCode !== null || child.signalCode !== null) throw error;
+      await new Promise<void>((done, reject) => { child.once('exit', () => done()); child.once('error', reject); child.kill(); });
+    }
+    // Windows may still be releasing a detached child's cwd handle. Synchronous retries block its exit callback.
+    await fs.promises.rm(root,{recursive:true,force:true,maxRetries:100,retryDelay:100});
+  }
 },30000);

@@ -86,7 +86,8 @@ export function runUpgradeCommand(root, args, onOutput) {
     child.once('error', reject);
     child.once('exit', code => {
       const detail = diagnostic.split(/\r?\n/).find(line => ['GENE_HASH_MUST_CHANGE','CANDIDATE_BASE_CONFLICT','GENOME_GENERATION_NUMBER_CONFLICT','EVOLUTION_ALREADY_RUNNING','MAIN_SERVICE_UNAVAILABLE','MAIN_SERVICE_NOT_READY','LOCAL_CONTROL_PROCESS_IDENTITY_CONFLICT','ROLLBACK_TARGET_INVALID','ROLLBACK_TARGET_NOT_ANCESTOR','ROLLBACK_HISTORY_UNAVAILABLE','RELEASE_DELETE_DENIED','RELEASE_ACTIVE_CHANGED','RELEASE_IDENTITY_CHANGED','RELEASE_DELETE_PATH_DENIED','EVOLUTION_RECOVERY_REQUIRED','HISTORICAL_RELEASE_INTEGRITY_CONFLICT','ACTIVE_TRUSTED_RELEASE_CONFLICT','V23_ROLLBACK_DENIED_INSTANCE_PAYMENT_FACTS','PAYMENT_ROLLBACK_SCHEMA_UNSUPPORTED'].includes(line));
-      code === 0 ? resolve() : reject(new Error(detail ?? `UPGRADE_COMMAND_FAILED:${args[0]}`));
+      const validationFailed = diagnostic.split(/\r?\n/).some(line => line.startsWith('LOCAL_VALIDATOR_COMMAND_FAILED:'));
+      code === 0 ? resolve() : reject(new Error(detail ?? (validationFailed ? 'UPGRADE_VALIDATION_FAILED' : `UPGRADE_COMMAND_FAILED:${args[0]}`)));
     });
   });
 }

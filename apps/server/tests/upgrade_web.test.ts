@@ -8,7 +8,7 @@ import { pixelReleaseToken } from '../src/services/release_maintenance_client.js
 
 // The web maintenance process uses the same compiled Owner authentication as the launcher.
 // @ts-ignore Standalone maintenance script.
-import { createUpgradeWeb, readUpgradeStatus } from '../../../scripts/upgrade-web.mjs';
+import { createUpgradeWeb, readUpgradeStatus, runUpgradeCommand } from '../../../scripts/upgrade-web.mjs';
 // @ts-ignore Standalone maintenance script.
 import { ownerReleaseInput } from '../../../scripts/version-upgrade.mjs';
 const {JSDOM}=createRequire(path.resolve('frontend/package.json'))('jsdom');
@@ -292,6 +292,13 @@ describe('Owner web upgrade', () => {
     await vi.waitFor(()=>expect(JSON.parse(fs.readFileSync(path.join(f.directory,'upgrade-web-job.json'),'utf8')).state).toBe('failed'));
     const {doc,poll}=await page(f,lang);expect(doc.getElementById('job-state').textContent).toContain(lang==='en'?'no code changes':'没有可发布的代码改动');expect(doc.getElementById('recover').hidden).toBe(false);doc.getElementById('recover').click();await vi.waitFor(()=>expect(f.run).toHaveBeenCalledTimes(2));expect(f.run.mock.calls[1][1]).toEqual(['recover']);
     await f.app.inject({method:'POST',url:'/api/logout',headers:{cookie:f.cookie}});await poll();expect(doc.getElementById('login').hidden).toBe(false);expect(doc.getElementById('error').textContent).toBe(lang==='en'?'Your session expired. Log in again.':'登录已过期，请重新登录。');
+  });
+
+  it.each(['zh-CN','en'])('maps an actual validator command failure to a readable message and retains the candidate (%s)',async lang=>{
+    const f=await fixture();fs.mkdirSync(path.join(f.directory,'scripts'));fs.writeFileSync(path.join(f.directory,'scripts/version-upgrade.mjs'),"process.stderr.write('LOCAL_VALIDATOR_COMMAND_FAILED: test\\n');process.exitCode=1;");
+    const row=f.data.candidates[0];row.state='SUBMITTED';row.candidate=null;f.run.mockImplementation((_root,args,output)=>runUpgradeCommand(f.directory,args,output));
+    expect((await f.request({action:'validate',id:row.id,identity:row.identity,expectedActive:'G0008'})).statusCode).toBe(202);await vi.waitFor(()=>expect(JSON.parse(fs.readFileSync(path.join(f.directory,'upgrade-web-job.json'),'utf8')).state).toBe('failed'));
+    const {doc}=await page(f,lang);expect(doc.getElementById('job-state').textContent).toContain(lang==='en'?'has not been published':'尚未发布');expect(doc.querySelector('#candidates button').disabled).toBe(false);expect(f.run).toHaveBeenCalledOnce();
   });
 
 });
