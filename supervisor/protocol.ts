@@ -1,7 +1,7 @@
 export interface GenePatchFile { path: string; content: string | null }
 export interface GeneRequest {
   id: string; base_generation: string; base_release: string; proposal_id: string; patch: GenePatchFile[];
-  owner_release?: { reason: string; source_commit: string; release_hash: string };
+  owner_release?: { label?: string; reason: string; source_commit: string; release_hash: string };
 }
 export interface GeneCandidate {
   id: string; base_generation: string; base_release: string; proposal_id: string;

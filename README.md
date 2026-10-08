@@ -97,6 +97,8 @@ Windows launchers open the page only after the launched process reports readines
 
 Daily upgrades use the independent page at `http://127.0.0.1:8766/`. `EmergentInc_Upgrade.bat` remains an optional command-line entry for status, rollback and recovery; the web upgrade service does not depend on this batch file.
 
+Version labels accept free text, including Chinese, spaces and symbols (up to 200 characters). Leave the label blank to generate a timestamp label; a change description is still required. Display labels are stored separately from the system-generated release IDs.
+
 Owner and Agent development use separate branches / worktrees. Keep production releases frozen. Do not edit `/srv/emergentinc/current` or `git pull` into a live production directory. Tests and a local commit precede merging and release approval. Do not share a working tree between simultaneous editors.
 
 ## Upgrade and rollback

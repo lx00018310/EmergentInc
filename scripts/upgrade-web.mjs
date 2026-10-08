@@ -6,7 +6,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { pathToFileURL } from 'node:url';
 import { registerOwnerAuth } from '../apps/server/dist/owner_auth.js';
 import { ownerEnvironment } from './local-release.mjs';
-import { upgradeConfig } from './version-upgrade.mjs';
+import { upgradeConfig, ownerReleaseInput } from './version-upgrade.mjs';
 import { readAppCodeReport } from './prepare-app-code.mjs';
 
 const require = createRequire(new URL('../apps/server/package.json', import.meta.url));
@@ -22,12 +22,16 @@ function logTail(file) {
 }
 
 export function readUpgradeStatus(root, config) {
-  const readDb = (file, sql) => {
+  const readDb = (file, sql, params=[]) => {
     const db = new DatabaseSync(file, { readOnly: true });
-    try { return db.prepare(sql).all(); } finally { db.close(); }
+    try { return db.prepare(sql).all(...params); } finally { db.close(); }
   };
   const active = readDb(path.join(config.workspace, 'system/lineage/lineage.sqlite3'), "SELECT id,release_id FROM generations WHERE state='ACTIVE'")[0];
   const file = path.join(config.stateDirectory, 'evolution.sqlite3');
+  if(active&&fs.existsSync(file)){
+    const request=readDb(file,'SELECT request_json FROM candidates WHERE id=?',[active.release_id])[0];
+    if(request)active.label=JSON.parse(request.request_json).owner_release?.label;
+  }
   const candidates = fs.existsSync(file) ? readDb(file, 'SELECT id,state,phase,failure_reason,created_at,candidate_json,request_json FROM candidates ORDER BY created_at DESC LIMIT 30')
     .map(row => ({ ...row, candidate: row.candidate_json ? JSON.parse(row.candidate_json) : null, request: JSON.parse(row.request_json) }))
     .filter(row => row.request.owner_release || row.request.app_code_report).map(({ candidate_json, request_json, ...row }) => ({ ...row,
@@ -80,12 +84,12 @@ export async function createUpgradeWeb({ root, config, secret, runCommand = runU
   app.post('/api/upgrades', async (req, reply) => {
     if (busy) return reply.status(409).send({ detail: 'UPGRADE_ALREADY_RUNNING' });
     const body = req.body ?? {}, current = status(root, config);
-    let commands;
+    let commands,version;
     if (body.action === 'prepare') {
-      if (!/^v\d+(?:[._-][a-zA-Z0-9]+)*$/.test(body.version ?? '') || typeof body.reason !== 'string' || !body.reason.trim() || body.reason.length > 1000)
-        return reply.status(400).send({ detail: 'VERSION_LABEL_AND_OWNER_REASON_REQUIRED' });
+      let input;
+      try{input=ownerReleaseInput(body.version,body.reason);}catch(error){return reply.status(400).send({detail:error.message});}
       if (current.dirty) return reply.status(409).send({ detail: 'OWNER_RELEASE_REQUIRES_CLEAN_COMMITTED_CHECKOUT' });
-      commands = [['prepare', body.version, body.reason.trim()]];
+      version=input.label;commands = [['prepare', version, input.reason]];
     } else if (body.action === 'prepare-code') {
       if(!/^code_[a-f0-9]{32}$/.test(body.id??'')||!/^[a-f0-9]{64}$/.test(body.hash??''))return reply.status(400).send({detail:'APP_CODE_REPORT_INVALID'});
       commands=[['prepare-code',body.id,body.hash]];
@@ -98,7 +102,7 @@ export async function createUpgradeWeb({ root, config, secret, runCommand = runU
     } else if (body.action === 'recover') commands = [['recover']];
     else return reply.status(400).send({ detail: 'VERSION_UPGRADE_ACTION_INVALID' });
     busy = true;
-    job = { action: body.action, id: body.id ?? null, state: 'running', startedAt: Date.now(), log: '', error: null };
+    job = { action: body.action, id: body.id ?? null, ...(version?{version}:{}), state: 'running', startedAt: Date.now(), log: '', error: null };
     const save = () => fs.writeFileSync(jobFile, JSON.stringify(job, null, 2));
     try { save(); } catch (error) { busy = false; throw error; }
     const execute = async () => {

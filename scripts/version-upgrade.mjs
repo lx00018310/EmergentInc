@@ -7,6 +7,13 @@ import {freezeLocalRelease,frozenReleaseHash,ownerEnvironment} from './local-rel
 import {LineageStore} from '../packages/persistence/dist/index.js';
 
 const root=path.resolve(import.meta.dirname,'..');
+export function ownerReleaseInput(version,reason,now=new Date()){
+  if(version!==undefined&&typeof version!=='string'||typeof reason!=='string'||!reason.trim()||reason.length>1000||reason.includes('\0'))
+    throw new Error('VERSION_LABEL_AND_OWNER_REASON_REQUIRED');
+  const label=(version??'').trim();
+  if(label.length>200||/[\u0000-\u001f\u007f]/.test(label))throw new Error('VERSION_LABEL_AND_OWNER_REASON_REQUIRED');
+  return {label:label||`release-${now.toISOString().replace(/[-:]/g,'').replace(/\.\d{3}Z$/,'Z')}`,reason:reason.trim()};
+}
 export function upgradeConfig(projectRoot){
   const environment=ownerEnvironment(projectRoot),file=environment.EMERGENTINC_LOCAL_EVOLUTION_CONFIG;
   if(!file)throw new Error('V23_OWNER_CONFIG_REQUIRED_USE_V23_UPGRADE_FOR_V22');
@@ -36,11 +43,10 @@ export async function versionUpgrade(args){
     return generation(configFile,'list');
   }
   if(action==='prepare'){
-    const [version,reason]=values;
-    if(!/^v\d+(?:[._-][a-zA-Z0-9]+)*$/.test(version??'')||!reason?.trim()||reason.length>1000)throw new Error('VERSION_LABEL_AND_OWNER_REASON_REQUIRED');
+    const {label:version,reason}=ownerReleaseInput(values[0],values[1]);
     if(execFileSync('git',['status','--porcelain'],{cwd:root,encoding:'utf8'}).trim())throw new Error('OWNER_RELEASE_REQUIRES_CLEAN_COMMITTED_CHECKOUT');
     const sourceCommit=execFileSync('git',['rev-parse','HEAD'],{cwd:root,encoding:'utf8'}).trim();
-    const id=`local-${version}-${randomUUID()}`,directory=path.join(config.releases,id);
+    const id=`local-${randomUUID()}`,directory=path.join(config.releases,id);
     const lineage=new LineageStore(path.join(config.workspace,'system/lineage/lineage.sqlite3'),{v23:true});
     try{
       const base=lineage.activeGeneration();if(!base)throw new Error('ACTIVE_GENERATION_REQUIRED');
@@ -50,7 +56,7 @@ export async function versionUpgrade(args){
       manifest.generation=number;fs.writeFileSync(manifestFile,JSON.stringify(manifest,null,2)+'\n');
       const proposal=lineage.proposeGene(base.id,'owner',{point:`Owner software upgrade ${version}`,reason,effect:'All Worlds share the approved release; raw facts retained for later Dream'},`owner-version:${id}`);
       lineage.decideProposal(proposal.id,'APPROVED');
-      const request={id,base_generation:base.id,base_release:base.release_id,proposal_id:proposal.id,patch:[],owner_release:{reason,source_commit:sourceCommit,release_hash:frozenReleaseHash(directory)}};
+      const request={id,base_generation:base.id,base_release:base.release_id,proposal_id:proposal.id,patch:[],owner_release:{label:version,reason,source_commit:sourceCommit,release_hash:frozenReleaseHash(directory)}};
       const requestFile=path.join(config.stateDirectory,id+'.request.json');fs.writeFileSync(requestFile,JSON.stringify(request,null,2),{flag:'wx'});
       await generation(configFile,'submit-owner-release',requestFile);
       await generation(configFile,'validate',id);

@@ -70,11 +70,12 @@ describe("trusted Generation lifecycle (local runtime contract doubles)", () => 
     fs.writeFileSync(join(directory,"apps/server/core.txt"),"V24 core");f.app().current.event("retained_fact",{real:true});
     const proposal=f.lineage.proposeGene("G0001","owner",point);f.lineage.decideProposal(proposal.id,"APPROVED");
     const request={id:"owner-r2",base_generation:"G0001",base_release:"r1",proposal_id:proposal.id,patch:[],
-      owner_release:{reason:"Explicit Owner maintenance",source_commit:"a".repeat(40),release_hash:releaseHash(directory)}};
+      owner_release:{label:"统一背景 / 中文 & 🚀",reason:"Explicit Owner maintenance",source_commit:"a".repeat(40),release_hash:releaseHash(directory)}};
     expect(()=>f.supervisor.submit(request)).toThrow("LOCAL_OWNER_ENTRY");
     f.supervisor.submitOwnerRelease(request);const c=await f.supervisor.validate(request.id);
     expect(c.candidate.owner_release).toEqual(request.owner_release);
     f.supervisor.approve(request.id,c.candidate.candidate_hash);await f.supervisor.birth(request.id);
+    expect(f.lineage.activeGeneration()?.release_id).toBe("owner-r2");
     expect(f.runtime.finalDream).not.toHaveBeenCalled();
     const archived=new CurrentStore(join(f.directory,"trusted/snapshots",request.id,"current-before.sqlite3"),{readOnly:true});
     try{expect(archived.db.prepare("SELECT payload FROM current_events WHERE kind='retained_fact'").get()?.payload).toBe('{"real":true}');}finally{archived.close();}
