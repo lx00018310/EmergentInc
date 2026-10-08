@@ -43,6 +43,8 @@ function render(data){snapshot=data;$('busy-state').hidden=!data.busy;$('active'
 }
 function renderCards(data){const history=$('history');history.replaceChildren();
  for(const version of data.versions??[]){const card=text('article','',history);card.className='candidate';text('h3',`${version.id} · ${version.label}`,card);text('small',version.release_id,card);
+   const record=data.candidates.find(row=>row.id===version.release_id),description=record?.request.owner_release?.reason??record?.request.app_code_report?.reason;
+   if(description){text('small',t('reason'),card);text('p',description,card).style.whiteSpace='pre-wrap';}
    if(version.id===data.active?.id)text('p',t('current'),card);else if(!version.available)text('p',t('unavailable'),card);
    if(version.rollbackBlockedReason)text('p',t(version.rollbackBlockedReason),card);
    if(version.canRollback){const button=text('button',t('rollback'),card);button.disabled=data.busy||sending;button.onclick=()=>openMaintenance({action:'rollback',targetGeneration:version.id,expectedActive:data.active.id},`${version.id} · ${version.label}`);}
