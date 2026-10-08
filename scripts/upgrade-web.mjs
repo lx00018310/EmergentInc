@@ -38,8 +38,10 @@ function operatorBusy(config) {
 
 export function readUpgradeStatus(root, config) {
   const readDb = (file, sql, params=[]) => {
-    const db = new DatabaseSync(file, { readOnly: true });
-    try { return db.prepare(sql).all(...params); } finally { db.close(); }
+    if (!fs.existsSync(file)) throw new Error('UPGRADE_DATABASE_UNAVAILABLE');
+    // Query-only permits SQLite to repair its WAL bookkeeping after a Windows process stop.
+    const db = new DatabaseSync(file);
+    try { db.exec('PRAGMA query_only=ON'); return db.prepare(sql).all(...params); } finally { db.close(); }
   };
   const generations=readDb(path.join(config.workspace,'system/lineage/lineage.sqlite3'),'SELECT id,generation_no,parent_id,release_id,state FROM generations ORDER BY generation_no DESC');
   const active=generations.find(g=>g.state==='ACTIVE');
@@ -85,7 +87,7 @@ export function runUpgradeCommand(root, args, onOutput) {
     }); }
     child.once('error', reject);
     child.once('exit', code => {
-      const detail = diagnostic.split(/\r?\n/).find(line => ['GENE_HASH_MUST_CHANGE','CANDIDATE_BASE_CONFLICT','GENOME_GENERATION_NUMBER_CONFLICT','EVOLUTION_ALREADY_RUNNING','MAIN_SERVICE_UNAVAILABLE','MAIN_SERVICE_NOT_READY','LOCAL_CONTROL_PROCESS_IDENTITY_CONFLICT','ROLLBACK_TARGET_INVALID','ROLLBACK_TARGET_NOT_ANCESTOR','ROLLBACK_HISTORY_UNAVAILABLE','RELEASE_DELETE_DENIED','RELEASE_ACTIVE_CHANGED','RELEASE_IDENTITY_CHANGED','RELEASE_DELETE_PATH_DENIED','EVOLUTION_RECOVERY_REQUIRED','HISTORICAL_RELEASE_INTEGRITY_CONFLICT','ACTIVE_TRUSTED_RELEASE_CONFLICT','V23_ROLLBACK_DENIED_INSTANCE_PAYMENT_FACTS','PAYMENT_ROLLBACK_SCHEMA_UNSUPPORTED'].includes(line));
+      const detail = diagnostic.split(/\r?\n/).find(line => ['SNAPSHOT_DATABASE_FAILED','GENE_HASH_MUST_CHANGE','CANDIDATE_BASE_CONFLICT','GENOME_GENERATION_NUMBER_CONFLICT','EVOLUTION_ALREADY_RUNNING','MAIN_SERVICE_UNAVAILABLE','MAIN_SERVICE_NOT_READY','LOCAL_CONTROL_PROCESS_IDENTITY_CONFLICT','ROLLBACK_TARGET_INVALID','ROLLBACK_TARGET_NOT_ANCESTOR','ROLLBACK_HISTORY_UNAVAILABLE','RELEASE_DELETE_DENIED','RELEASE_ACTIVE_CHANGED','RELEASE_IDENTITY_CHANGED','RELEASE_DELETE_PATH_DENIED','EVOLUTION_RECOVERY_REQUIRED','HISTORICAL_RELEASE_INTEGRITY_CONFLICT','ACTIVE_TRUSTED_RELEASE_CONFLICT','V23_ROLLBACK_DENIED_INSTANCE_PAYMENT_FACTS','PAYMENT_ROLLBACK_SCHEMA_UNSUPPORTED'].includes(line));
       const validationFailed = diagnostic.split(/\r?\n/).some(line => line.startsWith('LOCAL_VALIDATOR_COMMAND_FAILED:'));
       code === 0 ? resolve() : reject(new Error(detail ?? (validationFailed ? 'UPGRADE_VALIDATION_FAILED' : `UPGRADE_COMMAND_FAILED:${args[0]}`)));
     });

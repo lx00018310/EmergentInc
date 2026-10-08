@@ -301,4 +301,8 @@ describe('Owner web upgrade', () => {
     const {doc}=await page(f,lang);expect(doc.getElementById('job-state').textContent).toContain(lang==='en'?'has not been published':'尚未发布');expect(doc.querySelector('#candidates button').disabled).toBe(false);expect(f.run).toHaveBeenCalledOnce();
   });
 
+  it('does not create a missing database during status inspection',async()=>{
+    const f=await fixture(),workspace=path.join(f.directory,'missing');expect(()=>readUpgradeStatus(path.resolve('.'),{workspace,stateDirectory:f.directory,appUrl:f.data.appUrl})).toThrow('UPGRADE_DATABASE_UNAVAILABLE');expect(fs.existsSync(workspace)).toBe(false);
+  });
+
 });

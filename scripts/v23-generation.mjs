@@ -27,5 +27,5 @@ try{
   else if(action==='delete-newer')result=supervisor.deleteNewerReleases(value,exactHash);
   else if(action==='recover')result=await supervisor.recover();else if(action==='post-rollback-dream')result=await supervisor.postRollbackDream(value);
   else result=await supervisor[action](value);console.log(JSON.stringify(result,null,2));
-}catch(error){console.error(error.message);process.exitCode=1;}
+}catch(error){console.error(error.message);console.error(error.stack);if(error.cause)console.error(error.cause);process.exitCode=1;}
 finally{supervisor?.close();lineage?.close();if(lock&&fs.existsSync(lock)&&JSON.parse(fs.readFileSync(lock,'utf8')).pid===process.pid)fs.unlinkSync(lock);}

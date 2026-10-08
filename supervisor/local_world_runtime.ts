@@ -30,7 +30,7 @@ export class LocalWorldRuntime implements EvolutionRuntime {
     }
   }
   activeRelease(){return fs.realpathSync(JSON.parse(fs.readFileSync(this.config.activeReleaseFile,'utf8')).directory);}
-  worlds(){const db=new DatabaseSync(path.join(this.config.workspace,'system/control/control.sqlite3'),{readOnly:true});try{
+  worlds(){const file=path.join(this.config.workspace,'system/control/control.sqlite3');if(!fs.existsSync(file))throw new Error('UPGRADE_DATABASE_UNAVAILABLE');const db=new DatabaseSync(file);try{db.exec('PRAGMA query_only=ON');
     return db.prepare("SELECT world_id,workspace_relpath FROM qianji_worlds WHERE status='ACTIVE' AND world_id NOT IN (SELECT world_id FROM world_recovery_blocks) ORDER BY world_id").all().map(row=>({id:String(row.world_id),directory:path.join(this.config.workspace,String(row.workspace_relpath))}));
   }finally{db.close();}}
   async checkRunning(generation:string){
