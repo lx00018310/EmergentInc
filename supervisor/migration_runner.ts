@@ -16,6 +16,18 @@ export function copyDirectoryNew(source:string,target:string){
 
 /** Trusted online snapshots, including committed WAL. Never restore Lineage over live history. */
 export async function snapshotDatabase(source: string, target: string) {
+  for (let attempt=0; ; attempt++) {
+    try { return await snapshotDatabaseOnce(source,target); }
+    catch (error) {
+      const sqlite=(error as Error & {cause?:{error?:{errcode?:number}}}).cause?.error;
+      // Windows can briefly retain a mapped file after its process exits (SQLITE_IOERR_TRUNCATE).
+      if(process.platform!=='win32'||sqlite?.errcode!==1546||attempt===4)throw error;
+      await new Promise(done=>setTimeout(done,100));
+    }
+  }
+}
+
+async function snapshotDatabaseOnce(source: string, target: string) {
   if (!existsSync(source) || existsSync(target)) throw new Error("SNAPSHOT_NEW_TARGET_REQUIRED");
   mkdirSync(dirname(target), { recursive: true });
   const temporary = target + '.partial-' + randomBytes(8).toString('hex');
