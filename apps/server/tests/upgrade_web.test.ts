@@ -18,17 +18,42 @@ async function fixture() {
   const directory = fs.mkdtempSync(path.join(tmpdir(), 'upgrade-web-'));
   const secret = 'test-upgrade-owner-secret'.repeat(3);
   const run = vi.fn(async (_root: string, _args: string[], output: (text: string) => void) => { output('checked'); });
+  const checkRunning = vi.fn(async (_generation: string) => {});
   const data = { active: { id: 'G0008' }, dirty: false, appUrl: 'http://127.0.0.1:8765', candidates: [{ id: 'local-v24-test', state: 'VALIDATED',
     candidate: { candidate_hash: 'a'.repeat(64), base_generation: 'G0008' }, request: { owner_release: { reason: 'Fix run state' } } }] };
-  const app = await createUpgradeWeb({ root: path.resolve('.'), config: { stateDirectory: directory }, secret, runCommand: run, status: () => data });
+  const app = await createUpgradeWeb({ root: path.resolve('.'), config: { stateDirectory: directory }, secret, runCommand: run, status: () => data, checkRunning });
   cleanups.push(async () => { await app.close(); fs.rmSync(directory, { recursive: true, force: true }); });
   const login = await app.inject({ method: 'POST', url: '/api/login', payload: { secret } });
   const cookie = String(login.headers['set-cookie']).split(';')[0];
   const request = (payload: unknown) => app.inject({ method: 'POST', url: '/api/upgrades', headers: { cookie }, payload });
-  return { app, data, directory, run, request, cookie };
+  return { app, data, directory, run, request, cookie, checkRunning };
 }
 
 describe('Owner web upgrade', () => {
+  it('blocks approval when the main service is offline and allows an explicit retry after startup',async()=>{
+    const f=await fixture();f.checkRunning.mockRejectedValueOnce(new Error('MAIN_SERVICE_UNAVAILABLE'));
+    const publish={action:'publish',id:'local-v24-test',hash:'a'.repeat(64)};
+    expect((await f.request(publish)).statusCode).toBe(202);
+    await vi.waitFor(()=>expect(JSON.parse(fs.readFileSync(path.join(f.directory,'upgrade-web-job.json'),'utf8'))).toMatchObject({state:'failed',error:'MAIN_SERVICE_UNAVAILABLE'}));
+    expect(f.run).not.toHaveBeenCalled();expect(f.data.candidates[0].state).toBe('VALIDATED');
+    expect((await f.request(publish)).statusCode).toBe(202);
+    await vi.waitFor(()=>expect(f.run).toHaveBeenCalledTimes(2));
+    expect(f.checkRunning).toHaveBeenCalledWith('G0008');
+    expect(f.run.mock.calls.map(call=>call[1][0])).toEqual(['approve','apply']);
+  });
+  it.each(['zh-CN','en'])('keeps a readable offline publication error in the actual page (%s)',async lang=>{
+    const f=await fixture();f.checkRunning.mockRejectedValue(new Error('MAIN_SERVICE_UNAVAILABLE'));
+    await f.request({action:'publish',id:'local-v24-test',hash:'a'.repeat(64)});
+    await vi.waitFor(()=>expect(JSON.parse(fs.readFileSync(path.join(f.directory,'upgrade-web-job.json'),'utf8')).state).toBe('failed'));
+    const dom=new JSDOM((await f.app.inject('/')).body,{url:'http://127.0.0.1:8766/',runScripts:'outside-only'});
+    cleanups.push(async()=>dom.window.close());dom.window.localStorage.setItem('emergentinc.language',lang);dom.window.setInterval=()=>0;
+    dom.window.fetch=async(url:string)=>{const response=await f.app.inject({url,headers:{cookie:f.cookie}});return {ok:response.statusCode<400,status:response.statusCode,json:async()=>response.json()};};
+    await dom.window.eval(`(async()=>{${dom.window.document.querySelector('script').textContent}})()`);
+    const message=dom.window.document.getElementById('job-state').textContent;
+    expect(message).toContain(lang==='en'?'The main service is stopped or unreachable.':'主服务未启动或无法连接。');
+    expect(message).toContain('EmergentInc_UI.bat');expect(message).toContain('EmergentInc_UI.sh');
+    expect(message).toContain(lang==='en'?'The candidate is retained':'候选版本保留');expect(f.run).not.toHaveBeenCalled();
+  });
   it('requires an independent Owner session for source reports and prepares them without publication',async()=>{
     const f=await fixture(),id=`code_${'a'.repeat(32)}`,hash='b'.repeat(64);
     expect((await f.app.inject(`/api/code-reports/${id}`)).statusCode).toBe(401);

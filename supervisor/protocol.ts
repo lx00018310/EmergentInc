@@ -11,6 +11,7 @@ export interface GeneCandidate {
 }
 export interface EvolutionRuntime {
   validateRelease(directory: string): Promise<void>;
+  checkRunning?(generationId: string): Promise<void>;
   quiesce(): Promise<void>;
   finalDream(): Promise<void>;
   smoke(directory: string, workspace: string, generationId: string): Promise<void>;

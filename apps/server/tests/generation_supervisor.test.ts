@@ -62,6 +62,20 @@ function fixture() {
   return { directory, releases, workspace, lineage, runtime, supervisor, prepare, app: () => app! };
 }
 describe("trusted Generation lifecycle (local runtime contract doubles)", () => {
+  it("retains exact approval when the main service is offline before publication and permits an explicit retry",async()=>{
+    const f=fixture(),c=await f.prepare("r2");f.supervisor.approve("r2",c.candidate.candidate_hash);
+    f.runtime.checkRunning=vi.fn(async()=>{}).mockRejectedValueOnce(new Error("MAIN_SERVICE_UNAVAILABLE"));
+    await expect(f.supervisor.birth("r2")).rejects.toThrow("MAIN_SERVICE_UNAVAILABLE");
+    expect(f.supervisor.get("r2")).toMatchObject({state:"APPROVED",approval_hash:c.candidate.candidate_hash,target_generation:null,failure_reason:null});
+    expect(f.lineage.proposal(c.candidate.proposal_id).state).toBe("CANDIDATE_READY");
+    expect(f.runtime.quiesce).not.toHaveBeenCalled();expect(f.runtime.stop).not.toHaveBeenCalled();expect(f.lineage.generations()).toHaveLength(1);
+    expect((await f.supervisor.birth("r2")).state).toBe("BORN");
+  });
+  it("does not report recovery success while the active main service is stopped",async()=>{
+    const f=fixture();f.runtime.checkRunning=vi.fn(async()=>{throw new Error("MAIN_SERVICE_UNAVAILABLE");});
+    await expect(f.supervisor.recover()).rejects.toThrow("MAIN_SERVICE_UNAVAILABLE");
+    expect(f.runtime.start).not.toHaveBeenCalled();expect(f.lineage.activeGeneration()?.id).toBe("G0001");
+  });
   it("archives unsynthesized facts for an explicit Owner release while keeping Root forbidden for Gene", async () => {
     const f=fixture(),base=join(f.releases,"r1"),directory=join(f.releases,"owner-r2");
     fs.cpSync(base,directory,{recursive:true});fs.unlinkSync(join(directory,".env"));

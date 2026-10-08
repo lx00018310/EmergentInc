@@ -8,6 +8,7 @@ import { registerOwnerAuth } from '../apps/server/dist/owner_auth.js';
 import { ownerEnvironment } from './local-release.mjs';
 import { upgradeConfig, ownerReleaseInput } from './version-upgrade.mjs';
 import { readAppCodeReport } from './prepare-app-code.mjs';
+import { LocalWorldRuntime } from '../supervisor/dist/local_world_runtime.js';
 
 const require = createRequire(new URL('../apps/server/package.json', import.meta.url));
 const fastify = require('fastify');
@@ -44,14 +45,22 @@ export function runUpgradeCommand(root, args, onOutput) {
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [path.join(root, 'scripts/version-upgrade.mjs'), ...args],
       { cwd: root, shell: false, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
-    for (const stream of [child.stdout, child.stderr]) { stream.setEncoding('utf8'); stream.on('data', onOutput); }
+    let diagnostic = '';
+    for (const stream of [child.stdout, child.stderr]) { stream.setEncoding('utf8'); stream.on('data', chunk => {
+      if (stream === child.stderr) diagnostic = (diagnostic + chunk).slice(-8000);
+      onOutput(chunk);
+    }); }
     child.once('error', reject);
-    child.once('exit', code => code === 0 ? resolve() : reject(new Error(`UPGRADE_COMMAND_FAILED:${args[0]}`)));
+    child.once('exit', code => {
+      const detail = diagnostic.split(/\r?\n/).find(line => ['MAIN_SERVICE_UNAVAILABLE', 'MAIN_SERVICE_NOT_READY', 'LOCAL_CONTROL_PROCESS_IDENTITY_CONFLICT'].includes(line));
+      code === 0 ? resolve() : reject(new Error(detail ?? `UPGRADE_COMMAND_FAILED:${args[0]}`));
+    });
   });
 }
 
 // This Owner maintenance process stays outside the release being replaced.
-export async function createUpgradeWeb({ root, config, secret, runCommand = runUpgradeCommand, status = readUpgradeStatus }) {
+export async function createUpgradeWeb({ root, config, secret, runCommand = runUpgradeCommand, status = readUpgradeStatus,
+  checkRunning = generation => new LocalWorldRuntime({ ...config, ownerEnvironment: { EMERGENTINC_OWNER_SECRET: secret } }).checkRunning(generation) }) {
   const app = fastify({ logger: false, bodyLimit: 8192 });
   const jobFile = path.join(config.stateDirectory, 'upgrade-web-job.json');
   let job = fs.existsSync(jobFile) ? JSON.parse(fs.readFileSync(jobFile, 'utf8')) : null;
@@ -107,6 +116,7 @@ export async function createUpgradeWeb({ root, config, secret, runCommand = runU
     try { save(); } catch (error) { busy = false; throw error; }
     const execute = async () => {
       try {
+        if (body.action === 'publish') await checkRunning(current.active.id);
         for (const args of commands) await runCommand(root, args, chunk => { job.log = (job.log + chunk).slice(-8000); });
         job.state = 'succeeded';
       } catch (error) { job.state = 'failed'; job.error = error.message; }

@@ -164,8 +164,9 @@ export class GenerationSupervisor {
     if (genome.generation !== number) throw new Error("GENOME_GENERATION_NUMBER_CONFLICT");
     this.busy = true;
     const snapshots = path.join(this.directory, "snapshots", id), newDirectory = generationDirectory(this.workspace, generation);
-    let current: CurrentStore | undefined, old: CurrentStore | undefined, quiesced = false, switching = false;
+    let current: CurrentStore | undefined, old: CurrentStore | undefined, quiesced = false, switching = false, runningChecked = false;
     try {
+      await this.runtime.checkRunning?.(previous.id); runningChecked = true;
       await this.runtime.quiesce(); quiesced = true;
       await snapshotDatabase(this.lineage.db.dbPath, path.join(snapshots, "lineage-before.sqlite3"));
       if(this.runtime.worlds){
@@ -264,6 +265,7 @@ export class GenerationSupervisor {
     } catch (e) {
       current?.close(); current = undefined; old?.close(); old = undefined;
       const reason = e instanceof Error ? e.message : "BIRTH_FAILED";
+      if (!runningChecked) { this.event(id, "publication_blocked", { reason }); throw e; }
       this.db.prepare("UPDATE candidates SET failure_reason=? WHERE id=?").run(reason, id);
       if (switching || this.get(id).state === "BIRTHING") await this.restore(id, reason, "FAILED");
       else {
@@ -355,6 +357,7 @@ export class GenerationSupervisor {
     try {
       for (const row of this.db.prepare("SELECT id FROM candidates WHERE state IN ('BIRTHING','ROLLING_BACK') ORDER BY created_at").all())
         await this.restore(String(row.id), "INTERRUPTED_BIRTH_RECOVERY", "FAILED");
+      await this.runtime.checkRunning?.(this.lineage.activeGeneration()!.id);
       return this.list();
     } finally { this.busy = false; }
   }

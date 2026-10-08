@@ -33,6 +33,22 @@ export class LocalWorldRuntime implements EvolutionRuntime {
   worlds(){const db=new DatabaseSync(path.join(this.config.workspace,'system/control/control.sqlite3'),{readOnly:true});try{
     return db.prepare("SELECT world_id,workspace_relpath FROM qianji_worlds WHERE status='ACTIVE' AND world_id NOT IN (SELECT world_id FROM world_recovery_blocks) ORDER BY world_id").all().map(row=>({id:String(row.world_id),directory:path.join(this.config.workspace,String(row.workspace_relpath))}));
   }finally{db.close();}}
+  async checkRunning(generation:string){
+    let live:any,ready:any;
+    try{
+      const response=await fetch(this.config.appUrl+'/health/live',{headers:{Connection:'close'},redirect:'error',signal:AbortSignal.timeout(3000)});
+      live=await response.json();if(!response.ok||live.alive!==true)throw new Error('MAIN_SERVICE_UNAVAILABLE');
+      const health=await fetch(this.config.appUrl+'/health/ready',{headers:{Connection:'close'},redirect:'error',signal:AbortSignal.timeout(3000)});
+      ready=await health.json();if(!health.ok||ready.ready!==true)throw new Error('MAIN_SERVICE_NOT_READY');
+    }catch(error){
+      if(error instanceof Error&&error.message==='MAIN_SERVICE_NOT_READY')throw error;
+      throw new Error('MAIN_SERVICE_UNAVAILABLE',{cause:error});
+    }
+    const file=path.join(this.config.workspace,'runtime/instance.lock');
+    const lock=fs.existsSync(file)?JSON.parse(fs.readFileSync(file,'utf8')):null;
+    if(!Number.isSafeInteger(live.processId)||live.processId<1||live.processId!==lock?.pid||ready.generation!==generation)
+      throw new Error('LOCAL_CONTROL_PROCESS_IDENTITY_CONFLICT');
+  }
   private async owner(action:string,body:unknown={}){
     if(!this.cookie){const response=await fetch(this.config.appUrl+'/api/login',{method:'POST',headers:{'Content-Type':'application/json',Connection:'close'},body:JSON.stringify({secret:this.config.ownerEnvironment.EMERGENTINC_OWNER_SECRET}),redirect:'error',signal:AbortSignal.timeout(8000)});
       this.cookie=response.headers.get('set-cookie')?.split(';')[0];if(response.status!==200||!this.cookie)throw new Error('EVOLUTION_OWNER_AUTH_FAILED');}
