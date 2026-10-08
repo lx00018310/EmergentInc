@@ -33,13 +33,20 @@ export const OwnerChat: React.FC<{missionControl?:boolean;onDone?:()=>void;work?
   const [error, setError] = useState<string | null>(null);
   const endRef = useRef<HTMLDivElement>(null);
   const answerRef = useRef<HTMLDivElement>(null);
+  const historyRef = useRef<HTMLDivElement>(null);
   const pending = useRef<Pending|null>(missionControl?loadPending():null);
 
   useEffect(() => {
     try { localStorage.setItem(STORAGE_KEY, JSON.stringify(messages.slice(-40))); } catch { /* 浏览器存储不可用时仅保留当前页面 */ }
+    if (missionControl && historyRef.current) {
+      const history = historyRef.current;
+      if (messages.at(-1)?.role === 'assistant' && answerRef.current) history.scrollTop += answerRef.current.getBoundingClientRect().top - history.getBoundingClientRect().top;
+      else history.scrollTop = history.scrollHeight;
+      return;
+    }
     if (messages.at(-1)?.role === 'assistant') answerRef.current?.scrollIntoView?.({ block: 'start' });
     else endRef.current?.scrollIntoView?.({ block: 'end' });
-  }, [messages]);
+  }, [messages, missionControl]);
 
   const send = async () => {
     const question = draft.trim();
@@ -70,7 +77,7 @@ export const OwnerChat: React.FC<{missionControl?:boolean;onDone?:()=>void;work?
 
   return (
     <div className="owner-chat">
-      <div className="owner-chat-history" aria-label={tr("老板窗口对话记录")}>
+      <div className="owner-chat-history" ref={historyRef} aria-label={tr("老板窗口对话记录")}>
         {messages.length === 0 && <p className="form-hint">{tr(missionControl ? 'Describe a goal to assign work by role, or request energy changes directly. Recruitment, external publication and software upgrades require Owner approval.' : "可询问项目进度、运行状态和 Pixel 工作。回答会读取提问时的最新数据，并列出依据。")}</p>}
         {messages.map((message, index) => (
           <div className={`owner-chat-message ${message.role}`} key={index} ref={message.role === 'assistant' && index === messages.length - 1 ? answerRef : undefined}>
@@ -89,7 +96,6 @@ export const OwnerChat: React.FC<{missionControl?:boolean;onDone?:()=>void;work?
         {busy && <p role="status">{tr("正在读取并回答...")}</p>}
         <div ref={endRef} />
       </div>
-      {missionControl&&<OwnerWork work={work}/>}
       {error && <p className="operation-error" role="alert">{error}</p>}
       <div className="owner-chat-compose">
         <textarea
@@ -109,6 +115,7 @@ export const OwnerChat: React.FC<{missionControl?:boolean;onDone?:()=>void;work?
           <button className="btn btn-sm btn-primary" disabled={busy || !draft.trim()} onClick={() => void send()}>{tr("发送")}</button>
         </div>
       </div>
+      {missionControl&&<OwnerWork work={work}/>}
     </div>
   );
 };
