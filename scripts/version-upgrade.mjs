@@ -29,7 +29,7 @@ function generation(configFile,action,...args){return new Promise((resolve,rejec
 export async function versionUpgrade(args){
   const [action,...values]=args;
   if(!action||action==='help'){
-    console.log('Owner software upgrade (V23-layout workspace):\n  status\n  prepare <version-label> <reason>\n  show <id>\n  approve <id> <exact-candidate-hash>\n  apply <id>\n  rollback <id> <reason>\n  rollback-to <target-generation> <expected-active> <reason>\n  delete-release <id> <expected-active> <identity> <reason>\n  delete-newer <expected-active> <reason>\n  recover\nPreparation freezes this clean checkout and validates it. Approval binds the exact hash; apply switches all Worlds.');return;
+    console.log('Owner software upgrade (V23-layout workspace):\n  status\n  prepare <version-label> <reason>\n  validate <id>\n  show <id>\n  approve <id> <exact-candidate-hash>\n  apply <id>\n  rollback <id> <reason>\n  rollback-to <target-generation> <expected-active> <reason>\n  delete-release <id> <expected-active> <identity> <reason>\n  delete-newer <expected-active> <reason>\n  recover\nPreparation freezes this clean checkout and validates it. Approval binds the exact hash; apply switches all Worlds.');return;
   }
   const {configFile,config}=upgradeConfig(root);
   if(action==='prepare-code'){
@@ -64,7 +64,7 @@ export async function versionUpgrade(args){
     return;
   }
   const translated=action==='apply'?'birth':action;
-  if(!['show','approve','birth','rollback','rollback-to','delete-release','delete-newer','recover'].includes(translated))throw new Error('VERSION_UPGRADE_ACTION_INVALID');
+  if(!['validate','show','approve','birth','rollback','rollback-to','delete-release','delete-newer','recover'].includes(translated))throw new Error('VERSION_UPGRADE_ACTION_INVALID');
   return generation(configFile,translated,...values);
 }
 if(process.argv[1]&&import.meta.url===pathToFileURL(path.resolve(process.argv[1])).href){

@@ -26,6 +26,16 @@ function logTail(file) {
   } finally { fs.closeSync(fd); }
 }
 
+function operatorBusy(config) {
+  const file = path.join(config.stateDirectory, 'operator.lock');
+  let lock;
+  try { lock = JSON.parse(fs.readFileSync(file, 'utf8')); }
+  catch (error) { if (error.code === 'ENOENT') return false; throw error; }
+  if (!Number.isSafeInteger(lock.pid) || lock.pid < 1) throw new Error('INVALID_EVOLUTION_LOCK');
+  try { process.kill(lock.pid, 0); return true; }
+  catch (error) { if (error.code === 'ESRCH') return false; throw error; }
+}
+
 export function readUpgradeStatus(root, config) {
   const readDb = (file, sql, params=[]) => {
     const db = new DatabaseSync(file, { readOnly: true });
@@ -56,7 +66,7 @@ export function readUpgradeStatus(root, config) {
     const record=records.find(r=>r.id===g.release_id),directory=config.releases&&path.join(config.releases,g.release_id);
     const available=Boolean(directory&&/^[a-zA-Z0-9_-]+$/.test(g.release_id)&&fs.existsSync(directory)&&!fs.lstatSync(directory).isSymbolicLink());
     let canRollback=false,rollbackBlockedReason=null;
-    if(active&&g.id!==active.id&&available){try{rollbackPlan(generations,records,active.id,g.id);checkPaymentRollback(path.join(config.workspace,'system/payment/payment.sqlite3'),directory);canRollback=true;}catch(error){rollbackBlockedReason=error.message;}}
+    if(active&&g.generation_no<active.generation_no&&available){try{rollbackPlan(generations,records,active.id,g.id);checkPaymentRollback(path.join(config.workspace,'system/payment/payment.sqlite3'),directory);canRollback=true;}catch(error){rollbackBlockedReason=error.message;}}
     return {...g,label:record?.request.owner_release?.label??record?.request.app_code_report?.title??g.release_id,available,canRollback,rollbackBlockedReason,
       identity:record?.candidate?.candidate_hash??record?.request_hash,canDelete:Boolean(active&&record&&canDeleteRelease(record.state,g.release_id,g.generation_no,active,afterRollback))};
   });
@@ -109,12 +119,12 @@ export async function createUpgradeWeb({ root, config, secret, runCommand = runU
   // Loopback read-only projection. Never expose private paths, logs, credentials or approval capabilities.
   app.get('/status', async () => {
     const current = status(root, config);
-    return { service: 'owner-upgrade', active: current.active?.id ?? null, busy, startedAt: job?.startedAt ?? 0,
+    return { service: 'owner-upgrade', active: current.active?.id ?? null, busy: busy || operatorBusy(config), startedAt: job?.startedAt ?? 0,
       candidates: current.candidates.map(row => ({ id: row.id, state: row.state, createdAt: Number(row.created_at ?? 0),
         sourceCommit: row.request?.owner_release?.source_commit ?? row.candidate?.source_commit ?? null,
         hash: row.candidate?.candidate_hash ?? null, baseGeneration: row.candidate?.base_generation ?? null })) };
   });
-  app.get('/api/upgrades', async () => ({ ...status(root, config), job, busy }));
+  app.get('/api/upgrades', async () => ({ ...status(root, config), job, busy: busy || operatorBusy(config) }));
   app.get('/api/code-reports/:id',async(req,reply)=>{
     try{return await readAppCodeReport(config,req.params.id,secret,fetch,appReportSession);}catch(error){return reply.status(409).send({detail:error.message});}
   });
@@ -124,7 +134,7 @@ export async function createUpgradeWeb({ root, config, secret, runCommand = runU
       if(job.requestHash!==requestHash)return reply.status(409).send({detail:'IDEMPOTENCY_CONFLICT'});
       return reply.status(202).send({accepted:true,operationKey:actor.operationKey,state:job.state});
     }
-    if (busy) return reply.status(409).send({ detail: 'UPGRADE_ALREADY_RUNNING' });
+    if (busy || operatorBusy(config)) return reply.status(409).send({ detail: 'UPGRADE_ALREADY_RUNNING' });
     const current = status(root, config);
     let commands,version;
     if (body.action === 'prepare') {
@@ -135,9 +145,15 @@ export async function createUpgradeWeb({ root, config, secret, runCommand = runU
     } else if (body.action === 'prepare-code') {
       if(!/^code_[a-f0-9]{32}$/.test(body.id??'')||!/^[a-f0-9]{64}$/.test(body.hash??''))return reply.status(400).send({detail:'APP_CODE_REPORT_INVALID'});
       commands=[['prepare-code',body.id,body.hash]];
+    } else if (body.action === 'validate') {
+      const candidate = current.candidates.find(item => item.id === body.id);
+      if (!candidate || candidate.state !== 'SUBMITTED' || candidate.request.base_generation !== current.active?.id ||
+        body.expectedActive !== current.active?.id || typeof body.identity !== 'string' || body.identity !== candidate.identity)
+        return reply.status(409).send({ detail: 'UPGRADE_CANDIDATE_CONFLICT' });
+      commands = [['validate', body.id]];
     } else if (body.action === 'publish') {
       const candidate = current.candidates.find(item => item.id === body.id);
-      if (!candidate || !['VALIDATED', 'APPROVED'].includes(candidate.state) || candidate.candidate?.base_generation !== current.active?.id ||
+      if (!candidate || !['VALIDATED', 'APPROVED'].includes(candidate.state) || candidate.request.base_generation !== current.active?.id || candidate.candidate?.base_generation !== current.active?.id ||
         typeof body.hash !== 'string' || !/^[a-f0-9]{64}$/.test(body.hash) || body.hash !== candidate.candidate?.candidate_hash)
         return reply.status(409).send({ detail: 'UPGRADE_CANDIDATE_CONFLICT' });
       commands = [['approve', body.id, body.hash], ['apply', body.id]];
@@ -174,7 +190,7 @@ export async function createUpgradeWeb({ root, config, secret, runCommand = runU
   app.post('/api/upgrades',(req,reply)=>handleAction(req.body??{},reply));
   app.get('/pixel/releases',()=>{
     const current=status(root,config);
-    return {active:current.active?.id??null,busy,afterRollback:current.afterRollback??false,
+    return {active:current.active?.id??null,busy:busy||operatorBusy(config),afterRollback:current.afterRollback??false,
       versions:(current.versions??[]).map(v=>({generation:v.id,number:v.generation_no,releaseId:v.release_id,label:v.label,available:v.available,canRollback:v.canRollback,canDelete:v.canDelete,identity:v.identity})),
       candidates:current.candidates.map(c=>({releaseId:c.id,state:c.state,identity:c.identity,number:c.versionNumber,canDelete:c.canDelete??false})),
       job:job?{operationKey:job.operationKey??null,action:job.action,state:job.state,targetGeneration:job.targetGeneration,error:job.error}:null};

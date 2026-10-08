@@ -21,13 +21,25 @@ async function fixture() {
   const run = vi.fn(async (_root: string, _args: string[], output: (text: string) => void) => { output('checked'); });
   const checkRunning = vi.fn(async (_generation: string) => {});
   const data:any = { active: { id: 'G0008' }, versions:[{id:'G0007',generation_no:7,release_id:'old',label:'Previous version',available:true,canRollback:true}],afterRollback:false,dirty: false, appUrl: 'http://127.0.0.1:8765', candidates: [{ id: 'local-v24-test', state: 'VALIDATED',identity:'a'.repeat(64),canDelete:false,
-    candidate: { candidate_hash: 'a'.repeat(64), base_generation: 'G0008' }, request: { owner_release: { reason: 'Fix run state' } } }] };
+    candidate: { candidate_hash: 'a'.repeat(64), base_generation: 'G0008' }, request: { base_generation:'G0008', owner_release: { reason: 'Fix run state' } } }] };
   const app = await createUpgradeWeb({ root: path.resolve('.'), config: { stateDirectory: directory }, secret, runCommand: run, status: () => data, checkRunning });
   cleanups.push(async () => { await app.close(); fs.rmSync(directory, { recursive: true, force: true }); });
   const login = await app.inject({ method: 'POST', url: '/api/login', payload: { secret } });
   const cookie = String(login.headers['set-cookie']).split(';')[0];
   const request = (payload: unknown) => app.inject({ method: 'POST', url: '/api/upgrades', headers: { cookie }, payload });
   return { app, data, directory, run, request, cookie, checkRunning,secret };
+}
+
+async function page(f:Awaited<ReturnType<typeof fixture>>,lang='zh-CN',query='') {
+  const dom=new JSDOM((await f.app.inject('/')).body,{url:'http://127.0.0.1:8766/'+query,runScripts:'outside-only'});
+  cleanups.push(async()=>dom.window.close());let poll!:()=>Promise<void>,browserCookie=f.cookie;
+  dom.window.localStorage.setItem('emergentinc.language',lang);
+  dom.window.setInterval=(callback:()=>Promise<void>)=>{poll=callback;return 0;};
+  dom.window.HTMLDialogElement.prototype.showModal=function(){this.open=true;};
+  dom.window.HTMLDialogElement.prototype.close=function(){this.open=false;};
+  dom.window.fetch=vi.fn(async(url:string,init:any={})=>{const response=await f.app.inject({method:init.method??'GET',url,headers:{cookie:browserCookie},...(init.body?{payload:JSON.parse(init.body)}:{})});if(response.headers['set-cookie'])browserCookie=String(response.headers['set-cookie']).split(';')[0];return {ok:response.statusCode<400,status:response.statusCode,json:async()=>response.json()};});
+  await dom.window.eval(`(async()=>{${dom.window.document.querySelector('script').textContent}})()`);
+  return {dom,doc:dom.window.document,poll:()=>poll()};
 }
 
 describe('Owner web upgrade', () => {
@@ -58,15 +70,15 @@ describe('Owner web upgrade', () => {
   it.each(['zh-CN','en'])('renders the Owner link, rollback and deletion controls and sends their exact targets in %s',async lang=>{
     const f=await fixture();f.data.afterRollback=true;f.data.candidates[0].canDelete=true;
     const dom=new JSDOM((await f.app.inject('/')).body,{url:'http://127.0.0.1:8766/',runScripts:'outside-only'});cleanups.push(async()=>dom.window.close());
-    dom.window.localStorage.setItem('emergentinc.language',lang);dom.window.setInterval=()=>0;dom.window.fetch=async(url:string,init:any={})=>{const response=await f.app.inject({method:init.method??'GET',url,headers:{cookie:f.cookie},...(init.body?{payload:JSON.parse(init.body)}:{})});return {ok:response.statusCode<400,status:response.statusCode,json:async()=>response.json()};};
+    dom.window.localStorage.setItem('emergentinc.language',lang);dom.window.setInterval=()=>0;dom.window.HTMLDialogElement.prototype.showModal=function(){this.open=true;};dom.window.HTMLDialogElement.prototype.close=function(){this.open=false;};dom.window.fetch=async(url:string,init:any={})=>{const response=await f.app.inject({method:init.method??'GET',url,headers:{cookie:f.cookie},...(init.body?{payload:JSON.parse(init.body)}:{})});return {ok:response.statusCode<400,status:response.statusCode,json:async()=>response.json()};};
     await dom.window.eval(`(async()=>{${dom.window.document.querySelector('script').textContent}})()`);const doc=dom.window.document;
     expect(doc.getElementById('back').textContent).toBe(lang==='en'?'Back to Owner':'返回 Owner');expect(doc.getElementById('back').href).toBe('http://127.0.0.1:8765/OWNER');
-    expect(doc.querySelector('#history button').disabled).toBe(true);const reason=doc.getElementById('maintenance-reason');reason.value='Undo regression';reason.dispatchEvent(new dom.window.Event('input'));
-    expect(doc.querySelector('#history button').textContent).toBe(lang==='en'?'Roll back to this version':'回退到此版本');doc.querySelector('#history button').click();await vi.waitFor(()=>expect(f.run).toHaveBeenCalledOnce());
+    expect(doc.querySelector('#history button').disabled).toBe(false);
+    expect(doc.querySelector('#history button').textContent).toBe(lang==='en'?'Roll back to this version':'回退到此版本');doc.querySelector('#history button').click();expect(doc.getElementById('maintenance-dialog').open).toBe(true);doc.getElementById('maintenance-reason').value='Undo regression';doc.getElementById('maintenance-form').requestSubmit();await vi.waitFor(()=>expect(f.run).toHaveBeenCalledOnce());
     expect(f.run.mock.calls[0][1]).toEqual(['rollback-to','G0007','G0008','Undo regression']);
     await vi.waitFor(()=>expect(JSON.parse(fs.readFileSync(path.join(f.directory,'upgrade-web-job.json'),'utf8')).state).toBe('succeeded'));
     await vi.waitFor(()=>expect([...doc.querySelectorAll('#candidates button')].find((b:any)=>b.textContent===(lang==='en'?'Delete this code version':'删除此代码版本')).disabled).toBe(false));
-    [...doc.querySelectorAll('#candidates button')].find((b:any)=>b.textContent===(lang==='en'?'Delete this code version':'删除此代码版本')).click();await vi.waitFor(()=>expect(f.run).toHaveBeenCalledTimes(2));
+    [...doc.querySelectorAll('#candidates button')].find((b:any)=>b.textContent===(lang==='en'?'Delete this code version':'删除此代码版本')).click();doc.getElementById('maintenance-reason').value='Undo regression';doc.getElementById('maintenance-form').requestSubmit();await vi.waitFor(()=>expect(f.run).toHaveBeenCalledTimes(2));
     expect(f.run.mock.calls[1][1]).toEqual(['delete-release','local-v24-test','G0008','a'.repeat(64),'Undo regression']);
   });
   it('blocks approval when the main service is offline and allows an explicit retry after startup',async()=>{
@@ -85,7 +97,7 @@ describe('Owner web upgrade', () => {
     await f.request({action:'publish',id:'local-v24-test',hash:'a'.repeat(64)});
     await vi.waitFor(()=>expect(JSON.parse(fs.readFileSync(path.join(f.directory,'upgrade-web-job.json'),'utf8')).state).toBe('failed'));
     const dom=new JSDOM((await f.app.inject('/')).body,{url:'http://127.0.0.1:8766/',runScripts:'outside-only'});
-    cleanups.push(async()=>dom.window.close());dom.window.localStorage.setItem('emergentinc.language',lang);dom.window.setInterval=()=>0;
+    cleanups.push(async()=>dom.window.close());dom.window.localStorage.setItem('emergentinc.language',lang);dom.window.setInterval=()=>0;dom.window.HTMLDialogElement.prototype.showModal=function(){this.open=true;};dom.window.HTMLDialogElement.prototype.close=function(){this.open=false;};
     dom.window.fetch=async(url:string)=>{const response=await f.app.inject({url,headers:{cookie:f.cookie}});return {ok:response.statusCode<400,status:response.statusCode,json:async()=>response.json()};};
     await dom.window.eval(`(async()=>{${dom.window.document.querySelector('script').textContent}})()`);
     const message=dom.window.document.getElementById('job-state').textContent;
@@ -183,7 +195,7 @@ describe('Owner web upgrade', () => {
     const f=await fixture(),html=(await f.app.inject('/')).body;
     (f.data.candidates[0].request.owner_release as any).label='<img src=x onerror=alert(1)> 中文标签';
     const dom=new JSDOM(html,{url:'http://127.0.0.1:8766/',runScripts:'outside-only'});
-    cleanups.push(async()=>dom.window.close());dom.window.localStorage.setItem('emergentinc.language',lang);dom.window.setInterval=()=>0;
+    cleanups.push(async()=>dom.window.close());dom.window.localStorage.setItem('emergentinc.language',lang);dom.window.setInterval=()=>0;dom.window.HTMLDialogElement.prototype.showModal=function(){this.open=true;};dom.window.HTMLDialogElement.prototype.close=function(){this.open=false;};
     dom.window.fetch=async(url:string,init:any={})=>{const response=await f.app.inject({method:init.method??'GET',url,headers:{cookie:f.cookie},...(init.body?{payload:JSON.parse(init.body)}:{})});return {ok:response.statusCode<400,status:response.statusCode,json:async()=>response.json()};};
     await dom.window.eval(`(async()=>{${dom.window.document.querySelector('script').textContent}})()`);
     const input=dom.window.document.getElementById('version'),reason=dom.window.document.getElementById('reason');
@@ -203,4 +215,63 @@ describe('Owner web upgrade', () => {
     expect(status.job.error).toBe('validation failed');
     expect(status.busy).toBe(false);
   });
+  it.each(['zh-CN','en'])('keeps publication at the top and preserves controls and errors across actual polling (%s)',async lang=>{
+    const f=await fixture(),{dom,doc,poll}=await page(f,lang);
+    expect(doc.getElementById('publish-section').compareDocumentPosition(doc.getElementById('history-section'))&4).toBe(4);
+    const card=doc.querySelector('#candidates article'),check=card.querySelector('input'),button=card.querySelector('button'),details=card.querySelector('details');
+    expect(button.disabled).toBe(true);check.click();details.open=true;details.dispatchEvent(new dom.window.Event('toggle'));check.focus();
+    await poll();expect(doc.querySelector('#candidates input')).toBe(check);expect(doc.activeElement).toBe(check);expect(details.open).toBe(true);expect(button.disabled).toBe(false);
+    f.data.candidates[0].candidate.candidate_hash='b'.repeat(64);button.click();
+    await vi.waitFor(()=>expect(doc.getElementById('error').textContent).toContain(lang==='en'?'identifier changed':'标识已变化'));
+    await poll();expect(doc.getElementById('error').textContent).toContain(lang==='en'?'identifier changed':'标识已变化');
+    expect(doc.querySelector('#candidates input').checked).toBe(false);expect(f.run).not.toHaveBeenCalled();
+    doc.querySelector('#history button').click();doc.getElementById('maintenance-reason').value='Kept during polling';
+    await poll();expect(doc.getElementById('maintenance-dialog').open).toBe(true);expect(doc.getElementById('maintenance-reason').value).toBe('Kept during polling');
+    doc.getElementById('maintenance-cancel').click();expect(doc.getElementById('maintenance-dialog').open).toBe(false);expect(f.run).not.toHaveBeenCalled();
+  });
+  it.each(['zh-CN','en'])('requires a reason inside the target dialog and supports rollback with cleanup (%s)',async lang=>{
+    const f=await fixture(),{doc,poll}=await page(f,lang);doc.querySelector('#history button').click();
+    expect(doc.getElementById('maintenance-target').textContent).toContain('G0007');expect(doc.getElementById('maintenance-form').checkValidity()).toBe(false);
+    doc.getElementById('maintenance-form').requestSubmit();expect(f.run).not.toHaveBeenCalled();
+    doc.getElementById('maintenance-reason').value='Rollback and clean';doc.getElementById('delete-newer').checked=true;doc.getElementById('maintenance-form').requestSubmit();
+    await vi.waitFor(()=>expect(f.run).toHaveBeenCalledTimes(2));expect(f.run.mock.calls.map(c=>c[1][0])).toEqual(['rollback-to','delete-newer']);
+    await poll();expect(doc.getElementById('job-title').textContent).toContain(lang==='en'?'Most recent operation':'最近一次操作');
+    expect(doc.getElementById('job-time').textContent).toContain('G0007');
+  });
+  it('offers validation retry only for the unchanged submitted candidate on the active base',async()=>{
+    const f=await fixture(),row=f.data.candidates[0];row.state='SUBMITTED';row.candidate=null;
+    expect((await f.request({action:'validate',id:row.id,expectedActive:'G0008',identity:'b'.repeat(64)})).statusCode).toBe(409);
+    const {doc}=await page(f);expect(doc.querySelector('#candidates button').textContent).toBe('重新校验此版本');doc.querySelector('#candidates button').click();
+    await vi.waitFor(()=>expect(f.run).toHaveBeenCalledOnce());expect(f.run.mock.calls[0][1]).toEqual(['validate',row.id]);
+    row.request.base_generation='G0007';expect((await f.request({action:'validate',id:row.id,expectedActive:'G0008',identity:row.identity})).statusCode).toBe(409);
+  });
+  it('shows an external maintenance lock as busy and rejects conflicting actions',async()=>{
+    const f=await fixture(),lock=path.join(f.directory,'operator.lock');fs.writeFileSync(lock,JSON.stringify({pid:process.pid}));
+    expect((await f.app.inject({url:'/api/upgrades',headers:{cookie:f.cookie}})).json().busy).toBe(true);
+    expect((await f.request({action:'recover'})).statusCode).toBe(409);const {doc,poll}=await page(f);
+    expect(doc.querySelector('#history button').disabled).toBe(true);fs.unlinkSync(lock);await poll();expect(doc.querySelector('#history button').disabled).toBe(false);expect(f.run).not.toHaveBeenCalled();
+  });
+  it.each(['zh-CN','en'])('separates stale candidates and logs out and restores the login form (%s)',async lang=>{
+    const f=await fixture();f.data.candidates.push({...f.data.candidates[0],id:'old-candidate',request:{...f.data.candidates[0].request,base_generation:'G0007'}});
+    const {doc,poll}=await page(f,lang);expect(doc.querySelectorAll('#candidates article')).toHaveLength(1);expect(doc.querySelector('#archived-candidates').textContent).toContain(lang==='en'?'based on an old version':'基于旧版本');
+    expect(doc.querySelectorAll('#archived-candidates button')).toHaveLength(0);doc.getElementById('logout').click();
+    await vi.waitFor(()=>expect(doc.getElementById('login').hidden).toBe(false));await poll();expect(doc.getElementById('content').hidden).toBe(true);
+    doc.getElementById('secret').value='bad';doc.getElementById('login-form').requestSubmit();await vi.waitFor(()=>expect(doc.getElementById('error').textContent).toBe(lang==='en'?'Invalid Owner secret.':'Owner 口令错误。'));
+    doc.getElementById('secret').value=f.secret;doc.getElementById('login-form').requestSubmit();await vi.waitFor(()=>expect(doc.getElementById('content').hidden).toBe(false));expect(doc.getElementById('error').textContent).toBe('');
+  });
+  it('prevents overlapping polling and distinguishes network failures from login rejection',async()=>{
+    const f=await fixture(),{dom,doc,poll}=await page(f);let finish!:(r:any)=>void;
+    dom.window.fetch.mockImplementationOnce(()=>new Promise(resolve=>{finish=resolve;}));const running=poll();await poll();
+    expect(dom.window.fetch.mock.calls.filter(([url]:[string])=>url==='/api/upgrades')).toHaveLength(2);
+    finish({ok:true,status:200,json:async()=>({...f.data,job:null,busy:false})});await running;
+    dom.window.fetch.mockRejectedValueOnce(new Error('Failed to fetch'));await poll();expect(doc.getElementById('error').textContent).toBe('无法连接升级服务。');await poll();expect(doc.getElementById('error').textContent).toBe('');
+  });
+  it('reads an interrupted job after restart and offers explicit recovery',async()=>{
+    const f=await fixture();fs.writeFileSync(path.join(f.directory,'upgrade-web-job.json'),JSON.stringify({action:'rollback',targetGeneration:'G0007',state:'running',startedAt:Date.now(),log:'Before restart'}));
+    const app=await createUpgradeWeb({root:path.resolve('.'),config:{stateDirectory:f.directory},secret:f.secret,runCommand:f.run,status:()=>f.data,checkRunning:f.checkRunning});cleanups.push(()=>app.close());
+    const login=await app.inject({method:'POST',url:'/api/login',payload:{secret:f.secret}}),cookie=String(login.headers['set-cookie']).split(';')[0];
+    expect((await app.inject({url:'/api/upgrades',headers:{cookie}})).json().job).toMatchObject({state:'interrupted',error:'UPGRADE_INTERRUPTED_CHECK_RECOVERY'});
+    expect((await app.inject({method:'POST',url:'/api/upgrades',headers:{cookie},payload:{action:'recover'}})).statusCode).toBe(202);await vi.waitFor(()=>expect(f.run).toHaveBeenCalledWith(path.resolve('.'),['recover'],expect.any(Function)));
+  });
+
 });
