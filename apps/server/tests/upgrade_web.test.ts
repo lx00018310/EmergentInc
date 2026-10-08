@@ -30,14 +30,14 @@ async function fixture() {
   return { app, data, directory, run, request, cookie, checkRunning,secret };
 }
 
-async function page(f:Awaited<ReturnType<typeof fixture>>,lang='zh-CN',query='') {
+async function page(f:Awaited<ReturnType<typeof fixture>>,lang='zh-CN',query='',responses:Record<string,any>={}) {
   const dom=new JSDOM((await f.app.inject('/')).body,{url:'http://127.0.0.1:8766/'+query,runScripts:'outside-only'});
   cleanups.push(async()=>dom.window.close());let poll!:()=>Promise<void>,browserCookie=f.cookie;
   dom.window.localStorage.setItem('emergentinc.language',lang);
   dom.window.setInterval=(callback:()=>Promise<void>)=>{poll=callback;return 0;};
   dom.window.HTMLDialogElement.prototype.showModal=function(){this.open=true;};
   dom.window.HTMLDialogElement.prototype.close=function(){this.open=false;};
-  dom.window.fetch=vi.fn(async(url:string,init:any={})=>{const response=await f.app.inject({method:init.method??'GET',url,headers:{cookie:browserCookie},...(init.body?{payload:JSON.parse(init.body)}:{})});if(response.headers['set-cookie'])browserCookie=String(response.headers['set-cookie']).split(';')[0];return {ok:response.statusCode<400,status:response.statusCode,json:async()=>response.json()};});
+  dom.window.fetch=vi.fn(async(url:string,init:any={})=>{if(url in responses)return {ok:true,status:200,json:async()=>responses[url]};const response=await f.app.inject({method:init.method??'GET',url,headers:{cookie:browserCookie},...(init.body?{payload:JSON.parse(init.body)}:{})});if(response.headers['set-cookie'])browserCookie=String(response.headers['set-cookie']).split(';')[0];return {ok:response.statusCode<400,status:response.statusCode,json:async()=>response.json()};});
   await dom.window.eval(`(async()=>{${dom.window.document.querySelector('script').textContent}})()`);
   return {dom,doc:dom.window.document,poll:()=>poll()};
 }
@@ -272,6 +272,26 @@ describe('Owner web upgrade', () => {
     const login=await app.inject({method:'POST',url:'/api/login',payload:{secret:f.secret}}),cookie=String(login.headers['set-cookie']).split(';')[0];
     expect((await app.inject({url:'/api/upgrades',headers:{cookie}})).json().job).toMatchObject({state:'interrupted',error:'UPGRADE_INTERRUPTED_CHECK_RECOVERY'});
     expect((await app.inject({method:'POST',url:'/api/upgrades',headers:{cookie},payload:{action:'recover'}})).statusCode).toBe(202);await vi.waitFor(()=>expect(f.run).toHaveBeenCalledWith(path.resolve('.'),['recover'],expect.any(Function)));
+  });
+
+  it.each(['zh-CN','en'])('reviews source reports, binds their hash and clears approval on logout (%s)',async lang=>{
+    const f=await fixture(),id='code_'+ 'a'.repeat(32),hash='b'.repeat(64),report={id,hash,title:'Source report',personName:'Pixel',baseGeneration:'G0008',summary:'Change source',files:[{path:'apps/server/example.ts',content:'export const example=1;'},{path:'apps/server/obsolete.ts',content:null}]};
+    const {doc,poll}=await page(f,lang,`?report=${id}&reportHash=${hash}`,{['/api/code-reports/'+id]:report});
+    const section=doc.getElementById('code-report');expect(section.hidden).toBe(false);expect(section.textContent).toContain(lang==='en'?'Delete file':'删除文件');
+    expect(section.querySelector('button').disabled).toBe(true);section.querySelector('input').click();section.querySelector('button').click();
+    await vi.waitFor(()=>expect(f.run).toHaveBeenCalledOnce());expect(f.run.mock.calls[0][1]).toEqual(['prepare-code',id,hash]);
+    await vi.waitFor(()=>expect(section.querySelector('button').disabled).toBe(false));doc.getElementById('logout').click();await vi.waitFor(()=>expect(doc.getElementById('login').hidden).toBe(false));expect(section.hidden).toBe(true);
+    doc.getElementById('secret').value=f.secret;doc.getElementById('login-form').requestSubmit();await vi.waitFor(()=>expect(doc.getElementById('content').hidden).toBe(false));await poll();expect(section.querySelector('input').checked).toBe(false);expect(section.querySelector('button').disabled).toBe(true);
+  });
+  it.each(['zh-CN','en'])('rejects a changed source report and keeps its error across polling (%s)',async lang=>{
+    const f=await fixture(),id='code_'+ 'a'.repeat(32),{doc,poll}=await page(f,lang,`?report=${id}&reportHash=${'b'.repeat(64)}`,{['/api/code-reports/'+id]:{id,hash:'c'.repeat(64)}});
+    const section=doc.getElementById('code-report');expect(section.hidden).toBe(false);expect(section.textContent).toContain(lang==='en'?'verification ID changed':'校验标识已变化');expect(section.querySelector('button')).toBeNull();await poll();expect(section.hidden).toBe(false);expect(f.run).not.toHaveBeenCalled();
+  });
+  it.each(['zh-CN','en'])('executes recovery from the failed-operation button and reports an expired session (%s)',async lang=>{
+    const f=await fixture();f.run.mockRejectedValueOnce(new Error('GENE_HASH_MUST_CHANGE'));await f.request({action:'prepare',version:'No change',reason:'Test'});
+    await vi.waitFor(()=>expect(JSON.parse(fs.readFileSync(path.join(f.directory,'upgrade-web-job.json'),'utf8')).state).toBe('failed'));
+    const {doc,poll}=await page(f,lang);expect(doc.getElementById('job-state').textContent).toContain(lang==='en'?'no code changes':'没有可发布的代码改动');expect(doc.getElementById('recover').hidden).toBe(false);doc.getElementById('recover').click();await vi.waitFor(()=>expect(f.run).toHaveBeenCalledTimes(2));expect(f.run.mock.calls[1][1]).toEqual(['recover']);
+    await f.app.inject({method:'POST',url:'/api/logout',headers:{cookie:f.cookie}});await poll();expect(doc.getElementById('login').hidden).toBe(false);expect(doc.getElementById('error').textContent).toBe(lang==='en'?'Your session expired. Log in again.':'登录已过期，请重新登录。');
   });
 
 });

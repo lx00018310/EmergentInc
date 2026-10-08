@@ -46,7 +46,7 @@ export function readUpgradeStatus(root, config) {
   const file = path.join(config.stateDirectory, 'evolution.sqlite3');
   if(active&&fs.existsSync(file)){
     const request=readDb(file,'SELECT request_json FROM candidates WHERE id=?',[active.release_id])[0];
-    if(request)active.label=JSON.parse(request.request_json).owner_release?.label;
+    if(request)active.label=JSON.parse(request.request_json).owner_release?.label??JSON.parse(request.request_json).app_code_report?.title;
   }
   const restored=fs.existsSync(file)?readDb(file,"SELECT payload FROM events WHERE kind='generation_restored' ORDER BY sequence DESC LIMIT 1")[0]:null;
   const afterRollback=Boolean(active&&restored&&JSON.parse(restored.payload).previous===active.id);
@@ -85,7 +85,7 @@ export function runUpgradeCommand(root, args, onOutput) {
     }); }
     child.once('error', reject);
     child.once('exit', code => {
-      const detail = diagnostic.split(/\r?\n/).find(line => ['MAIN_SERVICE_UNAVAILABLE','MAIN_SERVICE_NOT_READY','LOCAL_CONTROL_PROCESS_IDENTITY_CONFLICT','ROLLBACK_TARGET_INVALID','ROLLBACK_TARGET_NOT_ANCESTOR','ROLLBACK_HISTORY_UNAVAILABLE','RELEASE_DELETE_DENIED','RELEASE_ACTIVE_CHANGED','RELEASE_IDENTITY_CHANGED','RELEASE_DELETE_PATH_DENIED','EVOLUTION_RECOVERY_REQUIRED','HISTORICAL_RELEASE_INTEGRITY_CONFLICT','ACTIVE_TRUSTED_RELEASE_CONFLICT','V23_ROLLBACK_DENIED_INSTANCE_PAYMENT_FACTS','PAYMENT_ROLLBACK_SCHEMA_UNSUPPORTED'].includes(line));
+      const detail = diagnostic.split(/\r?\n/).find(line => ['GENE_HASH_MUST_CHANGE','CANDIDATE_BASE_CONFLICT','GENOME_GENERATION_NUMBER_CONFLICT','EVOLUTION_ALREADY_RUNNING','MAIN_SERVICE_UNAVAILABLE','MAIN_SERVICE_NOT_READY','LOCAL_CONTROL_PROCESS_IDENTITY_CONFLICT','ROLLBACK_TARGET_INVALID','ROLLBACK_TARGET_NOT_ANCESTOR','ROLLBACK_HISTORY_UNAVAILABLE','RELEASE_DELETE_DENIED','RELEASE_ACTIVE_CHANGED','RELEASE_IDENTITY_CHANGED','RELEASE_DELETE_PATH_DENIED','EVOLUTION_RECOVERY_REQUIRED','HISTORICAL_RELEASE_INTEGRITY_CONFLICT','ACTIVE_TRUSTED_RELEASE_CONFLICT','V23_ROLLBACK_DENIED_INSTANCE_PAYMENT_FACTS','PAYMENT_ROLLBACK_SCHEMA_UNSUPPORTED'].includes(line));
       code === 0 ? resolve() : reject(new Error(detail ?? `UPGRADE_COMMAND_FAILED:${args[0]}`));
     });
   });
