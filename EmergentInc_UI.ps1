@@ -1,9 +1,9 @@
-# EmergentInc V10 Visual Control Deck PowerShell Launcher
+# EmergentInc approved runtime PowerShell launcher
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 Set-Location $PSScriptRoot
 
 Write-Host "========================================================" -ForegroundColor Cyan
-Write-Host " Starting EmergentInc V10 Visual Control Deck..." -ForegroundColor Cyan
+Write-Host " Starting the approved EmergentInc release..." -ForegroundColor Cyan
 Write-Host "========================================================" -ForegroundColor Cyan
 
 $nodeCmd = Get-Command node -ErrorAction SilentlyContinue
@@ -35,11 +35,9 @@ if ($LASTEXITCODE -eq 2) {
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 }
 
-Start-Process "http://127.0.0.1:8765"
-
 # Print every real LLM request/response/error to this console window.
 # Set EMERGENT_LLM_TRACE=0 before launching to silence it.
 if (-not $env:EMERGENT_LLM_TRACE) { $env:EMERGENT_LLM_TRACE = "1" }
 
-node scripts/launch-approved.mjs $args
+node scripts/launch-approved.mjs --open-browser $args
 exit $LASTEXITCODE

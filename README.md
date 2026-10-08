@@ -93,6 +93,10 @@ node scripts/launch-approved.mjs
 
 `EmergentInc_UI.bat` also launches the approved release. Startup verifies frozen code against generation, Current, pointer and Owner approval receipts. Editing development source does not update a running instance.
 
+Windows launchers open the page only after the launched process reports readiness and its homepage responds. On Linux, run `bash ./EmergentInc_UI.sh` for the same foreground startup. A desktop session uses `xdg-open`; a headless session prints the URL. Install Node.js 24 and pnpm, and configure Linux paths in `.env` and the Owner release configuration. This local launcher does not replace the production systemd units or migrate a Windows workspace.
+
+Daily upgrades use the independent page at `http://127.0.0.1:8766/`. `EmergentInc_Upgrade.bat` remains an optional command-line entry for status, rollback and recovery; the web upgrade service does not depend on this batch file.
+
 Owner and Agent development use separate branches / worktrees. Keep production releases frozen. Do not edit `/srv/emergentinc/current` or `git pull` into a live production directory. Tests and a local commit precede merging and release approval. Do not share a working tree between simultaneous editors.
 
 ## Upgrade and rollback

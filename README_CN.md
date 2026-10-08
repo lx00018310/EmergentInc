@@ -93,6 +93,10 @@ node scripts/launch-approved.mjs
 
 `EmergentInc_UI.bat` 也可以启动批准版本。启动核对冻结代码、代号、Current、指针与 Owner 审批回执，编辑开发源码不会更新正式实例。
 
+Windows 启动器会等待本次启动的进程就绪、首页正常响应后再打开网页。Linux 运行 `bash ./EmergentInc_UI.sh`，同样在前台启动；桌面会话使用 `xdg-open` 打开网页，无桌面会话则显示访问地址。先安装 Node.js 24 和 pnpm，并将 `.env` 与 Owner 发布配置中的路径改为 Linux 路径。这个本机启动器不替代生产 systemd 服务，也不迁移 Windows Workspace。
+
+日常升级使用独立网页 `http://127.0.0.1:8766/`。`EmergentInc_Upgrade.bat` 保留为可选的命令行查看版本、回退和恢复入口；网页升级服务不依赖这个批处理文件。
+
 Owner 与 Agent 使用独立 branch / worktree。正式 Release 永远冻结，不修改 `/srv/emergentinc/current`，不在运行目录 `git pull`。测试与本地提交完成后再合并、审批发布。禁止多人同时直接编辑同一 working tree。
 
 ## 升级与回退
