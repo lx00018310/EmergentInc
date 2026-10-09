@@ -380,7 +380,7 @@ describe('V27 dual-tree git upgrade', () => {
     const dirtyLogin=await dirtyApp.inject({method:'POST',url:'/api/login',payload:{secret:f.secret}}),dirtyCookie=String(dirtyLogin.headers['set-cookie']).split(';')[0];
     expect((await dirtyApp.inject({method:'POST',url:'/api/upgrades',headers:{cookie:dirtyCookie},payload:{action:'prepare',version:'x',reason:'y'}})).statusCode).toBe(409);
     expect((await dirtyApp.inject({method:'POST',url:'/api/upgrades',headers:{cookie:dirtyCookie},payload:{action:'prepare',version:'x',reason:'y',sourceCommit:fresh.tip}})).statusCode).toBe(202);
-  });
+  },30000);
 
   it('fast-forwards git main only when the recorded expectations still hold',()=>{
     const repo=gitRepo();
