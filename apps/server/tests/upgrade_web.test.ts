@@ -8,9 +8,9 @@ import { pixelReleaseToken } from '../src/services/release_maintenance_client.js
 
 // The web maintenance process uses the same compiled Owner authentication as the launcher.
 // @ts-ignore Standalone maintenance script.
-import { createUpgradeWeb, readUpgradeStatus, runUpgradeCommand } from '../../../scripts/upgrade-web.mjs';
+import { createUpgradeWeb, readUpgradeStatus, runUpgradeCommand, readGitGraph, readGitCommit } from '../../../scripts/upgrade-web.mjs';
 // @ts-ignore Standalone maintenance script.
-import { ownerReleaseInput } from '../../../scripts/version-upgrade.mjs';
+import { ownerReleaseInput, ensureFastForwardable, fastForwardMain } from '../../../scripts/version-upgrade.mjs';
 const {JSDOM}=createRequire(path.resolve('frontend/package.json'))('jsdom');
 
 const cleanups: (() => Promise<void>)[] = [];
@@ -305,4 +305,140 @@ describe('Owner web upgrade', () => {
     const f=await fixture(),workspace=path.join(f.directory,'missing');expect(()=>readUpgradeStatus(path.resolve('.'),{workspace,stateDirectory:f.directory,appUrl:f.data.appUrl})).toThrow('UPGRADE_DATABASE_UNAVAILABLE');expect(fs.existsSync(workspace)).toBe(false);
   });
 
+});
+
+function gitRepo(){
+  const directory=fs.mkdtempSync(path.join(tmpdir(),'upgrade-git-'));
+  const run=(...args:string[])=>{const {execFileSync}=require('node:child_process') as typeof import('node:child_process');return execFileSync('git',args,{cwd:directory,encoding:'utf8',windowsHide:true}).trim();};
+  const commit=(message:string,file='file.txt')=>{fs.writeFileSync(path.join(directory,file),message);run('add',file);run('-c','user.name=Tester','-c','user.email=t@example.com','commit','-m',message);return run('rev-parse','HEAD');};
+  run('init','-b','main');run('-c','user.name=Tester','-c','user.email=t@example.com','commit','--allow-empty','-m','root');
+  const base=commit('base');
+  run('checkout','-b','feature/skills');
+  const first=commit('add SKILL.md');
+  const tip=commit('polish SKILL.md');
+  run('checkout','main');
+  cleanups.push(()=>fs.rmSync(directory,{recursive:true,force:true}));
+  return {directory,run,commit,base,first,tip};
+}
+
+describe('V27 dual-tree git upgrade', () => {
+  it('exposes a bounded read-only graph and commit details with FF feasibility, but only after login',async()=>{
+    const repo=gitRepo(),f=await fixture();
+    const graphApp=await createUpgradeWeb({root:repo.directory,config:{stateDirectory:f.directory},secret:f.secret,runCommand:f.run,status:()=>f.data,checkRunning:f.checkRunning});
+    cleanups.push(async()=>{await graphApp.close();});
+    expect((await graphApp.inject('/api/git-graph')).statusCode).toBe(401);
+    const login=await graphApp.inject({method:'POST',url:'/api/login',payload:{secret:f.secret}}),cookie=String(login.headers['set-cookie']).split(';')[0];
+    const graph=await graphApp.inject({url:'/api/git-graph',headers:{cookie}});
+    expect(graph.statusCode).toBe(200);
+    const value=graph.json();
+    expect(value.available).toBe(true);expect(value.mainHead).toBe(repo.base);expect(value.commits.length).toBeGreaterThanOrEqual(3);
+    const tipCommit=value.commits.find((c:any)=>c.sha===repo.tip);
+    expect(tipCommit).toMatchObject({subject:'polish SKILL.md'});expect(tipCommit.parents).toEqual([repo.first]);
+    expect(value.refs.map((r:any)=>r.ref)).toEqual(expect.arrayContaining(['refs/heads/main','refs/heads/feature/skills']));
+    expect((await graphApp.inject({url:'/api/git-graph?limit=10000',headers:{cookie}})).json().limit).toBeLessThanOrEqual(500);
+    const detail=(await graphApp.inject({url:'/api/git-commit/'+repo.tip,headers:{cookie}})).json();
+    expect(detail.fastForwardable).toBe(true);expect(detail.mainHead).toBe(repo.base);expect(detail.behind).toBe(0);expect(detail.ahead).toBe(2);
+    expect(new Set(detail.includedCommits)).toEqual(new Set([repo.first,repo.tip]));
+    expect(detail.files.map((file:any)=>file.name)).toContain('file.txt');
+    expect((await graphApp.inject({url:'/api/git-commit/'+encodeURIComponent('../../evil'),headers:{cookie}})).statusCode).toBe(400);
+    expect((await graphApp.inject({url:'/api/git-commit/'+'f'.repeat(40),headers:{cookie}})).statusCode).toBe(404);
+    // No repo: graph reports unavailable instead of crashing; release status still works.
+    const empty=fs.mkdtempSync(path.join(tmpdir(),'upgrade-nogit-'));cleanups.push(()=>fs.rmSync(empty,{recursive:true,force:true}));
+    expect(readGitGraph(empty).available).toBe(false);
+  });
+
+  it('prepares a candidate from a pinned fast-forwardable commit and refuses diverged or invalid SHAs',async()=>{
+    const repo=gitRepo();
+    // A branch cut from the current main tip is still fast-forwardable until main advances.
+    repo.run('checkout','-b','other');const side=repo.commit('side work','other.txt');repo.run('checkout','main');
+    expect(()=>ensureFastForwardable(side,repo.directory)).not.toThrow();
+    repo.commit('main advanced','main-file.txt');
+    expect(()=>ensureFastForwardable(side,repo.directory)).toThrow();
+    const f=await fixture(),commands:any[]=[];
+    const app=await createUpgradeWeb({root:repo.directory,config:{stateDirectory:f.directory},secret:f.secret,
+      runCommand:async(_root:any,args:any[],output:any)=>{commands.push(args);output('ok');},status:()=>f.data,checkRunning:f.checkRunning});
+    cleanups.push(async()=>{await app.close();});
+    const login=await app.inject({method:'POST',url:'/api/login',payload:{secret:f.secret}}),cookie=String(login.headers['set-cookie']).split(';')[0];
+    const post=(payload:unknown)=>app.inject({method:'POST',url:'/api/upgrades',headers:{cookie},payload});
+    expect((await post({action:'prepare',version:'Skills',reason:'V27 flow',sourceCommit:'not-a-sha'})).statusCode).toBe(400);
+    expect((await post({action:'prepare',version:'Stale side',reason:'x',sourceCommit:side})).statusCode).toBe(409);
+    expect((await post({action:'prepare',version:'Stale tip',reason:'x',sourceCommit:repo.tip})).statusCode).toBe(409);
+    // A fresh repo where main has not advanced accepts the pinned FF tip.
+    const fresh=gitRepo(),freshCommands:any[]=[];
+    const app2=await createUpgradeWeb({root:fresh.directory,config:{stateDirectory:f.directory},secret:f.secret,
+      runCommand:async(_root:any,args:any[],output:any)=>{freshCommands.push(args);output('ok');},status:()=>f.data,checkRunning:f.checkRunning});
+    cleanups.push(async()=>{await app2.close();});
+    const login2=await app2.inject({method:'POST',url:'/api/login',payload:{secret:f.secret}}),cookie2=String(login2.headers['set-cookie']).split(';')[0];
+    const post2=(payload:unknown)=>app2.inject({method:'POST',url:'/api/upgrades',headers:{cookie:cookie2},payload});
+    expect((await post2({action:'prepare',version:'Skills',reason:'V27 flow',sourceCommit:fresh.tip})).statusCode).toBe(202);
+    await vi.waitFor(()=>expect(freshCommands).toHaveLength(1));
+    expect(freshCommands[0]).toEqual(['prepare','Skills','V27 flow','--commit',fresh.tip]);
+    // HEAD-based prepare still refuses a dirty checkout; pinned prepare works from a detached worktree regardless.
+    const dirtyApp=await createUpgradeWeb({root:fresh.directory,config:{stateDirectory:f.directory},secret:f.secret,
+      runCommand:async()=>{},status:()=>({...f.data,dirty:true}),checkRunning:f.checkRunning});
+    cleanups.push(async()=>{await dirtyApp.close();});
+    const dirtyLogin=await dirtyApp.inject({method:'POST',url:'/api/login',payload:{secret:f.secret}}),dirtyCookie=String(dirtyLogin.headers['set-cookie']).split(';')[0];
+    expect((await dirtyApp.inject({method:'POST',url:'/api/upgrades',headers:{cookie:dirtyCookie},payload:{action:'prepare',version:'x',reason:'y'}})).statusCode).toBe(409);
+    expect((await dirtyApp.inject({method:'POST',url:'/api/upgrades',headers:{cookie:dirtyCookie},payload:{action:'prepare',version:'x',reason:'y',sourceCommit:fresh.tip}})).statusCode).toBe(202);
+  });
+
+  it('fast-forwards git main only when the recorded expectations still hold',()=>{
+    const repo=gitRepo();
+    expect(()=>fastForwardMain(repo.tip,repo.base,repo.directory)).not.toThrow();
+    expect(repo.run('rev-parse','main')).toBe(repo.tip);
+    // main moved past the recorded expectation: refuse without touching history.
+    const moved=repo.commit('main advanced');
+    repo.run('checkout','-b','late');const late=repo.commit('late work','late.txt');repo.run('checkout','main');
+    const beyond=repo.commit('main moved again');
+    expect(()=>fastForwardMain(late,moved,repo.directory)).toThrow('GIT_SYNC_MAIN_MOVED');
+    expect(repo.run('rev-parse','main')).toBe(beyond);
+    // A non-fast-forwardable target is refused and main is untouched.
+    const divergedRepo=gitRepo();divergedRepo.run('checkout','-b','side');const side=divergedRepo.commit('side work','side.txt');
+    divergedRepo.commit('main advanced','main-file.txt');
+    expect(()=>fastForwardMain(side,divergedRepo.base,divergedRepo.directory)).toThrow();
+    expect(divergedRepo.run('rev-parse','main')).not.toBe(side);
+  },30000);
+
+  it('marks publish as needs_git_sync when the git target cannot be applied, and blocks when main moved before publication',async()=>{
+    const f=await fixture();
+    const launch=async(repo:ReturnType<typeof gitRepo>,run:(_root:string,_args:string[],output:(t:string)=>void)=>Promise<void>)=>{
+      const instance=await createUpgradeWeb({root:repo.directory,config:{stateDirectory:f.directory},secret:f.secret,runCommand:run,status:()=>f.data,checkRunning:f.checkRunning});
+      cleanups.push(async()=>{await instance.close();});
+      const login=await instance.inject({method:'POST',url:'/api/login',payload:{secret:f.secret}});
+      return {instance,cookie:String(login.headers['set-cookie']).split(';')[0]};
+    };
+    const publishOf=async(instance:any,cookie:string,release:any)=>{f.data.candidates[0].request.owner_release=release;
+      return instance.inject({method:'POST',url:'/api/upgrades',headers:{cookie},payload:{action:'publish',id:'local-v24-test',hash:'a'.repeat(64)}});};
+    const jobOf=()=>JSON.parse(fs.readFileSync(path.join(f.directory,'upgrade-web-job.json'),'utf8'));
+    const noop=async()=>{};
+    // main advanced after prepare -> preflight blocks publication entirely.
+    const repo=gitRepo();repo.run('checkout','main');repo.commit('someone advanced main');
+    const blockedApp=await launch(repo,noop);
+    const blocked=await publishOf(blockedApp.instance,blockedApp.cookie,{reason:'V27',source_commit:repo.tip,main_head_at_prepare:repo.base,git_sync_target:repo.tip});
+    expect(blocked.statusCode).toBe(202);
+    await vi.waitFor(()=>{expect(jobOf().state).toBe('failed');expect(String(jobOf().error)).toContain('GIT_SYNC_MAIN_MOVED');});
+    expect(repo.run('rev-parse','main')).not.toBe(repo.base);
+    // With expectations intact, publish succeeds and main fast-forwards to the pinned commit.
+    const fresh=gitRepo();
+    const freshApp=await launch(fresh,noop);
+    const ok=await publishOf(freshApp.instance,freshApp.cookie,{reason:'V27',source_commit:fresh.tip,main_head_at_prepare:fresh.base,git_sync_target:fresh.tip});
+    expect(ok.statusCode).toBe(202);
+    await vi.waitFor(()=>{expect(jobOf().state).toBe('succeeded');expect(jobOf().gitSyncState).toBe('synced');});
+    expect(fresh.run('rev-parse','main')).toBe(fresh.tip);
+    // Main moves between preflight and post-apply sync: release published, job reports needs_git_sync.
+    const racing=gitRepo();
+    let raceRuns=0;
+    const raceApp=await launch(racing,async()=>{racing.run('checkout','main');racing.commit(`concurrent advance ${++raceRuns}`,'race.txt');});
+    const raced=await publishOf(raceApp.instance,raceApp.cookie,{reason:'V27',source_commit:racing.tip,main_head_at_prepare:racing.base,git_sync_target:racing.tip});
+    expect(raced.statusCode).toBe(202);
+    await vi.waitFor(()=>{expect(jobOf().state).toBe('succeeded');expect(jobOf().gitSyncState).toBe('needs_git_sync');});
+    expect(racing.run('rev-parse','main')).not.toBe(racing.tip);
+    // A genuinely diverged target: preflight refuses before any approval command runs.
+    const forked=gitRepo();forked.run('checkout','-b','other');const otherTip=forked.commit('other work','other.txt');forked.run('checkout','main');forked.commit('main moved on');
+    const forkedApp=await launch(forked,noop);
+    const refused=await publishOf(forkedApp.instance,forkedApp.cookie,{reason:'V27',source_commit:otherTip,main_head_at_prepare:forked.base,git_sync_target:otherTip});
+    expect(refused.statusCode).toBe(202);
+    await vi.waitFor(()=>{expect(jobOf().state).toBe('failed');expect(String(jobOf().error)).toContain('GIT_SYNC_BLOCKED');});
+    expect(forked.run('rev-parse','main')).not.toBe(otherTip);
+  },60000);
 });

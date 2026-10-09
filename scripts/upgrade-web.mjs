@@ -6,7 +6,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { pathToFileURL } from 'node:url';
 import { registerOwnerAuth } from '../apps/server/dist/owner_auth.js';
 import { ownerEnvironment } from './local-release.mjs';
-import { upgradeConfig, ownerReleaseInput } from './version-upgrade.mjs';
+import { upgradeConfig, ownerReleaseInput, ensureFastForwardable, fastForwardMain } from './version-upgrade.mjs';
 import { readAppCodeReport } from './prepare-app-code.mjs';
 import { LocalWorldRuntime } from '../supervisor/dist/local_world_runtime.js';
 import { rollbackPlan, canDeleteRelease } from '../supervisor/dist/release_history.js';
@@ -76,6 +76,48 @@ export function readUpgradeStatus(root, config) {
   return { active, candidates, versions, afterRollback, dirty, appUrl: config.appUrl };
 }
 
+const GIT_SHA_PATTERN=/^[0-9a-f]{40}$|^[0-9a-f]{64}$/;
+function gitText(root, args) {
+  try {
+    return execFileSync('git', args, { cwd: root, encoding: 'utf8', windowsHide: true, timeout: 30000, maxBuffer: 4*1024*1024 });
+  } catch (error) { if (error.status === 128) return null; throw error; }
+}
+/** Bounded read-only Git DAG projection: refs plus the first `limit` commits across all branches. */
+export function readGitGraph(root, limit=200) {
+  const bound=Math.min(Math.max(Number(limit)||200,1),500);
+  const refsRaw=gitText(root,['for-each-ref','--format=%(refname) %(objectname)']);
+  if(refsRaw===null)return {available:false};
+  const refs=refsRaw.trim()?refsRaw.trim().split(/\r?\n/).map(line=>{const index=line.lastIndexOf(' ');return {ref:line.slice(0,index),sha:line.slice(index+1)};}):[];
+  const log=gitText(root,['log','--all','--topo-order','--parents','-n',String(bound),
+    '--pretty=format:%H%x1f%P%x1f%s%x1f%an%x1f%ct']);
+  if(log===null)return {available:false};
+  const commits=log.trim()?log.trim().split(/\r?\n/).map(line=>{
+    const [sha,parents,subject,author,time]=line.split('\x1f');
+    return {sha,parents:parents?parents.split(' ').filter(Boolean):[],subject:String(subject??''),author:String(author??''),time:Number(time??0)};
+  }):[];
+  let mainHead=null;try{mainHead=execFileSync('git',['rev-parse','main'],{cwd:root,encoding:'utf8',windowsHide:true,timeout:10000}).trim();}catch{mainHead=null;}
+  return {available:true,refs,commits,mainHead,limit:bound};
+}
+/** Read-only details for one commit: parents, files versus its parent, and fast-forward feasibility. */
+export function readGitCommit(root, shaInput) {
+  if(typeof shaInput!=='string'||!GIT_SHA_PATTERN.test(shaInput))throw Object.assign(new Error('GIT_COMMIT_INVALID'),{statusCode:400});
+  const show=gitText(root,['show','-s','--pretty=format:%H%x1f%P%x1f%s%x1f%an%x1f%ct',shaInput]);
+  if(show===null||!show.trim())throw Object.assign(new Error('GIT_COMMIT_NOT_FOUND'),{statusCode:404});
+  const [sha,parents,subject,author,time]=show.trim().split('\x1f');
+  let ahead=0,behind=0,fastForwardable=false,mainHead=null;
+  try{mainHead=execFileSync('git',['rev-parse','main'],{cwd:root,encoding:'utf8',windowsHide:true,timeout:10000}).trim();
+    ensureFastForwardable(shaInput,root);fastForwardable=true;}catch{fastForwardable=false;}
+  if(mainHead&&fastForwardable){
+    const counts=gitText(root,['rev-list','--left-right','--count',`${mainHead}...${shaInput}`]);
+    if(counts!==null){const parts=counts.trim().split(/\s+/);behind=Number(parts[0]);ahead=Number(parts[1]);}
+  }
+  const raw=gitText(root,['diff','--name-status',`${shaInput}^!`]);
+  const included=fastForwardable?gitText(root,['log','--pretty=format:%H',`${mainHead}..${shaInput}`]):null;
+  const files=raw!==null?raw.trim()?raw.trim().split(/\r?\n/).map(line=>{const status=line.slice(0,1);const name=line.slice(1).trim();return {status,name};}):[]:null;
+  return {commit:{sha,parents:parents?parents.split(' ').filter(Boolean):[],subject:String(subject??''),author:String(author??''),time:Number(time??0)},
+    mainHead,fastForwardable,ahead,behind,files,includedCommits:included!==null?included.trim()?included.trim().split(/\r?\n/):[]:[]};
+}
+
 export function runUpgradeCommand(root, args, onOutput) {
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [path.join(root, 'scripts/version-upgrade.mjs'), ...args],
@@ -128,6 +170,13 @@ export async function createUpgradeWeb({ root, config, secret, runCommand = runU
         hash: row.candidate?.candidate_hash ?? null, baseGeneration: row.candidate?.base_generation ?? null })) };
   });
   app.get('/api/upgrades', async () => ({ ...status(root, config), job, busy: busy || operatorBusy(config) }));
+  // Read-only Git DAG projections for the dual-tree view. Login required; never accepts paths.
+  app.get('/api/git-graph', async (req,reply) => {
+    try{const graph=readGitGraph(root,Number(req.query?.limit??200)||200);reply.send(graph);}catch(error){return reply.status(500).send({detail:error.message});}
+  });
+  app.get('/api/git-commit/:sha', async (req,reply) => {
+    try{return await readGitCommit(root,String(req.params.sha));}catch(error){return reply.status(error.statusCode??500).send({detail:error.message});}
+  });
   app.get('/api/code-reports/:id',async(req,reply)=>{
     try{return await readAppCodeReport(config,req.params.id,secret,fetch,appReportSession);}catch(error){return reply.status(409).send({detail:error.message});}
   });
@@ -143,8 +192,13 @@ export async function createUpgradeWeb({ root, config, secret, runCommand = runU
     if (body.action === 'prepare') {
       let input;
       try{input=ownerReleaseInput(body.version,body.reason);}catch(error){return reply.status(400).send({detail:error.message});}
-      if (current.dirty) return reply.status(409).send({ detail: 'OWNER_RELEASE_REQUIRES_CLEAN_COMMITTED_CHECKOUT' });
-      version=input.label;commands = [['prepare', version, input.reason]];
+      let commitFlag='';
+      if(body.sourceCommit!==undefined&&body.sourceCommit!==null&&body.sourceCommit!==''){
+        if(typeof body.sourceCommit!=='string'||!GIT_SHA_PATTERN.test(body.sourceCommit))return reply.status(400).send({detail:'GIT_COMMIT_INVALID'});
+        commitFlag=['--commit',body.sourceCommit];
+        try{ensureFastForwardable(body.sourceCommit,root);}catch{return reply.status(409).send({detail:'GIT_COMMIT_NOT_FAST_FORWARDABLE'});}
+      } else if (current.dirty) return reply.status(409).send({ detail: 'OWNER_RELEASE_REQUIRES_CLEAN_COMMITTED_CHECKOUT' });
+      version=input.label;commands = [['prepare', version, input.reason, ...commitFlag]];
     } else if (body.action === 'prepare-code') {
       if(!/^code_[a-f0-9]{32}$/.test(body.id??'')||!/^[a-f0-9]{64}$/.test(body.hash??''))return reply.status(400).send({detail:'APP_CODE_REPORT_INVALID'});
       commands=[['prepare-code',body.id,body.hash]];
@@ -180,10 +234,33 @@ export async function createUpgradeWeb({ root, config, secret, runCommand = runU
     const save = () => fs.writeFileSync(jobFile, JSON.stringify(job, null, 2));
     try { save(); } catch (error) { busy = false; throw error; }
     const execute = async () => {
+      let gitSyncState = null;
       try {
         if (['publish','rollback'].includes(body.action)) await checkRunning(current.active.id);
+        if (body.action === 'publish') {
+          const candidate=current.candidates.find(item=>item.id===body.id);
+          const gitTarget=candidate?.request?.owner_release?.git_sync_target;
+          const expectedMainHead=candidate?.request?.owner_release?.main_head_at_prepare;
+          if(gitTarget){
+            // Pre-preflight: main must not have moved since prepare and must still fast-forward.
+            try{
+              if(expectedMainHead&&execFileSync('git',['rev-parse','main'],{cwd:root,encoding:'utf8',windowsHide:true,timeout:10000}).trim()!==expectedMainHead)throw new Error('GIT_SYNC_MAIN_MOVED');
+              ensureFastForwardable(gitTarget,root);
+            }catch(error){job.error=`GIT_SYNC_BLOCKED:${error.message}`;job.state='failed';return;}
+          }
+        }
         for (const args of commands) await runCommand(root, args, chunk => { job.log = (job.log + chunk).slice(-8000); });
+        if (body.action === 'publish') {
+          const candidate=current.candidates.find(item=>item.id===body.id);
+          const gitTarget=candidate?.request?.owner_release?.git_sync_target;
+          const expectedMainHead=candidate?.request?.owner_release?.main_head_at_prepare;
+          if(gitTarget){
+            try{fastForwardMain(gitTarget,expectedMainHead,root);gitSyncState='synced';}
+            catch(error){gitSyncState='needs_git_sync';job.log=(job.log+`\nGIT_SYNC_PENDING: ${error.message}\n`).slice(-8000);}
+          }
+        }
         job.state = 'succeeded';
+        if (gitSyncState) job.gitSyncState = gitSyncState;
       } catch (error) { job.state = 'failed'; job.error = error.message; }
       finally { job.finishedAt = Date.now(); busy = false; save(); }
     };

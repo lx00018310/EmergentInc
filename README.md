@@ -41,6 +41,8 @@ All Worlds must prepare their next Current before the global generation pointer 
 
 Self-evolution stays within verified contracts and approvals. Agents cannot edit a live production release or silently add arbitrary dependencies.
 
+The 8766 upgrade page shows the approved release lineage beside the local Git commit graph; fast-forwardable commits can be pinned as candidates and a successful publish safely fast-forwards git `main` (never rebase or force).
+
 ## Orders and USDT payments
 
 Store → select a listed product → customer details → Order → USDT Invoice / QR → existing Payment Monitor → confirmed payment → paid Order → instance revenue visible in `/GENE`.
