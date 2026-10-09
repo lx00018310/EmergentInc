@@ -35,6 +35,8 @@ Root, Genome and Evolution are global. Each World's Current, Body Skills and led
 
 Body Skills grow, test and execute within inherited permissions. The minimal contract, `pure-ast-json@1`, interprets JavaScript functions using JSON tests without eval, host files, credentials, network, subprocesses or dependency installation. Body revisions do not create a new generation.
 
+Beyond executable Body Skills, Pixels can also load reusable Markdown working-method Skills on demand (`LIST_SKILLS` / `READ_SKILL`): unlike executable pure Skills, these are advisory documents, not execution permissions.
+
 Promotion freezes an immutable snapshot with World, Pixel, generation and source hashes. The Owner reviews privacy, sharing rights and generality. Approved directions become Gene patches. Full releases must pass typecheck, tests, builds and smoke checks before the trusted Supervisor receives approval for the **exact candidate hash**.
 
 All Worlds must prepare their next Current before the global generation pointer changes. Failure rolls back code and projections; Lineage, payments and failure evidence persist. New Worlds inherit promoted Gene capabilities without copying private Body files.

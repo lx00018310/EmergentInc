@@ -35,6 +35,8 @@
 
 Body 技能在遗传权限内生成、测试和执行。最小契约 `pure-ast-json@1` 用 JSON 用例验证 JavaScript 函数，通过解释器执行；不使用 eval，不访问主机文件、凭据、网络、子进程或安装依赖。Body Revision 不形成新一代。
 
+除可执行的 pure Skill 外，Pixel 还能按需加载基于 Markdown 的工作方法 Skill（`LIST_SKILLS` / `READ_SKILL`）；与可执行 Skill 不同，它们只是参考文档，不构成执行许可。
+
 资产晋升冻结不可变快照，记录 World、元胞、代号与来源哈希。Owner 审查隐私、共享许可和通用性，批准的方向形成 Gene Patch。完整 release 必须通过类型检查、测试、构建和烟测，可信 Supervisor 才能接受**准确候选哈希**审批。
 
 所有 World 准备好下一代 Current 后才切换全局指针。失败回退代码与投影；谱系、付款与失败事实保留。新 World 从 Gene 继承已晋升能力，不复制私有 Body 文件。
