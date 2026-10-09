@@ -120,8 +120,8 @@ function renderSelectedCommit(){
  text('div',`${t('parents')}: ${c.parents.map(p=>p.slice(0,10)).join(', ')||'—'}`,holder);
  if(selectedDetail.mainHead)text('div',`${t('mainHeadNow')}: ${selectedDetail.mainHead.slice(0,10)}`,holder).className='mono';
  const ff=$('selected-ff');
- if(selectedDetail.fastForwardable){ff.textContent=t('fastForwardOk');ff.className='';$('prepare-commit').disabled=Boolean(snapshot?.busy||snapshot?.dirty===undefined?false:snapshot.dirty)||sending;
-  if(selectedDetail.includedCommits?.length>1){const div=text('div',`${t('includedCommits')} (${selectedDetail.includedCommits.length})`,panel.parentElement===null?holder:holder);div.className='ref-tag mono';text('div',selectedDetail.includedCommits.map(s=>s.slice(0,10)).join(' · '),div).className='mono';}
+ if(selectedDetail.fastForwardable){ff.textContent=t('fastForwardOk');ff.className='';$('prepare-commit').disabled=Boolean(snapshot?.busy)||sending;
+  if(selectedDetail.includedCommits?.length>1){const div=text('div',`${t('includedCommits')} (${selectedDetail.includedCommits.length})`,holder);text('div',selectedDetail.includedCommits.map(sha=>sha.slice(0,10)).join(' · '),div).className='mono';}
  } else {ff.textContent=t('fastForwardBlocked');ff.className='sync-note';$('prepare-commit').disabled=true;}
  const files=$('selected-files');files.replaceChildren();
  text('h4',t('changedFiles'),files);
