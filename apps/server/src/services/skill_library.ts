@@ -74,11 +74,9 @@ function listBodySkills(ctx:ToolContext):{entries:SkillEntry[];diagnostics:Skill
   return {entries,diagnostics,truncated};
 }
 
-function geneSkillText(release:string,assetId:string):{text:string;version:number;contentHash:string}|null{
-  const catalog=readGeneCatalog(release);
-  if(!catalog.assets.some(asset=>asset.id===assetId&&asset.kind==='knowledge'))return null;
+function geneSkillText(release:string,assetId:string):{text:string;version:number;contentHash:string}{
   const loaded=loadGeneAsset(release,assetId);
-  if(loaded.asset.kind!=='knowledge')return null;
+  if(loaded.asset.kind!=='knowledge')throw new Error('GENE_ASSET_NOT_A_SKILL');
   const text=(loaded.content as {content?:unknown}|null)?.content;
   if(typeof text!=='string')throw new Error('GENE_ASSET_NOT_A_SKILL');
   return {text,version:loaded.asset.version,contentHash:loaded.asset.contentHash};
@@ -91,8 +89,8 @@ function listGeneSkills(release:string):{entries:SkillEntry[];diagnostics:SkillD
       if(asset.kind!=='knowledge')continue;
       const ref=`gene:${asset.id}`;
       try{
-        const parsed=parseSkillMarkdown(geneSkillText(release,asset.id)!.text);
-        entries.push({ref,name:parsed.name,description:parsed.description,origin:'gene',version:asset.version,size_bytes:Buffer.byteLength(parsed.body+parsed.name)});
+        const gene=geneSkillText(release,asset.id),parsed=parseSkillMarkdown(gene.text);
+        entries.push({ref,name:parsed.name,description:parsed.description,origin:'gene',version:gene.version,size_bytes:Buffer.byteLength(gene.text)});
       }catch(error){diagnostics.push({ref,reason:error instanceof Error?error.message:String(error)});}
     }
   }catch(error){diagnostics.push({ref:'gene:*',reason:error instanceof Error?error.message:String(error)});}
@@ -113,8 +111,8 @@ function readBodySkill(ctx:ToolContext,slug:string):SkillContent{
 
 function readGeneSkill(release:string,assetId:string):SkillContent{
   lifeId(assetId);
+  if(!readGeneCatalog(release).assets.some(asset=>asset.id===assetId&&asset.kind==='knowledge'))throw new Error('GENE_ASSET_NOT_FOUND');
   const gene=geneSkillText(release,assetId);
-  if(!gene)throw new Error('GENE_ASSET_NOT_FOUND');
   const parsed=parseSkillMarkdown(gene.text);
   return {ref:`gene:${assetId}`,name:parsed.name,description:parsed.description,origin:'gene',version:gene.version,content:gene.text,sha256:gene.contentHash,size_bytes:Buffer.byteLength(gene.text)};
 }
