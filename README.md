@@ -29,6 +29,8 @@ The store supports multiple products and initially displays two blank placeholde
 
 A Qianji is a persistent character with a narrative and its own World. A World contains multiple Pixels with independent runtime records, messages and files. Characters remain after gateway Pixel death; the Owner can replace the gateway with an active Pixel from that World. Chat starts a bounded Run and returns replies through its outbox.
 
+The `/OWNER` console separates pending decisions from the activity timeline (`#owner-inbox` / `#owner-activity`); each real decision offers one-click Approve / Reject / Details with server-written effects, while runs, external unknowns and software upgrades stay as human-verification alerts instead of fake buttons.
+
 Root, Genome and Evolution are global. Each World's Current, Body Skills and ledger are separate. Identical coordinates in different Worlds do not share files or messages. V23's legacy meeting history is archived; V24 does not introduce a new collaboration architecture.
 
 ## Body, Gene and evolution

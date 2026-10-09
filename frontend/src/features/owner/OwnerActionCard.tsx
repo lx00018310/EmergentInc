@@ -17,7 +17,8 @@ export function OwnerActionCard({proposal,onDone}:{proposal:OwnerActionProposal;
         <p>{t('Stop condition')}: {a.plan.plan.stopCondition}</p>
         <details><summary>{t('Review full plan and external actions')}</summary><pre>{JSON.stringify(a.plan,null,2)}</pre></details>
         <p>{a.type==='business_plan_approve'?t('Approval authorizes the displayed actions and budget, including external writes.'):t('Rejection stops this pending plan.')}</p>
-      </> : <><p>{a.resource} · {a.planId} · R{a.revision}</p><p>{a.type==='resource_reject'?t('Rejecting this resource stops its associated plan.'):t('The server verifies that the requested data or connection already exists.')}</p></>}
+      </> : 'resource' in a ? <><p>{a.resource} · {a.planId} · R{a.revision}</p><p>{a.type==='resource_reject'?t('Rejecting this resource stops its associated plan.'):t('The server verifies that the requested data or connection already exists.')}</p></>
+        : <><p>{t('Approves or rejects the direction of this proposal in the current generation; publication stays in the trusted maintenance channel.')}</p></>}
     {!done&&<label><input type="checkbox" checked={checked} disabled={busy} onChange={e=>setChecked(e.target.checked)}/>{t('I reviewed the targets, content and effects.')}</label>}
     <button disabled={!checked||busy||done} onClick={async()=>{setBusy(true);setError('');try{
       const results=await executeOwnerAction(proposal),failures=results.filter(r=>!r.ok);

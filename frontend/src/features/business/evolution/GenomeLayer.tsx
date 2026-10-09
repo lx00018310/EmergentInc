@@ -36,7 +36,7 @@ export function GenomeLayer({ genome, currentGeneration, busy, act }: {
       {Object.entries(genome.capabilityContracts).map(([name, value]) => <div className="life-record" key={name}><strong>{name}</strong><Contract value={value} /></div>)}
       <h3>Gene Proposal</h3>{!genome.proposals.length && <p>{tr("当前没有等待遗传的变化。Dream 或 Body 越界需求可能产生新的 Gene Proposal。")}</p>}
       {genome.proposals.length > 0 && <p>{tr("优先展开待审批方向和就绪候选；批准方向后，准确候选 Hash 仍需可信维护通道批准。")}</p>}
-      {genome.proposals.map(p => <details key={p.id} open={['PROPOSED', 'CANDIDATE_READY'].includes(p.state)}>
+      {genome.proposals.map(p => <details key={p.id} id={`owner-detail:${p.id}`} open={['PROPOSED', 'CANDIDATE_READY'].includes(p.state) || window.location.search.includes(encodeURIComponent(p.id))}>
         <summary>{p.point} · {proposalStates[p.state] ?? p.state} <StateBadge state={p.state} /></summary>
         <p>{tr("原因：")}{p.reason}</p><p>{tr("效果：")}{p.effect}</p>
         <p>{tr("来源：")}{p.source_ref.startsWith('body-need:') ? 'Body Need → Gene Proposal' : p.source} · {p.generation_id} · {p.source_ref}</p>

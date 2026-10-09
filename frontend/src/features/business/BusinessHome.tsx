@@ -27,7 +27,7 @@ export function BusinessHome() {
   const [data, setData] = useState<any>(null), [error, setError] = useState(''), [busy, setBusy] = useState(false);
   const [direction, setDirection] = useState(''), [tab, setTab] = useState<BusinessTab | 'life' | 'public-site'>(()=>{
     const view=new URLSearchParams(window.location.search).get('view');
-    return ['business','plans','resources','public-site'].includes(view??'') ? view as BusinessTab|'public-site' : 'life';
+    return ['business','plans','resources','public-site','life'].includes(view??'') ? view as BusinessTab|'public-site' : 'life';
   });
   const [total, setTotal] = useState('10'), [draft, setDraft] = useState('2'), [calls, setCalls] = useState('10');
   const [days, setDays] = useState('7'), [uploadId, setUploadId] = useState('');

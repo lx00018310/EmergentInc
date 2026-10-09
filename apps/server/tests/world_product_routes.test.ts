@@ -41,8 +41,10 @@ describe('authenticated V23 product and life integration',()=>{
     fs.writeFileSync(join(runtime.directory,'live/pixels/0_0_0/tips.md'),'Public reminder');
     const ledger=runtime.store.db.prepare('SELECT COUNT(*) n FROM ledger_entries').get()!.n;
     const overview=await f.request('GET','/api/owner/overview');expect(overview.statusCode,overview.body).toBe(200);
-    const data=overview.json();expect(data.summary).toMatchObject({qianjiCount:2,runningWorlds:0,inboxCount:1,currentGeneration:'G0001'});
-    expect(data.inbox[0].summary).toContain('WAITING_PIXEL_BUDGET');expect(data.activity.find((a:any)=>a.type==='Tips').summary).toContain('Public reminder');
+    // V28: waiting runs need human verification, not one-click decisions, so they surface as alerts.
+    const data=overview.json();expect(data.summary).toMatchObject({qianjiCount:2,runningWorlds:0,inboxCount:0,currentGeneration:'G0001'});
+    expect(data.alerts.some((a:any)=>a.kind==='run'&&a.summary.includes('WAITING_PIXEL_BUDGET'))).toBe(true);
+    expect(data.activity.find((a:any)=>a.type==='Tips').summary).toContain('Public reminder');
     expect(data.inbox.some((i:any)=>i.type==='Tips')).toBe(false);
     expect(data.activity.map((a:any)=>a.createdAt)).toEqual(data.activity.map((a:any)=>a.createdAt).sort((a:number,b:number)=>b-a));
     expect(data.availability).toEqual({business:false,upgrade:'not_configured'});
@@ -50,7 +52,7 @@ describe('authenticated V23 product and life integration',()=>{
     runtime.store.messages.updateStatus(String(turn.message_id),'COMMITTED' as any);
     expect((await f.request('GET','/api/owner/overview')).json().inbox).toHaveLength(0);
     runtime.store.messages.updateStatus(String(turn.message_id),'ABANDONED' as any);
-    expect((await f.request('GET','/api/owner/overview')).json().inbox[0].summary).toContain('ABANDONED');
+    expect((await f.request('GET','/api/owner/overview')).json().alerts.some((a:any)=>a.summary.includes('ABANDONED'))).toBe(true);
     runtime.store.db.prepare("INSERT INTO recovery_decisions VALUES('decision','message',?,'abandon','Owner resolved','{}',?)").run(turn.message_id,Date.now()/1000);
     expect((await f.request('GET','/api/owner/overview')).json().inbox).toHaveLength(0);
   });

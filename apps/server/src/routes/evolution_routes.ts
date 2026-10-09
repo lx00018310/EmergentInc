@@ -34,6 +34,13 @@ export async function registerEvolutionRoutes(app: FastifyInstance, services: Ev
   app.post<{ Params: { id: string } }>("/evolution/proposals/:id/decision", async req => {
     const b = req.body as any;
     if (!["APPROVED", "REJECTED"].includes(b?.decision)) throw new Error("INVALID_PROPOSAL_DECISION");
+    // Backward-compatible stale guard: one-click buttons pin the generation and expected state so a
+    // stale page cannot decide a proposal that already moved. The GENE page keeps calling without them.
+    if (b?.expectedGeneration !== undefined || b?.expectedState !== undefined) {
+      const proposal = life.lineage.proposal(req.params.id);
+      if (b?.expectedGeneration !== undefined && String(proposal.generation_id) !== String(b.expectedGeneration)) throw new Error("PROPOSAL_GENERATION_CHANGED");
+      if (b?.expectedState !== undefined && proposal.state !== b.expectedState) throw new Error("PROPOSAL_NOT_PENDING");
+    }
     services.beforeProposalDecision?.(req.params.id,b.decision);
     const proposal=life.lineage.decideProposal(req.params.id, b.decision);
     const request=b.decision==='APPROVED'?await services.onProposalApproved?.(req.params.id):undefined;return {...proposal,...(request?{candidateRequest:request}:{})};

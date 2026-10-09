@@ -5,13 +5,16 @@ export type OwnerAction =
   | { type: 'qianji_chat'; targets: { id: string; name: string }[]; message: string }
   | { type: 'recruit_approve' | 'recruit_reject'; requestId: string; hash: string; role: string; reason: string; instruction: string }
   | { type: 'business_plan_approve' | 'business_plan_reject'; plan: BusinessPlanView }
-  | { type: 'resource_provided' | 'resource_reject'; requestId: string; planId: string; revision: number; resource: string; note: string };
+  | { type: 'resource_provided' | 'resource_reject'; requestId: string; planId: string; revision: number; resource: string; note: string }
+  | { type: 'gene_proposal_approve' | 'gene_proposal_reject'; proposalId: string; expectedGeneration: string; expectedState: 'PROPOSED' };
 export interface OwnerActionProposal { id: string; explanation?: string; risk?: 'read' | 'normal' | 'sensitive'; requiresApproval: boolean; action: OwnerAction }
 export interface OwnerInboxItem {
   id: string; type: 'gene' | 'plan' | 'resource' | 'run' | 'external' | 'upgrade' | 'recruit' | 'code';
   title: string; summary: string; priority: 'normal' | 'critical'; createdAt: number | null;
   source: string; href: string; actions?: OwnerActionProposal[];
+  approveEffect?: string; rejectEffect?: string;
 }
+export interface OwnerAlert { id: string; kind: string; severity: 'normal' | 'critical'; title: string; summary: string; createdAt: number | null; source: string; href: string }
 export interface OwnerActivityItem { id: string; type: string; summary: string; createdAt: number; source: string; href: string }
 export interface OwnerPerson { id: string; name: string; worldId: string; status: string; running: boolean; runStatus: string; role?: string | null; behaviorProfile?: string[]; infiniteEnergy?: boolean; gatewayPixelId?: string | null; round?: number; energy?: number; pixels?: unknown[] }
 export interface OwnerWorkTask {
@@ -33,6 +36,7 @@ export interface OwnerOverview {
   asOf: number;
   summary: { qianjiCount: number; activeWorlds: number; runningWorlds: number; inboxCount: number; currentGeneration: string | null };
   inbox: OwnerInboxItem[]; activity: OwnerActivityItem[]; people: OwnerPerson[];
+  alerts?: OwnerAlert[];
   availability: { business: boolean; upgrade: 'available' | 'unavailable' | 'not_configured' };
   upgrade?: { active: string | null; busy: boolean };
   work?: OwnerWork;

@@ -1231,4 +1231,11 @@ export const zhCN: Record<string, string> = {
   "查看历史版本、可回退目标、回退后可删除的较新代码版本和维护任务状态。返回受限元数据，不含口令或私有路径。": "查看历史版本、可回退目标、回退后可删除的较新代码版本和维护任务状态。返回受限元数据，不含口令或私有路径。",
   "按发布代次回退到 LIST_RELEASE_VERSIONS 中可回退的 targetGeneration；expectedActive 必须来自最新列表。无需 Owner 再批准。返回接受状态后维护服务执行并重启 8765；不能把接受当完成。deleteNewer=true 会在回退成功后删除所有较新代码版本，保留业务数据和审计；旧版本可能不含本工具，可在同一次调用中明确选择清理。": "按发布代次回退到 LIST_RELEASE_VERSIONS 中可回退的 targetGeneration；expectedActive 必须来自最新列表。无需 Owner 再批准。返回接受状态后维护服务执行并重启 8765；不能把接受当完成。deleteNewer=true 会在回退成功后删除所有较新代码版本，保留业务数据和审计；旧版本可能不含本工具，可在同一次调用中明确选择清理。",
   "仅在回退后删除列表中可删除的较新代码版本。releaseId、identity、expectedActive 必须来自最新列表。无需 Owner 再批准；不删除业务数据、账本、Current 快照或谱系。": "仅在回退后删除列表中可删除的较新代码版本。releaseId、identity、expectedActive 必须来自最新列表。无需 Owner 再批准；不删除业务数据、账本、Current 快照或谱系。",
+  'If you approve': '同意后',
+  'If you reject': '拒绝后',
+  'Approve': '同意',
+  'Reject': '拒绝',
+  'More actions': '更多操作',
+  'Owner views': 'Owner 视图',
+  'Needs human verification': '需要人工核实',
 };

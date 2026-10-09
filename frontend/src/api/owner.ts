@@ -4,7 +4,7 @@ import type { OwnerChatAnswer, OwnerChatTurn } from './ownerChat';
 import { language, t } from '../i18n';
 import { explanations } from '../features/business/business_api';
 import { postQianjiChat } from './qianji';
-export type { OwnerActionProposal, OwnerOverview, OwnerInboxItem, OwnerActivityItem, OwnerWork } from '../../../packages/protocol/src/types/owner';
+export type { OwnerActionProposal, OwnerOverview, OwnerInboxItem, OwnerActivityItem, OwnerAlert, OwnerWork } from '../../../packages/protocol/src/types/owner';
 export const fetchOwnerOverview=()=>apiRequest<OwnerOverview>('owner/overview',{worldScoped:false});
 export const askMissionOwner=(question:string,history:OwnerChatTurn[],requestKey:string=crypto.randomUUID(),requestLanguage=language())=>apiRequest<OwnerChatAnswer&{proposals?:OwnerActionProposal[]}>('owner/chat',{
   worldScoped:false,method:'POST',body:JSON.stringify({question,history,language:requestLanguage,requestKey}),timeoutMs:2*60*60*1000});
@@ -35,6 +35,7 @@ export async function executeOwnerAction(proposal:OwnerActionProposal):Promise<{
   if(a.type==='business_plan_approve'||a.type==='business_plan_reject')await post(`business/plans/${encodeURIComponent(a.plan.id)}/${a.type==='business_plan_approve'?'approve':'revoke'}`,{revision:a.plan.revision,hash:a.plan.hash});
   else if(a.type==='recruit_approve'||a.type==='recruit_reject')await post(`owner/requests/${encodeURIComponent(a.requestId)}/decision`,{decision:a.type==='recruit_approve'?'approve':'reject',hash:a.hash});
   else if(a.type==='resource_provided'||a.type==='resource_reject')await post(`business/requests/${encodeURIComponent(a.requestId)}/decision`,{decision:a.type==='resource_provided'?'provided':'reject',note:a.note,planId:a.planId,revision:a.revision});
+  else if(a.type==='gene_proposal_approve'||a.type==='gene_proposal_reject')await post(`evolution/proposals/${encodeURIComponent(a.proposalId)}/decision`,{decision:a.type==='gene_proposal_approve'?'APPROVED':'REJECTED',expectedGeneration:a.expectedGeneration,expectedState:a.expectedState});
   else throw new Error('OWNER_ACTION_DENIED');
   return [{id:proposal.id,ok:true}];
 }
