@@ -22,6 +22,7 @@ function fixture() {
   fs.writeFileSync(join(base, "genome/manifest.json"), JSON.stringify(manifest)); fs.writeFileSync(join(base, "apps/server/core.txt"), "V21 core");
   fs.mkdirSync(join(base, "packages/runtime"), { recursive: true });
   fs.writeFileSync(join(base, "packages/runtime/index.ts"), "export const runtime = true;");
+  for (const launcher of ["EmergentInc_UI.bat", "EmergentInc_UI.ps1", "EmergentInc_UI.sh", "EmergentInc_Upgrade.bat"]) fs.writeFileSync(join(base, launcher), "echo launcher");
   fs.writeFileSync(join(base, ".env"), "DO_NOT_COPY=secret");
   let currentRelease = base;
   const initial = readGenome(base);
@@ -62,6 +63,14 @@ function fixture() {
   return { directory, releases, workspace, lineage, runtime, supervisor, prepare, app: () => app! };
 }
 describe("trusted Generation lifecycle (local runtime contract doubles)", () => {
+  it('carries root launcher scripts into a Gene candidate so its self-validation suite can pass',async()=>{
+    const f=fixture(),c=await f.prepare('r2');
+    // A candidate release missing its launcher files cannot run its own test suite (the
+    // launcher tests read EmergentInc_UI.sh), so the frozen files must always be inherited.
+    for(const launcher of ['EmergentInc_UI.bat','EmergentInc_UI.ps1','EmergentInc_UI.sh','EmergentInc_Upgrade.bat'])
+      expect(fs.readFileSync(join(f.releases,'r2',launcher),'utf8')).toBe('echo launcher');
+    expect(c.candidate.candidate_hash).toBeTruthy();
+  });
   it('rolls back multiple published generations and deletes only their code while retaining facts and approvals',async()=>{
     const f=fixture();for(const id of ['r2','r3']){const c=await f.prepare(id);f.supervisor.approve(id,c.candidate.candidate_hash);await f.supervisor.birth(id);}
     f.app().current.setObjective('new-fact','business','Fact after publication','OPEN',true);

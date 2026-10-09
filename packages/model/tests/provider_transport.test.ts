@@ -3,11 +3,13 @@ import { OpenAICompatibleProvider } from "../src/provider/openai_compatible.js";
 import { InfrastructureFailureError, OutcomeUnknownError } from "../src/provider/model_provider.js";
 
 const request: any = { model: "fixture", messages: [] };
-const provider = () => new OpenAICompatibleProvider({ baseUrl: "https://fixture.invalid", apiKey: "fixture-only", timeoutMs: 10 });
+// Outcome-classification fixtures disable the retry policy: each error type is asserted
+// exactly once, without waiting for real retry delays.
+const provider = () => new OpenAICompatibleProvider({ baseUrl: "https://fixture.invalid", apiKey: "fixture-only", timeoutMs: 10, maxRetries: 0 });
 afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
 
 describe("Optional streaming transport", () => {
-  const streamed = () => new OpenAICompatibleProvider({ baseUrl: "https://fixture.invalid", apiKey: "fixture-only", stream: true });
+  const streamed = () => new OpenAICompatibleProvider({ baseUrl: "https://fixture.invalid", apiKey: "fixture-only", stream: true, maxRetries: 0 });
   function response(events: string) {
     // One byte per chunk exercises split UTF-8 characters and event boundaries.
     const bytes = new TextEncoder().encode(events);
@@ -81,5 +83,47 @@ describe("Model transport outcome classification", () => {
       controller.abort();
     })));
     await expect(provider().call(request, controller.signal)).rejects.toBeInstanceOf(OutcomeUnknownError);
+  });
+});
+
+describe("Owner-directed retry of connection-class failures", () => {
+  // Fast retry pacing keeps the retry semantics observable within the test timeout.
+  const retrying = () => new OpenAICompatibleProvider({ baseUrl: "https://fixture.invalid", apiKey: "fixture-only", timeoutMs: 10, retryDelayMs: 1, maxRetries: 2 });
+  const outcomeUnknown = () => new OutcomeUnknownError("outcome unknown", undefined, "ECONNRESET", "dispatch");
+  const notSent = () => new InfrastructureFailureError("not sent", undefined, "ECONNREFUSED", "before_dispatch");
+
+  it("retries the same request after outcome-unknown failures and returns the first success", async () => {
+    const fetch = vi.fn()
+      .mockRejectedValueOnce(outcomeUnknown())
+      .mockRejectedValueOnce(outcomeUnknown())
+      .mockResolvedValue({ ok: true, json: async () => ({ choices: [{ message: { content: "ok" } }] }) });
+    vi.stubGlobal("fetch", fetch);
+    expect((await retrying().call(request)).rawText).toBe("ok");
+    expect(fetch).toHaveBeenCalledTimes(3);
+  });
+  it("retries provably-not-sent failures and stops after the final retry", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(notSent()));
+    await expect(retrying().call(request)).rejects.toMatchObject({ name: "InfrastructureFailureError", code: "ECONNREFUSED" });
+    expect(vi.mocked(fetch)).toHaveBeenCalledTimes(3);
+  });
+  it("never retries caller-initiated aborts", async () => {
+    const controller = new AbortController();
+    const fetch = vi.fn((_url: string, init: any) => new Promise((_resolve, reject) => {
+      init.signal.addEventListener("abort", () => reject(new Error("aborted")));
+      controller.abort();
+    }));
+    vi.stubGlobal("fetch", fetch);
+    await expect(retrying().call(request, controller.signal)).rejects.toBeInstanceOf(OutcomeUnknownError);
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+  it("stops waiting and reports not-sent when the caller aborts during the retry delay", async () => {
+    const controller = new AbortController();
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(outcomeUnknown()));
+    // A long delay guarantees the abort lands inside the wait, not between attempts.
+    const slowRetry = new OpenAICompatibleProvider({ baseUrl: "https://fixture.invalid", apiKey: "fixture-only", retryDelayMs: 60_000, maxRetries: 2 });
+    const pending = slowRetry.call(request, controller.signal);
+    await new Promise(resolve => setTimeout(resolve, 10));
+    controller.abort();
+    await expect(pending).rejects.toMatchObject({ name: "InfrastructureFailureError", code: "ABORTED_BEFORE_DISPATCH" });
   });
 });

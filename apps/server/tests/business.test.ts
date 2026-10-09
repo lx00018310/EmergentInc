@@ -195,6 +195,24 @@ describe("Owner identity and runtime boundary", () => {
     const release = acquireWorkspaceLock(dir); resources.push(release);
     expect(() => acquireWorkspaceLock(dir)).toThrow("WORKSPACE_ALREADY_RUNNING"); release(); const release2 = acquireWorkspaceLock(dir); release2();
   });
+  it.skipIf(process.platform !== "win32")("takes over a stale lock whose PID was reused by a protected system process", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "business-lock-")); resources.push(() => fs.rmSync(dir, { recursive: true, force: true }));
+    fs.mkdirSync(path.join(dir, "runtime"), { recursive: true });
+    fs.writeFileSync(path.join(dir, "runtime", "instance.lock"), JSON.stringify({ pid: 4, token: "stale" }));
+    const kill = vi.spyOn(process, "kill").mockImplementation(() => { throw Object.assign(new Error("kill EPERM"), { code: "EPERM", errno: -4048, syscall: "kill" }); });
+    try {
+      const release = acquireWorkspaceLock(dir); resources.push(release);
+      expect(JSON.parse(fs.readFileSync(path.join(dir, "runtime", "instance.lock"), "utf8")).pid).toBe(process.pid);
+    } finally { kill.mockRestore(); }
+  });
+  it.skipIf(process.platform === "win32")("still refuses a lock held by a live foreign-user process reporting EPERM", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "business-lock-")); resources.push(() => fs.rmSync(dir, { recursive: true, force: true }));
+    fs.mkdirSync(path.join(dir, "runtime"), { recursive: true });
+    fs.writeFileSync(path.join(dir, "runtime", "instance.lock"), JSON.stringify({ pid: 1, token: "foreign" }));
+    const kill = vi.spyOn(process, "kill").mockImplementation(() => { throw Object.assign(new Error("kill EPERM"), { code: "EPERM", errno: -1, syscall: "kill" }); });
+    try { expect(() => acquireWorkspaceLock(dir)).toThrow(); expect(fs.existsSync(path.join(dir, "runtime", "instance.lock"))).toBe(true); }
+    finally { kill.mockRestore(); }
+  });
 });
 
 describe("business evidence is not a generated revenue claim", () => {

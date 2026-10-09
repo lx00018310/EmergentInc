@@ -10,6 +10,10 @@ export interface OpenAICompatibleProviderConfig {
   apiKey: string;
   timeoutMs?: number;
   stream?: boolean;
+  /** Milliseconds to wait before retrying the same request. Default 30000. */
+  retryDelayMs?: number;
+  /** Maximum consecutive retries after the initial attempt. Default 5. */
+  maxRetries?: number;
 }
 
 // Consume SSE through its terminal marker before exposing any model decision.
@@ -69,10 +73,52 @@ function truncate(text: string, max: number): string {
   return flat.length <= max ? flat : `${flat.slice(0, max)}… (+${flat.length - max} chars)`;
 }
 
-function logTrace(direction: "REQUEST" | "RESPONSE" | "ERROR", payload: Record<string, unknown>): void {
+function logTrace(direction: "REQUEST" | "RESPONSE" | "ERROR" | "RETRY", payload: Record<string, unknown>): void {
   if (!llmTraceEnabled()) return;
   const ts = new Date().toISOString().slice(11, 23);
   console.log(`[LLM ${ts} ${direction}] ${JSON.stringify(payload)}`);
+}
+
+// Owner-directed retry policy for connection-class failures.
+// A connection-class failure leaves the outcome unknown: the model may or may not
+// have received (and billed) the attempt. The SAME request is retried after a fixed
+// delay, at most N consecutive retries after the initial attempt; only when every
+// retry fails does the final error propagate. Failed attempts never return usage,
+// so their token consumption (invisible here even if the provider billed it) is
+// ignored and never counted in any pixel usage statistics.
+const DEFAULT_RETRY_DELAY_MS = 30_000;
+const DEFAULT_MAX_RETRIES = 5;
+
+// Retriable = outcome unknown or provably not sent. Caller-initiated aborts are
+// never retried: the caller no longer wants the result.
+function isRetryableFailure(err: any): boolean {
+  if (err instanceof InfrastructureFailureError) {
+    return err.phase === "before_dispatch" && err.code !== "ABORTED_BEFORE_DISPATCH";
+  }
+  if (err instanceof OutcomeUnknownError) {
+    return err.code !== "ABORTED_AFTER_DISPATCH";
+  }
+  return false;
+}
+
+// Wait that rejects immediately if the caller aborts during the retry delay.
+function delay(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new Error(signal.reason?.message || "ABORTED"));
+      return;
+    }
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const onAbort = () => {
+      if (timer !== undefined) clearTimeout(timer);
+      reject(new Error(signal?.reason?.message || "ABORTED"));
+    };
+    timer = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
 }
 
 export class OpenAICompatibleProvider implements ModelProvider {
@@ -80,6 +126,8 @@ export class OpenAICompatibleProvider implements ModelProvider {
   private apiKey: string;
   private timeoutMs: number;
   private stream: boolean;
+  private retryDelayMs: number;
+  private maxRetries: number;
 
   constructor(config: OpenAICompatibleProviderConfig) {
     this.baseUrl = config.baseUrl.replace(/\/+$/, "");
@@ -87,9 +135,47 @@ export class OpenAICompatibleProvider implements ModelProvider {
     this.stream = config.stream ?? process.env.MCL_STREAM === "1";
     const envTimeout = process.env.MCL_TIMEOUT_MS ? Number(process.env.MCL_TIMEOUT_MS) : undefined;
     this.timeoutMs = config.timeoutMs || (envTimeout && !isNaN(envTimeout) ? envTimeout : 120000);
+    const envRetryDelay = process.env.MCL_RETRY_DELAY_MS ? Number(process.env.MCL_RETRY_DELAY_MS) : undefined;
+    const envMaxRetries = process.env.MCL_MAX_RETRIES ? Number(process.env.MCL_MAX_RETRIES) : undefined;
+    this.retryDelayMs = config.retryDelayMs ?? (envRetryDelay && !isNaN(envRetryDelay) && envRetryDelay >= 0 ? envRetryDelay : DEFAULT_RETRY_DELAY_MS);
+    this.maxRetries = config.maxRetries ?? (envMaxRetries !== undefined && !isNaN(envMaxRetries) && envMaxRetries >= 0 && Number.isSafeInteger(envMaxRetries) ? envMaxRetries : DEFAULT_MAX_RETRIES);
   }
 
+  // Retry wrapper: connection-class (outcome-unknown) failures wait retryDelayMs
+  // and retry the SAME request, at most maxRetries consecutive retries; only
+  // after every retry fails does the last error reach the caller.
   public async call(
+    request: PreparedModelRequest,
+    signal?: AbortSignal
+  ): Promise<RawModelResponse> {
+    let retries = 0;
+    while (true) {
+      try {
+        return await this.callOnce(request, signal);
+      } catch (err: any) {
+        if (!isRetryableFailure(err) || retries >= this.maxRetries) throw err;
+        retries += 1;
+        logTrace("RETRY", {
+          attempt: retries,
+          maxRetries: this.maxRetries,
+          delayMs: this.retryDelayMs,
+          code: typeof err?.code === "string" ? err.code : "UNKNOWN",
+        });
+        try {
+          await delay(this.retryDelayMs, signal);
+        } catch (abortErr: any) {
+          throw new InfrastructureFailureError(
+            "Model call cancelled during retry wait",
+            abortErr,
+            "ABORTED_BEFORE_DISPATCH",
+            "before_dispatch"
+          );
+        }
+      }
+    }
+  }
+
+  private async callOnce(
     request: PreparedModelRequest,
     signal?: AbortSignal
   ): Promise<RawModelResponse> {

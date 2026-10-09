@@ -30,7 +30,13 @@ export function acquireWorkspaceLock(workspaceRoot: string, localUpgradeToken?: 
     const previous = JSON.parse(contents);
     if (!Number.isSafeInteger(previous.pid) || previous.pid <= 0) throw new Error("INVALID_WORKSPACE_LOCK_REQUIRES_REVIEW");
     try { process.kill(previous.pid, 0); throw new Error("WORKSPACE_ALREADY_RUNNING"); }
-    catch (e) { if ((e as NodeJS.ErrnoException).code !== "ESRCH") throw e; }
+    catch (e) {
+      // A live same-user server is always signalable; on Windows a reused PID held
+      // by a protected system process reports EPERM instead of ESRCH, so EPERM
+      // also identifies a stale lock left behind by a dead server.
+      const code = (e as NodeJS.ErrnoException).code;
+      if (code !== "ESRCH" && !(process.platform === "win32" && code === "EPERM")) throw e;
+    }
     if (fs.readFileSync(file, "utf8") !== contents) throw new Error("WORKSPACE_LOCK_CHANGED");
     fs.unlinkSync(file);
   }
