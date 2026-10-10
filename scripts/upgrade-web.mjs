@@ -85,10 +85,10 @@ function gitText(root, args) {
 /** Bounded read-only Git DAG projection: refs plus the first `limit` commits across all branches. */
 export function readGitGraph(root, limit=200) {
   const bound=Math.min(Math.max(Number(limit)||200,1),500);
-  const refsRaw=gitText(root,['for-each-ref','--format=%(refname) %(objectname)']);
+  const refsRaw=gitText(root,['for-each-ref','--format=%(refname) %(objectname)','refs/heads','refs/remotes','refs/tags']);
   if(refsRaw===null)return {available:false};
   const refs=refsRaw.trim()?refsRaw.trim().split(/\r?\n/).map(line=>{const index=line.lastIndexOf(' ');return {ref:line.slice(0,index),sha:line.slice(index+1)};}):[];
-  const log=gitText(root,['log','--all','--topo-order','--parents','-n',String(bound),
+  const log=gitText(root,['log','--branches','--remotes','--tags','--topo-order','--parents','-n',String(bound),
     '--pretty=format:%H%x1f%P%x1f%s%x1f%an%x1f%ct']);
   if(log===null)return {available:false};
   const commits=log.trim()?log.trim().split(/\r?\n/).map(line=>{

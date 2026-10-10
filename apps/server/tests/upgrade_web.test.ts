@@ -322,6 +322,12 @@ function gitRepo(){
 }
 
 describe('V27 dual-tree git upgrade', () => {
+  it('shows real branches and tags without counting internal tool checkpoint refs as development',()=>{
+    const repo=gitRepo();repo.run('checkout','-b','scratch');const checkpoint=repo.commit('internal checkpoint','scratch.txt');repo.run('update-ref','refs/cline/checkpoints/test/1',checkpoint);repo.run('checkout','main');repo.run('branch','-D','scratch');repo.run('tag','approved-base',repo.base);
+    let graph=readGitGraph(repo.directory);expect(graph.commits.map((c:any)=>c.sha)).not.toContain(checkpoint);expect(graph.refs.map((r:any)=>r.ref)).toContain('refs/tags/approved-base');expect(graph.refs.map((r:any)=>r.ref)).not.toContain('refs/cline/checkpoints/test/1');
+    repo.run('branch','feature/restored',checkpoint);graph=readGitGraph(repo.directory);expect(graph.commits.map((c:any)=>c.sha)).toContain(checkpoint);expect(repo.run('rev-parse','refs/cline/checkpoints/test/1')).toBe(checkpoint);
+  },30000);
+
   it.each(['zh-CN','en'])('opens a pinned-commit preparation form, requires a reason, cancels safely and submits the selected SHA (%s)',async lang=>{
     const repo=gitRepo(),f=await fixture(),app=await createUpgradeWeb({root:repo.directory,config:{stateDirectory:f.directory},secret:f.secret,runCommand:f.run,status:()=>f.data,checkRunning:f.checkRunning});cleanups.push(()=>app.close());
     fs.mkdirSync(path.join(repo.directory,'resources'));fs.copyFileSync(path.resolve('resources/upgrade-web.html'),path.join(repo.directory,'resources/upgrade-web.html'));
