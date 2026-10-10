@@ -74,6 +74,12 @@ export async function prepareV23Upgrade(workspace,stage0,operatorDirectory,proje
 export function approveV23Upgrade(directory,exactHash,reason){const file=path.join(directory,'initial-v23.json'),receipt=read(file);if(receipt.candidateHash!==hash(receipt.candidate)||exactHash!==receipt.candidateHash||!reason?.trim())throw new Error('V23_EXACT_OWNER_APPROVAL_REQUIRED');
   if(!['PREPARED','APPROVED'].includes(receipt.state))throw new Error('V23_UPGRADE_NOT_APPROVABLE');receipt.state='APPROVED';receipt.ownerAuthorization={channel:'explicit_owner_cli',candidateHash:exactHash,reason};save(file,receipt);return receipt;}
 
+async function renameStoppedWorkspace(source,target){
+  for(let attempt=0;;attempt++){
+    try{await fs.promises.rename(source,target);return;}
+    catch(error){if(process.platform!=='win32'||!['EPERM','EBUSY'].includes(error.code)||attempt>=19)throw error;await new Promise(resolve=>setTimeout(resolve,100));}
+  }
+}
 /** Approval is bound to both code and the preserved projection. Any new live fact forces a new rehearsal. */
 export async function applyV23Upgrade(directory,exactHash){
   const receiptFile=path.join(directory,'initial-v23.json'),receipt=read(receiptFile),c=receipt.candidate;
@@ -112,7 +118,7 @@ export async function applyV23Upgrade(directory,exactHash){
     }finally{lineage.close();}
     if(path.resolve(backup)!==path.resolve(c.workspace+'.v22-before-'+c.id)||path.dirname(backup)!==path.dirname(c.workspace))throw new Error('V23_BACKUP_PATH_INVALID');
     fs.mkdirSync(path.join(c.prepared,'runtime'),{recursive:true});fs.writeFileSync(pending(c.prepared),JSON.stringify({id:c.id,token}),{flag:'wx',mode:0o600});
-    receipt.state='APPLYING';save(receiptFile,receipt);fs.renameSync(c.workspace,backup);moved=true;fs.renameSync(c.prepared,c.workspace);published=true;
+    receipt.state='APPLYING';save(receiptFile,receipt);await renameStoppedWorkspace(c.workspace,backup);moved=true;fs.renameSync(c.prepared,c.workspace);published=true;
     const activeReleaseFile=path.join(directory,'active-release.json'),configFile=path.join(directory,'owner-config.json');save(activeReleaseFile,{directory:c.release.directory});
     const config={workspace:c.workspace,releases:path.join(directory,'releases'),stateDirectory:directory,activeReleaseFile,appUrl:base,ownerProjectRoot:c.projectRoot};save(configFile,config);
     runtime=new LocalWorldRuntime({...config,ownerEnvironment:{...env,EMERGENTINC_LOCAL_UPGRADE_TOKEN:token}});await runtime.start();await runtime.healthy(c.target);

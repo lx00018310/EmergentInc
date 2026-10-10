@@ -1,4 +1,4 @@
-import {it,expect} from 'vitest';
+import {it,expect,vi} from 'vitest';
 import * as fs from 'node:fs';
 import {join,resolve} from 'node:path';
 import {tmpdir} from 'node:os';
@@ -92,7 +92,11 @@ it.each([false,true])('publishes initial V23 or restores V22 when resume fails (
       const journal=JSON.parse(fs.readFileSync(join(operator,'initial-v23.json'),'utf8'));expect(journal.state).toBe('FAILED');expect(fs.existsSync(journal.failedWorkspace)).toBe(true);
       const restored=new LineageStore(join(workspace,'lineage/lineage.sqlite3'));try{expect(restored.activeGeneration()?.id).toBe('G0005');expect(restored.relevantMemories({kind:'generation_failure'})).toHaveLength(1);}finally{restored.close();}
       expect(fs.readFileSync(join(project,'.env'),'utf8')).not.toContain('EMERGENTINC_LOCAL_EVOLUTION_CONFIG');
-    }else{expect((await applyV23Upgrade(operator,receipt.candidateHash)).state).toBe('COMMITTED');await waitReady('G0006');
+    }else{
+      const rename=fs.promises.rename.bind(fs.promises);let blockedOnce=false;
+      const spy=vi.spyOn(fs.promises,'rename').mockImplementation(async(source,target)=>{if(process.platform==='win32'&&source===workspace&&!blockedOnce){blockedOnce=true;throw Object.assign(new Error('Temporary directory handle'),{code:'EPERM'});}return rename(source,target);});
+      try{expect((await applyV23Upgrade(operator,receipt.candidateHash)).state).toBe('COMMITTED');expect(blockedOnce).toBe(process.platform==='win32');}finally{spy.mockRestore();}
+      await waitReady('G0006');
       expect(approvedWorldRelease(workspace,join(operator,'owner-config.json')).generation.id).toBe('G0006');expect(fs.existsSync(workspace+'.v22-before-'+receipt.candidate.id)).toBe(true);}
     expect(fs.existsSync(workspace+'.v23-upgrade-pending.json')).toBe(false);expect(fs.existsSync(join(workspace,'runtime/local-upgrade-pending.json'))).toBe(false);
     expect(fs.readFileSync(join(workspace,'private/owner-note.txt'),'utf8')).toBe('private original');
