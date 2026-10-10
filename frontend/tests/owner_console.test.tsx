@@ -22,14 +22,14 @@ describe('Owner Mission Control',()=>{
     expect(within(table).getAllByRole('row')).toHaveLength(6);
     expect(within(table).getByRole('row',{name:'Total pixels 45'})).toBeTruthy();
     expect(within(table).getByRole('row',{name:'Running tasks 2'})).toBeTruthy();
-    expect(within(table).getByRole('row',{name:'Pending approvals 3'})).toBeTruthy();
+    expect(within(table).getByRole('row',{name:'To-dos 0'})).toBeTruthy();
     expect(within(table).getByRole('row',{name:'Available energy 123,456'})).toBeTruthy();
     expect(within(table).getByRole('row',{name:'Service status Ready'})).toBeTruthy();
     expect(table.compareDocumentPosition(screen.getByRole('textbox'))&Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     act(()=>setLanguage('zh-CN'));
     expect(screen.getByRole('table',{name:'状态总览'})).toBe(table);
     expect(within(table).getByRole('row',{name:'服务状态 正常'})).toBeTruthy();
-    for(const name of ['当前运行版本','元胞总数','运行中任务数','待处理审批数','可用能量'])expect(within(table).getByRole('rowheader',{name})).toBeTruthy();
+    for(const name of ['当前运行版本','元胞总数','运行中任务数','待办事项','可用能量'])expect(within(table).getByRole('rowheader',{name})).toBeTruthy();
     fireEvent.click(screen.getByRole('link',{name:/待办事项/}));expect(screen.queryByRole('table')).toBeNull();
     fireEvent.click(screen.getByRole('link',{name:'Boss'}));
       fetch.mockResolvedValue(response({...data,summary:{...data.summary,availableEnergy:0,serviceStatus:'paused'}}));
@@ -149,14 +149,64 @@ describe('Owner Mission Control',()=>{
               {id:'upgrade:c1',kind:'upgrade',severity:'normal',title:'Upgrade candidate ready',summary:'c1 · abc · def',createdAt:Date.now(),source:'Upgrade Service',href:'http://127.0.0.1:8766/'}],
       activity:[],availability:{business:true,upgrade:'unavailable'}}));
     render(<OwnerConsole/>);
-    await screen.findByRole('link',{name:/To-dos\s*0/});
+    await screen.findByRole('link',{name:/To-dos\s*2/});
+    expect(screen.getByRole('row',{name:'To-dos 2'})).toBeTruthy();
     expect(screen.queryByText('Run needs attention')).toBeNull();
     fireEvent.click(screen.getByRole('link',{name:/To-dos/}));
     await screen.findByText('Run needs attention');expect(screen.getByText('Upgrade candidate ready')).toBeTruthy();
+    expect(screen.getByRole('heading',{name:'To-dos (2)'})).toBeTruthy();
+    expect(screen.queryByText('No to-dos pending.')).toBeNull();
     expect(screen.queryByRole('button',{name:'Approve'})).toBeNull();expect(screen.queryByRole('button',{name:'Reject'})).toBeNull();
     expect(screen.getByText('Run needs attention').closest('article')!.querySelector('a[href="/YUAN?world=w1"]')).toBeTruthy();
     fireEvent.click(screen.getByRole('link',{name:'History'}));
     expect(screen.queryByText('Run needs attention')).toBeNull();expect(screen.queryByText('Upgrade candidate ready')).toBeNull();
+  });
+  it.each([['en','To-dos','No to-dos pending.'],['zh-CN','待办事项','当前没有待办事项。']] as const)('keeps overview, badge and all displayed items consistent after polling in %s',async(lang,title,empty)=>{
+    setLanguage(lang);
+    const data={asOf:Date.now(),summary:{inboxCount:99,pendingApprovals:0},inbox:[{id:'code:1',type:'code',title:'Source change report',summary:'Review source',priority:'normal',createdAt:1,source:'owner_code_reports',href:'/OWNER?report=1'}],
+      alerts:[{id:'task:1',kind:'task',title:'Assigned task needs attention',summary:'Waiting for energy',severity:'normal',source:'owner_work_tasks',createdAt:1,href:'/QIAN?qianji=1'},
+        {id:'run:1',kind:'run',title:'Run needs attention',summary:'Needs recovery',severity:'critical',source:'runs',createdAt:1,href:'/YUAN?world=1'}],activity:[],availability:{business:true,upgrade:'available'}};
+    const fetch=vi.spyOn(globalThis,'fetch').mockResolvedValue(response(data));
+    vi.useFakeTimers();
+    try {
+      render(<OwnerConsole/>);await act(async()=>{});
+      const assertCount=(count:number)=>expect(screen.getByRole('link',{name:new RegExp(`${title}\\s*${count}$`)})).toBeTruthy();
+      assertCount(3);expect(screen.getByRole('row',{name:`${title} 3`})).toBeTruthy();
+      fireEvent.click(screen.getByRole('link',{name:new RegExp(title)}));
+      expect(screen.getByRole('heading',{name:`${title} (3)`})).toBeTruthy();
+      expect(document.querySelectorAll('.owner-inbox article')).toHaveLength(3);
+      expect(screen.queryByText(empty)).toBeNull();
+      fetch.mockResolvedValue(response({...data,inbox:[],alerts:[data.alerts[0]]}));
+      await act(async()=>{await vi.advanceTimersByTimeAsync(5000);});
+      assertCount(1);expect(screen.getByRole('heading',{name:`${title} (1)`})).toBeTruthy();
+      expect(document.querySelectorAll('.owner-inbox article')).toHaveLength(1);
+      fetch.mockResolvedValue(response({...data,inbox:[],alerts:[]}));
+      await act(async()=>{await vi.advanceTimersByTimeAsync(5000);});
+      assertCount(0);expect(screen.getByRole('heading',{name:`${title} (0)`})).toBeTruthy();expect(screen.getByText(empty)).toBeTruthy();
+      fireEvent.click(screen.getByRole('link',{name:'Boss'}));
+      expect(screen.getByRole('row',{name:`${title} 0`})).toBeTruthy();
+    } finally {vi.useRealTimers();}
+  });
+  it('does not restore stale to-dos when a slow poll finishes after an action refresh',async()=>{
+    const data={asOf:1,summary:{},inbox:[],activity:[],availability:{business:true,upgrade:'available'},alerts:[{id:'task:1',kind:'task',severity:'normal',title:'Assigned task needs attention',summary:'Waiting',createdAt:1,source:'owner_work_tasks',href:'/QIAN'}]};
+    let calls=0,finishOld!:(value:Response)=>void;
+    vi.spyOn(globalThis,'fetch').mockImplementation(async input=>{
+      if(String(input)==='/api/owner/chat')return response({answer:'Task addressed',sources:[],as_of:new Date().toISOString(),usage:{tokens:0,cost_cny:0}});
+      if(++calls===2)return new Promise(resolve=>{finishOld=resolve;});
+      return response(calls===1?data:{...data,asOf:3,alerts:[]});
+    });
+    vi.useFakeTimers();
+    try {
+      render(<OwnerConsole/>);await act(async()=>{});
+      expect(screen.getByRole('row',{name:'To-dos 1'})).toBeTruthy();
+      await act(async()=>{await vi.advanceTimersByTimeAsync(5000);});
+      fireEvent.change(screen.getByRole('textbox'),{target:{value:'Handle the task'}});
+      await act(async()=>{fireEvent.click(screen.getByRole('button',{name:'Send'}));});
+      expect(screen.getByRole('row',{name:'To-dos 0'})).toBeTruthy();
+      await act(async()=>{finishOld(response({...data,asOf:2}));});
+      expect(screen.getByRole('row',{name:'To-dos 0'})).toBeTruthy();
+      expect(screen.getByRole('link',{name:/To-dos\s*0/})).toBeTruthy();
+    } finally {vi.useRealTimers();}
   });
   it('retains a reply that finishes while another page is open',async()=>{
     let finish!:(value:Response)=>void;

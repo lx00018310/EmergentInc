@@ -6,6 +6,7 @@ import { explanations } from '../features/business/business_api';
 import { postQianjiChat } from './qianji';
 export type { OwnerActionProposal, OwnerOverview, OwnerInboxItem, OwnerActivityItem, OwnerAlert, OwnerWork } from '../../../packages/protocol/src/types/owner';
 export const fetchOwnerOverview=()=>apiRequest<OwnerOverview>('owner/overview',{worldScoped:false});
+export const ownerTodoCount=(data:Pick<OwnerOverview,'inbox'|'alerts'>)=>data.inbox.length+(data.alerts?.length??0);
 export const askMissionOwner=(question:string,history:OwnerChatTurn[],requestKey:string=crypto.randomUUID(),requestLanguage=language())=>apiRequest<OwnerChatAnswer&{proposals?:OwnerActionProposal[]}>('owner/chat',{
   worldScoped:false,method:'POST',body:JSON.stringify({question,history,language:requestLanguage,requestKey}),timeoutMs:2*60*60*1000});
 export function ownerError(error:unknown):string {

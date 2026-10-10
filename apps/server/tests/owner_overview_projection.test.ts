@@ -12,6 +12,7 @@ import { PaymentMonitor } from '../src/services/payment_monitor.js';
 import { OwnerOverviewService } from '../src/services/owner_overview_service.js';
 import { BusinessService } from '../src/services/business_service.js';
 import { createServer } from '../src/app.js';
+import { OwnerWorkService } from '../src/services/owner_work_service.js';
 
 const cleanups: (() => Promise<void>)[] = [];
 afterEach(async () => { for (const fn of cleanups.splice(0).reverse()) await fn(); });
@@ -40,6 +41,14 @@ function fixture() {
 }
 
 describe('V28 Owner projection: decisions versus alerts', () => {
+  it('returns every unresolved verification item beyond the old twenty-item display cap',async()=>{
+    const f=fixture(),work=new OwnerWorkService(f.manager);cleanups.push(async()=>work.close());
+    const insert=f.registry.control.db.prepare("INSERT INTO owner_work_tasks(id,request_key,person_id,person_name,instruction,state,reason,created_at,updated_at) VALUES(?,?,?,?,?,'BLOCKED','WAITING_PIXEL_BUDGET',?,?)");
+    for(let index=0;index<25;index++)insert.run(`task-${index}`,`request-${index}`,f.a.qianji_id,'A','Report',index+1,index+1);
+    const overview=await new OwnerOverviewService(f.worlds,f.business,undefined,work).overview();
+    expect(overview.alerts).toHaveLength(25);expect(overview.alerts.map(item=>item.id)).toContain('task:task-24');
+    expect(overview.summary.pendingApprovals).toBe(0);expect(overview.inbox).toHaveLength(0);
+  });
   it('reports readiness, upgrade pause and runtime failures through the actual Owner endpoint',async()=>{
     const f=fixture();await f.manager.open(f.a.world_id);let paused=false;
     const app=await createServer({workspaceRoot:f.workspace,runtimeMode:'business',worlds:f.worlds,businessService:f.business,

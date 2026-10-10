@@ -56,6 +56,7 @@ export const zhCN: Record<string, string> = {
   "Inbox": "待办",
   "Only decisions, missing resources and unresolved outcomes appear here.": "这里只显示需要决策、补充资源或核实结果的事项。",
   "No decisions pending.": "当前没有待决事项。",
+  "No to-dos pending.": "当前没有待办事项。",
   "Needs verification": "需要核实",
   "Activity": "动态",
   "Recent events and public Tips, newest first.": "最近事件与公开提醒，按时间倒序显示。",

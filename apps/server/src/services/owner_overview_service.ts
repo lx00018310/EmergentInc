@@ -119,6 +119,6 @@ export class OwnerOverviewService {
     activity.sort((a,b)=>b.createdAt-a.createdAt||a.id.localeCompare(b.id));
     return {asOf:Date.now(),summary:{qianjiCount:people.length,activeWorlds:records.filter(r=>r.status==='ACTIVE').length,runningWorlds:records.filter(r=>r.running).length,inboxCount:inbox.length,currentGeneration:generation,
       pixelCount:metricsComplete?pixelCount:null,availableEnergy:metricsComplete?availableEnergy:null,
-      pendingApprovals:inbox.filter(item=>item.actions?.some(action=>action.requiresApproval)).length,...(this.serviceStatus?{serviceStatus:this.serviceStatus()}:{} )},inbox,activity:activity.slice(0,50),people,alerts:alerts.slice(0,20),availability,...(upgrade?{upgrade}:{}),...(work?{work}:{})};
+      pendingApprovals:inbox.filter(item=>item.actions?.some(action=>action.requiresApproval)).length,...(this.serviceStatus?{serviceStatus:this.serviceStatus()}:{} )},inbox,activity:activity.slice(0,50),people,alerts,availability,...(upgrade?{upgrade}:{}),...(work?{work}:{})};
   }
 }

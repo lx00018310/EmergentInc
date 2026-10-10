@@ -56,6 +56,7 @@ export const en: Record<string, string> = {
   "Inbox": "Inbox",
   "Only decisions, missing resources and unresolved outcomes appear here.": "Only decisions, missing resources and unresolved outcomes appear here.",
   "No decisions pending.": "No decisions pending.",
+  "No to-dos pending.": "No to-dos pending.",
   "Needs verification": "Needs verification",
   "Activity": "Activity",
   "Recent events and public Tips, newest first.": "Recent events and public Tips, newest first.",
