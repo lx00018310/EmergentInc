@@ -5,10 +5,12 @@ import type { OwnerWorkService } from './owner_work_service.js';
 
 /** Owner projections use existing records; they never start, settle or recover a Run. Times are milliseconds. */
 export class OwnerOverviewService {
-  constructor(private worlds: WorldRouteServices, private business?: BusinessService, private upgradeOrigin?: string, private work?:OwnerWorkService) {}
+  constructor(private worlds: WorldRouteServices, private business?: BusinessService, private upgradeOrigin?: string, private work?:OwnerWorkService,
+    private serviceStatus?: () => NonNullable<OwnerOverview['summary']['serviceStatus']>) {}
   async overview(): Promise<OwnerOverview> {
     const { manager, payments } = this.worlds, { control, lineage } = manager.registry;
     const records = manager.list(), inbox: OwnerInboxItem[] = [], alerts: OwnerAlert[] = [], activity: OwnerActivityItem[] = [];
+    let pixelCount = 0, availableEnergy = 0, metricsComplete = true;
     const add = (id: string, type: string, summary: string, createdAt: number, source: string, href: string) =>
       activity.push({ id, type, summary: summary.slice(0, 400), createdAt, source, href });
     const alert = (id: string, kind: string, severity: OwnerAlert['severity'], title: string, summary: string, createdAt: number | null, source: string, href: string) =>
@@ -17,6 +19,17 @@ export class OwnerOverviewService {
       const runtime = manager.peek(row.world_id), profile = control.qianji.getProfile(row.qianji_id);
       const href = `/YUAN?world=${encodeURIComponent(row.world_id)}`, name = profile?.narrative.displayName ?? row.qianji_id;
       const run = runtime?.run.getStatus(), world = runtime?.world.getWorldDto();
+      if (row.status === 'ACTIVE') {
+        if (!runtime || !world) metricsComplete = false;
+        else {
+          pixelCount += world.metrics.total_pixels;
+          // Reservations remain in the balance until settlement; only unblocked active accounts are spendable.
+          const energy = runtime.store.db.prepare(`SELECT COALESCE(SUM(MAX(0,p.energy-COALESCE(r.reserved,0))),0) AS available
+            FROM pixel_accounts p LEFT JOIN (SELECT pixel_id,SUM(amount) AS reserved FROM reservations WHERE status='OPEN' GROUP BY pixel_id) r ON r.pixel_id=p.pixel_id
+            WHERE p.active=1 AND p.refund_deficit_tokens=0 AND p.spend_blocked_reason IS NULL`).get()!;
+          availableEnergy += Number(energy.available);
+        }
+      }
       // A Run can stop with NO_ACTIVE_MESSAGES while its messages still wait for energy.
       const waiting=runtime?.store.db.prepare(`SELECT status,COUNT(*) count FROM messages
         WHERE status IN ('WAITING_PIXEL_BUDGET','WAITING_RUN_BUDGET','WAITING_EXECUTION_BUDGET','CALL_OUTCOME_UNKNOWN','AWAITING_SETTLEMENT') GROUP BY status
@@ -104,6 +117,8 @@ export class OwnerOverviewService {
     } catch { /* A disconnected independent service is explicitly reported, never projected as idle. */ }
     inbox.sort((a,b)=>Number(b.priority==='critical')-Number(a.priority==='critical')||(b.createdAt??0)-(a.createdAt??0)||a.id.localeCompare(b.id));
     activity.sort((a,b)=>b.createdAt-a.createdAt||a.id.localeCompare(b.id));
-    return {asOf:Date.now(),summary:{qianjiCount:people.length,activeWorlds:records.filter(r=>r.status==='ACTIVE').length,runningWorlds:records.filter(r=>r.running).length,inboxCount:inbox.length,currentGeneration:generation},inbox,activity:activity.slice(0,50),people,alerts:alerts.slice(0,20),availability,...(upgrade?{upgrade}:{}),...(work?{work}:{})};
+    return {asOf:Date.now(),summary:{qianjiCount:people.length,activeWorlds:records.filter(r=>r.status==='ACTIVE').length,runningWorlds:records.filter(r=>r.running).length,inboxCount:inbox.length,currentGeneration:generation,
+      pixelCount:metricsComplete?pixelCount:null,availableEnergy:metricsComplete?availableEnergy:null,
+      pendingApprovals:inbox.filter(item=>item.actions?.some(action=>action.requiresApproval)).length,...(this.serviceStatus?{serviceStatus:this.serviceStatus()}:{} )},inbox,activity:activity.slice(0,50),people,alerts:alerts.slice(0,20),availability,...(upgrade?{upgrade}:{}),...(work?{work}:{})};
   }
 }

@@ -11,6 +11,7 @@ import { PaymentService } from '../src/services/payment_service.js';
 import { PaymentMonitor } from '../src/services/payment_monitor.js';
 import { OwnerOverviewService } from '../src/services/owner_overview_service.js';
 import { BusinessService } from '../src/services/business_service.js';
+import { createServer } from '../src/app.js';
 
 const cleanups: (() => Promise<void>)[] = [];
 afterEach(async () => { for (const fn of cleanups.splice(0).reverse()) await fn(); });
@@ -35,10 +36,47 @@ function fixture() {
   const worlds = { manager, promotion, payments, monitor: new PaymentMonitor(payments), modelName: 'test' } as any;
   const service = new OwnerOverviewService(worlds, business);
   cleanups.push(async () => { await manager.closeAll(); payments.close(); control.close(); lineage.close(); business.close?.(); fs.rmSync(root, { recursive: true, force: true }); });
-  return { root, workspace, lineage, registry, narrative, a, manager, business, service };
+  return { root, workspace, lineage, registry, narrative, a, manager, business, service, worlds };
 }
 
 describe('V28 Owner projection: decisions versus alerts', () => {
+  it('reports readiness, upgrade pause and runtime failures through the actual Owner endpoint',async()=>{
+    const f=fixture();await f.manager.open(f.a.world_id);let paused=false;
+    const app=await createServer({workspaceRoot:f.workspace,runtimeMode:'business',worlds:f.worlds,businessService:f.business,
+      evolution:{life:{current:{meta:()=>({generation_id:'G0001'})}},quiesced:()=>paused} as any});
+    cleanups.push(async()=>{await app.close();});
+    const summary=async()=>{const response=await app.inject({method:'GET',url:'/api/owner/overview'});expect(response.statusCode).toBe(200);return response.json().summary;};
+    expect(await summary()).toMatchObject({serviceStatus:'ready',pixelCount:1,availableEnergy:100000,pendingApprovals:0});
+    paused=true;expect((await summary()).serviceStatus).toBe('paused');
+    f.manager.diagnose(f.a.world_id,'WORLD_DATABASE_UNAVAILABLE');
+    expect((await summary()).serviceStatus).toBe('attention');
+    expect((await app.inject({method:'GET',url:'/health/ready'})).statusCode).toBe(503);
+  });
+  it('aggregates complete active-World pixel counts and spendable balances without changing reservations', async () => {
+    const f=fixture(), b=f.registry.create(f.narrative('B'));
+    const a=await f.manager.open(f.a.world_id), second=await f.manager.open(b.world_id);
+    for(let index=1;index<=34;index++){
+      const id=`${index}_0_0`, directory=join(a.directory,'live/pixels',id);
+      fs.mkdirSync(directory,{recursive:true});fs.writeFileSync(join(directory,'pixel.md'),'Test pixel');
+      a.store.pixels.upsertPixelAccount({pixelId:id,energy:100,active:true,refundDeficitTokens:0,spendBlockedReason:null});
+    }
+    a.store.pixels.upsertPixelAccount({pixelId:'1_0_0',energy:100,active:false,refundDeficitTokens:0,spendBlockedReason:null});
+    a.store.pixels.upsertPixelAccount({pixelId:'2_0_0',energy:100,active:true,refundDeficitTokens:1,spendBlockedReason:'refund'});
+    a.store.db.prepare("INSERT INTO reservations(call_id,run_id,pixel_id,amount,status,created_at) VALUES('overview-reserved','test','0_0_0',200,'OPEN',1)").run();
+    const proposal=f.lineage.proposeGene('G0001','owner',{point:'Direction',reason:'r',effect:'e'},'overview:approval');
+    const overview=await new OwnerOverviewService(f.worlds,f.business,undefined,undefined,()=> 'ready').overview();
+    expect(overview.summary).toMatchObject({currentGeneration:'G0001',pixelCount:36,availableEnergy:203000,pendingApprovals:1,serviceStatus:'ready'});
+    expect(overview.people.find(person=>person.worldId===f.a.world_id)!.pixels).toHaveLength(30);
+    expect(overview.inbox.map(item=>item.id)).toContain(`gene:${proposal.id}`);
+    expect(a.store.db.prepare("SELECT amount,status FROM reservations WHERE call_id='overview-reserved'").get()).toMatchObject({amount:200,status:'OPEN'});
+    expect(second.store.pixels.getPixelAccount('0_0_0')!.energy).toBe(100000);
+    await f.manager.close(b.world_id);
+    const incomplete=await f.service.overview();
+    expect(incomplete.summary.pixelCount).toBeNull();expect(incomplete.summary.availableEnergy).toBeNull();
+    f.registry.control.db.prepare("UPDATE qianji_worlds SET status='ARCHIVED' WHERE world_id=?").run(b.world_id);
+    const activeOnly=await f.service.overview();
+    expect(activeOnly.summary).toMatchObject({pixelCount:35,availableEnergy:103000});
+  });
   it('projects an awaiting plan with effects and an exact pair, and unknown outcomes only as alerts', async () => {
     const f = fixture();
     // Seed a real awaiting-approval plan row through the business store schema.

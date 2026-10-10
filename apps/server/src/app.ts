@@ -66,8 +66,9 @@ export async function createServer(options: CreateServerOptions): Promise<Fastif
       return reply.status(409).send({ detail: "EVOLUTION_QUIESCED" });
   });
   app.get("/health/live", async () => ({ alive: true, processId:process.pid }));
+  const serviceReady = () => !options.businessService?.status().schedulerFailure && !options.worlds?.manager.list().some(w=>w.runtimeFailure) && !ownerWork?.hasFailure();
   app.get("/health/ready", async (_req, reply) => {
-    const ready = !options.businessService?.status().schedulerFailure && !options.worlds?.manager.list().some(w=>w.runtimeFailure) && !ownerWork?.hasFailure();
+    const ready = serviceReady();
     return reply.status(ready ? 200 : 503).send({ ready, mode, version: options.worlds ? "v24-public-1" : options.evolution ? "v22-life-1" : "v21-business-1",
       ...(options.evolution ? { generation: options.evolution.life.current.meta().generation_id,
         geneHash: options.evolution.life.current.meta().gene_hash, bodyRevision: options.evolution.life.current.meta().body_revision } : {}) });
@@ -96,7 +97,8 @@ export async function createServer(options: CreateServerOptions): Promise<Fastif
         if(!options.worlds.ownerWork){const previous=manager.options.configureTools;manager.options.configureTools=(id,tools)=>{previous?.(id,tools);work.registerTools(tools,id);};}
         app.addHook('onReady',async()=>work.start());app.addHook('onClose',async()=>work.close());
         await registerWorldRoutes(api,options.worlds);
-        const overview = new OwnerOverviewService(options.worlds, options.businessService, options.ownerUpgradeOrigin,work);
+        const overview = new OwnerOverviewService(options.worlds, options.businessService, options.ownerUpgradeOrigin,work,
+          () => !serviceReady() || manager.list().some(w=>w.blockedReason) ? 'attention' : options.evolution?.quiesced?.() ? 'paused' : 'ready');
         const chat = manager.options.projectRoot && manager.options.isModelConfigured ? new OwnerChatService({projectRoot:manager.options.projectRoot,workspaceRoot:options.workspaceRoot,
           store:manager.registry.control,provider:manager.options.provider,usageMeter:manager.options.usageMeter,modelName:manager.options.modelName,isModelConfigured:Boolean(manager.options.isModelConfigured),
           snapshot:async()=>{

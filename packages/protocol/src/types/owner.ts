@@ -34,7 +34,8 @@ export interface AppCodeReport {
 export interface OwnerWork { tasks: OwnerWorkTask[]; requests: OwnerRecruitRequest[]; codeReports: (Omit<AppCodeReport,'files'> & {paths:string[]})[]; upgradeOrigin?: string; schedulerError?:string }
 export interface OwnerOverview {
   asOf: number;
-  summary: { qianjiCount: number; activeWorlds: number; runningWorlds: number; inboxCount: number; currentGeneration: string | null };
+  summary: { qianjiCount: number; activeWorlds: number; runningWorlds: number; inboxCount: number; currentGeneration: string | null;
+    pixelCount?: number | null; availableEnergy?: number | null; pendingApprovals?: number; serviceStatus?: 'ready' | 'paused' | 'attention' };
   inbox: OwnerInboxItem[]; activity: OwnerActivityItem[]; people: OwnerPerson[];
   alerts?: OwnerAlert[];
   availability: { business: boolean; upgrade: 'available' | 'unavailable' | 'not_configured' };

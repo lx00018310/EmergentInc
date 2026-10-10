@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { OwnerActionCard } from '../src/features/owner/OwnerActionCard';
 import { OwnerConsole } from '../src/features/owner/OwnerConsole';
 import { OwnerInbox } from '../src/features/owner/OwnerInbox';
@@ -10,6 +10,47 @@ const proposal={id:'batch-1',requiresApproval:true as const,action:{type:'qianji
 const response=(data:unknown)=>({ok:true,headers:new Headers({'content-type':'application/json'}),json:async()=>data}) as Response;
 beforeEach(()=>{localStorage.clear();setLanguage('en');window.history.replaceState(null,'','/OWNER');});afterEach(()=>{cleanup();vi.restoreAllMocks();enableWorlds(false);});
 describe('Owner Mission Control',()=>{
+  it('shows six live status values above Boss chat in both languages, retaining values with a stale warning on failure',async()=>{
+    const data={asOf:Date.now(),summary:{currentGeneration:'G0019',pixelCount:45,runningWorlds:2,pendingApprovals:3,availableEnergy:123456,serviceStatus:'ready'},inbox:[],activity:[],availability:{business:true,upgrade:'available'}};
+    const fetch=vi.spyOn(globalThis,'fetch').mockResolvedValue(response(data));
+    vi.useFakeTimers();
+    try {
+    render(<OwnerConsole/>);
+    await act(async()=>{});
+    const table=screen.getByRole('table',{name:'Status overview'});
+    expect(within(table).getByText('G0019')).toBeTruthy();
+    expect(within(table).getAllByRole('row')).toHaveLength(6);
+    expect(within(table).getByRole('row',{name:'Total pixels 45'})).toBeTruthy();
+    expect(within(table).getByRole('row',{name:'Running tasks 2'})).toBeTruthy();
+    expect(within(table).getByRole('row',{name:'Pending approvals 3'})).toBeTruthy();
+    expect(within(table).getByRole('row',{name:'Available energy 123,456'})).toBeTruthy();
+    expect(within(table).getByRole('row',{name:'Service status Ready'})).toBeTruthy();
+    expect(table.compareDocumentPosition(screen.getByRole('textbox'))&Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    act(()=>setLanguage('zh-CN'));
+    expect(screen.getByRole('table',{name:'状态总览'})).toBe(table);
+    expect(within(table).getByRole('row',{name:'服务状态 正常'})).toBeTruthy();
+    for(const name of ['当前运行版本','元胞总数','运行中任务数','待处理审批数','可用能量'])expect(within(table).getByRole('rowheader',{name})).toBeTruthy();
+    fireEvent.click(screen.getByRole('link',{name:/待办事项/}));expect(screen.queryByRole('table')).toBeNull();
+    fireEvent.click(screen.getByRole('link',{name:'Boss'}));
+      fetch.mockResolvedValue(response({...data,summary:{...data.summary,availableEnergy:0,serviceStatus:'paused'}}));
+      await act(async()=>{await vi.advanceTimersByTimeAsync(5000);});
+      expect(within(table).getByRole('row',{name:'可用能量 0'})).toBeTruthy();
+      expect(within(table).getByRole('row',{name:'服务状态 已暂停'})).toBeTruthy();
+      fetch.mockRejectedValue(new Error('connection lost'));
+      await act(async()=>{await vi.advanceTimersByTimeAsync(5000);});
+      expect(screen.getByRole('alert').textContent).toContain('之前显示的数据可能已过期');
+      expect(within(table).getByRole('row',{name:'服务状态 不可用'})).toBeTruthy();
+      expect(within(table).getByRole('row',{name:'元胞总数 45'})).toBeTruthy();
+      act(()=>setLanguage('en'));
+      expect(screen.getByRole('alert').textContent).toContain('Previously displayed data may be stale');
+      fetch.mockResolvedValue(response({...data,summary:{...data.summary,pixelCount:null,availableEnergy:null,serviceStatus:'attention'}}));
+      await act(async()=>{await vi.advanceTimersByTimeAsync(5000);});
+      expect(screen.queryByRole('alert')).toBeNull();
+      expect(within(table).getByRole('row',{name:'Total pixels Unavailable'})).toBeTruthy();
+      expect(within(table).getByRole('row',{name:'Available energy Unavailable'})).toBeTruthy();
+      expect(within(table).getByRole('row',{name:'Service status Needs attention'})).toBeTruthy();
+    } finally {vi.useRealTimers();}
+  });
   it('reports missing source timestamps explicitly in both languages',()=>{
     const content=<OwnerInbox onDone={()=>{}} items={[{id:'unknown',type:'external',title:'External outcome unknown',summary:'Task',priority:'critical',createdAt:null,source:'business_tasks',href:'/GENE?view=business'}]}/>;
     render(content);
