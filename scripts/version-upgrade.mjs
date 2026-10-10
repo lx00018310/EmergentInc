@@ -32,11 +32,22 @@ export function ensureFastForwardable(sha,cwd=root){gitOutput(['merge-base','--i
 /** Safely fast-forwards git main to sha; refuses when main moved, the tree is dirty or the merge is not a fast-forward. */
 export function fastForwardMain(sha,expectedMainHead,cwd=root){
   const head=()=>gitOutput(['rev-parse','main'],{cwd});
-  if(expectedMainHead&&head()!==expectedMainHead)throw new Error('GIT_SYNC_MAIN_MOVED');
+  const previous=head();
+  if(expectedMainHead&&previous!==expectedMainHead)throw new Error('GIT_SYNC_MAIN_MOVED');
   ensureFastForwardable(sha,cwd);
   // Fail closed when main (or any checkout of this repository here) has uncommitted changes: never dirty a developer's tree.
   if(gitOutput(['status','--porcelain'],{cwd}))throw new Error('GIT_SYNC_DIRTY_WORKTREE');
-  gitOutput(['merge','--ff-only',sha],{cwd,timeout:120000});
+  const mainWorktree=gitOutput(['worktree','list','--porcelain'],{cwd}).split(/\r?\n\r?\n/)
+    .find(block=>block.split(/\r?\n/).includes('branch refs/heads/main'));
+  if(mainWorktree){
+    const mainDirectory=mainWorktree.split(/\r?\n/).find(line=>line.startsWith('worktree ')).slice(9);
+    if(gitOutput(['status','--porcelain'],{cwd:mainDirectory}))throw new Error('GIT_SYNC_DIRTY_WORKTREE');
+    if(head()!==previous)throw new Error('GIT_SYNC_MAIN_MOVED');
+    gitOutput(['merge','--ff-only',sha],{cwd:mainDirectory,timeout:120000});
+  }else{
+    // Compare-and-swap the un-checked-out main ref; never merge into the developer's current branch.
+    gitOutput(['update-ref','refs/heads/main',sha,previous],{cwd});
+  }
   if(head()!==sha)throw new Error('GIT_SYNC_INCOMPLETE');
 }
 /** Creates a detached worktree of the pinned sha under the maintenance state directory. */
@@ -54,7 +65,7 @@ function preparePinnedCommit(shaInput){
   if(fs.existsSync(worktree))throw new Error('GIT_WORKTREE_PATH_EXISTS');
   fs.mkdirSync(path.dirname(worktree),{recursive:true});
   try{gitOutput(['worktree','add','--detach',worktree,sha],{timeout:120000});}
-  catch(error){fs.rmSync(path.dirname(worktree),{recursive:true,force:true});throw error;}
+  catch(error){fs.rmSync(worktree,{recursive:true,force:true});throw error;}
   return {sourceDirectory:worktree,sourceCommit:sha,mainHeadAtPrepare:mainHead};
 }
 export async function versionUpgrade(args){

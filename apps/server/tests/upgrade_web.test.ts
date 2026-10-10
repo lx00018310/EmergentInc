@@ -322,6 +322,56 @@ function gitRepo(){
 }
 
 describe('V27 dual-tree git upgrade', () => {
+  it.each(['zh-CN','en'])('opens a pinned-commit preparation form, requires a reason, cancels safely and submits the selected SHA (%s)',async lang=>{
+    const repo=gitRepo(),f=await fixture(),app=await createUpgradeWeb({root:repo.directory,config:{stateDirectory:f.directory},secret:f.secret,runCommand:f.run,status:()=>f.data,checkRunning:f.checkRunning});cleanups.push(()=>app.close());
+    fs.mkdirSync(path.join(repo.directory,'resources'));fs.copyFileSync(path.resolve('resources/upgrade-web.html'),path.join(repo.directory,'resources/upgrade-web.html'));
+    const login=await app.inject({method:'POST',url:'/api/login',payload:{secret:f.secret}}),cookie=String(login.headers['set-cookie']).split(';')[0];
+    const {doc,poll}=await page({...f,app,cookie},lang);
+    doc.querySelector(`#commit-list [data-sha="${repo.first}"]`).click();await vi.waitFor(()=>expect(doc.getElementById('prepare-commit').disabled).toBe(false));
+    expect(doc.getElementById('selected-meta').textContent).toContain(lang==='en'?'commits not yet on main (1)':'未进入 main 的提交 (1)');
+    doc.getElementById('prepare-commit').click();expect(doc.getElementById('commit-dialog').open).toBe(true);expect(doc.getElementById('commit-target').textContent).toBe(repo.first);
+    doc.getElementById('commit-form').requestSubmit();expect(f.run).not.toHaveBeenCalled();expect(doc.getElementById('commit-dialog').open).toBe(true);
+    doc.getElementById('commit-cancel').click();expect(doc.getElementById('commit-dialog').open).toBe(false);expect(f.run).not.toHaveBeenCalled();
+    doc.getElementById('prepare-commit').click();doc.getElementById('commit-version').value='Pinned UI test';doc.getElementById('commit-reason').value='Review this exact commit';doc.getElementById('commit-form').requestSubmit();
+    await vi.waitFor(()=>expect(f.run).toHaveBeenCalledOnce());expect(f.run.mock.calls[0][1]).toEqual(['prepare','Pinned UI test','Review this exact commit','--commit',repo.first]);
+    await vi.waitFor(()=>expect(doc.getElementById('prepare-commit').disabled).toBe(false));
+    fs.writeFileSync(path.join(f.directory,'operator.lock'),JSON.stringify({pid:process.pid}));await poll();expect(doc.getElementById('prepare-commit').disabled).toBe(true);expect(doc.getElementById('commit-confirm').disabled).toBe(true);
+    fs.unlinkSync(path.join(f.directory,'operator.lock'));await poll();expect(doc.getElementById('prepare-commit').disabled).toBe(false);
+    doc.getElementById('prepare-commit').click();doc.getElementById('logout').click();await vi.waitFor(()=>expect(doc.getElementById('login').hidden).toBe(false));expect(doc.getElementById('commit-dialog').open).toBe(false);
+    doc.getElementById('secret').value=f.secret;doc.getElementById('login-form').requestSubmit();await vi.waitFor(()=>expect(doc.getElementById('content').hidden).toBe(false));await poll();expect(doc.getElementById('selected-commit').hidden).toBe(true);
+  },30000);
+
+  it('ignores an older commit response and disables stale details after graph refresh fails',async()=>{
+    const repo=gitRepo(),f=await fixture(),app=await createUpgradeWeb({root:repo.directory,config:{stateDirectory:f.directory},secret:f.secret,runCommand:f.run,status:()=>f.data,checkRunning:f.checkRunning});cleanups.push(()=>app.close());
+    fs.mkdirSync(path.join(repo.directory,'resources'));fs.copyFileSync(path.resolve('resources/upgrade-web.html'),path.join(repo.directory,'resources/upgrade-web.html'));
+    const login=await app.inject({method:'POST',url:'/api/login',payload:{secret:f.secret}}),cookie=String(login.headers['set-cookie']).split(';')[0],{dom,doc}=await page({...f,app,cookie},'en');
+    const original=dom.window.fetch;let release!:(value:any)=>void;
+    dom.window.fetch=async(url:string,init:any={})=>url==='/api/git-commit/'+repo.first?new Promise(resolve=>{release=resolve;}):original(url,init);
+    doc.querySelector(`#commit-list [data-sha="${repo.first}"]`).click();doc.querySelector(`#commit-list [data-sha="${repo.tip}"]`).click();await vi.waitFor(()=>expect(doc.getElementById('prepare-commit').disabled).toBe(false));
+    const late=readGitCommit(repo.directory,repo.first);late.commit.author='Late response';release({ok:true,status:200,json:async()=>late});await new Promise(resolve=>setTimeout(resolve,0));
+    expect(doc.getElementById('selected-sha').textContent).toContain(repo.tip.slice(0,12));expect(doc.getElementById('selected-meta').textContent).not.toContain('Late response');
+    let fail=true;dom.window.fetch=async(url:string,init:any={})=>{if(url==='/api/git-graph'&&fail){fail=false;throw new Error('Network lost');}return original(url,init);};
+    doc.getElementById('refresh-graph').click();await vi.waitFor(()=>expect(doc.getElementById('git-unavailable').hidden).toBe(false));expect(doc.getElementById('prepare-commit').disabled).toBe(true);
+    doc.getElementById('refresh-graph').click();await vi.waitFor(()=>expect(doc.getElementById('prepare-commit').disabled).toBe(false));expect(doc.getElementById('git-unavailable').hidden).toBe(true);
+  },30000);
+
+  it('fast-forwards main from a development checkout without changing the checked-out branch',()=>{
+    const repo=gitRepo();repo.run('checkout','feature/skills');const current=repo.run('rev-parse','HEAD');
+    fastForwardMain(repo.tip,repo.base,repo.directory);expect(repo.run('rev-parse','main')).toBe(repo.tip);expect(repo.run('branch','--show-current')).toBe('feature/skills');expect(repo.run('rev-parse','HEAD')).toBe(current);expect(repo.run('status','--porcelain')).toBe('');
+  },30000);
+
+  it('updates a separately checked-out main worktree and refuses its uncommitted changes',()=>{
+    const repo=gitRepo();repo.run('checkout','feature/skills');const mainDirectory=fs.mkdtempSync(path.join(tmpdir(),'upgrade-main-checkout-'));
+    repo.run('worktree','add',mainDirectory,'main');cleanups.push(async()=>{repo.run('worktree','remove','--force',mainDirectory);});
+    fs.writeFileSync(path.join(mainDirectory,'dirty.txt'),'Keep owner work');expect(()=>fastForwardMain(repo.tip,repo.base,repo.directory)).toThrow('GIT_SYNC_DIRTY_WORKTREE');expect(repo.run('rev-parse','main')).toBe(repo.base);fs.unlinkSync(path.join(mainDirectory,'dirty.txt'));
+    fastForwardMain(repo.tip,repo.base,repo.directory);expect(fs.readFileSync(path.join(mainDirectory,'file.txt'),'utf8')).toBe('polish SKILL.md');expect(repo.run('branch','--show-current')).toBe('feature/skills');expect(repo.run('rev-parse','main')).toBe(repo.tip);
+  },30000);
+
+  it('reports divergent ahead/behind counts and merge file changes against the first parent',()=>{
+    const repo=gitRepo();repo.commit('main advances','main.txt');const detail=readGitCommit(repo.directory,repo.tip);expect(detail.fastForwardable).toBe(false);expect(detail.ahead).toBe(2);expect(detail.behind).toBe(1);
+    repo.run('-c','user.name=Tester','-c','user.email=t@example.com','merge','--no-ff','feature/skills','-m','merge for details');const merged=readGitCommit(repo.directory,repo.run('rev-parse','HEAD'));expect(merged.files).toEqual([{status:'M',name:'file.txt'}]);expect(readGitCommit(repo.directory,repo.run('rev-list','--max-parents=0','main')).files).toEqual([]);
+  },30000);
+
   it.each(['zh-CN','en'])('draws the same forks and merges with opposite main membership and retains real release identity (%s)',async lang=>{
     const repo=gitRepo();repo.run('checkout','-b','feature/unmerged');const side=repo.commit('unmerged development','side.txt');
     repo.run('checkout','main');repo.commit('main work','main.txt');repo.run('-c','user.name=Tester','-c','user.email=t@example.com','merge','--no-ff','feature/skills','-m','merge skills');
@@ -386,7 +436,7 @@ describe('V27 dual-tree git upgrade', () => {
     // No repo: graph reports unavailable instead of crashing; release status still works.
     const empty=fs.mkdtempSync(path.join(tmpdir(),'upgrade-nogit-'));cleanups.push(()=>fs.rmSync(empty,{recursive:true,force:true}));
     expect(readGitGraph(empty).available).toBe(false);
-  });
+  },30000);
 
   it('prepares a candidate from a pinned fast-forwardable commit and refuses diverged or invalid SHAs',async()=>{
     const repo=gitRepo();
@@ -435,7 +485,7 @@ describe('V27 dual-tree git upgrade', () => {
     expect(repo.run('rev-parse','main')).toBe(beyond);
     // A non-fast-forwardable target is refused and main is untouched.
     const divergedRepo=gitRepo();divergedRepo.run('checkout','-b','side');const side=divergedRepo.commit('side work','side.txt');
-    divergedRepo.commit('main advanced','main-file.txt');
+    divergedRepo.run('checkout','main');divergedRepo.commit('main advanced','main-file.txt');
     expect(()=>fastForwardMain(side,divergedRepo.base,divergedRepo.directory)).toThrow();
     expect(divergedRepo.run('rev-parse','main')).not.toBe(side);
   },30000);

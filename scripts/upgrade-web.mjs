@@ -107,11 +107,12 @@ export function readGitCommit(root, shaInput) {
   let ahead=0,behind=0,fastForwardable=false,mainHead=null;
   try{mainHead=execFileSync('git',['rev-parse','main'],{cwd:root,encoding:'utf8',windowsHide:true,timeout:10000}).trim();
     ensureFastForwardable(shaInput,root);fastForwardable=true;}catch{fastForwardable=false;}
-  if(mainHead&&fastForwardable){
+  if(mainHead){
     const counts=gitText(root,['rev-list','--left-right','--count',`${mainHead}...${shaInput}`]);
     if(counts!==null){const parts=counts.trim().split(/\s+/);behind=Number(parts[0]);ahead=Number(parts[1]);}
   }
-  const raw=gitText(root,['diff','--name-status',`${shaInput}^!`]);
+  const parentList=parents?parents.split(' ').filter(Boolean):[];
+  const raw=gitText(root,parentList.length?['diff','--name-status',parentList[0],shaInput]:['diff-tree','--root','--no-commit-id','--name-status','-r',shaInput]);
   const included=fastForwardable?gitText(root,['log','--pretty=format:%H',`${mainHead}..${shaInput}`]):null;
   const files=raw!==null?raw.trim()?raw.trim().split(/\r?\n/).map(line=>{const status=line.slice(0,1);const name=line.slice(1).trim();return {status,name};}):[]:null;
   return {commit:{sha,parents:parents?parents.split(' ').filter(Boolean):[],subject:String(subject??''),author:String(author??''),time:Number(time??0)},
