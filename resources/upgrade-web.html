@@ -60,7 +60,7 @@ function render(data){snapshot=data;$('busy-state').hidden=!(data.busy||sending)
  const key=JSON.stringify([lang,data.active?.id,data.versions,data.candidates,data.busy,sending]);
  if(key!==cardsRenderKey){cardsRenderKey=key;renderCards(data);}
  renderGraph(data);
- renderSelectedCommit();$('commit-confirm').disabled=Boolean(data.busy||sending);
+ $('prepare-commit').disabled=selectedLoading||!selectedDetail?.fastForwardable||Boolean(data.busy||sending);$('commit-confirm').disabled=Boolean(data.busy||sending);
  renderMaintenance();
 }
 function renderCards(data){const history=$('history');history.replaceChildren();

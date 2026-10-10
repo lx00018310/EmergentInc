@@ -334,6 +334,7 @@ describe('V27 dual-tree git upgrade', () => {
     const login=await app.inject({method:'POST',url:'/api/login',payload:{secret:f.secret}}),cookie=String(login.headers['set-cookie']).split(';')[0];
     const {doc,poll}=await page({...f,app,cookie},lang);
     doc.querySelector(`#commit-list [data-sha="${repo.first}"]`).click();await vi.waitFor(()=>expect(doc.getElementById('prepare-commit').disabled).toBe(false));
+    const meta=doc.getElementById('selected-meta').firstChild,files=doc.querySelector('#selected-files .file-list');files.scrollTop=30;await poll();expect(doc.getElementById('selected-meta').firstChild).toBe(meta);expect(files.scrollTop).toBe(30);
     expect(doc.getElementById('selected-meta').textContent).toContain(lang==='en'?'commits not yet on main (1)':'未进入 main 的提交 (1)');
     doc.getElementById('prepare-commit').click();expect(doc.getElementById('commit-dialog').open).toBe(true);expect(doc.getElementById('commit-target').textContent).toBe(repo.first);
     doc.getElementById('commit-form').requestSubmit();expect(f.run).not.toHaveBeenCalled();expect(doc.getElementById('commit-dialog').open).toBe(true);
