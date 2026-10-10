@@ -322,6 +322,47 @@ function gitRepo(){
 }
 
 describe('V27 dual-tree git upgrade', () => {
+  it.each(['zh-CN','en'])('draws the same forks and merges with opposite main membership and retains real release identity (%s)',async lang=>{
+    const repo=gitRepo();repo.run('checkout','-b','feature/unmerged');const side=repo.commit('unmerged development','side.txt');
+    repo.run('checkout','main');repo.commit('main work','main.txt');repo.run('-c','user.name=Tester','-c','user.email=t@example.com','merge','--no-ff','feature/skills','-m','merge skills');
+    const graph=readGitGraph(repo.directory),mainMembers=new Set(repo.run('rev-list','main').split(/\r?\n/)),merge=graph.commits.find((c:any)=>c.parents.length===2);
+    const f=await fixture();f.data.versions.push({id:'G0008',generation_no:8,parent_id:'G0007',release_id:'local-v24-test',label:'Running old source',state:'ACTIVE'});f.data.candidates[0].request.owner_release.source_commit=repo.base;
+    const responses:any={'/api/git-graph':graph,['/api/git-commit/'+side]:readGitCommit(repo.directory,side)};
+    const {dom,doc}=await page(f,lang,'',responses);
+    for(const commit of graph.commits){
+      const left=doc.querySelector(`#release-list [data-sha="${commit.sha}"]`),right=doc.querySelector(`#commit-list [data-sha="${commit.sha}"]`);
+      expect(left.classList.contains('focused')).toBe(mainMembers.has(commit.sha));expect(right.classList.contains('focused')).toBe(!mainMembers.has(commit.sha));
+      expect(left.classList.contains('muted')).toBe(!mainMembers.has(commit.sha));expect(right.classList.contains('muted')).toBe(mainMembers.has(commit.sha));
+      const a=doc.querySelector(`#release-tree circle[data-sha="${commit.sha}"]`),b=doc.querySelector(`#git-tree circle[data-sha="${commit.sha}"]`);
+      expect([a.getAttribute('cx'),a.getAttribute('cy')]).toEqual([b.getAttribute('cx'),b.getAttribute('cy')]);
+      for(const parent of commit.parents){expect(doc.querySelector(`#release-tree path[data-child="${commit.sha}"][data-parent="${parent}"]`)).not.toBeNull();expect(doc.querySelector(`#git-tree path[data-child="${commit.sha}"][data-parent="${parent}"]`)).not.toBeNull();}
+    }
+    expect(doc.querySelectorAll(`#release-tree path[data-child="${merge.sha}"]`)).toHaveLength(2);
+    const parentX=merge.parents.map((sha:string)=>doc.querySelector(`#release-tree circle[data-sha="${sha}"]`).getAttribute('cx'));expect(new Set(parentX).size).toBe(2);
+    expect(doc.querySelector(`#release-list [data-sha="${repo.base}"]`).textContent).toContain(lang==='en'?'G0008 · Running':'G0008 · 当前运行');
+    expect(doc.querySelector(`#release-list [data-sha="${graph.mainHead}"]`).textContent).not.toContain('G0008');expect(doc.querySelector('.release-lineage path[data-child="G0008"][data-parent="G0007"]')).not.toBeNull();
+    doc.querySelector(`#commit-list [data-sha="${side}"]`).dispatchEvent(new dom.window.KeyboardEvent('keydown',{key:'Enter',bubbles:true}));
+    await vi.waitFor(()=>expect(doc.getElementById('selected-meta').textContent).toContain('Tester'));expect(doc.querySelectorAll('.commit.selected')).toHaveLength(2);expect(f.run).not.toHaveBeenCalled();
+    const scroll=doc.querySelector('#git-tree .graph-scroll');scroll.scrollTop=156;scroll.scrollLeft=20;scroll.dispatchEvent(new dom.window.Event('scroll'));expect(doc.querySelector('#release-tree .graph-scroll').scrollTop).toBe(156);doc.getElementById(lang==='en'?'zh':'en').click();
+    expect(scroll.scrollTop).toBe(156);expect(scroll.scrollLeft).toBe(20);expect(doc.getElementById('refresh-graph').textContent).toBe(lang==='en'?'刷新提交图':'Refresh commits');
+    expect(doc.getElementById('selected-meta').textContent).toContain(lang==='en'?'作者: Tester':'Author: Tester');
+    repo.run('-c','user.name=Tester','-c','user.email=t@example.com','merge','--no-ff','feature/unmerged','-m','merge remaining development');responses['/api/git-graph']=readGitGraph(repo.directory);doc.getElementById('refresh-graph').click();
+    await vi.waitFor(()=>expect(doc.querySelector(`#commit-list [data-sha="${side}"]`).classList.contains('muted')).toBe(true));expect(doc.querySelector(`#release-list [data-sha="${side}"]`).classList.contains('focused')).toBe(true);
+  },30000);
+
+  it('keeps a truncated development window accurate when main is outside the visible commits and marks continuation edges',async()=>{
+    const repo=gitRepo(),graph=readGitGraph(repo.directory,2),f=await fixture();expect(graph.commits.map((c:any)=>c.sha)).not.toContain(graph.mainHead);
+    const {doc}=await page(f,'en','',{'/api/git-graph':graph});
+    expect(doc.querySelectorAll('#release-list .focused')).toHaveLength(0);expect(doc.querySelectorAll('#commit-list .focused')).toHaveLength(2);expect(doc.querySelector('#git-tree path.continuation')).not.toBeNull();expect(doc.getElementById('graph-window').textContent).toContain('latest 2 commits');
+  });
+
+  it.each(['zh-CN','en'])('retains release lineage without git and avoids claiming membership without main (%s)',async lang=>{
+    const f=await fixture(),responses={'/api/git-graph':{available:false}};const {doc}=await page(f,lang,'',responses);
+    expect(doc.getElementById('git-unavailable').hidden).toBe(false);expect(doc.querySelectorAll('#lineage-list li')).toHaveLength(1);expect(doc.getElementById('main-unavailable').hidden).toBe(true);
+    responses['/api/git-graph']={available:true,mainHead:null,refs:[],commits:[{sha:'a'.repeat(40),parents:[],subject:'No main',author:'Tester',time:0}]} as any;
+    doc.getElementById('refresh-graph').click();await vi.waitFor(()=>expect(doc.getElementById('main-unavailable').hidden).toBe(false));expect(doc.querySelectorAll('.commit.focused')).toHaveLength(0);expect(doc.querySelector('#commit-list li').dataset.membership).toBe('unknown');
+  });
+
   it('exposes a bounded read-only graph and commit details with FF feasibility, but only after login',async()=>{
     const repo=gitRepo(),f=await fixture();
     const graphApp=await createUpgradeWeb({root:repo.directory,config:{stateDirectory:f.directory},secret:f.secret,runCommand:f.run,status:()=>f.data,checkRunning:f.checkRunning});

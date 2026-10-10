@@ -38,7 +38,7 @@ function DecisionButtons({item,onDone}:{item:OwnerInboxItem;onDone:()=>void}){
 }
 export function OwnerInbox({items,onDone}:{items:OwnerInboxItem[];onDone:()=>void}){
   useLanguage();
-  return <section className="owner-inbox" id="owner-inbox" tabIndex={-1}><h2>{t('Inbox')} ({items.length})</h2><p>{t('Only decisions, missing resources and unresolved outcomes appear here.')}</p>
+  return <section className="owner-inbox" id="owner-inbox" tabIndex={-1}><h2>{t('To-dos')} ({items.length})</h2><p>{t('Only decisions, missing resources and unresolved outcomes appear here.')}</p>
     {!items.length&&<p>{t('No decisions pending.')}</p>}
     {items.map(i=>{const pair=pairOf(i);return <article key={i.id} className={i.priority==='critical'?'critical':''}><h3>{t(i.title)}</h3><p>{i.type==='run'?i.summary.replace(/\b[A-Z_]+\b/g,code=>statuses[code]?t(statuses[code]!):code):i.summary}</p>
       {i.priority==='critical'&&<strong>{t('Needs verification')}</strong>}<small>{i.source} · {i.createdAt===null?t('Time not recorded.'):new Date(i.createdAt).toLocaleString()}</small>
