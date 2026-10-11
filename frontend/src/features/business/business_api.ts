@@ -9,6 +9,8 @@ export const explanations: Record<string, string> = {
   get MODEL_PLAN_INVALID_COST_RECORDED() { return tr("模型未返回有效方案，已发生费用已记账。请修改方向后重新拟定。"); },
   get INVALID_BUSINESS_PLAN() { return tr("模型方案未通过范围与格式校验，费用已记录。请修改方向后重新拟定。"); },
   get APPROVAL_VERSION_CONFLICT() { return tr("方案已更新，请刷新后批准当前版本。"); },
+  get PROPOSAL_GENERATION_CHANGED() { return tr("PROPOSAL_GENERATION_CHANGED"); },
+  get PROPOSAL_NOT_PENDING() { return tr("PROPOSAL_NOT_PENDING"); },
   get INVALID_OWNER_SECRET() { return tr("登录口令不正确。"); }, get LOGIN_RATE_LIMITED() { return tr("尝试次数过多，请一分钟后再试。"); },
   get DATASET_REQUIRED() { return tr("请先上传该请求指定的资料。"); }, get INVALID_BUDGET() { return tr("请检查金额、次数与有效期。"); },
   get DECISION_ALREADY_RUNNING() { return tr("Pixel 正在拟定另一份方案，请稍后重试。"); },

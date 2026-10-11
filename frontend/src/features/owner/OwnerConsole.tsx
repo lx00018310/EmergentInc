@@ -4,9 +4,10 @@ import { fetchOwnerOverview, ownerError, ownerTodoCount, type OwnerOverview } fr
 import { OwnerChat } from './OwnerChat';
 import { OwnerInbox } from './OwnerInbox';
 import { OwnerActivity } from './OwnerActivity';
+import { OwnerWork } from './OwnerWork';
 import './owner.css';
 type OwnerTab='owner-mission'|'owner-inbox'|'owner-activity';
-const parseHash=():OwnerTab=>window.location.hash==='#owner-activity'?'owner-activity':window.location.hash==='#owner-inbox'?'owner-inbox':'owner-mission';
+const parseHash=():OwnerTab=>window.location.hash==='#owner-activity'?'owner-activity':window.location.hash==='#owner-inbox'?'owner-inbox':!window.location.hash&&new URLSearchParams(window.location.search).has('report')?'owner-activity':'owner-mission';
 function OwnerStatusOverview({data,error}:{data?:OwnerOverview;error:string}) {
   const summary=data?.summary, unavailable=t('Unavailable');
   const number=(value:number|null|undefined)=>value==null?unavailable:value.toLocaleString(language());
@@ -31,11 +32,19 @@ export function OwnerConsole(){
   useLanguage();
   const [data,setData]=useState<OwnerOverview>(),[error,setError]=useState(''),[tab,setTab]=useState<OwnerTab>(parseHash);
   const latestRequest=useRef(0);
+  const focusedReport=useRef<string|null>(null);
   const refresh=useCallback(async()=>{
     const request=++latestRequest.current;
     try{const d=await fetchOwnerOverview();if(request===latestRequest.current&&d&&typeof d==='object'&&Array.isArray(d.inbox)&&typeof d.asOf==='number'){setData(d);setError('');}}
     catch(e){if(request===latestRequest.current)setError(ownerError(e));}
   },[]);
+  useEffect(()=>{
+    if(tab!=='owner-activity'){focusedReport.current=null;return;}
+    const report=new URLSearchParams(window.location.search).get('report');
+    if(!report||focusedReport.current===report)return;
+    const target=document.getElementById(report);
+    if(target){target.querySelector('details')?.setAttribute('open','');target.scrollIntoView?.({block:'start'});focusedReport.current=report;}
+  },[tab,data?.work]);
   useEffect(()=>{let inFlight=false;const poll=async()=>{if(inFlight)return;inFlight=true;try{await refresh();}finally{inFlight=false;}};void poll();const timer=setInterval(()=>void poll(),5000);return()=>{latestRequest.current++;clearInterval(timer);};},[refresh]);
   useEffect(()=>{
     const sync=()=>setTab(parseHash());
@@ -64,7 +73,7 @@ export function OwnerConsole(){
         {data&&<>
           {tab==='owner-inbox'?<>
             <OwnerInbox items={data.inbox} alerts={data.alerts} onDone={()=>void refresh()}/>
-          </>:<OwnerActivity items={data.activity}/>}
+          </>:<><OwnerActivity items={data.activity}/><OwnerWork work={data.work}/></>}
         </>}
       </div>}
     </div>

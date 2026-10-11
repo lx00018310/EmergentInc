@@ -56,6 +56,25 @@ describe("V22 Owner API and real candidate server", () => {
     const idempotent = await app.inject({ method: "POST", url: `/api/evolution/proposals/${proposal.id}/decision`, headers: { cookie }, payload: { decision: "APPROVED" } });
     expect(idempotent.json().state).toBe("APPROVED");
   });
+  it("refuses old-generation decisions after a generation switch, with or without request pins", async () => {
+    const root = mkdtempSync(join(tmpdir(), "evolution-stale-")); cleanup.push(() => rmSync(root, { recursive: true, force: true }));
+    const genome = readGenome(resolve(".")), life = LifeContext.open(root, genome.manifest, genome.geneHash, "r1"); cleanup.push(() => life.close());
+    const business = new BusinessService(life.lineage);
+    const old = life.lineage.proposeGene("G0001", "owner", { point: "Old direction", reason: "Test", effect: "Next generation" }, "stale-direction");
+    life.lineage.db.prepare("UPDATE generations SET state='RETIRED' WHERE id='G0001'").run();
+    life.lineage.createGeneration({ id: "G0002", number: 2, parentId: "G0001", geneHash: genome.geneHash, releaseId: "r2", state: "ACTIVE" });
+    const app = await createServer({ workspaceRoot: root, runtimeMode: "business", businessService: business,
+      ownerAuth: { secret: "a".repeat(32), secureCookies: false }, evolution: { life, body: new BodyGrowthService(life), dream: new DreamService(life), memoryGate: new MemoryGate(life.lineage, () => "G0002") } });
+    cleanup.push(() => app.close());
+    const login = await app.inject({ method: "POST", url: "/api/login", payload: { secret: "a".repeat(32) } });
+    const cookie = String(login.headers["set-cookie"]).split(";")[0]!;
+    for (const decision of ["APPROVED", "REJECTED"]) for (const pins of [{}, { expectedGeneration: "G0001", expectedState: "PROPOSED" }]) {
+      const response = await app.inject({ method: "POST", url: `/api/evolution/proposals/${old.id}/decision`, headers: { cookie }, payload: { decision, ...pins } });
+      expect(response.json()).toMatchObject({ detail: "PROPOSAL_GENERATION_CHANGED" });expect(response.statusCode).toBe(409);
+      expect(life.lineage.proposal(String(old.id)).state).toBe("PROPOSED");
+    }
+  });
+
   it("starts the actual compiled candidate with isolated dual databases, auth and side-effect gates", async () => {
     const root = mkdtempSync(join(tmpdir(), "real-candidate-")); cleanup.push(() => rmSync(root, { recursive: true, force: true }));
     const release = resolve("."), genome = readGenome(release), life = LifeContext.open(root, genome.manifest, genome.geneHash, "v22-initial");

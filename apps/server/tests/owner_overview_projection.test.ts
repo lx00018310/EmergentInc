@@ -97,8 +97,8 @@ describe('V28 Owner projection: decisions versus alerts', () => {
     const overview = await f.service.overview();
     const plan = overview.inbox.find(i => i.id === `plan:${planId}`);
     expect(plan).toBeTruthy();
-    expect(plan!.approveEffect).toContain('R1');
-    expect(plan!.rejectEffect).toContain('R1');
+    expect(plan!.approveEffect).toContain('R{0}');expect(plan!.approveEffectValues).toEqual([1,'1.0000']);
+    expect(plan!.rejectEffect).toContain('R{0}');expect(plan!.rejectEffectValues).toEqual([1]);
     expect(plan!.actions!.map(p => p.action.type).sort()).toEqual(['business_plan_approve', 'business_plan_reject']);
     expect(plan!.actions![0]!.action).toMatchObject({ plan: { id: planId, revision: 1, hash: 'a'.repeat(64) } });
     expect(Array.isArray(overview.inbox)).toBe(true);

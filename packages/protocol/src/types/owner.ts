@@ -13,6 +13,7 @@ export interface OwnerInboxItem {
   title: string; summary: string; priority: 'normal' | 'critical'; createdAt: number | null;
   source: string; href: string; actions?: OwnerActionProposal[];
   approveEffect?: string; rejectEffect?: string;
+  approveEffectValues?: (string | number)[]; rejectEffectValues?: (string | number)[];
 }
 export interface OwnerAlert { id: string; kind: string; severity: 'normal' | 'critical'; title: string; summary: string; createdAt: number | null; source: string; href: string }
 export interface OwnerActivityItem { id: string; type: string; summary: string; createdAt: number; source: string; href: string }

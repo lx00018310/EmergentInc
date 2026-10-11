@@ -10,6 +10,47 @@ const proposal={id:'batch-1',requiresApproval:true as const,action:{type:'qianji
 const response=(data:unknown)=>({ok:true,headers:new Headers({'content-type':'application/json'}),json:async()=>data}) as Response;
 beforeEach(()=>{localStorage.clear();setLanguage('en');window.history.replaceState(null,'','/OWNER');});afterEach(()=>{cleanup();vi.restoreAllMocks();enableWorlds(false);});
 describe('Owner Mission Control',()=>{
+  it.each(['en','zh-CN'] as const)('opens a source report from its detail URL and exposes read-only review and upgrade links (%s)',async lang=>{
+    setLanguage(lang);window.history.replaceState(null,'','/OWNER?report=code_test');
+    const report={schema:1 as const,id:'code_test',hash:'b'.repeat(64),worldId:'w1',pixelId:'0_0_0',personName:'Tester',title:'Review this source',summary:'Inspect the patch',baseGeneration:'G0001',baseRelease:'r1',createdAt:1,
+      files:[{path:'file.ts',content:'export const reviewed = true;',baseHash:null}]};
+    const data={asOf:Date.now(),summary:{currentGeneration:'G0001'},inbox:[],activity:[],availability:{business:true,upgrade:'available'},
+      work:{tasks:[],requests:[],codeReports:[{...report,paths:['file.ts']}],upgradeOrigin:'http://127.0.0.1:8766'}};
+    const fetch=vi.spyOn(globalThis,'fetch').mockImplementation(async input=>response(String(input)==='/api/owner/code-reports/code_test'?report:data));
+    render(<OwnerConsole/>);
+    const load=await screen.findByRole('button',{name:lang==='en'?'Load complete source report':'读取完整源码报告'});
+    expect(screen.getByRole('link',{name:lang==='en'?'History':'历史记录'}).getAttribute('aria-current')).toBe('page');
+    expect((document.getElementById(report.id)!.querySelector('details') as HTMLDetailsElement).open).toBe(true);
+    fireEvent.click(load);await screen.findByText('export const reviewed = true;');
+    expect(fetch.mock.calls.some(c=>String(c[0])==='/api/owner/code-reports/code_test')).toBe(true);
+    const upgrade=screen.getByRole('link',{name:lang==='en'?'Open independent upgrade review':'打开独立软件升级审查'});
+    expect(upgrade.getAttribute('href')).toBe(`http://127.0.0.1:8766/?report=code_test&reportHash=${report.hash}`);
+    expect(fetch.mock.calls.some(c=>String(c[0]).includes('/api/upgrades'))).toBe(false);
+    fireEvent.click(screen.getByRole('link',{name:'Boss'}));expect(screen.queryByText('Review this source')).toBeNull();
+  });
+  it('translates plan, resource, recruitment and Gene decision effects while preserving their parameters',()=>{
+    const effects=[
+      {type:'plan',approve:'Authorizes revision R{0} exactly as displayed: budget ¥{1}, its tasks and permitted external writes. Execution follows afterwards; approving is not completing the plan.',approveValues:[7,'2.5000'],reject:'Stops this pending revision R{0}; its tasks will not be authorized.',rejectValues:[7],types:['business_plan_approve','business_plan_reject']},
+      {type:'resource',approve:'Confirms that {0} already exists and is usable, so the waiting tasks may continue.',approveValues:['crm:leads'],reject:'Rejects this resource request and stops the whole associated plan {0}, not just this item.',rejectValues:['Pilot'],types:['resource_provided','resource_reject']},
+      {type:'recruit',approve:'Creates one person with this role and dispatches the initial task; model calls consume tokens; publication needs separate approval.',reject:'Stops this recruitment request; no person is created.',types:['recruit_approve','recruit_reject']},
+      {type:'gene',approve:'Approves this direction only. Candidate freezing, privacy review and the exact-hash publication still require separate approvals before any new generation is born.',reject:'Rejects this direction; it stops advancing in the current generation.',types:['gene_proposal_approve','gene_proposal_reject']},
+    ];
+    render(<OwnerInbox onDone={()=>{}} items={effects.map((e,index)=>({id:String(index),type:e.type,title:e.type,summary:'Decision',priority:'normal',createdAt:1,source:'test',href:'/GENE',
+      approveEffect:e.approve,approveEffectValues:e.approveValues,rejectEffect:e.reject,rejectEffectValues:e.rejectValues,actions:e.types.map(type=>({id:type,requiresApproval:true,action:{type}}))})) as any}/>);
+    expect(screen.getByText(/Authorizes revision R7 exactly as displayed: budget ¥2.5000/)).toBeTruthy();
+    expect(screen.getByText(/Confirms that crm:leads already exists/)).toBeTruthy();
+    expect(screen.getByText(/whole associated plan Pilot/)).toBeTruthy();
+    act(()=>setLanguage('zh-CN'));
+    expect(screen.getByText(/批准当前展示的 R7 修订：预算 ¥2.5000/)).toBeTruthy();
+    expect(screen.getByText(/停止待审批的 R7 修订/)).toBeTruthy();
+    expect(screen.getByText(/确认资源 crm:leads 已经存在且可用/)).toBeTruthy();
+    expect(screen.getByText(/停止整个关联方案 Pilot/)).toBeTruthy();
+    expect(screen.getByText(/按该职责创建一位人物并派发初始任务/)).toBeTruthy();
+    expect(screen.getByText(/停止本次招募请求，不创建人物/)).toBeTruthy();
+    expect(screen.getByText(/候选冻结、隐私审查和准确哈希发布仍需各自批准/)).toBeTruthy();
+    expect(screen.getByText(/拒绝此方向，停止它在当前代中的推进/)).toBeTruthy();
+    expect(document.body.textContent).not.toMatch(/\{\d+\}|Authorizes|Confirms that|Creates one person|Rejects this/);
+  });
   it('shows six live status values above Boss chat in both languages, retaining values with a stale warning on failure',async()=>{
     const data={asOf:Date.now(),summary:{currentGeneration:'G0019',pixelCount:45,runningWorlds:2,pendingApprovals:3,availableEnergy:123456,serviceStatus:'ready'},inbox:[],activity:[],availability:{business:true,upgrade:'available'}};
     const fetch=vi.spyOn(globalThis,'fetch').mockResolvedValue(response(data));

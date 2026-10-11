@@ -81,6 +81,18 @@ describe('V26 Pixel Skills: minimal discovery and reading', () => {
     await expectFailure(toolRuntime.execute('LIST_SKILLS', {}, { ...ctxOf('C:\\\\other'), pixelId: 'bad id' }), 'WORLD_TOOL_CONTEXT_CONFLICT');
   });
 
+  it('diagnoses invalid skill filenames instead of listing refs that cannot be read', async () => {
+    const f = fixture(), { runtime, toolRuntime } = await runtimeFor(f), ctx = ctxOf(runtime.directory);
+    for (const filename of ['customer.v2.skill.md', 'customer discovery.skill.md', 'customer-discovery.skill.md'])
+      expect((await toolRuntime.execute('save_artifact', { filename, content: SKILL }, ctx)).status).toBe('SUCCESS');
+    const listed = (await toolRuntime.execute('LIST_SKILLS', {}, ctx)).output as any;
+    expect(listed.skills.map((s: any) => s.ref)).toEqual(['body:customer-discovery']);
+    expect(listed.diagnostics).toEqual(expect.arrayContaining([
+      { ref: 'body:customer.v2', reason: 'INVALID_SKILL_REF' }, { ref: 'body:customer discovery', reason: 'INVALID_SKILL_REF' },
+    ]));
+    for (const skill of listed.skills) expect((await toolRuntime.execute('READ_SKILL', { ref: skill.ref }, ctx)).status).toBe('SUCCESS');
+  });
+
   it('keeps Body skills private to the caller Pixel and World; other Worlds cannot read them', async () => {
     const f = fixture(), { runtime, toolRuntime } = await runtimeFor(f);
     await toolRuntime.execute('save_artifact', { filename: 'private.skill.md', content: SKILL }, ctxOf(runtime.directory));

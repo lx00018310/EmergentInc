@@ -1,7 +1,7 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { AgentStepRunner } from "../src/index.js";
 import { CoreStore } from "@emergentinc/persistence";
-import { PromptBuilder, UsageMeter, ModelProvider, OutcomeUnknownError, InfrastructureFailureError } from "@emergentinc/model";
+import { PromptBuilder, UsageMeter, ModelProvider, OutcomeUnknownError, InfrastructureFailureError, OpenAICompatibleProvider } from "@emergentinc/model";
 import { ToolRegistry, ToolRuntime, registerAllBuiltinTools } from "@emergentinc/tools";
 import { PreparedModelRequest, RawModelResponse } from "@emergentinc/protocol";
 import * as fs from "node:fs";
@@ -47,6 +47,7 @@ describe("Phase 1 Convergence: Reliability, Safety & Recovery Guard", () => {
   });
 
   afterEach(() => {
+    vi.unstubAllGlobals();
     try {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     } catch {}
@@ -109,6 +110,25 @@ describe("Phase 1 Convergence: Reliability, Safety & Recovery Guard", () => {
     expect(unfinalized.unsettledReservations.length).toBe(1);
     expect(unfinalized.unknownCalls.length).toBe(1);
     expect(unfinalized.unknownCalls[0].outcome).toBe("CALL_OUTCOME_UNKNOWN");
+  });
+
+  it("keeps the reservation and recovery gate after an uncertain attempt followed by a refused retry", async () => {
+    const fetch = vi.fn()
+      .mockRejectedValueOnce(Object.assign(new Error("reset"), { cause: { code: "ECONNRESET" } }))
+      .mockRejectedValue(Object.assign(new Error("refused"), { cause: { code: "ECONNREFUSED" } }));
+    vi.stubGlobal("fetch", fetch);
+    const provider = new OpenAICompatibleProvider({ baseUrl: "https://fixture.invalid", apiKey: "fixture-only", retryDelayMs: 0, maxRetries: 1 });
+    const runner = new AgentStepRunner({ workspaceRoot: tmpDir, store, provider, toolRuntime, promptBuilder, usageMeter });
+    const messageId = "msg_uncertain_retry";
+    store.messages.enqueueMessage({ messageId, recipient: "0_0_0", sender: "SYS", content: "Review", roundNum: 1, hop: 0 });
+    await expect(runner.execute({ trace: { runId: "run_retry", hop: 0 },
+      pixelState: { pixelId: "0_0_0", position: [0, 0, 0], energy: 10000, active: true, generation: 0 },
+      pixelMind: "# Mind", message: { messageId, content: "Review", hop: 0 }, round: 1,
+    })).rejects.toMatchObject({ name: "OutcomeUnknownError", code: "ECONNRESET" });
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(store.messages.getMessage(messageId)?.status).toBe("CALL_OUTCOME_UNKNOWN");
+    const pending = store.getUnfinalizedOperations();
+    expect(pending.unsettledReservations).toHaveLength(1);expect(pending.unknownCalls).toHaveLength(1);
   });
 
   it("should refund and requeue message on InfrastructureFailureError", async () => {

@@ -43,8 +43,8 @@ export function OwnerInbox({items,alerts=[],onDone}:{items:OwnerInboxItem[];aler
     {!total&&<p>{t('No to-dos pending.')}</p>}
     {items.map(i=>{const pair=pairOf(i);return <article key={i.id} className={i.priority==='critical'?'critical':''}><h3>{t(i.title)}</h3><p>{i.type==='run'?i.summary.replace(/\b[A-Z_]+\b/g,code=>statuses[code]?t(statuses[code]!):code):i.summary}</p>
       {i.priority==='critical'&&<strong>{t('Needs verification')}</strong>}<small>{i.source} · {i.createdAt===null?t('Time not recorded.'):new Date(i.createdAt).toLocaleString()}</small>
-      {pair&&i.approveEffect&&<p className="owner-effect"><strong>{t('If you approve')}:</strong> {t(i.approveEffect)}</p>}
-      {pair&&i.rejectEffect&&<p className="owner-effect"><strong>{t('If you reject')}:</strong> {t(i.rejectEffect)}</p>}
+      {pair&&i.approveEffect&&<p className="owner-effect"><strong>{t('If you approve')}:</strong> {t(i.approveEffect,i.approveEffectValues)}</p>}
+      {pair&&i.rejectEffect&&<p className="owner-effect"><strong>{t('If you reject')}:</strong> {t(i.rejectEffect,i.rejectEffectValues)}</p>}
       {pair?<DecisionButtons item={i} onDone={onDone}/>:<a href={i.href}>{t('View details')}</a>}
       {/* Actions without a symmetric pair (chat dispatch, full-plan review) keep their existing gated card. */}
       {pair&&(i.actions??[]).filter(p=>p.action.type==='qianji_chat'||p.action.type==='open_details').map(p=><details key={p.id}><summary>{t('More actions')}</summary><OwnerActionCard proposal={p} onDone={onDone}/></details>)}

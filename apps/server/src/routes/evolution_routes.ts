@@ -31,19 +31,20 @@ export async function registerEvolutionRoutes(app: FastifyInstance, services: Ev
     const b = req.body as any; lifeId(b?.key);
     return life.lineage.proposeGene(life.current.meta().generation_id, "owner", memoryPoint(b?.proposal), `owner:${b.key}`);
   });
-  app.post<{ Params: { id: string } }>("/evolution/proposals/:id/decision", async req => {
+  app.post<{ Params: { id: string } }>("/evolution/proposals/:id/decision", async (req, reply) => {
     const b = req.body as any;
     if (!["APPROVED", "REJECTED"].includes(b?.decision)) throw new Error("INVALID_PROPOSAL_DECISION");
+    const proposal = life.lineage.proposal(req.params.id);
+    if (String(proposal.generation_id) !== String(life.lineage.activeGeneration()?.id)) return reply.status(409).send({ detail: "PROPOSAL_GENERATION_CHANGED" });
     // Backward-compatible stale guard: one-click buttons pin the generation and expected state so a
     // stale page cannot decide a proposal that already moved. The GENE page keeps calling without them.
     if (b?.expectedGeneration !== undefined || b?.expectedState !== undefined) {
-      const proposal = life.lineage.proposal(req.params.id);
-      if (b?.expectedGeneration !== undefined && String(proposal.generation_id) !== String(b.expectedGeneration)) throw new Error("PROPOSAL_GENERATION_CHANGED");
-      if (b?.expectedState !== undefined && proposal.state !== b.expectedState) throw new Error("PROPOSAL_NOT_PENDING");
+      if (b?.expectedGeneration !== undefined && String(proposal.generation_id) !== String(b.expectedGeneration)) return reply.status(409).send({ detail: "PROPOSAL_GENERATION_CHANGED" });
+      if (b?.expectedState !== undefined && proposal.state !== b.expectedState) return reply.status(409).send({ detail: "PROPOSAL_NOT_PENDING" });
     }
     services.beforeProposalDecision?.(req.params.id,b.decision);
-    const proposal=life.lineage.decideProposal(req.params.id, b.decision);
-    const request=b.decision==='APPROVED'?await services.onProposalApproved?.(req.params.id):undefined;return {...proposal,...(request?{candidateRequest:request}:{})};
+    const decided=life.lineage.decideProposal(req.params.id, b.decision);
+    const request=b.decision==='APPROVED'?await services.onProposalApproved?.(req.params.id):undefined;return {...decided,...(request?{candidateRequest:request}:{})};
   });
   app.post("/evolution/corrections", async req => {
     const b = req.body as any; lifeId(b?.key); if (b?.pixel_id) lifeId(b.pixel_id);

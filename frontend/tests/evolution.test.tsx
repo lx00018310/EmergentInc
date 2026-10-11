@@ -3,7 +3,23 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-li
 import { EvolutionPanel } from '../src/features/business/EvolutionPanel';
 import { OwnerEntry } from '../src/OwnerEntry';
 import { lifeFixture, businessFixture } from './life_fixture';
+import { businessApi } from '../src/features/business/business_api';
+import { ownerError } from '../src/api/owner';
+import { ApiError } from '../src/api/client';
+import { setLanguage } from '../src/i18n';
 afterEach(() => { cleanup(); vi.restoreAllMocks(); window.history.replaceState(null, '', '/'); });
+it.each(['en','zh-CN'] as const)('translates proposal conflicts in both GENE and OWNER (%s)',async lang=>{
+  setLanguage(lang);
+  const messages=lang==='en'
+    ? ['The proposal does not match the active generation. Refresh before retrying.','The proposal has already been decided. Refresh to check its current state.']
+    : ['提案与当前活动代不匹配，请刷新后重试。','提案已被处理，请刷新后核对当前状态。'];
+  const fetcher=vi.spyOn(globalThis,'fetch');
+  for(const [index,code] of ['PROPOSAL_GENERATION_CHANGED','PROPOSAL_NOT_PENDING'].entries()){
+    fetcher.mockResolvedValue({ok:false,status:409,json:async()=>({detail:code})} as Response);
+    await expect(businessApi('evolution/proposals/p/decision',{decision:'APPROVED'})).rejects.toThrow(messages[index]);
+    expect(ownerError(new ApiError(409,code))).toBe(messages[index]);
+  }
+});
 it('shows life facts and submits only a Proposal direction decision', async () => {
   const payload = lifeFixture();
   const fetcher = vi.spyOn(globalThis, 'fetch').mockResolvedValue({ ok: true, json: async () => payload } as Response);

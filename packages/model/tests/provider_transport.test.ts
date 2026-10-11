@@ -106,6 +106,29 @@ describe("Owner-directed retry of connection-class failures", () => {
     await expect(retrying().call(request)).rejects.toMatchObject({ name: "InfrastructureFailureError", code: "ECONNREFUSED" });
     expect(vi.mocked(fetch)).toHaveBeenCalledTimes(3);
   });
+  it("defaults to ten retries after the initial attempt, reusing the identical payload", async () => {
+    vi.stubEnv("MCL_MAX_RETRIES", "");
+    const fetch = vi.fn().mockRejectedValue(notSent());vi.stubGlobal("fetch", fetch);
+    const configured = new OpenAICompatibleProvider({ baseUrl: "https://fixture.invalid", apiKey: "fixture-only", retryDelayMs: 0 });
+    await expect(configured.call(request)).rejects.toBeInstanceOf(InfrastructureFailureError);
+    expect(fetch).toHaveBeenCalledTimes(11);
+    expect(new Set(fetch.mock.calls.map(call => call[1].body)).size).toBe(1);
+  });
+  it("preserves an uncertain dispatch when a later retry was not sent", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValueOnce(outcomeUnknown()).mockRejectedValue(notSent()));
+    await expect(retrying().call(request)).rejects.toMatchObject({ name: "OutcomeUnknownError", code: "ECONNRESET", phase: "dispatch" });
+    expect(vi.mocked(fetch)).toHaveBeenCalledTimes(3);
+  });
+  it.each([400, 401, 403, 404, 422])("does not retry a permanent HTTP %s or misclassify it as not sent", async status => {
+    const fetch = vi.fn().mockResolvedValue({ ok: false, status });vi.stubGlobal("fetch", fetch);
+    await expect(retrying().call(request)).rejects.toMatchObject({ name: "OutcomeUnknownError", code: `HTTP_${status}` });
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+  it.each([408, 429, 500, 504])("still retries temporary HTTP %s failures", async status => {
+    const fetch = vi.fn().mockResolvedValueOnce({ ok: false, status }).mockResolvedValue({ ok: true, json: async () => ({ choices: [] }) });
+    vi.stubGlobal("fetch", fetch);
+    expect(await retrying().call(request)).toMatchObject({ rawText: "" });expect(fetch).toHaveBeenCalledTimes(2);
+  });
   it("never retries caller-initiated aborts", async () => {
     const controller = new AbortController();
     const fetch = vi.fn((_url: string, init: any) => new Promise((_resolve, reject) => {
@@ -116,14 +139,17 @@ describe("Owner-directed retry of connection-class failures", () => {
     await expect(retrying().call(request, controller.signal)).rejects.toBeInstanceOf(OutcomeUnknownError);
     expect(fetch).toHaveBeenCalledTimes(1);
   });
-  it("stops waiting and reports not-sent when the caller aborts during the retry delay", async () => {
+  it.each([true, false])("stops waiting without losing the prior dispatch classification (uncertain=%s)", async uncertain => {
     const controller = new AbortController();
-    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(outcomeUnknown()));
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(uncertain ? outcomeUnknown() : notSent()));
     // A long delay guarantees the abort lands inside the wait, not between attempts.
     const slowRetry = new OpenAICompatibleProvider({ baseUrl: "https://fixture.invalid", apiKey: "fixture-only", retryDelayMs: 60_000, maxRetries: 2 });
     const pending = slowRetry.call(request, controller.signal);
     await new Promise(resolve => setTimeout(resolve, 10));
     controller.abort();
-    await expect(pending).rejects.toMatchObject({ name: "InfrastructureFailureError", code: "ABORTED_BEFORE_DISPATCH" });
+    await expect(pending).rejects.toMatchObject(uncertain
+      ? { name: "OutcomeUnknownError", code: "ECONNRESET" }
+      : { name: "InfrastructureFailureError", code: "ABORTED_BEFORE_DISPATCH" });
+    expect(vi.mocked(fetch)).toHaveBeenCalledTimes(1);
   });
 });

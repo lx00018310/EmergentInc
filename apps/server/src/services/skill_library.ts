@@ -57,8 +57,9 @@ function listBodySkills(ctx:ToolContext):{entries:SkillEntry[];diagnostics:Skill
   if(!fs.existsSync(dir))return {entries,diagnostics,truncated};
   const names=fs.readdirSync(dir).filter(name=>name.endsWith(SKILL_SUFFIX)).sort();
   for(const file of names){
-    const ref=`body:${file.slice(0,-SKILL_SUFFIX.length)}`;
+    const slug=file.slice(0,-SKILL_SUFFIX.length),ref=`body:${slug}`;
     if(entries.length>=MAX_LISTED_BODY_SKILLS){truncated=true;break;}
+    if(!SLUG_PATTERN.test(slug)){diagnostics.push({ref,reason:'INVALID_SKILL_REF'});continue;}
     const full=path.join(dir,file);
     let stat:fs.Stats;
     try{stat=fs.lstatSync(full);}catch{diagnostics.push({ref,reason:'SKILL_FILE_UNREADABLE'});continue;}

@@ -12,7 +12,7 @@ export interface OpenAICompatibleProviderConfig {
   stream?: boolean;
   /** Milliseconds to wait before retrying the same request. Default 30000. */
   retryDelayMs?: number;
-  /** Maximum consecutive retries after the initial attempt. Default 5. */
+  /** Maximum consecutive retries after the initial attempt. Default 10. */
   maxRetries?: number;
 }
 
@@ -83,11 +83,11 @@ function logTrace(direction: "REQUEST" | "RESPONSE" | "ERROR" | "RETRY", payload
 // A connection-class failure leaves the outcome unknown: the model may or may not
 // have received (and billed) the attempt. The SAME request is retried after a fixed
 // delay, at most N consecutive retries after the initial attempt; only when every
-// retry fails does the final error propagate. Failed attempts never return usage,
-// so their token consumption (invisible here even if the provider billed it) is
+// retry fails does an error propagate, preserving any uncertain attempt. Failed
+// attempts never return usage, so their token consumption (invisible here even if the provider billed it) is
 // ignored and never counted in any pixel usage statistics.
 const DEFAULT_RETRY_DELAY_MS = 30_000;
-const DEFAULT_MAX_RETRIES = 5;
+const DEFAULT_MAX_RETRIES = 10;
 
 // Retriable = outcome unknown or provably not sent. Caller-initiated aborts are
 // never retried: the caller no longer wants the result.
@@ -96,6 +96,8 @@ function isRetryableFailure(err: any): boolean {
     return err.phase === "before_dispatch" && err.code !== "ABORTED_BEFORE_DISPATCH";
   }
   if (err instanceof OutcomeUnknownError) {
+    const httpStatus = /^HTTP_(\d{3})$/.exec(err.code);
+    if (httpStatus) return Number(httpStatus[1]) >= 500 || [408, 429].includes(Number(httpStatus[1]));
     return err.code !== "ABORTED_AFTER_DISPATCH";
   }
   return false;
@@ -143,17 +145,20 @@ export class OpenAICompatibleProvider implements ModelProvider {
 
   // Retry wrapper: connection-class (outcome-unknown) failures wait retryDelayMs
   // and retry the SAME request, at most maxRetries consecutive retries; only
-  // after every retry fails does the last error reach the caller.
+  // after every retry fails does an error reach the caller. A later non-dispatch
+  // or cancellation cannot erase an earlier uncertain dispatch.
   public async call(
     request: PreparedModelRequest,
     signal?: AbortSignal
   ): Promise<RawModelResponse> {
     let retries = 0;
+    let uncertain: OutcomeUnknownError | undefined;
     while (true) {
       try {
         return await this.callOnce(request, signal);
       } catch (err: any) {
-        if (!isRetryableFailure(err) || retries >= this.maxRetries) throw err;
+        if (err instanceof OutcomeUnknownError) uncertain ??= err;
+        if (!isRetryableFailure(err) || retries >= this.maxRetries) throw uncertain ?? err;
         retries += 1;
         logTrace("RETRY", {
           attempt: retries,
@@ -164,7 +169,7 @@ export class OpenAICompatibleProvider implements ModelProvider {
         try {
           await delay(this.retryDelayMs, signal);
         } catch (abortErr: any) {
-          throw new InfrastructureFailureError(
+          throw uncertain ?? new InfrastructureFailureError(
             "Model call cancelled during retry wait",
             abortErr,
             "ABORTED_BEFORE_DISPATCH",
