@@ -336,7 +336,10 @@ describe('V27 dual-tree git upgrade', () => {
     doc.querySelector(`#commit-list [data-sha="${repo.first}"]`).click();await vi.waitFor(()=>expect(doc.getElementById('prepare-commit').disabled).toBe(false));
     const meta=doc.getElementById('selected-meta').firstChild,files=doc.querySelector('#selected-files .file-list');files.scrollTop=30;await poll();expect(doc.getElementById('selected-meta').firstChild).toBe(meta);expect(files.scrollTop).toBe(30);
     expect(doc.getElementById('selected-meta').textContent).toContain(lang==='en'?'commits not yet on main (1)':'未进入 main 的提交 (1)');
+    doc.getElementById('version').value='Other release';doc.getElementById('reason').value='Unrelated description';
     doc.getElementById('prepare-commit').click();expect(doc.getElementById('commit-dialog').open).toBe(true);expect(doc.getElementById('commit-target').textContent).toBe(repo.first);
+    expect(doc.getElementById('commit-version').value).toBe('add SKILL.md');expect(doc.getElementById('commit-reason').value).toBe('add SKILL.md');
+    doc.getElementById('commit-reason').value='';
     doc.getElementById('commit-form').requestSubmit();expect(f.run).not.toHaveBeenCalled();expect(doc.getElementById('commit-dialog').open).toBe(true);
     doc.getElementById('commit-cancel').click();expect(doc.getElementById('commit-dialog').open).toBe(false);expect(f.run).not.toHaveBeenCalled();
     doc.getElementById('prepare-commit').click();doc.getElementById('commit-version').value='Pinned UI test';doc.getElementById('commit-reason').value='Review this exact commit';doc.getElementById('commit-form').requestSubmit();
@@ -346,6 +349,36 @@ describe('V27 dual-tree git upgrade', () => {
     fs.unlinkSync(path.join(f.directory,'operator.lock'));await poll();expect(doc.getElementById('prepare-commit').disabled).toBe(false);
     doc.getElementById('prepare-commit').click();doc.getElementById('logout').click();await vi.waitFor(()=>expect(doc.getElementById('login').hidden).toBe(false));expect(doc.getElementById('commit-dialog').open).toBe(false);
     doc.getElementById('secret').value=f.secret;doc.getElementById('login-form').requestSubmit();await vi.waitFor(()=>expect(doc.getElementById('content').hidden).toBe(false));await poll();expect(doc.getElementById('selected-commit').hidden).toBe(true);
+  },30000);
+
+  it.each(['zh-CN','en'])('uses the selected Git title and multiline body as editable defaults and submits without edits (%s)',async lang=>{
+    const repo=gitRepo(),subject='fix(owner): 恢复报告审查入口',body='- 恢复源码报告入口\n- Preserve the exact selected SHA\n\n验证：接口测试通过。';
+    repo.run('checkout','feature/skills');const sha=repo.commit(subject+'\n\n'+body);repo.run('checkout','main');
+    const f=await fixture(),app=await createUpgradeWeb({root:repo.directory,config:{stateDirectory:f.directory},secret:f.secret,runCommand:f.run,status:()=>f.data,checkRunning:f.checkRunning});cleanups.push(()=>app.close());
+    fs.mkdirSync(path.join(repo.directory,'resources'));fs.copyFileSync(path.resolve('resources/upgrade-web.html'),path.join(repo.directory,'resources/upgrade-web.html'));
+    const login=await app.inject({method:'POST',url:'/api/login',payload:{secret:f.secret}}),cookie=String(login.headers['set-cookie']).split(';')[0];
+    const {doc}=await page({...f,app,cookie},lang);
+    expect(readGitCommit(repo.directory,sha).commit).toMatchObject({subject,body,author:'Tester'});
+    doc.querySelector(`#commit-list [data-sha="${sha}"]`).click();await vi.waitFor(()=>expect(doc.getElementById('prepare-commit').disabled).toBe(false));
+    doc.getElementById('prepare-commit').click();
+    expect(doc.getElementById('commit-version').value).toBe(subject);expect(doc.getElementById('commit-reason').value).toBe(body);
+    expect(doc.querySelector('[data-text="prepareCommitHint"]').textContent).toContain(lang==='en'?'Edit either field or submit directly':'两项均可编辑或直接提交');
+    doc.getElementById('commit-form').requestSubmit();
+    await vi.waitFor(()=>expect(f.run).toHaveBeenCalledOnce());
+    expect(f.run.mock.calls[0][1]).toEqual(['prepare',subject,body,'--commit',sha]);
+  },30000);
+
+  it('keeps long Git defaults within the existing form limits so direct submission succeeds',async()=>{
+    const repo=gitRepo(),subject='s'.repeat(220),body='detail\n'.repeat(180);
+    repo.run('checkout','feature/skills');const sha=repo.commit(subject+'\n\n'+body);repo.run('checkout','main');
+    const f=await fixture(),app=await createUpgradeWeb({root:repo.directory,config:{stateDirectory:f.directory},secret:f.secret,runCommand:f.run,status:()=>f.data,checkRunning:f.checkRunning});cleanups.push(()=>app.close());
+    fs.mkdirSync(path.join(repo.directory,'resources'));fs.copyFileSync(path.resolve('resources/upgrade-web.html'),path.join(repo.directory,'resources/upgrade-web.html'));
+    const login=await app.inject({method:'POST',url:'/api/login',payload:{secret:f.secret}}),cookie=String(login.headers['set-cookie']).split(';')[0];
+    const {doc}=await page({...f,app,cookie},'en');
+    doc.querySelector(`#commit-list [data-sha="${sha}"]`).click();await vi.waitFor(()=>expect(doc.getElementById('prepare-commit').disabled).toBe(false));
+    doc.getElementById('prepare-commit').click();doc.getElementById('commit-form').requestSubmit();
+    await vi.waitFor(()=>expect(f.run).toHaveBeenCalledOnce());
+    expect(f.run.mock.calls[0][1]).toEqual(['prepare',subject.slice(0,200),body.slice(0,1000).trim(),'--commit',sha]);
   },30000);
 
   it('ignores an older commit response and disables stale details after graph refresh fails',async()=>{

@@ -101,9 +101,9 @@ export function readGitGraph(root, limit=200) {
 /** Read-only details for one commit: parents, files versus its parent, and fast-forward feasibility. */
 export function readGitCommit(root, shaInput) {
   if(typeof shaInput!=='string'||!GIT_SHA_PATTERN.test(shaInput))throw Object.assign(new Error('GIT_COMMIT_INVALID'),{statusCode:400});
-  const show=gitText(root,['show','-s','--pretty=format:%H%x1f%P%x1f%s%x1f%an%x1f%ct',shaInput]);
+  const show=gitText(root,['show','-s','--pretty=format:%H%x1f%P%x1f%s%x1f%an%x1f%ct%x1f%b',shaInput]);
   if(show===null||!show.trim())throw Object.assign(new Error('GIT_COMMIT_NOT_FOUND'),{statusCode:404});
-  const [sha,parents,subject,author,time]=show.trim().split('\x1f');
+  const [sha,parents,subject,author,time,...body]=show.trim().split('\x1f');
   let ahead=0,behind=0,fastForwardable=false,mainHead=null;
   try{mainHead=execFileSync('git',['rev-parse','main'],{cwd:root,encoding:'utf8',windowsHide:true,timeout:10000}).trim();
     ensureFastForwardable(shaInput,root);fastForwardable=true;}catch{fastForwardable=false;}
@@ -115,7 +115,7 @@ export function readGitCommit(root, shaInput) {
   const raw=gitText(root,parentList.length?['diff','--name-status',parentList[0],shaInput]:['diff-tree','--root','--no-commit-id','--name-status','-r',shaInput]);
   const included=fastForwardable?gitText(root,['log','--pretty=format:%H',`${mainHead}..${shaInput}`]):null;
   const files=raw!==null?raw.trim()?raw.trim().split(/\r?\n/).map(line=>{const status=line.slice(0,1);const name=line.slice(1).trim();return {status,name};}):[]:null;
-  return {commit:{sha,parents:parents?parents.split(' ').filter(Boolean):[],subject:String(subject??''),author:String(author??''),time:Number(time??0)},
+  return {commit:{sha,parents:parents?parents.split(' ').filter(Boolean):[],subject:String(subject??''),body:body.join('\x1f').trim(),author:String(author??''),time:Number(time??0)},
     mainHead,fastForwardable,ahead,behind,files,includedCommits:included!==null?included.trim()?included.trim().split(/\r?\n/):[]:[]};
 }
 
