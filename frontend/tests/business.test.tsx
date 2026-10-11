@@ -7,6 +7,21 @@ import { lifeFixture } from './life_fixture';
 
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 describe('business owner journey', () => {
+  it('loads the current budget into the authorization form and preserves edits while polling', async () => {
+    const payload = { settings: { limit_micros: 50000000, draft_limit_micros: 8000000, draft_call_limit: 17, draft_expires_at: Date.now() + 3 * 86400000 },
+      modelConfigured: false, plans: [], datasets: [], requests: [], unknownOperations: [], tasks: [], spentMicros: 0, reservedMicros: 0 };
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async url => ({ ok: true, json: async () => String(url).includes('/evolution/') ? lifeFixture() : payload } as Response));
+    render(<BusinessHome />); fireEvent.click(screen.getByRole('button', { name: '经营', exact: true }));
+    await screen.findByText('已确认费用'); fireEvent.click(screen.getByText(/^费用授权/));
+    expect(screen.getByLabelText('总费用上限（元）')).toHaveProperty('value', '50');
+    expect(screen.getByLabelText('其中用于拟定方案（元）')).toHaveProperty('value', '8');
+    expect(screen.getByLabelText('累计拟定次数上限')).toHaveProperty('value', '17');
+    expect(screen.getByLabelText('有效天数')).toHaveProperty('value', '3');
+    fireEvent.change(screen.getByLabelText('总费用上限（元）'), { target: { value: '60' } });
+    fireEvent.click(screen.getByRole('button', { name: '确认费用授权' }));
+    await waitFor(() => expect(globalThis.fetch).toHaveBeenCalledWith('/api/business/budget', expect.objectContaining({ body: expect.stringContaining('"limitMicros":60000000') })));
+    expect(screen.getByLabelText('总费用上限（元）')).toHaveProperty('value', '60');
+  });
   it('retains paid-decision identity after a lost response and a retry', async () => {
     sessionStorage.clear();
     const fetcher = vi.spyOn(globalThis, 'fetch').mockRejectedValueOnce(new Error('lost response'))
@@ -22,7 +37,7 @@ describe('business owner journey', () => {
       plan: { title: '整理询盘', objective: '减少整理工作', audience: '客服', hypothesis: '缺失字段导致返工',
         metric: { name: '整理时间', baseline: '30分钟', target: '10分钟', evidence: '工时记录' }, stopCondition: '质量降低',
         budgetMicros: 1000000, expiresAt: Date.now() + 86400000, actions: [{ datasetId: 'inquiries', purpose: '检查字段' }], resources: [] } };
-    const payload = { settings: { limit_micros: 1000000 }, modelConfigured: true, plans: [p], datasets: [], requests: [], unknownOperations: [], tasks: [], spentMicros: 100, reservedMicros: 0 };
+    const payload = { settings: { limit_micros: 1000000, draft_limit_micros: 500000, draft_call_limit: 10, draft_expires_at: Date.now() + 86400000 }, modelConfigured: true, plans: [p], datasets: [], requests: [], unknownOperations: [], tasks: [], spentMicros: 100, reservedMicros: 0 };
     const fetcher = vi.spyOn(globalThis, 'fetch').mockImplementation(async url => ({ ok: true, json: async () => String(url).includes('/evolution/') ? lifeFixture() : payload } as Response));
     render(<BusinessHome />);
     fireEvent.click(screen.getByRole('button', { name: '经营', exact: true })); await screen.findByText('已确认费用');

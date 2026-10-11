@@ -18,29 +18,41 @@ export const EnvironmentEditor: React.FC<EnvironmentEditorProps> = ({
   const [content, setContent] = useState<string>('');
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [isSaving, setIsSaving] = useState<boolean>(false);
+  const [loaded, setLoaded] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!isOpen) return;
+    const controller = new AbortController();
     setIsLoading(true);
-    fetchEnvironment()
+    setLoaded(false); setError(null); setContent('');
+    fetchEnvironment(controller.signal)
       .then((res) => {
+        if (controller.signal.aborted) return;
         setContent(res.content || '');
+        setLoaded(true);
       })
       .catch((err) => {
+        if (controller.signal.aborted) return;
+        setError(err instanceof Error ? err.message : String(err));
         onLogMessage('error', `[ENV LOAD FAILED] ${err instanceof Error ? err.message : String(err)}`);
       })
       .finally(() => {
-        setIsLoading(false);
+        if (!controller.signal.aborted) setIsLoading(false);
       });
+    return () => controller.abort();
   }, [isOpen, onLogMessage]);
 
   const handleSave = async () => {
+    if (!loaded || isSaving || isLoading) return;
     setIsSaving(true);
+    setError(null);
     try {
       const res = await updateEnvironment(content);
       onLogMessage('success', tr("[ENV UPDATED] 外部环境已更新，字节数: {0}", [res.length]));
       onClose();
     } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
       onLogMessage('error', `[ENV SAVE FAILED] ${err instanceof Error ? err.message : String(err)}`);
     } finally {
       setIsSaving(false);
@@ -57,7 +69,7 @@ export const EnvironmentEditor: React.FC<EnvironmentEditorProps> = ({
         <>
           <button className="btn btn-secondary" onClick={onClose} disabled={isSaving}>
             {tr("取消")}</button>
-          <button className="btn btn-primary" onClick={handleSave} disabled={isSaving || isLoading}>
+          <button className="btn btn-primary" onClick={handleSave} disabled={isSaving || isLoading || !loaded}>
             {isSaving ? (tr("保存中...")) : (tr("保存更新"))}
           </button>
         </>
@@ -65,6 +77,7 @@ export const EnvironmentEditor: React.FC<EnvironmentEditorProps> = ({
     >
       <p className="form-hint">
         {tr("environment.md 全局存在但对元胞默认隐形，元胞必须主动声明读取才可见。您可以在此更新外部市场事实与真实业务要求：")}</p>
+      {error && <p role="alert" className="operation-error">{tr("操作失败：{0}", [error])}</p>}
       {isLoading ? (
         <div style={{ color: 'var(--text-dim)', padding: '20px', textAlign: 'center' }}>
           {tr("正在加载外部环境...")}</div>
@@ -73,6 +86,7 @@ export const EnvironmentEditor: React.FC<EnvironmentEditorProps> = ({
           className="modal-textarea"
           rows={12}
           value={content}
+          disabled={!loaded || isSaving}
           onChange={(e) => setContent(e.target.value)}
           placeholder={tr("可输入全局业务环境设定...")}
         />

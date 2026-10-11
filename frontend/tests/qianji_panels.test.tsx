@@ -26,6 +26,23 @@ const historyDto: any = {
 
 describe('Qianji detail panels', () => {
   beforeEach(() => { localStorage.setItem('emergentinc.language','zh-CN'); vi.clearAllMocks(); vi.mocked(qianjiApi.fetchQianjiChat).mockResolvedValue([]); });
+  it('shows unavailable archived physical data as unknown and offers a read-only profile', () => {
+    render(<QianjiProfilePanel item={{...item,currentBinding:null,physical:null,profile:{...item.profile,careerStatus:'retired'},world:{world_id:'archived',status:'ARCHIVED'}}} onRefresh={vi.fn()} onSent={vi.fn()}/>);
+    expect(screen.getByText('World ARCHIVED · 未知 活跃元胞')).toBeTruthy();
+    expect(screen.queryByText('NOMINAL · 正常')).toBeNull();
+    expect(screen.getByRole('button',{name:'查看人设'})).toBeTruthy();
+    expect(screen.queryByRole('button',{name:'编辑人设'})).toBeNull();
+  });
+  it('submits the narrative revision the draft was based on after a concurrent refresh', async () => {
+    vi.mocked(qianjiApi.updateQianjiNarrative).mockRejectedValue(new Error('NARRATIVE_REVISION_CONFLICT'));
+    const view = render(<QianjiNarrativeEditor profile={item.profile} onSaved={vi.fn()} />);
+    fireEvent.click(screen.getByRole('button', { name: '编辑人设' }));
+    fireEvent.change(screen.getByLabelText('完整人设 JSON'), { target: { value: JSON.stringify({ ...item.profile.narrative, shortBio: 'My draft' }) } });
+    view.rerender(<QianjiNarrativeEditor profile={{ ...item.profile, narrativeRevision: 1, narrative: { ...item.profile.narrative, shortBio: 'Concurrent edit' } }} onSaved={vi.fn()} />);
+    fireEvent.click(screen.getByRole('button', { name: '保存人设' }));
+    await screen.findByRole('alert');
+    expect(qianjiApi.updateQianjiNarrative).toHaveBeenCalledWith('qj_test', 0, expect.objectContaining({ shortBio: 'My draft' }));
+  });
   it.each([['zh-CN','运行轮数（1–20）','发送'],['en','Run rounds (1–20)','Send']])('sends an explicitly selected 10-round budget in %s',async(lang,label,send)=>{
     localStorage.setItem('emergentinc.language',lang);vi.mocked(qianjiApi.postQianjiChat).mockResolvedValue({} as any);const onSent=vi.fn();
     render(<QianjiChatPanel item={{...item,world:{world_id:'world_a',status:'ACTIVE'}}} onSent={onSent}/>);

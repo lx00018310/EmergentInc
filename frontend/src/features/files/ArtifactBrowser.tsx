@@ -22,20 +22,27 @@ export const ArtifactBrowser: React.FC<ArtifactBrowserProps> = ({
   useLanguage();
   const [data, setData] = useState<PixelArtifactsResponseDto | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(false);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!isOpen || !pixelId) return;
+    const controller = new AbortController();
     setIsLoading(true);
-    fetchPixelArtifacts(pixelId)
+    setData(null); setError(null);
+    fetchPixelArtifacts(pixelId, controller.signal)
       .then((res) => {
+        if (controller.signal.aborted) return;
         setData(res);
       })
       .catch((err) => {
+        if (controller.signal.aborted) return;
+        setError(err instanceof Error ? err.message : String(err));
         onLogMessage('error', `[ARTIFACTS LOAD FAILED] ${err instanceof Error ? err.message : String(err)}`);
       })
       .finally(() => {
-        setIsLoading(false);
+        if (!controller.signal.aborted) setIsLoading(false);
       });
+    return () => controller.abort();
   }, [isOpen, pixelId, onLogMessage]);
 
   const rawArtifacts = data?.artifacts || [];
@@ -57,7 +64,7 @@ export const ArtifactBrowser: React.FC<ArtifactBrowserProps> = ({
           {tr("关闭")}</button>
       }
     >
-      {isLoading ? (
+      {error ? <p role="alert" className="operation-error">{tr("操作失败：{0}", [error])}</p> : isLoading ? (
         <div style={{ color: 'var(--text-dim)', padding: '20px', textAlign: 'center' }}>
           {tr("正在加载交付物列表...")}</div>
       ) : items.length === 0 ? (

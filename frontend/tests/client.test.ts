@@ -2,6 +2,26 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { apiRequest, ApiError } from '../src/api/client';
 
 describe('API Client', () => {
+  it('does not turn an aborted response-body read into a successful null response', async () => {
+    const controller = new AbortController();
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, headers: new Headers({ 'content-type': 'application/json' }),
+      json: async () => { controller.abort(); throw controller.signal.reason; } });
+    await expect(apiRequest('/api/world', { signal: controller.signal })).rejects.toThrow();
+  });
+  it('forwards an already aborted signal and releases its listener after completion', async () => {
+    const controller = new AbortController(); controller.abort();
+    const fetcher = vi.fn().mockImplementation(async (_url, options) => {
+      expect(options.signal.aborted).toBe(true);
+      throw new DOMException('Cancelled', 'AbortError');
+    });
+    globalThis.fetch = fetcher;
+    await expect(apiRequest('/api/world', { signal: controller.signal })).rejects.toThrow('Cancelled');
+    const active = new AbortController();
+    const remove = vi.spyOn(active.signal, 'removeEventListener');
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, headers: new Headers({ 'content-type': 'application/json' }), json: async () => ({}) });
+    await apiRequest('/api/world', { signal: active.signal });
+    expect(remove).toHaveBeenCalledWith('abort', expect.any(Function));
+  });
   const originalFetch = globalThis.fetch;
 
   beforeEach(() => {

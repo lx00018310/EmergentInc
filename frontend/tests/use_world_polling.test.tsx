@@ -1,8 +1,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { renderHook, waitFor } from '@testing-library/react';
+import { act, renderHook, waitFor } from '@testing-library/react';
 import { useWorldPolling } from '../src/hooks/useWorldPolling';
 import * as worldApi from '../src/api/world';
 import * as runApi from '../src/api/run';
+import { enableWorlds, selectWorld } from '../src/api/worldScope';
 
 describe('useWorldPolling Hook', () => {
   beforeEach(() => {
@@ -11,6 +12,22 @@ describe('useWorldPolling Hook', () => {
 
   afterEach(() => {
     vi.clearAllTimers();
+    enableWorlds(false); selectWorld(null);
+  });
+
+  it('does not replace the selected World audit with an earlier response', async () => {
+    enableWorlds(true); selectWorld('world_a');
+    let finish!: (value: any) => void;
+    vi.spyOn(worldApi, 'fetchWorld').mockResolvedValue({ round: 1 } as any);
+    vi.spyOn(runApi, 'fetchRunStatus').mockResolvedValue({ running: false } as any);
+    vi.spyOn(worldApi, 'fetchWorkspaceAudit').mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }))
+      .mockResolvedValue({ audit_status: 'WORLD_B' } as any);
+    const { result } = renderHook(() => useWorldPolling());
+    await waitFor(() => expect(result.current.worldId).toBe('world_a'));
+    selectWorld('world_b'); await act(async () => result.current.refreshImmediately());
+    await waitFor(() => expect(result.current.audit?.audit_status).toBe('WORLD_B'));
+    await act(async () => finish({ audit_status: 'WORLD_A' }));
+    expect(result.current.audit?.audit_status).toBe('WORLD_B');
   });
 
   it('成功加载世界与运行状态并在卸载时取消定时器', async () => {

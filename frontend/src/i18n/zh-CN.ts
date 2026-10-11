@@ -1,4 +1,11 @@
 export const zhCN: Record<string, string> = {
+  "操作失败：{0}": "操作失败：{0}",
+  "此 World 已归档，仅保留人物与历史记录。": "此 World 已归档，仅保留人物与历史记录。",
+  "查看人物": "查看人物",
+  "查看人设": "查看人设",
+  "GATEWAY_INPUT_INVALID": "请提供有效的元胞 ID 和入口版本。",
+  "GATEWAY_PIXEL_NOT_ACTIVE": "请选择此 World 中的活跃元胞。",
+  "GATEWAY_REVISION_CONFLICT": "入口已变化，请等待人物信息刷新后重试。",
   "脚注": "脚注",
   "返回引用": "返回引用",
   "Time not recorded.": "未记录时间。",

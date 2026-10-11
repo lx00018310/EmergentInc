@@ -4,6 +4,14 @@ import React from 'react';
 import { PromptEditor } from '../src/features/prompts/PromptEditor';
 
 describe('PromptEditor Component', () => {
+  it('cannot save or clear a prompt whose existing content failed to load', () => {
+    const onSave = vi.fn(), onClear = vi.fn();
+    render(<PromptEditor cardId="failed" title="提示词" hint="" placeholder="内容" promptData={null} loadError="READ_FAILED" isRunning={false} onSave={onSave} onClear={onClear} />);
+    expect(screen.getByRole('alert').textContent).toContain('READ_FAILED');
+    expect(screen.getByRole('textbox')).toHaveProperty('disabled', true);
+    for (const button of screen.getAllByRole('button')) { expect(button).toHaveProperty('disabled', true); fireEvent.click(button); }
+    expect(onSave).not.toHaveBeenCalled(); expect(onClear).not.toHaveBeenCalled();
+  });
   it('正确展示初始提示词并支持编辑', async () => {
     const onSave = vi.fn().mockResolvedValue(undefined);
     const onClear = vi.fn().mockResolvedValue(undefined);

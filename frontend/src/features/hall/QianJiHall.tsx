@@ -32,6 +32,7 @@ export const QianJiHall: React.FC<QianJiHallProps> = ({ selectedQianjiId, onSele
   const [addMenuOpen, setAddMenuOpen] = useState(false);
   const [isRecoveryOpen, setIsRecoveryOpen] = useState(false);
   const addMenuRef = useRef<HTMLDivElement | null>(null);
+  const modalNonce = useRef(0);
   const selected = items.find(item => item.profile.qianjiId === selectedQianjiId) ?? null;
   const tipsPixels = world?.pixels.filter(pixel =>
     (worldsEnabled() ? Boolean(selected?.world && worldId === selected.world.world_id) : pixel.id === selected?.currentBinding?.pixelId) && pixel.tips_md?.trim());
@@ -55,7 +56,9 @@ export const QianJiHall: React.FC<QianJiHallProps> = ({ selectedQianjiId, onSele
   }, [addMenuOpen]);
 
   const selectPerson = (id: string) => {
-    const entry=items.find(e=>e.profile.qianjiId===id);if(entry?.world)selectWorld(entry.world.world_id);
+    setModalRequest(null);
+    const entry=items.find(e=>e.profile.qianjiId===id);
+    if(worldsEnabled())selectWorld(entry?.world?.status==='ACTIVE'?entry.world.world_id:null);
     onSelectedQianji(id);
     onSelectedPixel(items.find(entry => entry.profile.qianjiId === id)?.currentBinding?.pixelId ?? null);
   };
@@ -63,7 +66,7 @@ export const QianJiHall: React.FC<QianJiHallProps> = ({ selectedQianjiId, onSele
   const handleMenuAction = (id: string, action: QianjiMenuAction) => {
     selectPerson(id);
     if (action === 'meeting') { onOpenMeeting?.(); return; }
-    setModalRequest(previous => ({ modal: action, nonce: (previous?.nonce ?? 0) + 1 }));
+    setModalRequest({ modal: action, nonce: ++modalNonce.current });
   };
   const handleInfiniteEnergyChange = async (id: string, enabled: boolean) => {
     setRunError(null);
@@ -87,9 +90,9 @@ export const QianJiHall: React.FC<QianJiHallProps> = ({ selectedQianjiId, onSele
   }, [items, onSelectedQianji, selectedQianjiId]);
 
   useEffect(() => {
-    if(selected?.world){selectWorld(selected.world.world_id);void refreshImmediately();}
+    if(worldsEnabled()){selectWorld(selected?.world?.status==='ACTIVE'?selected.world.world_id:null);void refreshImmediately();}
     onSelectedPixel(selected?.currentBinding?.pixelId ?? null);
-  }, [selected?.currentBinding?.pixelId, selected?.world?.world_id, onSelectedPixel,refreshImmediately]);
+  }, [selected?.currentBinding?.pixelId, selected?.world?.world_id, selected?.world?.status, onSelectedPixel,refreshImmediately]);
 
   const runState = runStatus?.running ? tr("运行中 · {0}/{1} 轮", [runStatus.completed_rounds, runStatus.requested_rounds])
     : recoveryRequired ? (tr("需要恢复处理")) : runStatus?.result_status === 'FAILED' ? (tr("上次运行失败")) : (tr("空闲"));
@@ -199,7 +202,7 @@ export const QianJiHall: React.FC<QianJiHallProps> = ({ selectedQianjiId, onSele
         </section>
 
         <section className="hall-detail-column">
-          {selected ? <QianjiProfilePanel item={selected} modalRequest={modalRequest} onSent={handleSent} sendBlocked={sendBlocked}
+          {selected ? <QianjiProfilePanel key={selected.profile.qianjiId} item={selected} modalRequest={modalRequest} onSent={handleSent} sendBlocked={sendBlocked}
             onRefresh={async () => { await refresh(); await refreshImmediately(); }} />
             : <div className="qj-panel-placeholder">{tr("选择一位人物查看详情。")}</div>}
         </section>
@@ -213,7 +216,7 @@ export const QianJiHall: React.FC<QianJiHallProps> = ({ selectedQianjiId, onSele
               {unreadTipsPixelIds.has(pixel.id) && <button className="btn btn-sm" type="button" onClick={() => markTipsRead(pixel)}>{tr("标记已读")}</button>}
             </article>)}
           </section>}
-          {selected?.world?<WorldSummary item={selected} onRefresh={refresh}/>:!worldsEnabled()&&<ApprovalPanel />}
+          {selected?.world?<WorldSummary key={selected.world.world_id} item={selected} onRefresh={refresh}/>:!worldsEnabled()&&<ApprovalPanel />}
         </aside>
       </main>
 

@@ -1,4 +1,11 @@
 export const en: Record<string, string> = {
+  "操作失败：{0}": "Operation failed: {0}",
+  "此 World 已归档，仅保留人物与历史记录。": "This World is archived. Its person and history remain available.",
+  "查看人物": "View person",
+  "查看人设": "View profile",
+  "GATEWAY_INPUT_INVALID": "Enter a valid Pixel ID and gateway revision.",
+  "GATEWAY_PIXEL_NOT_ACTIVE": "Choose an active Pixel in this World.",
+  "GATEWAY_REVISION_CONFLICT": "The gateway has changed. Wait for the person to refresh, then retry.",
   "脚注": "Footnotes",
   "返回引用": "Back to reference",
   "Time not recorded.": "Time not recorded.",

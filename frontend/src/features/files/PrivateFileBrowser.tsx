@@ -1,5 +1,5 @@
 import { t as tr, useLanguage } from '../../i18n';
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Modal } from '../../components/Modal';
 import { fetchPrivateFiles, getPrivateImagePreviewUrl } from '../../api/files';
 import type { PrivateFileItemDto } from '../../api/types';
@@ -20,19 +20,28 @@ export const PrivateFileBrowser: React.FC<PrivateFileBrowserProps> = ({
   const [files, setFiles] = useState<PrivateFileItemDto[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [previewImageSrc, setPreviewImageSrc] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const request = useRef<AbortController | null>(null);
 
   const loadDirectory = (subPath: string) => {
+    request.current?.abort();
+    const controller = new AbortController();
+    request.current = controller;
     setIsLoading(true);
-    fetchPrivateFiles(subPath)
+    setFiles([]); setError(null); setPreviewImageSrc(null);
+    fetchPrivateFiles(subPath, controller.signal)
       .then((res) => {
+        if (controller.signal.aborted) return;
         setFiles(res.files || []);
         setCurrentPath(res.base_path || '');
       })
       .catch((err) => {
+        if (controller.signal.aborted) return;
+        setError(err instanceof Error ? err.message : String(err));
         onLogMessage('error', `[PRIVATE LOAD FAILED] ${err instanceof Error ? err.message : String(err)}`);
       })
       .finally(() => {
-        setIsLoading(false);
+        if (!controller.signal.aborted) setIsLoading(false);
       });
   };
 
@@ -41,6 +50,7 @@ export const PrivateFileBrowser: React.FC<PrivateFileBrowserProps> = ({
       loadDirectory('');
       setPreviewImageSrc(null);
     }
+    return () => request.current?.abort();
   }, [isOpen]);
 
   const isImage = (name: string) => {
@@ -75,7 +85,7 @@ export const PrivateFileBrowser: React.FC<PrivateFileBrowserProps> = ({
         </span>
       </div>
 
-      {previewImageSrc ? (
+      {error ? <p role="alert" className="operation-error">{tr("操作失败：{0}", [error])}</p> : previewImageSrc ? (
         <div style={{ padding: '10px', textAlign: 'center' }}>
           <div style={{ marginBottom: '8px' }}>
             <button className="btn btn-xs" onClick={() => setPreviewImageSrc(null)}>

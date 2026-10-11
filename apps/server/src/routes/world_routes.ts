@@ -31,7 +31,16 @@ export async function registerWorldRoutes(app:FastifyInstance,s:WorldRouteServic
   app.get('/world',async()=>({worlds:manager.list(),pixels:[],round:0,environment_md:"请选择 World",metrics:{alive_pixels:0,total_pixels:0,total_energy:0}}));
   app.get('/run/status',async()=>({scope:'control',running:false,result_status:'SELECT_WORLD',current_round:0,completed_rounds:0,requested_rounds:0,unfinalized_operations:{hasUnfinalized:false}}));
   app.get<{Params:{id:string}}>('/worlds/:id',async req=>{const runtime=await manager.open(req.params.id);return {...control.world(req.params.id),...runtime.world.getWorldDto(),current:runtime.life.current.meta(),revenue:payments.revenue(req.params.id)};});
-  app.put<{Params:{id:string}}>('/worlds/:id/gateway',async req=>{const b=req.body as any;await manager.replaceGateway(req.params.id,b?.pixel_id,b?.expected_revision);return control.world(req.params.id);});
+  app.put<{Params:{id:string}}>('/worlds/:id/gateway',async(req,reply)=>{
+    const b=req.body as any;
+    if(!b||typeof b.pixel_id!=='string'||! /^-?\d+_-?\d+_-?\d+$/.test(b.pixel_id)||!Number.isSafeInteger(b.expected_revision)||b.expected_revision<0)
+      return reply.status(400).send({detail:'GATEWAY_INPUT_INVALID'});
+    try{await manager.replaceGateway(req.params.id,b.pixel_id,b.expected_revision);return control.world(req.params.id);}
+    catch(error){const detail=(error as Error).message;
+      if(['GATEWAY_PIXEL_NOT_ACTIVE','GATEWAY_REVISION_CONFLICT','WORLD_NOT_ACTIVE'].includes(detail))return reply.status(409).send({detail});
+      if(detail==='WORLD_NOT_FOUND')return reply.status(404).send({detail});throw error;
+    }
+  });
   app.get<{Params:{id:string}}>('/worlds/:id/current',async req=>(await manager.open(req.params.id)).life.current.meta());
   app.post<{Params:{id:string}}>('/worlds/:id/body/skills',async req=>{const b=req.body as any;return promotion.createBodySkill(req.params.id,b?.pixel_id,b?.candidate);});
   app.post<{Params:{id:string;skill:string}}>('/worlds/:id/body/skills/:skill/run',async req=>promotion.runBodySkill(req.params.id,req.params.skill,(req.body as any)?.input));

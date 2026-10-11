@@ -15,6 +15,7 @@ export interface PixelMapCanvasProps {
   onHoverPixel: (pixelId: string | null) => void;
   runStatus?: RunStatusDto | null;
   onRefresh?: () => Promise<void>;
+  children?: React.ReactNode;
 }
 
 export const PixelMapCanvas: React.FC<PixelMapCanvasProps> = ({
@@ -26,6 +27,7 @@ export const PixelMapCanvas: React.FC<PixelMapCanvasProps> = ({
   onHoverPixel,
   runStatus,
   onRefresh,
+  children,
 }) => {
   useLanguage();
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -240,6 +242,7 @@ export const PixelMapCanvas: React.FC<PixelMapCanvasProps> = ({
         onPointerDown={() => setHoverPos(null)}
       >
         <canvas ref={canvasRef} id="pixel-canvas" />
+        {children}
 
         <svg ref={gizmoRef} className="axis-gizmo" viewBox="0 0 80 80" aria-hidden="true">
           <circle className="gizmo-bg" cx="40" cy="40" r="33" />

@@ -18,6 +18,18 @@ function fill() {
   fireEvent.submit(screen.getByRole('button', { name: 'Create order and USDT invoice' }).closest('form')!);
 }
 describe('V24 checkout and Owner product settings', () => {
+  it.each(['en', 'zh-CN'] as const)('retains the private order URL after section navigation in %s', async lang => {
+    setLanguage(lang);
+    const hash = '#order=' + order.order_id + '&token=' + order.public_order_token;
+    window.history.replaceState(null, '', '/' + hash);
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(response(payment));
+    const view = render(<Checkout />);
+    await screen.findByText(payment.order_id);
+    window.history.replaceState(null, '', '/#products');
+    view.rerender(<Checkout />);
+    const label = lang === 'en' ? 'Private order link' : '私有订单链接';
+    expect(screen.getByRole('link', { name: label }).getAttribute('href')).toBe('/' + hash);
+  });
   it('creates an invoice, sends no client price, queries with a bearer token and preserves an uncertain request through remount', async () => {
     setLanguage('en'); let lost = true;
     const fetch = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {

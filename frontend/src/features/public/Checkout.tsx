@@ -52,7 +52,7 @@ export function Checkout({ product }: { product?: Product }) {
   return <div className="public-checkout">
     {error && <p role="alert">{t(error)}</p>}
     {order ? <><h3>{t('Your payment')}</h3><p>{t('Keep this private order link to check your payment after closing the browser.')}</p>
-      <a href={window.location.href}>{t('Private order link')}</a>
+      <a href={'/#' + new URLSearchParams({ order: order.order_id, token: order.public_order_token }).toString()}>{t('Private order link')}</a>
       {payment ? <><p role="status">{t(payment.invoice_status === 'PAID' ? 'Payment received. We will contact you using your order details.' : payment.invoice_status === 'REVIEW_REQUIRED' ? 'Payment requires Owner review. Please contact the service provider.' : payment.invoice_status === 'EXPIRED' ? 'This invoice has expired. Do not send payment; contact the service provider.' : payment.invoice_status === 'CANCELLED' ? 'This order was cancelled. Do not send payment.' : 'Awaiting confirmed payment.')}</p>
         <dl><dt>{t('Order')}</dt><dd><code>{payment.order_id}</code></dd><dt>{t('Chain')}</dt><dd>{chainLabels[payment.chain]} · mainnet</dd>
           <dt>{t('Quoted price')}</dt><dd>{payment.quoted_amount} USDT</dd><dt>{t('Exact amount due')}</dt><dd><strong>{payment.amount} USDT</strong></dd>

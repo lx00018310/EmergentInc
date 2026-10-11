@@ -32,6 +32,23 @@ async function fixture(owner=false){const root=fs.mkdtempSync(join(tmpdir(),'v23
   return {root,lineage,control,registry,manager,a,b,genome,payments,promotion,app,request,narrative,generation};
 }
 describe('authenticated V23 product and life integration',()=>{
+  it('reports invalid or stale gateway choices as client conflicts without changing the active entry',async()=>{
+    const f=await fixture(),url=`/api/worlds/${f.a.world_id}/gateway`;
+    expect((await f.request('PUT',url,{pixel_id:'bad',expected_revision:0})).statusCode).toBe(400);
+    const inactive=await f.request('PUT',url,{pixel_id:'1_0_0',expected_revision:0});
+    expect(inactive.statusCode,inactive.body).toBe(409);expect(inactive.json().detail).toBe('GATEWAY_PIXEL_NOT_ACTIVE');
+    const stale=await f.request('PUT',url,{pixel_id:'0_0_0',expected_revision:5});
+    expect(stale.statusCode,stale.body).toBe(409);expect(stale.json().detail).toBe('GATEWAY_REVISION_CONFLICT');
+    expect(f.control.world(f.a.world_id).gateway_pixel_id).toBe('0_0_0');
+    expect((await f.request('PUT',url,{pixel_id:'0_0_0',expected_revision:0})).statusCode).toBe(200);
+  });
+  it('lists the optional private root of a new World as empty while preserving missing-subdirectory errors',async()=>{
+    const f=await fixture();
+    const root=await f.request('GET',`/api/worlds/${f.a.world_id}/api/private-files`);
+    expect(root.statusCode,root.body).toBe(200);expect(root.json()).toEqual({files:[],base_path:''});
+    const missing=await f.request('GET',`/api/worlds/${f.a.world_id}/api/private-files?path=missing`);
+    expect(missing.statusCode).toBe(404);expect(missing.json().detail).toBe('Directory not found');
+  });
   it('projects blocked messages and Tips without running or changing ledgers',async()=>{
     const f=await fixture(),runtime=await f.manager.open(f.a.world_id);
     expect((await f.app.inject('/api/owner/overview')).statusCode).toBe(401);

@@ -18,21 +18,28 @@ export const ToolCatalog: React.FC<ToolCatalogProps> = ({
   useLanguage();
   const [tools, setTools] = useState<ToolSpecDto[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(false);
+  const [error, setError] = useState<string | null>(null);
   const [selectedSchema, setSelectedSchema] = useState<{ name: string; schema: Record<string, unknown> } | null>(null);
 
   useEffect(() => {
     if (!isOpen) return;
+    const controller = new AbortController();
     setIsLoading(true);
-    fetchToolsCatalog()
+    setTools([]); setSelectedSchema(null); setError(null);
+    fetchToolsCatalog(controller.signal)
       .then((res) => {
+        if (controller.signal.aborted) return;
         setTools(res.tools || []);
       })
       .catch((err) => {
+        if (controller.signal.aborted) return;
+        setError(err instanceof Error ? err.message : String(err));
         onLogMessage('error', `[TOOLS CATALOG LOAD FAILED] ${err instanceof Error ? err.message : String(err)}`);
       })
       .finally(() => {
-        setIsLoading(false);
+        if (!controller.signal.aborted) setIsLoading(false);
       });
+    return () => controller.abort();
   }, [isOpen, onLogMessage]);
 
   return (
@@ -46,7 +53,7 @@ export const ToolCatalog: React.FC<ToolCatalogProps> = ({
           {tr("关闭")}</button>
       }
     >
-      {selectedSchema ? (
+      {error ? <p role="alert" className="operation-error">{tr("操作失败：{0}", [error])}</p> : selectedSchema ? (
         <div>
           <div style={{ marginBottom: '8px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <span style={{ fontWeight: 600, color: 'var(--text-bright)' }}>

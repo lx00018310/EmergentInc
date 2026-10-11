@@ -11,7 +11,10 @@ export function GachaView({ onBack, onOpenPerson }: { onBack: () => void; onOpen
     setBusy(true);
     setError(null);
     try {
-      const profile = await recruitQianji(globalThis.crypto.randomUUID());
+      const key = sessionStorage.getItem('emergentinc.recruit-intent') ?? globalThis.crypto.randomUUID();
+      sessionStorage.setItem('emergentinc.recruit-intent', key);
+      const profile = await recruitQianji(key);
+      sessionStorage.removeItem('emergentinc.recruit-intent');
       if (onOpenPerson) onOpenPerson(profile.qianjiId); else onBack();
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));

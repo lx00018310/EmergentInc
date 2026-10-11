@@ -1,5 +1,5 @@
 import React from 'react';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { GachaView } from '../src/features/gacha/GachaView';
 import * as qianjiApi from '../src/api/qianji';
@@ -17,6 +17,18 @@ const born = {
 };
 
 describe('recruitment view', () => {
+  beforeEach(() => { vi.clearAllMocks(); sessionStorage.clear(); });
+  it('retries the same recruitment after a lost response, including after remount', async () => {
+    vi.mocked(qianjiApi.recruitQianji).mockRejectedValueOnce(new Error('lost response')).mockResolvedValueOnce(born as any);
+    const view = render(<GachaView onBack={vi.fn()} onOpenPerson={vi.fn()} />);
+    fireEvent.click(screen.getByRole('button', { name: '招募一位人物' }));
+    await screen.findByRole('alert'); const key = vi.mocked(qianjiApi.recruitQianji).mock.calls[0]![0];
+    view.unmount(); const open = vi.fn(); render(<GachaView onBack={vi.fn()} onOpenPerson={open} />);
+    fireEvent.click(screen.getByRole('button', { name: '招募一位人物' }));
+    await waitFor(() => expect(open).toHaveBeenCalledWith('qj_new'));
+    expect(vi.mocked(qianjiApi.recruitQianji).mock.calls[1]![0]).toBe(key);
+    expect(sessionStorage.getItem('emergentinc.recruit-intent')).toBeNull();
+  });
   it('creates a person and returns to the hall with that person opened', async () => {
     const open = vi.fn();
     vi.mocked(qianjiApi.recruitQianji).mockResolvedValue(born as any);

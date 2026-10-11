@@ -1,5 +1,5 @@
 import { t as tr, useLanguage } from '../../i18n';
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Modal } from '../../components/Modal';
 import { fetchToolExecutions } from '../../api/tools';
 import type { ToolExecutionDto } from '../../api/types';
@@ -23,18 +23,27 @@ export const ToolExecutionHistory: React.FC<ToolExecutionHistoryProps> = ({
   const [executions, setExecutions] = useState<ToolExecutionDto[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [selectedExec, setSelectedExec] = useState<ToolExecutionDto | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const request = useRef<AbortController | null>(null);
 
   const loadData = () => {
+    request.current?.abort();
+    const controller = new AbortController();
+    request.current = controller;
     setIsLoading(true);
-    fetchToolExecutions({ limit: 100 })
+    setError(null); setSelectedExec(null); setExecutions([]);
+    fetchToolExecutions({ limit: 100 }, controller.signal)
       .then((res) => {
+        if (controller.signal.aborted) return;
         setExecutions(res.executions || []);
       })
       .catch((err) => {
+        if (controller.signal.aborted) return;
+        setError(err instanceof Error ? err.message : String(err));
         onLogMessage('error', `[EXECUTIONS LOAD FAILED] ${err instanceof Error ? err.message : String(err)}`);
       })
       .finally(() => {
-        setIsLoading(false);
+        if (!controller.signal.aborted) setIsLoading(false);
       });
   };
 
@@ -43,6 +52,7 @@ export const ToolExecutionHistory: React.FC<ToolExecutionHistoryProps> = ({
       loadData();
       setSelectedExec(null);
     }
+    return () => request.current?.abort();
   }, [isOpen]);
 
   const getStatusBadge = (status: string) => {
@@ -73,7 +83,7 @@ export const ToolExecutionHistory: React.FC<ToolExecutionHistoryProps> = ({
         </div>
       }
     >
-      {selectedExec ? (
+      {error ? <p role="alert" className="operation-error">{tr("操作失败：{0}", [error])}</p> : selectedExec ? (
         <div>
           <div style={{ marginBottom: '8px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <span style={{ fontWeight: 600, color: 'var(--text-bright)' }}>

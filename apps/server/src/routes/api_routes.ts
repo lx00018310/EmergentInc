@@ -528,6 +528,8 @@ export async function registerApiRoutes(
 
     
     if (!fs.existsSync(targetDir)) {
+      // A new World has no private materials yet; only its optional root is empty.
+      if (!subPath) return reply.send({ files: [], base_path: '' });
       return reply.status(404).send({ detail: "Directory not found" });
     }
 

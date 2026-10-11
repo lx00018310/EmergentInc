@@ -27,7 +27,7 @@ export const QianjiNarrativeEditor: React.FC<{ profile: QianjiProfileDto; onSave
     setError(null);
     try {
       const parsed: unknown = JSON.parse(draft);
-      await updateQianjiNarrative(profile.qianjiId, profile.narrativeRevision, parsed as any);
+      await updateQianjiNarrative(profile.qianjiId, draftRevision, parsed as any);
       await onSaved();
       setEditing(false);
     } catch (err) {

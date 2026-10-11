@@ -57,7 +57,7 @@ export function useWorldPolling(): UseWorldPollingResult {
       if (!runRes?.running) {
         fetchWorkspaceAudit(signal)
           .then((auditRes) => {
-            if (isMountedRef.current) {
+            if (isMountedRef.current && !signal.aborted && requestWorldId === (worldsEnabled() ? selectedWorld() : null)) {
               setAudit(auditRes);
             }
           })
@@ -68,14 +68,14 @@ export function useWorldPolling(): UseWorldPollingResult {
         setAudit(null);
       }
     } catch (err: unknown) {
-      if (!isMountedRef.current) return;
+      if (!isMountedRef.current || signal.aborted || requestWorldId !== (worldsEnabled() ? selectedWorld() : null)) return;
       if (err instanceof DOMException && err.name === 'AbortError') {
         return;
       }
       const msg = err instanceof Error ? err.message : String(err);
       setError(msg);
     } finally {
-      if (!isMountedRef.current) return;
+      if (!isMountedRef.current || activeAbortControllerRef.current !== controller) return;
       setIsLoading(false);
 
       // 依据当前运行状态动态调度下一批：运行中 ~600ms，空闲 ~1500ms

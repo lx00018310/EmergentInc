@@ -2,7 +2,7 @@ import { t as tr, useLanguage } from '../../i18n';
 import {worldsEnabled} from '../../api/worldScope';
 import {V23Panel} from './V23Panel';
 import {PublicSiteSettings} from './PublicSiteSettings';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import './business.css';
 import { readTable } from './read_table';
 import { BusinessOutcomes } from './BusinessOutcomes';
@@ -32,6 +32,15 @@ export function BusinessHome() {
   const [total, setTotal] = useState('10'), [draft, setDraft] = useState('2'), [calls, setCalls] = useState('10');
   const [days, setDays] = useState('7'), [uploadId, setUploadId] = useState('');
   const [feedback, setFeedback] = useState<Record<string, string>>({});
+  const budgetLoaded = useRef(false);
+  useEffect(() => {
+    if (!data?.settings || budgetLoaded.current) return;
+    budgetLoaded.current = true;
+    const settings = data.settings;
+    setTotal(String(settings.limit_micros / 1000000)); setDraft(String(settings.draft_limit_micros / 1000000));
+    setCalls(String(settings.draft_call_limit));
+    setDays(String(Math.max(1, Math.ceil((settings.draft_expires_at - Date.now()) / 86400000))));
+  }, [data?.settings]);
   const refresh = useCallback(async () => { setData(await businessApi('business/overview')); }, []);
   useEffect(() => {
     void refresh().catch(e => setError(e.message));

@@ -80,7 +80,7 @@ export const EngineView: React.FC<{ onBack: () => void; initialPixelId?: string 
   // 元胞选择状态
   const [selectedPixelId, setSelectedPixelId] = useState<string | null>(initialPixelId ?? null);
   // 仅在首次加载时自动选中一次；用户手动关闭详情卡后不再强制重选
-  const didAutoSelectRef = useRef(false);
+  const didAutoSelectRef = useRef(Boolean(initialPixelId));
 
   // 默认选中首个活跃元胞（仅一次）
   useEffect(() => {
@@ -100,14 +100,16 @@ export const EngineView: React.FC<{ onBack: () => void; initialPixelId?: string 
   // 提示词状态 (独立实例)
   const [genesisPrompt, setGenesisPrompt] = useState<PromptDto | null>(null);
   const [tempPrompt, setTempPrompt] = useState<PromptDto | null>(null);
+  const [promptError, setPromptError] = useState<string | null>(null);
 
   const loadPrompts = useCallback(async () => {
     try {
       const [gen, temp] = await Promise.all([fetchGenesisPrompt(), fetchTemporaryPrompt()]);
       setGenesisPrompt(gen);
       setTempPrompt(temp);
-    } catch {
-      // 容错处理
+      setPromptError(null);
+    } catch (err) {
+      setPromptError(err instanceof Error ? err.message : String(err));
     }
   }, []);
 
@@ -146,9 +148,11 @@ export const EngineView: React.FC<{ onBack: () => void; initialPixelId?: string 
   // 文档预览模式：'docs' = 元胞文档（含 Tab 切换），'artifact' = 交付物
   const [previewMode, setPreviewMode] = useState<'docs' | 'artifact'>('docs');
   const [activeDocKey, setActiveDocKey] = useState<string>('pixel');
+  const previewRequest = useRef(0);
 
   const handleOpenDoc = async (docName: string) => {
     if (!selectedPixelId) return;
+    const request = ++previewRequest.current;
     setPreviewMode('docs');
     setActiveDocKey(docName);
     setIsPreviewLoading(true);
@@ -159,17 +163,18 @@ export const EngineView: React.FC<{ onBack: () => void; initialPixelId?: string 
     setIsPreviewOpen(true);
     try {
       const res = await fetchPixelDocument(selectedPixelId, docName);
-      setPreviewContent(res.content || '');
+      if (request === previewRequest.current) setPreviewContent(res.content || '');
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
-      setPreviewContent(`[FAILED TO LOAD DOCUMENT] ${msg}`);
+      if (request === previewRequest.current) setPreviewContent(`[FAILED TO LOAD DOCUMENT] ${msg}`);
     } finally {
-      setIsPreviewLoading(false);
+      if (request === previewRequest.current) setIsPreviewLoading(false);
     }
   };
 
   const handlePreviewArtifact = async (title: string, filename: string) => {
     if (!selectedPixelId) return;
+    const request = ++previewRequest.current;
     setPreviewMode('artifact');
     const downloadUrl = getArtifactDownloadUrl(selectedPixelId, filename);
     setPreviewTitle(title);
@@ -199,14 +204,14 @@ export const EngineView: React.FC<{ onBack: () => void; initialPixelId?: string 
     setIsPreviewLoading(true);
     try {
       const res = await fetchPixelArtifact(selectedPixelId, filename);
-      setPreviewContent(res.content || '');
+      if (request === previewRequest.current) setPreviewContent(res.content || '');
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
-      setPreviewContent(
+      if (request === previewRequest.current) setPreviewContent(
         tr("[FAILED TO LOAD ARTIFACT] {0}\n\n该交付物可能包含非 UTF-8 编码或为二进制文件，请点击右下角按钮直接下载原始文件查看。", [msg])
       );
     } finally {
-      setIsPreviewLoading(false);
+      if (request === previewRequest.current) setIsPreviewLoading(false);
     }
   };
 
@@ -259,17 +264,17 @@ export const EngineView: React.FC<{ onBack: () => void; initialPixelId?: string 
             onHoverPixel={handleHoverPixel}
             runStatus={runStatus}
             onRefresh={refreshImmediately}
-          />
-
-          <PixelDetails
-            pixel={selectedPixel}
-            isTipsUnread={isTipsUnread}
-            onMarkTipsRead={markTipsRead}
-            onOpenDoc={handleOpenDoc}
-            onOpenArtifacts={() => setIsArtifactsModalOpen(true)}
-            onOpenOperation={(tab) => { if (selectedPixelId) setPixelOperation({ pixelId: selectedPixelId, tab }); }}
-            onClose={() => { setSelectedPixelId(null); onSelectedPixelChange?.(null); }}
-          />
+          >
+            <PixelDetails
+              pixel={selectedPixel}
+              isTipsUnread={isTipsUnread}
+              onMarkTipsRead={markTipsRead}
+              onOpenDoc={handleOpenDoc}
+              onOpenArtifacts={() => setIsArtifactsModalOpen(true)}
+              onOpenOperation={(tab) => { if (selectedPixelId) setPixelOperation({ pixelId: selectedPixelId, tab }); }}
+              onClose={() => { setSelectedPixelId(null); onSelectedPixelChange?.(null); }}
+            />
+          </PixelMapCanvas>
         </section>
       </main>
 
@@ -327,6 +332,7 @@ export const EngineView: React.FC<{ onBack: () => void; initialPixelId?: string 
           placeholder={tr("可输入创世提示词，清空则完全关闭...")}
           rows={12}
           promptData={genesisPrompt}
+          loadError={promptError}
           isRunning={isRunning}
           onSave={async content => {
             const res = await updateGenesisPrompt(content);
@@ -349,6 +355,7 @@ export const EngineView: React.FC<{ onBack: () => void; initialPixelId?: string 
           placeholder={tr("可输入当前任务的临时提示词 (如 VPS 运维指令)...")}
           rows={12}
           promptData={tempPrompt}
+          loadError={promptError}
           isRunning={isRunning}
           onSave={async content => {
             const res = await updateTemporaryPrompt(content);
@@ -379,7 +386,7 @@ export const EngineView: React.FC<{ onBack: () => void; initialPixelId?: string 
         previewType={previewType}
         downloadUrl={previewDownloadUrl}
         filename={previewFilename}
-        onClose={() => setIsPreviewOpen(false)}
+        onClose={() => { ++previewRequest.current; setIsPreviewOpen(false); }}
         docTabs={
           previewMode === 'docs'
             ? [

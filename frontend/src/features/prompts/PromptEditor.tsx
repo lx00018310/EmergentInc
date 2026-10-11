@@ -9,6 +9,7 @@ export interface PromptEditorProps {
   placeholder: string;
   rows?: number;
   promptData: PromptDto | null;
+  loadError?: string | null;
   isRunning: boolean;
   onSave: (content: string) => Promise<void>;
   onClear: () => Promise<void>;
@@ -21,6 +22,7 @@ export const PromptEditor: React.FC<PromptEditorProps> = ({
   placeholder,
   rows = 5,
   promptData,
+  loadError,
   isRunning,
   onSave,
   onClear,
@@ -43,7 +45,7 @@ export const PromptEditor: React.FC<PromptEditorProps> = ({
   const isActive = Boolean(promptData?.active);
 
   const handleSave = async () => {
-    if (isSubmitting || isRunning || isOverLimit) return;
+    if (!promptData || isSubmitting || isRunning || isOverLimit) return;
     setIsSubmitting(true);
     setLocalError(null);
     try {
@@ -58,7 +60,7 @@ export const PromptEditor: React.FC<PromptEditorProps> = ({
   };
 
   const handleClear = async () => {
-    if (isSubmitting || isRunning) return;
+    if (!promptData || isSubmitting || isRunning) return;
     setIsSubmitting(true);
     setLocalError(null);
     try {
@@ -97,7 +99,7 @@ export const PromptEditor: React.FC<PromptEditorProps> = ({
         maxLength={12500}
         placeholder={placeholder}
         value={draft}
-        disabled={isRunning || isSubmitting}
+        disabled={!promptData || isRunning || isSubmitting}
         onChange={(e) => {
           setDraft(e.target.value);
           setIsDirty(true);
@@ -128,23 +130,23 @@ export const PromptEditor: React.FC<PromptEditorProps> = ({
         </span>
       </div>
 
-      {localError && (
-        <div style={{ color: 'var(--accent-red)', fontSize: '11px', marginBottom: '6px' }}>
-          {localError}
+      {(localError || loadError) && (
+        <div role="alert" style={{ color: 'var(--accent-red)', fontSize: '11px', marginBottom: '6px' }}>
+          {tr("操作失败：{0}", [localError || loadError])}
         </div>
       )}
 
       <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
         <button
           className="btn btn-sm btn-primary"
-          disabled={isRunning || isSubmitting || isOverLimit || (!isDirty && draft === promptData?.content)}
+          disabled={!promptData || isRunning || isSubmitting || isOverLimit || (!isDirty && draft === promptData?.content)}
           onClick={handleSave}
         >
           {isSubmitting ? (tr("保存中...")) : (tr("保存提示词"))}
         </button>
         <button
           className="btn btn-sm btn-secondary"
-          disabled={isRunning || isSubmitting || (!isActive && !draft)}
+          disabled={!promptData || isRunning || isSubmitting || (!isActive && !draft)}
           onClick={handleClear}
         >
           {tr("清空并关闭")}</button>

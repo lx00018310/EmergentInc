@@ -327,14 +327,21 @@ body {
 }
 
 .canvas-toolbar {
-  height: 36px;
+  min-height: 36px;
   background-color: var(--bg-card);
   border-bottom: 1px solid var(--border-color);
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 12px;
+  padding: 6px 12px;
+  flex-wrap: wrap;
+  gap: 6px;
   flex-shrink: 0;
+}
+
+.canvas-toolbar > div,
+.canvas-legend {
+  flex-wrap: wrap;
 }
 
 .toolbar-title {

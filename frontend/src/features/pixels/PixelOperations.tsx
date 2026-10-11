@@ -1,4 +1,5 @@
 import { t as tr, useLanguage } from '../../i18n';
+import { selectedWorld, worldsEnabled } from '../../api/worldScope';
 import React, { useEffect, useState, useRef } from 'react';
 import { Modal } from '../../components/Modal';
 import { fetchMandate, updateMandate, deleteMandate, postExternalReward, fetchExternalRewards, fetchStepCosts } from '../../api/pixels';
@@ -90,7 +91,7 @@ export const PixelOperations: React.FC<PixelOperationsProps> = ({ pixelId, initi
         setDraft('');
         setNotice((tr("Human Mandate 已删除；Pixel Self 与既有历史保持不变。")));
       } else {
-        const storageKey = `reward-pending:${pixelId}`;
+        const storageKey = `reward-pending:${worldsEnabled() ? selectedWorld() + ':' : ''}${pixelId}`;
         if (!rewardRequest.current) {
           const saved = sessionStorage.getItem(storageKey);
           rewardRequest.current = saved ? JSON.parse(saved) : {

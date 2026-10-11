@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import { PixelOperations, knownNumber } from '../src/features/pixels/PixelOperations';
 import * as api from '../src/api/pixels';
+import { enableWorlds, selectWorld } from '../src/api/worldScope';
 
 vi.mock('../src/api/pixels', () => ({
   fetchMandate: vi.fn(), updateMandate: vi.fn(), deleteMandate: vi.fn(),
@@ -15,6 +16,7 @@ function mount(tab: 'mandate' | 'reward' | 'cost' = 'mandate') {
 }
 
 beforeEach(() => {
+  enableWorlds(false); selectWorld(null); sessionStorage.clear();
   vi.clearAllMocks();
   vi.mocked(api.fetchMandate).mockResolvedValue({ pixel_id: 'p1', mandate: '独立职责' });
   vi.mocked(api.updateMandate).mockImplementation(async (_id, mandate) => ({ pixel_id: 'p1', mandate }));
@@ -23,9 +25,33 @@ beforeEach(() => {
   vi.mocked(api.postExternalReward).mockResolvedValue({ newBalance: 120 });
   vi.mocked(api.fetchStepCosts).mockResolvedValue({ pixel_id: 'p1', costs: [] });
 });
-afterEach(cleanup);
+afterEach(() => { cleanup(); enableWorlds(false); selectWorld(null); sessionStorage.clear(); });
 
 describe('V11 Pixel operations', () => {
+  it('isolates uncertain reward retries for the same Pixel ID in different Worlds', async () => {
+    enableWorlds(true); selectWorld('world_a');
+    vi.mocked(api.postExternalReward).mockRejectedValueOnce(new Error('lost response'));
+    const first = mount('reward');
+    await screen.findByText('暂无奖励记录。');
+    fireEvent.change(screen.getByLabelText(/奖励金额/), { target: { value: '20' } });
+    fireEvent.click(screen.getByText('发放 External Reward'));
+    await screen.findByRole('alert');
+    const original = vi.mocked(api.postExternalReward).mock.calls[0]![1];
+    first.unmount(); selectWorld('world_b');
+    const second = mount('reward');
+    await screen.findByText('暂无奖励记录。');
+    fireEvent.change(screen.getByLabelText(/奖励金额/), { target: { value: '30' } });
+    fireEvent.click(screen.getByText('发放 External Reward'));
+    await screen.findByText(/奖励已入账/);
+    const next = vi.mocked(api.postExternalReward).mock.calls[1]![1];
+    expect(next.amount).toBe(30); expect(next.idempotency_key).not.toBe(original.idempotency_key);
+    second.unmount(); selectWorld('world_a'); mount('reward');
+    await screen.findByText('暂无奖励记录。');
+    fireEvent.change(screen.getByLabelText(/奖励金额/), { target: { value: '999' } });
+    fireEvent.click(screen.getByText('发放 External Reward'));
+    await screen.findByText(/奖励已入账/);
+    expect(vi.mocked(api.postExternalReward).mock.calls[2]![1]).toEqual(original);
+  });
   it('reads, saves and deletes only the selected pixel mandate', async () => {
     mount();
     await waitFor(() => expect((screen.getByLabelText('Human Mandate 内容') as HTMLTextAreaElement).value).toBe('独立职责'));

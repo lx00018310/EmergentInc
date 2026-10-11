@@ -35,11 +35,9 @@ export async function apiRequest<T>(endpoint: string, options: RequestOptions = 
   }
 
   // 链接外部传入的 callerSignal
-  if (callerSignal) {
-    callerSignal.addEventListener('abort', () => {
-      controller.abort(callerSignal.reason);
-    });
-  }
+  const abortFromCaller = () => controller.abort(callerSignal?.reason);
+  if (callerSignal?.aborted) abortFromCaller();
+  else callerSignal?.addEventListener('abort', abortFromCaller, { once: true });
 
   const rawUrl = endpoint.startsWith('/') ? endpoint : `/api/${endpoint}`;
   const url = worldScoped ? worldApiUrl(rawUrl) : rawUrl;
@@ -54,8 +52,6 @@ export async function apiRequest<T>(endpoint: string, options: RequestOptions = 
         ...fetchOptions.headers,
       },
     });
-
-    if (timer) clearTimeout(timer);
 
     // 尝试解析 JSON
     const contentType = res.headers.get('content-type') || '';
@@ -75,6 +71,8 @@ export async function apiRequest<T>(endpoint: string, options: RequestOptions = 
         bodyData = null;
       }
     }
+
+    if (controller.signal.aborted) throw controller.signal.reason;
 
     if (!res.ok) {
       let detailMessage = res.statusText || 'Unknown Error';
@@ -96,8 +94,6 @@ export async function apiRequest<T>(endpoint: string, options: RequestOptions = 
 
     return bodyData as T;
   } catch (err: unknown) {
-    if (timer) clearTimeout(timer);
-
     if (err instanceof ApiError) {
       throw err;
     }
@@ -108,5 +104,8 @@ export async function apiRequest<T>(endpoint: string, options: RequestOptions = 
 
     const message = err instanceof Error ? err.message : String(err);
     throw new ApiError(0, `Network error or connection severed: ${message}`);
+  } finally {
+    if (timer) clearTimeout(timer);
+    callerSignal?.removeEventListener('abort', abortFromCaller);
   }
 }

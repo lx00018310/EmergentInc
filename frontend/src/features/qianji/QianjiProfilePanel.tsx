@@ -58,7 +58,7 @@ export const QianjiProfilePanel: React.FC<{
     return () => controller.abort();
   }, [openModal, reloadHistory]);
 
-  const physicalText = item.world?tr("World {0} · {1} 活跃元胞", [item.world.status, item.world.activePixels??0]) : !item.currentBinding ? (tr("未绑定 Pixel"))
+  const physicalText = item.world?tr("World {0} · {1} 活跃元胞", [item.world.status, item.world.activePixels??tr('未知')]) : !item.currentBinding ? (tr("未绑定 Pixel"))
     : item.physical?.active ? tr("载体活跃 · {0} Token", [item.physical.energy ?? tr('未知')])
       : tr("载体失活 · {0} Token", [item.physical?.energy ?? tr('未知')]);
 
@@ -121,7 +121,7 @@ export const QianjiProfilePanel: React.FC<{
             <div className="qj-hero-actions">
               <button className="btn btn-xs" type="button" onClick={() => setOpenModal('history')}>{tr("查阅经历")}</button>
               <button className="btn btn-xs" type="button" onClick={() => setOpenModal('narrative')}>
-                {item.profile.birthIdentity ? (tr("出生生辰")) : (tr("编辑人设"))}
+                {item.profile.birthIdentity ? (tr("出生生辰")) : item.profile.careerStatus==='retired' ? tr("查看人设") : tr("编辑人设")}
               </button>
               {item.profile.careerStatus !== 'retired' && (
                 <button className="btn btn-xs btn-outline-danger" type="button" onClick={() => setOpenModal('retire')}>{tr("办理退役")}</button>
@@ -145,7 +145,7 @@ export const QianjiProfilePanel: React.FC<{
               </div>
               <div className="qj-ortho-cell">
                 <small>{tr("亏损补偿状态")}</small>
-                <strong>{(item.physical?.refundDeficitTokens ?? 0) === 0 ? (tr("NOMINAL · 正常")) : `DEFICIT · ${item.physical?.refundDeficitTokens}`}</strong>
+                <strong>{item.physical?.refundDeficitTokens == null ? tr("未知") : item.physical.refundDeficitTokens === 0 ? (tr("NOMINAL · 正常")) : `DEFICIT · ${item.physical.refundDeficitTokens}`}</strong>
               </div>
             </div>
           </div>
