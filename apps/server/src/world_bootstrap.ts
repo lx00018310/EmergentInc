@@ -44,11 +44,12 @@ export async function bootstrapWorlds(projectRoot:string,config:ReturnType<typeo
   const payments=new PaymentService(path.join(system,'payment/payment.sqlite3'),control,lineage),monitor=new PaymentMonitor(payments);
   let promotion:GenePromotionService,ownerWork:OwnerWorkService;
   let paused=candidate||process.env.EMERGENTINC_START_PAUSED==='1'||active.state!=='ACTIVE';
+  let starting=true;
   const ownerUpgradeOrigin=!candidate&&config.host==='127.0.0.1'&&process.env.EMERGENTINC_LOCAL_EVOLUTION_CONFIG?`http://127.0.0.1:${Number(process.env.PORT||8765)+1}`:undefined;
   const manager=new WorldRuntimeManager(registry,{...manifest,generation:Number(active.generation_no)},{provider,usageMeter,modelName,isModelConfigured:modelConfigured,isMockMode:mock,
     projectRoot,baseSystemPrompt:fs.readFileSync(path.join(projectRoot,'resources/prompts/v9_system_prompt.md'),'utf8'),configureTools:(id,tools)=>{registerWorldTools(tools,id,promotion,payments);ownerWork.registerTools(tools,id);}});
   promotion=new GenePromotionService(manager,projectRoot,lineage);
-  ownerWork=new OwnerWorkService(manager,()=>paused,ownerUpgradeOrigin,ownerUpgradeOrigin?new ReleaseMaintenanceClient(ownerUpgradeOrigin,config.ownerAuth.secret):undefined);
+  ownerWork=new OwnerWorkService(manager,()=>paused||starting,ownerUpgradeOrigin,ownerUpgradeOrigin?new ReleaseMaintenanceClient(ownerUpgradeOrigin,config.ownerAuth.secret):undefined);
   for(const world of manager.list().filter(w=>w.status==='ACTIVE'&&!w.blockedReason)){
     try{await manager.open(world.world_id);}catch(error){const e=error as any;if(candidate||!['WORLD_ACTIVE_CURRENT_MISSING','CURRENT_NOT_INITIALIZED','WORLD_ACTIVE_GENOME_MISMATCH','WORLD_IDENTITY_CONFLICT','WORLD_CORE_MISSING'].includes(e.message)&&!['ERR_SQLITE_ERROR'].includes(e.code))throw error;manager.diagnose(world.world_id,e.code==='ERR_SQLITE_ERROR'?'WORLD_DATABASE_UNAVAILABLE':e.message);}
   }
@@ -66,14 +67,16 @@ export async function bootstrapWorlds(projectRoot:string,config:ReturnType<typeo
   },worldOverview:()=>manager.list().map(row=>{const current=manager.currents().find(w=>w.id===row.world_id)?.current;return {...row,...(current?{current:current.meta(),skills:current.skills()}: {})};}),
     quiesced:()=>paused,recoveryOrigin:process.env.EMERGENTINC_RECOVERY_ORIGIN,
     quiesce:async()=>{paused=true;await manager.quiesceAll();await monitor.stop();await dream.stop();await business.stop();},
-    resume:async()=>{if(candidate||lineage.activeGeneration()?.id!==current.meta().generation_id)throw new Error('GENERATION_NOT_ACTIVE');if(!paused)return;paused=false;promotion.reconcileInherited();monitor.start();dream.start();business.start({exclusiveWorkspaceLockHeld:true});}};
+    resume:async()=>{if(candidate||lineage.activeGeneration()?.id!==current.meta().generation_id)throw new Error('GENERATION_NOT_ACTIVE');if(!paused)return;paused=false;await manager.resumeInterrupted();promotion.reconcileInherited();monitor.start();dream.start();business.start({exclusiveWorkspaceLockHeld:true});}};
   const legacyFile=path.join(system,'legacy/v22/snapshots/ledger/v9_core.sqlite3'),legacy=fs.existsSync(legacyFile)?new CoreStore(legacyFile,{readOnly:true}):undefined;
   const app=await createServer({workspaceRoot:workspace,runtimeMode:'business',ownerAuth:config.ownerAuth,trustLoopbackProxy:config.trustLoopbackProxy,development:process.env.EMERGENT_DEV==='1',allowedOrigins:(process.env.EMERGENT_ALLOWED_ORIGINS||'').split(',').map(v=>v.trim()).filter(Boolean),businessService:business,evolution,
     worlds:{manager,promotion,payments,monitor,legacy,provider:modelConfigured?provider:undefined,meter:usageMeter,modelName,ownerWork},frontendDistDir:path.join(projectRoot,'frontend/dist'),ownerUpgradeOrigin});
   app.addHook('onClose',async()=>{paused=true;await ownerWork.close();await monitor.stop();await dream.stop();await business.stop();await manager.closeAll();legacy?.close();payments.close();control.close();life.close();unlock();});
   for(const signal of ['SIGINT','SIGTERM'] as const)process.once(signal,()=>{void app.close();});
   await app.listen({port:Number(process.env.PORT||8765),host:config.host});
-  if(!paused){promotion.reconcileInherited();payments.deliverMemories();monitor.start();dream.start();business.start({exclusiveWorkspaceLockHeld:true});}
+  if(!paused)await manager.resumeInterrupted();
+  starting=false;
+  if(!paused){promotion.reconcileInherited();payments.deliverMemories();monitor.start();dream.start();business.start({exclusiveWorkspaceLockHeld:true});await ownerWork.tick();}
   console.log(`[EmergentInc V24] ${active.id}, ${registry.list().length} Worlds, http://${config.host}:${process.env.PORT||8765}`);
   return app;
 }

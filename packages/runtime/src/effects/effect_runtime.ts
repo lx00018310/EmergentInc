@@ -45,8 +45,9 @@ export class EffectRuntime {
 
   private enqueueMessage(params: EnqueueMessageParams): void {
     this.ctx.store.transaction(()=>{
+      if(params.messageId&&this.ctx.store.messages.getMessage(params.messageId))return;
       const inbox=this.ctx.worldMode&&this.originMessageId?this.ctx.store.db.prepare(`SELECT turn_id FROM world_chat_inbox WHERE message_id=? UNION ALL SELECT turn_id FROM world_chat_continuations WHERE message_id=?`).get(this.originMessageId,this.originMessageId):undefined;
-      const message=this.ctx.store.messages.enqueueMessage({...params,...(inbox?{messageId:`msg_${randomUUID()}`}:{ }),executionId:this.ctx.executionScope?.executionId??null});
+      const message=this.ctx.store.messages.enqueueMessage({...params,...(inbox?{messageId:params.messageId??`msg_${randomUUID()}`}:{ }),executionId:this.ctx.executionScope?.executionId??null});
       if(inbox)this.ctx.store.db.prepare('INSERT INTO world_chat_continuations VALUES(?,?,?)').run(message.messageId,inbox.turn_id,this.originMessageId!);
     });
   }
@@ -61,22 +62,31 @@ export class EffectRuntime {
     for (const effect of effects) {
       if (actorDeactivated) break;
       // 1. Exactly-Once 幂等检查
-      if (this.ctx.store.effects.hasEffectBeenApplied(effect.effectId)) {
+      const recorded = this.ctx.store.effects.getEffect(effect.effectId);
+      if (recorded && ["APPLIED", "FAILED", "SKIPPED"].includes(recorded.status)) {
+        if (effect.effectType === "TOOL_CALL" && recorded.status !== "SKIPPED") {
+          const result = JSON.parse(recorded.details!);
+          const output = result.output && typeof result.output === "object" ? { ...result.output } : result.output;
+          if (output && typeof output === "object") delete output.snapshot_relative_path;
+          toolTargetPixelId = effect.pixelId;
+          toolExecutions.push({ tool: result.tool, status: result.status, outputOrError: result.status === "SUCCESS" ? output : result.error_message });
+          if (result.status !== "SUCCESS") priorToolFailed = true;
+        }
         continue;
       }
 
       // 2. 根据类型派发执行
       switch (effect.effectType) {
         case "UPDATE_MIND":
-          await this.applyUpdateMind(effect);
+          this.ctx.store.transaction(() => this.applyUpdateMind(effect));
           break;
 
         case "CAPABILITY_UNAVAILABLE":
-          await this.applyCapabilityUnavailable(effect);
+          this.ctx.store.transaction(() => this.applyCapabilityUnavailable(effect));
           break;
 
         case "READ_ENVIRONMENT":
-          await this.applyReadEnvironment(effect);
+          this.ctx.store.transaction(() => this.applyReadEnvironment(effect));
           break;
 
         case "TOOL_CALL":
@@ -104,7 +114,7 @@ export class EffectRuntime {
           break;
 
         case "TRANSFER_ENERGY":
-          await this.applyTransferEnergy(effect);
+          this.ctx.store.transaction(() => this.applyTransferEnergy(effect));
           actorDeactivated = !this.ctx.store.pixels.getPixelAccount(effect.fromPixelId)?.active;
           break;
 
@@ -114,11 +124,11 @@ export class EffectRuntime {
           break;
 
         case "ROUTE_MESSAGE":
-          await this.applyRouteMessage(effect);
+          this.ctx.store.transaction(() => this.applyRouteMessage(effect));
           break;
 
         case "OWNER_REPLY":
-          await this.applyOwnerReply(effect);
+          this.ctx.store.transaction(() => this.applyOwnerReply(effect));
           break;
       }
     }
@@ -131,11 +141,11 @@ export class EffectRuntime {
         this.ctx.runId,
         toolExecutions
       );
-      this.enqueueMessage(feedback);
+      this.enqueueMessage({ ...feedback, messageId: `feedback_tools_${effects[0].messageId}` });
     }
   }
 
-  private async applyUpdateMind(effect: UpdateMindEffect): Promise<void> {
+  private applyUpdateMind(effect: UpdateMindEffect): void {
     const pixelDir = path.resolve(this.ctx.workspaceRoot, "live", "pixels", effect.pixelId);
     const pixelFile = path.resolve(pixelDir, "pixel.md");
 
@@ -194,7 +204,7 @@ export class EffectRuntime {
     });
   }
 
-  private async applyCapabilityUnavailable(effect: CapabilityUnavailableEffect): Promise<void> {
+  private applyCapabilityUnavailable(effect: CapabilityUnavailableEffect): void {
     const binding = this.ctx.store.qianji.getCurrentBindingByPixel(effect.pixelId);
     this.ctx.store.db.prepare(`INSERT OR IGNORE INTO qianji_approval_requests
       (request_id, qianji_id, pixel_id, capability, status, created_at)
@@ -219,7 +229,7 @@ export class EffectRuntime {
     });
   }
 
-  private async applyReadEnvironment(effect: ReadEnvironmentEffect): Promise<void> {
+  private applyReadEnvironment(effect: ReadEnvironmentEffect): void {
     const envPath = path.resolve(this.ctx.workspaceRoot, "live", "environment.md");
     let content = this.ctx.executionScope && typeof this.ctx.executionScope.inputSnapshot.environment === "string"
       ? this.ctx.executionScope.inputSnapshot.environment as string : "";
@@ -263,6 +273,11 @@ export class EffectRuntime {
       executionScope: this.ctx.executionScope,
     };
 
+    const previous = this.ctx.store.toolExecutions.getExecution(effect.operationId);
+    if (previous) {
+      // An execution without its atomic effect receipt is an older, uncertain operation.
+      throw Object.assign(new Error("Tool execution requires operator review / 工具执行记录需人工核实"), { code: "PAUSED_RECOVERY_REQUIRED" });
+    }
     // 记录工具执行开始
     this.ctx.store.toolExecutions.recordStarted({
       operation_id: effect.operationId,
@@ -288,23 +303,25 @@ export class EffectRuntime {
     const storedResult = hasObjectOutput ? { ...result, output: storedOutput } : result;
 
     // 记录工具执行结束
-    this.ctx.store.toolExecutions.recordFinished({
-      operationId: effect.operationId,
-      status: result.status,
-      result: JSON.stringify(result.output ? storedOutput : result.error_message || ""),
-      finishedAt: Date.now() / 1000,
-      costCny: result.costCny,
-    });
+    this.ctx.store.transaction(() => {
+      this.ctx.store.toolExecutions.recordFinished({
+        operationId: effect.operationId,
+        status: result.status,
+        result: JSON.stringify(result.output ? storedOutput : result.error_message || ""),
+        finishedAt: Date.now() / 1000,
+        costCny: result.costCny,
+      });
 
-    this.ctx.store.effects.recordEffect({
-      effect_id: effect.effectId,
-      message_id: effect.messageId,
-      effect_type: effect.effectType,
-      effect_index: effect.effectIndex,
-      payload_hash: effect.payloadHash,
-      status: result.status === "SUCCESS" ? "APPLIED" : "FAILED",
-      details: JSON.stringify(storedResult),
-      created_at: Date.now() / 1000,
+      this.ctx.store.effects.recordEffect({
+        effect_id: effect.effectId,
+        message_id: effect.messageId,
+        effect_type: effect.effectType,
+        effect_index: effect.effectIndex,
+        payload_hash: effect.payloadHash,
+        status: result.status === "SUCCESS" ? "APPLIED" : "FAILED",
+        details: JSON.stringify(storedResult),
+        created_at: Date.now() / 1000,
+      });
     });
 
     return {
@@ -317,7 +334,7 @@ export class EffectRuntime {
     };
   }
 
-  private async applyTransferEnergy(effect: TransferEnergyEffect): Promise<void> {
+  private applyTransferEnergy(effect: TransferEnergyEffect): void {
     if (this.ctx.executionScope && (this.ctx.executionScope.kind === "trial_candidate" ||
         !this.ctx.executionScope.allowedRecipients.includes(effect.transfer.target))) {
       this.enqueueMessage(FeedbackFactory.createTransferFailureFeedback(
@@ -414,6 +431,9 @@ export class EffectRuntime {
   }
 
   private async applyReproduce(effect: ReproduceEffect): Promise<void> {
+    if (this.ctx.store.effects.getEffect(effect.effectId)?.status === "PENDING") {
+      throw Object.assign(new Error("Interrupted body creation requires operator review / 元胞创建中断，需人工核实"), { code: "PAUSED_RECOVERY_REQUIRED" });
+    }
     if (this.ctx.executionScope) {
       this.recordReproductionFailure(effect, "EXECUTION_SCOPE_DENIED", "Reproduction is disabled inside an execution");
       return;
@@ -509,6 +529,12 @@ export class EffectRuntime {
 
     let movedPixel = false;
     let movedArtifacts = false;
+    // Filesystem moves cannot share a SQLite commit. A crash here must require review.
+    this.ctx.store.transaction(() => {
+      this.ctx.store.messages.updateStatus(effect.messageId, "PROCESSING");
+      this.ctx.store.effects.recordEffect({effect_id:effect.effectId,message_id:effect.messageId,effect_type:effect.effectType,
+        effect_index:effect.effectIndex,payload_hash:effect.payloadHash,status:"PENDING",created_at:Date.now()/1000});
+    });
     try {
       if (hadPixelDir || hadArtifactsDir) fs.mkdirSync(historyDir, { recursive: true });
       if (hadPixelDir) {
@@ -601,11 +627,16 @@ export class EffectRuntime {
           effect_index: effect.effectIndex, payload_hash: effect.payloadHash,
           status: "APPLIED", created_at: now,
         });
+        this.ctx.store.messages.updateStatus(effect.messageId, "RESPONSE_STORED");
       });
     } catch (err) {
       if ((movedPixel || !hadPixelDir) && fs.existsSync(childDir)) fs.rmSync(childDir, { recursive: true, force: true });
       if (movedPixel) fs.renameSync(archivedPixelDir, childDir);
       if (movedArtifacts) fs.renameSync(archivedArtifactsDir, artifactsDir);
+      this.ctx.store.transaction(() => {
+        this.ctx.store.db.prepare("DELETE FROM effects WHERE effect_id=? AND status='PENDING'").run(effect.effectId);
+        this.ctx.store.messages.updateStatus(effect.messageId, "RESPONSE_STORED");
+      });
       throw err;
     }
     this.syncAccountStateFile(effect.parentPixelId);
@@ -636,7 +667,7 @@ export class EffectRuntime {
     });
   }
 
-  private async applyRouteMessage(effect: RouteMessageEffect): Promise<void> {
+  private applyRouteMessage(effect: RouteMessageEffect): void {
     const activePixels = this.ctx.store.pixels.listActivePixels();
     const activeNeighbors = new Set(
       (this.ctx.executionScope
@@ -707,7 +738,7 @@ export class EffectRuntime {
     });
   }
 
-  private async applyOwnerReply(effect: OwnerReplyEffect): Promise<void> {
+  private applyOwnerReply(effect: OwnerReplyEffect): void {
     if (this.ctx.worldMode) {
       const inbox = this.ctx.store.db.prepare(`SELECT * FROM world_chat_inbox WHERE message_id=? OR turn_id IN (SELECT turn_id FROM world_chat_continuations WHERE message_id=?)`).get(effect.messageId,effect.messageId);
       const message = this.ctx.store.messages.getMessage(effect.messageId);

@@ -30,6 +30,30 @@ export interface RunRecord {
 export class RunRepository {
   constructor(private db: SqliteDatabase) {}
 
+  public createCheckpoint(runId: string, nextRound: number): void {
+    this.db.prepare("INSERT INTO run_checkpoints(run_id,next_round) VALUES(?,?)").run(runId, nextRound);
+  }
+
+  public getCheckpoint(runId: string): RunCheckpoint | null {
+    return (this.db.prepare("SELECT * FROM run_checkpoints WHERE run_id=?").get(runId) as unknown as RunCheckpoint) ?? null;
+  }
+
+  public setResumePending(runId: string, pending: boolean): void {
+    this.db.prepare("UPDATE run_checkpoints SET resume_pending=? WHERE run_id=?").run(pending ? 1 : 0, runId);
+  }
+
+  public completeRound(runId: string, round: number, messages: number): void {
+    this.db.prepare(`UPDATE run_checkpoints SET next_round=?,round_started=0,round_messages=0,
+      completed_rounds=completed_rounds+1,messages_processed=messages_processed+?,idle_rounds=idle_rounds+?
+      WHERE run_id=? AND next_round=?`).run(round + 1, messages, messages === 0 ? 1 : 0, runId, round);
+  }
+
+  public getWorldRound(): number | null {
+    const row = this.db.prepare(`SELECT MAX(c.next_round-1) AS round FROM run_checkpoints c
+      JOIN runs r USING(run_id) WHERE r.execution_id IS NULL`).get() as any;
+    return row?.round == null ? null : Number(row.round);
+  }
+
   public createRun(run: RunRecord): void {
     const stmt = this.db.prepare(`
       INSERT INTO runs (
@@ -73,12 +97,12 @@ export class RunRepository {
   }
 
   public getActiveRun(): RunRecord | null {
-    const stmt = this.db.prepare("SELECT * FROM runs WHERE status = 'RUNNING' ORDER BY created_at DESC LIMIT 1");
+    const stmt = this.db.prepare("SELECT * FROM runs WHERE status = 'RUNNING' ORDER BY created_at DESC, rowid DESC LIMIT 1");
     return (stmt.get() as unknown as RunRecord) ?? null;
   }
 
   public getLatestRun(): RunRecord | null {
-    const stmt = this.db.prepare("SELECT * FROM runs ORDER BY created_at DESC LIMIT 1");
+    const stmt = this.db.prepare("SELECT * FROM runs ORDER BY created_at DESC, rowid DESC LIMIT 1");
     return (stmt.get() as unknown as RunRecord) ?? null;
   }
 
@@ -101,4 +125,15 @@ export class RunRepository {
     `);
     stmt.run(spentDelta, reservedDelta, runId);
   }
+}
+
+export interface RunCheckpoint {
+  run_id: string;
+  next_round: number;
+  round_started: number;
+  round_messages: number;
+  completed_rounds: number;
+  messages_processed: number;
+  idle_rounds: number;
+  resume_pending: number;
 }

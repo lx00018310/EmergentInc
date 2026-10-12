@@ -84,6 +84,7 @@ export type EffectStatus =
  */
 export type StopReason =
   | "USER_STOPPED"
+  | "SERVICE_SHUTDOWN"
   | "ROUND_LIMIT_REACHED"
   | "MESSAGE_LIMIT_REACHED"
   | "RUN_BUDGET_EXHAUSTED"

@@ -216,14 +216,19 @@ export class MessageRepository {
     });
   }
 
-  public commitMessage(messageId: string): void {
+  public commitMessage(messageId: string, runId?: string): void {
     const now = Date.now() / 1000;
     const stmt = this.db.prepare(`
       UPDATE messages
       SET status = 'COMMITTED', updated_at = ?
-      WHERE message_id = ?
+      WHERE message_id = ? AND status <> 'COMMITTED'
     `);
-    stmt.run(now, messageId);
+    this.db.transaction(() => {
+      const result = stmt.run(now, messageId);
+      if (runId && Number(result.changes)) {
+        this.db.prepare("UPDATE run_checkpoints SET round_messages=round_messages+1 WHERE run_id=? AND round_started=1").run(runId);
+      }
+    });
   }
 
   public updateStatus(messageId: string, status: MessageStatus): void {

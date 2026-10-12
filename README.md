@@ -84,6 +84,8 @@ workspace/
 
 Site settings and orders use the existing control database. Payments remain in the existing payment database. Business data never lives in frontend source, Git JSON files or a release directory.
 
+Run checkpoints, completed-message counts and resume intent are stored in the existing ledger database. After a crash, power loss or service shutdown, the next normal startup continues the same Run at its unfinished round, reuses stored model responses and tool receipts, and preserves the original round limit and spent token budget. Manual stops, exhausted budgets, normal completion and work awaiting approval do not resume automatically. Candidate validation and paused startup do not recover work. Unknown model billing, external tool outcomes or filesystem moves still require operator review. Older unresolved Runs without checkpoints retain the existing manual recovery flow.
+
 ## Run and develop
 
 Use Node.js 24 and pnpm. On Windows use `pnpm.cmd`. Configure a random Owner secret of at least 32 characters and model pricing in local `.env`; keep credentials out of Git.

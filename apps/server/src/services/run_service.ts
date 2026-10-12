@@ -47,6 +47,7 @@ export class RunService {
   private hasExecutedRunInProcess: boolean = false;
   private errorPhase: string | null = null;
   private currentExecutionId: string | null = null;
+  private suspendRequested = false;
   private readonly executionFinalizers = new Map<string, (runId: string, executionId: string, status: "awaiting_review" | "blocked", reason: string) => void>();
 
   constructor(
@@ -71,6 +72,8 @@ export class RunService {
   }
 
   public getWorldRound(): number {
+    const checkpointRound = this.store.runs.getWorldRound();
+    if (checkpointRound !== null) return checkpointRound;
     if (!this.workspaceRoot) return 0;
     const worldFile = path.resolve(this.workspaceRoot, "live", "world_state.json");
     if (!fs.existsSync(worldFile)) return 0;
@@ -91,7 +94,8 @@ export class RunService {
         data = JSON.parse(fs.readFileSync(worldFile, "utf-8"));
       }
       data.round = round;
-      fs.writeFileSync(worldFile, JSON.stringify(data, null, 2), "utf-8");
+      fs.writeFileSync(worldFile + ".tmp", JSON.stringify(data, null, 2), "utf-8");
+      fs.renameSync(worldFile + ".tmp", worldFile);
     } catch (err) {
       console.error("[RunService] Failed to persist world_state.json round:", err);
     }
@@ -107,6 +111,7 @@ export class RunService {
 
     // 内存态为空时回退到最近一次持久化 Run，进程重启后状态仍可见
     const latestRun = this.currentRunId ? null : this.store.runs.getLatestRun();
+    const checkpoint = this.store.runs.getCheckpoint(this.currentRunId ?? latestRun?.run_id ?? "");
     const persistedStatus = latestRun?.status;
     const stopReason = this.lastStopReason ?? latestRun?.stop_reason ?? null;
     const lastError = this.lastError ?? latestRun?.error_summary ?? null;
@@ -130,6 +135,7 @@ export class RunService {
       resultStatus = "RECOVERY_RESOLVED";
     } else if (
       stopReason === "USER_STOPPED" ||
+      stopReason === "SERVICE_SHUTDOWN" ||
       stopReason === "RUN_BUDGET_EXHAUSTED" ||
       stopReason === "EXECUTION_BUDGET_EXHAUSTED" ||
       stopReason === "READ_LOOP_THRESHOLD_REACHED" ||
@@ -158,11 +164,11 @@ export class RunService {
       current_round: lastCompletedRound,
       last_completed_round: lastCompletedRound,
       executing_round: this.isRunning ? this.currentRound : null,
-      requested_rounds: this.requestedRounds,
-      completed_rounds: this.completedRounds,
-      messages_processed: this.messagesProcessed,
-      model_calls_completed: modelCallsCount,
-      idle_rounds: this.idleRounds,
+      requested_rounds: this.currentRunId ? this.requestedRounds : latestRun?.end_round == null ? 0 : latestRun.end_round - latestRun.start_round + 1,
+      completed_rounds: checkpoint?.completed_rounds ?? this.completedRounds,
+      messages_processed: checkpoint ? checkpoint.messages_processed + checkpoint.round_messages : this.messagesProcessed,
+      model_calls_completed: this.currentRunId ? modelCallsCount : latestRun ? this.store.modelCalls.countByRunId(latestRun.run_id) : 0,
+      idle_rounds: checkpoint?.idle_rounds ?? this.idleRounds,
       stop_requested: Boolean(this.abortController?.signal?.aborted),
       stop_reason: stopReason,
       last_error: lastError,
@@ -218,6 +224,8 @@ export class RunService {
           `Summary: reservations=${unfinalized.unsettledReservations.length}, unknownCalls=${unfinalized.unknownCalls.length}, callingMessages=${unfinalized.callingMessages.length}`
         );
       }
+      // An explicit new Run supersedes any earlier resumable attempt.
+      this.store.db.prepare("UPDATE run_checkpoints SET resume_pending=0 WHERE resume_pending=1").run();
       this.store.runs.createRun({
         run_id: runId,
         execution_id: executionId,
@@ -230,6 +238,7 @@ export class RunService {
         status: "RUNNING",
         created_at: Date.now() / 1000,
       });
+      this.store.runs.createCheckpoint(runId, startRound);
       if (options.onRunCreated) options.onRunCreated(runId);
       this.store.messages.resetWaitingRunBudgetMessages(executionId);
     });
@@ -248,6 +257,7 @@ export class RunService {
     this.errorCode = null;
     this.errorPhase = null;
     this.abortController = new AbortController();
+    this.suspendRequested = false;
 
     // Control-plane rounds never enqueue agent messages; use per-Pixel Mandate.
 
@@ -269,8 +279,63 @@ export class RunService {
     if (!this.isRunning || !this.abortController) {
       return { status: "IDLE", message: "No active run to stop." };
     }
+    // Persist intent before signalling: a subsequent hard kill must not undo a manual stop.
+    this.store.transaction(() => {
+      this.store.runs.setResumePending(this.currentRunId!, false);
+      this.store.db.prepare("UPDATE runs SET stop_reason='USER_STOPPED' WHERE run_id=?").run(this.currentRunId!);
+    });
+    this.suspendRequested = false;
     this.abortController.abort(new Error("USER_STOPPED"));
     return { status: "STOPPING", message: "Stop request signaled to active run." };
+  }
+
+  /** Finish the in-flight step, then preserve this Run for the next service start. */
+  public requestSuspend(): void {
+    if (this.isRunning && !this.abortController?.signal.aborted) this.suspendRequested = true;
+  }
+
+  public async resumeInterrupted(): Promise<boolean> {
+    if (this.isRunning || (!this.isModelConfigured && !this.isMockMode)) return false;
+    const run = this.store.runs.getLatestRun();
+    const checkpoint = run && this.store.runs.getCheckpoint(run.run_id);
+    if (!run || !checkpoint?.resume_pending || run.end_round == null || run.stop_reason === "USER_STOPPED") return false;
+    if (!(run.status === "RUNNING" || run.status === "FAILED" && run.stop_reason === "INFRASTRUCTURE_FAILURE" ||
+      run.status === "STOPPED" && ["SERVICE_SHUTDOWN", "CALL_OUTCOME_UNKNOWN", "TOOL_OUTCOME_UNKNOWN", "PAUSED_RECOVERY_REQUIRED"].includes(run.stop_reason ?? ""))) return false;
+    const execution = run.execution_id ? this.store.executions.get(run.execution_id) : null;
+    if (run.execution_id && execution?.status !== "running") return false;
+
+    const ready = this.store.transaction(() => {
+      // These states precede dispatch. CALLING and uncertain outcomes are deliberately untouched.
+      for (const message of this.store.db.prepare(`SELECT message_id,status FROM messages
+        WHERE execution_id IS ? AND status IN ('PROCESSING','RESERVED')`).all(run.execution_id ?? null)) {
+        const id = String(message.message_id);
+        if (this.store.db.prepare("SELECT 1 FROM effects WHERE message_id=? AND status IN ('PENDING','UNKNOWN')").get(id)) continue;
+        const call = this.store.modelCalls.getLatestByMessageId(id);
+        if (call?.outcome === "CALL_OUTCOME_UNKNOWN" || call?.outcome === "SUCCESS" && call.actualTokens === null) continue;
+        for (const reservation of this.store.db.prepare("SELECT call_id FROM reservations WHERE message_id=? AND run_id=? AND status='OPEN'").all(id, run.run_id))
+          this.store.budgets.refund(String(reservation.call_id));
+        this.store.messages.updateStatus(id, call?.outcome === "SUCCESS" && call.rawResponse != null ? "RESPONSE_STORED" : "QUEUED");
+      }
+      const unfinalized = this.store.getUnfinalizedOperations();
+      return !unfinalized.unsettledReservations.length && !unfinalized.unknownCalls.length &&
+        !unfinalized.callingMessages.length && !unfinalized.startedToolExecutions.length &&
+        unfinalized.pendingRuns.every(id => id === run.run_id);
+    });
+    if (!ready) return false;
+    this.store.db.prepare("UPDATE runs SET status='RUNNING',stop_reason=NULL,error_code=NULL,error_summary=NULL,finished_at=NULL WHERE run_id=?").run(run.run_id);
+    this.currentRunId = run.run_id;
+    this.currentExecutionId = run.execution_id ?? null;
+    this.requestedRounds = run.end_round - run.start_round + 1;
+    this.completedRounds = checkpoint.completed_rounds;
+    this.messagesProcessed = checkpoint.messages_processed;
+    this.idleRounds = checkpoint.idle_rounds;
+    this.currentRound = checkpoint.next_round;
+    this.lastStopReason = this.lastError = this.errorCode = this.errorPhase = null;
+    this.suspendRequested = false;
+    this.abortController = new AbortController();
+    this.isRunning = true;
+    void this.runLoop(run.run_id, checkpoint.next_round, run.end_round, this.abortController.signal, this.currentExecutionId);
+    return true;
   }
 
   public reconcile(): { status: string; reconciled: any } {
@@ -297,10 +362,14 @@ export class RunService {
           this.lastStopReason = "USER_STOPPED";
           break;
         }
+        if (this.suspendRequested) {
+          this.lastStopReason = "SERVICE_SHUTDOWN";
+          break;
+        }
 
         this.currentRound = r;
         if (executionId) this.store.executions.beginScopeRound(executionId, runId, r);
-        const summary: RoundSummary = await this.scheduler.executeRound(r, runId, signal, executionId);
+        const summary: RoundSummary = await this.scheduler.executeRound(r, runId, signal, executionId, () => this.suspendRequested);
 
         const diagnostic = summary as RoundSummary & { errorCode?: string; errorSummary?: string; errorPhase?: string };
         if (diagnostic.errorCode) this.errorCode = diagnostic.errorCode;
@@ -308,7 +377,7 @@ export class RunService {
         if (diagnostic.errorPhase) this.errorPhase = diagnostic.errorPhase;
 
         // 如果本轮遭遇基础设施失败或被主动中断，不可计入完成轮次，不可推进世界轮次
-        if (summary.stopReason === "INFRASTRUCTURE_FAILURE" || summary.stopReason === "PAUSED_RECOVERY_REQUIRED" || signal.aborted) {
+        if (["INFRASTRUCTURE_FAILURE", "PAUSED_RECOVERY_REQUIRED", "CALL_OUTCOME_UNKNOWN", "TOOL_OUTCOME_UNKNOWN", "SERVICE_SHUTDOWN"].includes(summary.stopReason ?? "") || signal.aborted) {
           this.lastStopReason = signal.aborted ? "USER_STOPPED" : summary.stopReason!;
           break;
         }
@@ -320,6 +389,15 @@ export class RunService {
         }
 
         // 仅在整轮完整成功执行后，才推进持久化的绝对世界轮次
+        this.store.transaction(() => {
+          this.store.runs.completeRound(runId, r, summary.messagesProcessed);
+          if (summary.stopReason) {
+            const completed = ["ROUND_LIMIT_REACHED", "MESSAGE_LIMIT_REACHED"].includes(summary.stopReason);
+            this.store.runs.updateRunStatus(runId, completed ? "COMPLETED" : "STOPPED", summary.stopReason, this.errorCode, this.lastError);
+            this.store.runs.setResumePending(runId, false);
+            this.finalizeExecutionRun(executionId, summary.stopReason);
+          }
+        });
         if (!executionId) this.updateWorldRound(r);
 
         if (summary.stopReason) {
@@ -331,6 +409,7 @@ export class RunService {
       const isStopped =
         signal.aborted ||
         this.lastStopReason === "USER_STOPPED" ||
+        this.lastStopReason === "SERVICE_SHUTDOWN" ||
         this.lastStopReason === "RUN_BUDGET_EXHAUSTED" ||
         this.lastStopReason === "EXECUTION_BUDGET_EXHAUSTED" ||
         this.lastStopReason === "READ_LOOP_THRESHOLD_REACHED" ||
@@ -342,17 +421,19 @@ export class RunService {
       const finalReason = this.lastStopReason || (signal.aborted ? "USER_STOPPED" : "ROUND_LIMIT_REACHED");
 
       this.lastStopReason = finalReason;
-      this.store.runs.updateRunStatus(runId, finalStatus, finalReason as any, this.errorCode, this.lastError);
-      this.finalizeExecutionRun(executionId, finalReason);
-      this.notifyExecutionFinalized(runId, executionId, finalReason);
+      this.store.transaction(() => {
+        this.store.runs.updateRunStatus(runId, finalStatus, finalReason as any, this.errorCode, this.lastError);
+        if (!isFailed && !needsRecovery && finalReason !== "SERVICE_SHUTDOWN") this.store.runs.setResumePending(runId, false);
+        if (!isFailed && finalReason !== "SERVICE_SHUTDOWN") this.finalizeExecutionRun(executionId, finalReason);
+      });
+      if (!isFailed && finalReason !== "SERVICE_SHUTDOWN") this.notifyExecutionFinalized(runId, executionId, finalReason);
     } catch (err: any) {
       this.lastError = err.summary || err.message || String(err);
       this.errorCode = err.code || "INFRASTRUCTURE_FAILURE";
       this.errorPhase = err.phase || null;
       this.lastStopReason = "INFRASTRUCTURE_FAILURE";
       this.store.runs.updateRunStatus(runId, "FAILED", "INFRASTRUCTURE_FAILURE", this.errorCode, this.lastError);
-      this.finalizeExecutionRun(executionId, this.lastStopReason);
-      this.notifyExecutionFinalized(runId, executionId, this.lastStopReason);
+      // Keep the execution and original budget attached to the interrupted Run.
     } finally {
       this.isRunning = false;
       this.abortController = null;

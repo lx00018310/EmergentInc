@@ -1,6 +1,7 @@
 import { t as tr } from '../../i18n';
 const stopReasonLabels: Record<string, string> = {
   get USER_STOPPED() { return tr("用户手动停止"); },
+  get SERVICE_SHUTDOWN() { return tr("服务中断，等待续跑"); },
   get ROUND_LIMIT_REACHED() { return tr("已达到设定轮数"); },
   get MESSAGE_LIMIT_REACHED() { return tr("已达到单轮消息上限"); },
   get RUN_BUDGET_EXHAUSTED() { return tr("本次运行 Token 预算已耗尽"); },

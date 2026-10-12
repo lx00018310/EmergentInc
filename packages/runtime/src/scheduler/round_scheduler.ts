@@ -106,11 +106,18 @@ export class RoundScheduler {
     currentRound: number,
     runId: string,
     signal?: AbortSignal,
-    executionId: string | null = null
+    executionId: string | null = null,
+    shouldSuspend: () => boolean = () => false
   ): Promise<RoundSummary> {
-    this.beginRound(currentRound, runId, executionId);
+    // Round initialization and its marker commit together, including natural wakes.
+    this.store.transaction(() => {
+      if (!this.store.runs.getCheckpoint(runId)?.round_started) {
+        this.beginRound(currentRound, runId, executionId);
+        this.store.db.prepare("UPDATE run_checkpoints SET round_started=1 WHERE run_id=?").run(runId);
+      }
+    });
 
-    let messagesProcessed = 0;
+    let messagesProcessed = this.store.runs.getCheckpoint(runId)?.round_messages ?? 0;
     let stopReason: StopReason | null = null;
     let errorCode: string | null = null;
     let errorSummary: string | null = null;
@@ -120,6 +127,10 @@ export class RoundScheduler {
       // 检查 Stop 信号 (在领取下一条消息之前)
       if (signal?.aborted) {
         stopReason = "USER_STOPPED";
+        break;
+      }
+      if (shouldSuspend()) {
+        stopReason = "SERVICE_SHUTDOWN";
         break;
       }
 
@@ -137,7 +148,7 @@ export class RoundScheduler {
       const pixelAccount = this.store.pixels.getPixelAccount(message.recipient);
       if (!pixelAccount || !pixelAccount.active) {
         // 目标已失活或不存在，直接提交该消息，保持 V9 消费行为
-        this.store.messages.commitMessage(message.messageId);
+        this.store.messages.commitMessage(message.messageId, runId);
         messagesProcessed++;
         continue;
       }

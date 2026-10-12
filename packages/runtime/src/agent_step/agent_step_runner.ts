@@ -89,6 +89,8 @@ export class AgentStepRunner {
       : undefined;
     let rawText: string | null = null;
     let currentTipsMd = "";
+    const savedTips = path.resolve(this.workspaceRoot, "live", "pixels", pixelState.pixelId, "tips.md");
+    if (fs.existsSync(savedTips)) currentTipsMd = fs.readFileSync(savedTips, "utf-8");
     let usage: ModelUsage | undefined;
     let bindingId = identitySnapshot.bindingId;
     let narrativeRevision = identitySnapshot.narrativeRevision;
@@ -126,14 +128,6 @@ export class AgentStepRunner {
         } catch {}
       }
       if (executionScope) humanMandate = this.renderExecutionMandate(executionScope, identitySnapshot.bindingId);
-
-      // 读取当前 tips.md（模型缺失 tips_md 输出时保留原值）
-      const tipsFile = path.resolve(pixelDir, "tips.md");
-      if (fs.existsSync(tipsFile)) {
-        try {
-          currentTipsMd = fs.readFileSync(tipsFile, "utf-8");
-        } catch {}
-      }
 
       // Environment is visible only through the next-hop READ_ENVIRONMENT message.
       let environmentInfo: string | null = null;
@@ -315,7 +309,7 @@ export class AgentStepRunner {
 
     // 模型费用若已耗尽能量，本次响应只留作审计，不允许失活 Pixel 再执行副作用。
     if (!this.store.pixels.getPixelAccount(pixelState.pixelId)?.active) {
-      this.store.messages.commitMessage(message.messageId);
+      this.store.messages.commitMessage(message.messageId, trace.runId);
       this.syncPixelState(pixelState.pixelId, round);
       return { decision: {}, usage, effects: [], trace };
     }
@@ -323,7 +317,11 @@ export class AgentStepRunner {
     // 8. 解析归一化决策
     let decision: AgentDecision;
     try {
-      decision = parseAndNormalizeResponse(rawText || "", pixelMind, currentTipsMd);
+      decision = existingModelCall?.normalizedResponse
+        ? JSON.parse(existingModelCall.normalizedResponse)
+        : parseAndNormalizeResponse(rawText || "", pixelMind, currentTipsMd);
+      // Freeze defaults before any file writes, so replay never normalizes from a torn mind file.
+      this.store.db.prepare("UPDATE model_calls SET normalized_response=? WHERE call_id=?").run(JSON.stringify(decision), callId);
     } catch (parseErr: any) {
       if (parseErr instanceof InvalidModelResponseError) {
         // 供应商已经计费，但是响应不可使用：
@@ -361,7 +359,7 @@ export class AgentStepRunner {
     await effectRuntime.applyEffects(effects);
 
     // 11. 提交消息终态为 COMMITTED
-    this.store.messages.commitMessage(message.messageId);
+    this.store.messages.commitMessage(message.messageId, trace.runId);
 
     // 12. 更新元胞状态中的实际活动轮次
     this.syncPixelState(pixelState.pixelId, round);

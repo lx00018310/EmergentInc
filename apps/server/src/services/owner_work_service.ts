@@ -181,7 +181,15 @@ export class OwnerWorkService {
     }
     // An explicit energy retry or a manual recovery can later produce the real reply.
     for(const row of db.prepare("SELECT * FROM owner_work_tasks WHERE state IN ('BLOCKED','NO_REPLY') AND turn_id IS NOT NULL").all()) {
-      try {const turn=(await this.gateway.turns(String(row.person_id))).find(t=>t.turnId===row.turn_id);if(turn?.status==='replied')db.prepare("UPDATE owner_work_tasks SET state='REPLIED',reply=?,reason=NULL,updated_at=? WHERE id=?").run(turn.reply,Date.now(),row.id);}catch{/* Keep the recorded blocker until there is verified new evidence. */}
+      try {
+        const turn=(await this.gateway.turns(String(row.person_id))).find(t=>t.turnId===row.turn_id);
+        if(turn?.status==='replied')db.prepare("UPDATE owner_work_tasks SET state='REPLIED',reply=?,reason=NULL,updated_at=? WHERE id=?").run(turn.reply,Date.now(),row.id);
+        else {
+          const runtime=this.manager.peek(this.manager.registry.control.worldForQianji(String(row.person_id)).world_id);
+          if(runtime?.run.getStatus().running&&runtime.run.getStatus().run_id===row.run_id)
+            db.prepare("UPDATE owner_work_tasks SET state='RUNNING',reason=NULL,updated_at=? WHERE id=?").run(Date.now(),row.id);
+        }
+      }catch{/* Keep the recorded blocker until there is verified new evidence. */}
     }
   }
 }

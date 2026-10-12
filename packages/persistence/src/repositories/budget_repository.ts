@@ -198,11 +198,11 @@ export class BudgetRepository {
       // 3. 写入预留记录
       const resStmt = this.db.prepare(`
         INSERT INTO reservations (
-          call_id, run_id, pixel_id, amount, execution_id, binding_id, narrative_revision, status, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, 'OPEN', ?)
+          call_id, run_id, pixel_id, amount, execution_id, binding_id, narrative_revision, message_id, status, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'OPEN', ?)
       `);
       resStmt.run(
-        callId, runId, pixelId, estimatedTokens, params.executionId ?? null, params.bindingId ?? null, params.narrativeRevision ?? null, now,
+        callId, runId, pixelId, estimatedTokens, params.executionId ?? null, params.bindingId ?? null, params.narrativeRevision ?? null, params.messageId ?? null, now,
       );
 
       // 4. 更新 Run 预留量与历史累计统计

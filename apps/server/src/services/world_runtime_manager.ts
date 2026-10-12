@@ -24,6 +24,7 @@ export class WorldRuntimeManager {
   diagnose(id:string,code:string){this.failures.set(id,code);}
   private opened = new Map<string, WorldRuntime>();
   private opening = new Map<string, Promise<WorldRuntime>>();
+  private recoveryEnabled = false;
   constructor(readonly registry: WorldRegistryService, readonly genome: GenomeManifest, readonly options: WorldRuntimeOptions) {if(!registry.lineage.worldsEnabled)throw new Error('V23_WORLD_LINEAGE_REQUIRED');}
   currents(){return [...this.opened.values()].map(r=>({id:r.id,current:r.life.current}));}
   peek(id:string){return this.opened.get(id);}
@@ -66,12 +67,15 @@ export class WorldRuntimeManager {
         isMockMode:this.options.isMockMode,isModelConfigured:this.options.isModelConfigured});
       api=fastify({logger:false});api.setErrorHandler((error:any,_req,reply)=>reply.status(error.statusCode||400).send({detail:error.message}));
       await api.register(async server=>registerApiRoutes(server,{worldService:world,runService:run,promptService:prompts,toolRegistry:tools,coreStore:store!,workspaceRoot:directory,worldMode:true,ownerChatService:this.options.projectRoot?new OwnerChatService({projectRoot:this.options.projectRoot,workspaceRoot:directory,store:store!,worldService:world,runService:run,provider:this.options.provider,usageMeter:this.options.usageMeter,modelName:this.options.modelName,isModelConfigured:Boolean(this.options.isModelConfigured)}):undefined}),{prefix:'/api'});
-      await api.ready(); const runtime={id,directory,store,life,world,run,api,unlock};this.opened.set(id,runtime);this.failures.delete(id);return runtime;
+      await api.ready(); const runtime={id,directory,store,life,world,run,api,unlock};this.opened.set(id,runtime);this.failures.delete(id);
+      if(this.recoveryEnabled)await run.resumeInterrupted();
+      return runtime;
     } catch(error){await api?.close();current?.close();store?.close();unlock();throw error;}
   }
-  async close(id:string) { const runtime=this.opened.get(id);if(!runtime)return;runtime.run.requestStop();await this.wait(runtime);await runtime.api.close();runtime.life.current.close();runtime.store.close();runtime.unlock();this.opened.delete(id); }
+  async close(id:string) { const runtime=this.opened.get(id);if(!runtime)return;runtime.run.requestSuspend();await this.wait(runtime);await runtime.api.close();runtime.life.current.close();runtime.store.close();runtime.unlock();this.opened.delete(id); }
   private async wait(runtime:WorldRuntime) { const deadline=Date.now()+30000;while(runtime.run.getStatus().running){if(Date.now()>deadline)throw new Error('WORLD_QUIESCE_TIMEOUT');await new Promise(r=>setTimeout(r,20));} }
-  async quiesceAll(){for(const runtime of this.opened.values())runtime.run.requestStop();for(const runtime of this.opened.values())await this.wait(runtime);}
+  async resumeInterrupted(){this.recoveryEnabled=true;for(const runtime of this.opened.values())await runtime.run.resumeInterrupted();}
+  async quiesceAll(){this.recoveryEnabled=false;for(const runtime of this.opened.values())runtime.run.requestSuspend();for(const runtime of this.opened.values())await this.wait(runtime);}
   async closeAll(){await this.quiesceAll();for(const id of [...this.opened.keys()])await this.close(id);}
   async replaceGateway(id:string,pixel:string,revision:number){const runtime=await this.open(id);if(!runtime.store.pixels.getPixelAccount(pixel)?.active)throw new Error('GATEWAY_PIXEL_NOT_ACTIVE');this.registry.control.transaction(()=>this.registry.control.setGateway(id,pixel,revision));}
 }

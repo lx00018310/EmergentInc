@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import * as fs from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -26,6 +26,23 @@ function fixture(){
   return {root,lineage,control,registry,manager,a,b,requests,gateway:new QianjiWorldGateway(manager)};
 }
 describe('V23 World registry and genuine runtime isolation',()=>{
+  it('restores the original QIAN turn only after startup recovery is enabled',async()=>{
+    const f=fixture();let release!:(value:any)=>void;
+    f.manager.options.provider.call=()=>new Promise(r=>{release=r;});
+    const first=await f.manager.open(f.a.world_id),turn=await f.gateway.enqueue(f.a.qianji_id,'Continue and report','restart');
+    await first.run.start({rounds:3,runBudgetTokens:10000,onRunCreated:runId=>f.control.db.prepare('UPDATE world_chat_turns SET run_id=? WHERE turn_id=?').run(runId,turn.turn_id)});
+    const runId=first.run.getStatus().run_id,closing=f.manager.closeAll();
+    release({rawText:JSON.stringify({message_md:'Next step',send_to:'SELF'}),usage:{promptTokens:15,completionTokens:8}});await closing;
+    f.manager.options.provider.call=async()=>({rawText:JSON.stringify({owner_reply:'Work resumed',send_to:'STOP'}),usage:{promptTokens:15,completionTokens:8}});
+    const reopened=await f.manager.open(f.a.world_id);
+    expect(reopened.run.getStatus().running).toBe(false);
+    expect(reopened.store.runs.getLatestRun()!.stop_reason).toBe('SERVICE_SHUTDOWN');
+    await f.manager.resumeInterrupted();
+    await vi.waitFor(()=>expect(reopened.run.getStatus().running).toBe(false));
+    expect(reopened.store.runs.getLatestRun()).toMatchObject({run_id:runId,run_limit:10000,run_spent:46});
+    expect((await f.gateway.turns(f.a.qianji_id))[0]).toMatchObject({turnId:turn.turn_id,status:'replied',reply:'Work resumed'});
+    expect(f.manager.peek(f.b.world_id)).toBeUndefined();
+  });
   it('creates one World per identity, permits repeated coordinates, and keeps separate files, accounts, messages and Currents',async()=>{
     const f=fixture(),a=await f.manager.open(f.a.world_id),b=await f.manager.open(f.b.world_id);
     expect(a.store.pixels.getPixelAccount('0_0_0')).toBeTruthy();expect(b.store.pixels.getPixelAccount('0_0_0')).toBeTruthy();

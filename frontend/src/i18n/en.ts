@@ -987,6 +987,7 @@ export const en: Record<string, string> = {
   "系统状态:": "System status:",
   "帮助": "Help",
   "用户手动停止": "Stopped by user",
+  "服务中断，等待续跑": "Service interrupted; waiting to resume",
   "已达到设定轮数": "Requested rounds completed",
   "已达到单轮消息上限": "Per-round message limit reached",
   "本次运行 Token 预算已耗尽": "Run Token budget exhausted",

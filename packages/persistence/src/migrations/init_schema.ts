@@ -19,6 +19,17 @@ export function initSchema(db: SqliteDatabase): void {
           updated_at REAL NOT NULL
       );
 
+      CREATE TABLE IF NOT EXISTS run_checkpoints (
+          run_id TEXT PRIMARY KEY REFERENCES runs(run_id) ON DELETE CASCADE,
+          next_round INTEGER NOT NULL,
+          round_started INTEGER NOT NULL DEFAULT 0,
+          round_messages INTEGER NOT NULL DEFAULT 0,
+          completed_rounds INTEGER NOT NULL DEFAULT 0,
+          messages_processed INTEGER NOT NULL DEFAULT 0,
+          idle_rounds INTEGER NOT NULL DEFAULT 0,
+          resume_pending INTEGER NOT NULL DEFAULT 1
+      );
+
       CREATE TABLE IF NOT EXISTS global_budget (
           id TEXT PRIMARY KEY DEFAULT 'GLOBAL',
           total_limit INTEGER NOT NULL,
@@ -70,6 +81,7 @@ export function initSchema(db: SqliteDatabase): void {
           execution_id TEXT,
           binding_id TEXT,
           narrative_revision INTEGER,
+          message_id TEXT,
           status TEXT NOT NULL DEFAULT 'OPEN',
           created_at REAL NOT NULL,
           settled_at REAL
@@ -570,6 +582,7 @@ export function initSchema(db: SqliteDatabase): void {
     if (!reservationColumns.some(c => c.name === "binding_id")) db.exec("ALTER TABLE reservations ADD COLUMN binding_id TEXT");
     if (!reservationColumns.some(c => c.name === "narrative_revision")) db.exec("ALTER TABLE reservations ADD COLUMN narrative_revision INTEGER");
     if (!reservationColumns.some(c => c.name === "execution_id")) db.exec("ALTER TABLE reservations ADD COLUMN execution_id TEXT");
+    if (!reservationColumns.some(c => c.name === "message_id")) db.exec("ALTER TABLE reservations ADD COLUMN message_id TEXT");
 
     const messageColumns = db.prepare("PRAGMA table_info(messages)").all() as any[];
     if (!messageColumns.some(c => c.name === "sender_binding_id")) db.exec("ALTER TABLE messages ADD COLUMN sender_binding_id TEXT");

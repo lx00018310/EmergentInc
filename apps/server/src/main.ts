@@ -72,7 +72,7 @@ async function bootstrap() {
   let closeLife: (() => Promise<void>) | undefined;
   let activeRun: RunService | undefined;
   const stopRun = async () => {
-    activeRun?.requestStop();
+    activeRun?.requestSuspend();
     const deadline = Date.now() + 30000;
     while (activeRun?.getStatus().running) {
       if (Date.now() > deadline) throw new Error("RUN_QUIESCE_TIMEOUT");
@@ -112,6 +112,7 @@ async function bootstrap() {
         if (candidateMode || store.activeGeneration()?.id !== life.current.meta().generation_id) throw new Error("GENERATION_NOT_ACTIVE");
         if (!quiesced) return;
         service.start({ exclusiveWorkspaceLockHeld: true }); dream.start(); quiesced = false;
+        await activeRun?.resumeInterrupted();
       } };
     startLife = () => { if (!quiesced) { service.start({ exclusiveWorkspaceLockHeld: true }); dream.start(); } };
     closeLife = async () => { quiesced = true; await body.idle(); await dream.stop(); await service.stop(); life.close(); };
@@ -269,6 +270,7 @@ async function bootstrap() {
   app.addHook("onClose", async () => { await stopRun(); await closeLife?.(); store.db.close(); releaseLock(); });
   for (const signal of ["SIGINT", "SIGTERM"] as const) process.once(signal, () => { void app.close(); });
   await app.listen({ port, host });
+  if (!candidateMode && !evolution?.quiesced?.()) await runService.resumeInterrupted();
   startLife?.();
   console.log(`[EmergentInc V10 Server] Listening on http://${host}:${port}`);
 }
