@@ -43,6 +43,18 @@ async function page(f:Awaited<ReturnType<typeof fixture>>,lang='zh-CN',query='',
 }
 
 describe('Owner web upgrade', () => {
+  it.each(['zh-CN','en'])('labels failed and interrupted upgrades consistently, retaining reasons and truthful progress (%s)',async lang=>{
+    const f=await fixture(),data={...f.data,busy:false,job:{action:'prepare',state:'running',error:null as string|null,log:'Diagnostic log'}};
+    const {doc,poll}=await page(f,lang,'',{'/api/upgrades':data,'/api/git-graph':{available:false}}),failure=lang==='en'?'Upgrade failed':'升级失败';
+    expect(doc.getElementById('job-state').textContent).toBe(lang==='en'?'In progress…':'处理中…');
+    data.job.state='succeeded';await poll();expect(doc.getElementById('job-state').textContent).toBe(lang==='en'?'Operation completed.':'操作完成。');
+    for(const [state,error] of [['failed','CUSTOM_GENE_PATCH_NEEDS_REBASE'],['failed','UNEXPECTED_ERROR'],['failed',null],['interrupted','UPGRADE_INTERRUPTED_CHECK_RECOVERY'],['interrupted',null]]){
+      Object.assign(data.job,{state,error});await poll();const message=doc.getElementById('job-state').textContent;
+      expect(message.startsWith(failure)).toBe(true);expect(doc.getElementById('recover').hidden).toBe(false);
+      expect(doc.getElementById('log').textContent).toContain('Diagnostic log');if(error)expect(doc.getElementById('log').textContent).toContain(error);
+      if(error==='CUSTOM_GENE_PATCH_NEEDS_REBASE')expect(message).toContain(lang==='en'?'Custom non-asset Gene':'非资产 Gene');
+    }
+  });
   it('rolls back to the selected history without publication approval and denies stale targets',async()=>{
     const f=await fixture();expect((await f.request({action:'rollback',targetGeneration:'G0007',expectedActive:'G0006',reason:'Undo regression'})).statusCode).toBe(409);
     expect((await f.request({action:'rollback',targetGeneration:'G0007',expectedActive:'G0008',reason:'Undo regression'})).statusCode).toBe(202);

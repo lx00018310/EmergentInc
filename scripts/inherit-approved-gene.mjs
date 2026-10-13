@@ -27,15 +27,15 @@ function geneFiles(directory){
     if(item.isDirectory())walk(name);else {let bytes=fs.readFileSync(regular(directory,name));if(name==='genome/manifest.json'){const m=JSON.parse(bytes);delete m.generation;bytes=Buffer.from(JSON.stringify(m));}result[name]=hash(bytes);}
   }};walk('genome');return result;
 }
-function originGene(active,source,db,stateDirectory){
+function originGene(active,source,db,stateDirectory,repository){
   const metadata=path.join(active,'instance-compatibility.json');if(fs.existsSync(metadata))return json(metadata).sourceGene;
   if(stateDirectory&&fs.existsSync(path.join(stateDirectory,'evolution.sqlite3'))){
     const approvals=new DatabaseSync(path.join(stateDirectory,'evolution.sqlite3'),{readOnly:true});
     try{let g=db.prepare("SELECT * FROM generations WHERE state='ACTIVE'").get();while(g){
       const r=approvals.prepare("SELECT request_json FROM candidates WHERE id=? AND state IN ('BORN','ROLLED_BACK')").get(g.release_id);
       const commit=r&&JSON.parse(r.request_json).owner_release?.source_commit;
-      if(commit){try{const names=execFileSync('git',['ls-tree','-r','--name-only',commit,'--','genome'],{cwd:source,encoding:'utf8',windowsHide:true}).trim().split(/\r?\n/).filter(n=>n&&!n.startsWith('genome/assets/'));
-        return Object.fromEntries(names.map(name=>{let bytes=execFileSync('git',['show',`${commit}:${name}`],{cwd:source,windowsHide:true});if(name==='genome/manifest.json'){const m=JSON.parse(bytes);delete m.generation;bytes=Buffer.from(JSON.stringify(m));}return [name,hash(bytes)];}));
+      if(commit){try{const names=execFileSync('git',['ls-tree','--full-tree','-r','--name-only',commit,'--','genome'],{cwd:repository,encoding:'utf8',windowsHide:true}).trim().split(/\r?\n/).filter(n=>n&&!n.startsWith('genome/assets/'));
+        return Object.fromEntries(names.map(name=>{let bytes=execFileSync('git',['show',`${commit}:${name}`],{cwd:repository,windowsHide:true});if(name==='genome/manifest.json'){const m=JSON.parse(bytes);delete m.generation;bytes=Buffer.from(JSON.stringify(m));}return [name,hash(bytes)];}));
       }catch{fail('CUSTOM_GENE_PATCH_NEEDS_REBASE','Core origin unavailable');}}
       g=g.parent_id?db.prepare('SELECT * FROM generations WHERE id=?').get(g.parent_id):undefined;
     }}finally{approvals.close();}
@@ -44,11 +44,11 @@ function originGene(active,source,db,stateDirectory){
   return geneFiles(source);
 }
 /** Read-only trusted plan. Only public assets with exact birth, license and immutable-source evidence enter it. */
-export function approvedGenePlan(active,workspace,source,stateDirectory){
+export function approvedGenePlan(active,workspace,source,stateDirectory,repository=source){
   const db=new DatabaseSync(path.join(workspace,'system/lineage/lineage.sqlite3'),{readOnly:true});
   try{
     const generation=db.prepare("SELECT * FROM generations WHERE state='ACTIVE'").get();if(!generation||path.basename(active)!==generation.release_id)fail('CANDIDATE_BASE_CONFLICT');
-    const current=catalog(active),sourceGene=geneFiles(source),origin=originGene(active,source,db,stateDirectory),actual=geneFiles(active);
+    const current=catalog(active),sourceGene=geneFiles(source),origin=originGene(active,source,db,stateDirectory,repository),actual=geneFiles(active);
     if(JSON.stringify(Object.entries(actual).sort())!==JSON.stringify(Object.entries(origin??{}).sort()))fail('CUSTOM_GENE_PATCH_NEEDS_REBASE');
     const history=[];
     const table=db.prepare("SELECT 1 FROM sqlite_master WHERE name='gene_assets'").get();
@@ -84,13 +84,14 @@ export function inheritApprovedGene(plan,active,candidate){
   fs.writeFileSync(path.join(candidate,'instance-compatibility.json'),JSON.stringify(plan,null,2)+'\n',{flag:'wx'});
   return plan;
 }
-export function checkInheritedGene(active,workspace,candidate,stateDirectory){
+export function checkInheritedGene(active,workspace,candidate,stateDirectory,repository=path.resolve(import.meta.dirname,'..')){
   const file=path.join(candidate,'instance-compatibility.json');if(!fs.existsSync(file)){
     const db=new DatabaseSync(path.join(workspace,'system/lineage/lineage.sqlite3'),{readOnly:true});
     try{if(db.prepare("SELECT 1 FROM sqlite_master WHERE name='gene_assets'").get()&&db.prepare("SELECT 1 FROM gene_assets WHERE state='GENE' LIMIT 1").get())fail('GENE_ASSET_BASE_CHANGED','Prepare a candidate with verified inherited provenance');}finally{db.close();}
     return;
   }
-  const saved=json(file),fresh=approvedGenePlan(active,workspace,candidate,stateDirectory);
+  // A frozen release has no Git checkout. Read approved Core history from the maintenance repository.
+  const saved=json(file),fresh=approvedGenePlan(active,workspace,candidate,stateDirectory,repository);
   if(saved.baseGeneration!==fresh.baseGeneration||saved.baseRelease!==fresh.baseRelease||saved.fingerprint!==fresh.fingerprint)fail('GENE_ASSET_BASE_CHANGED');
   // The live approved ledger is authoritative; a candidate cannot omit checks by shortening its saved lists.
   const current=catalog(candidate);for(const h of fresh.history)bytesFor(candidate,h);

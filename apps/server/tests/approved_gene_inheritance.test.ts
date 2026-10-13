@@ -4,6 +4,7 @@ import {join} from 'node:path';
 import {tmpdir} from 'node:os';
 import {createHash} from 'node:crypto';
 import {execFileSync} from 'node:child_process';
+import {DatabaseSync} from 'node:sqlite';
 import {LineageStore,WorldRegistryStore,readGenome,writeGenerationPointer} from '@emergentinc/persistence';
 import {UsageMeter} from '@emergentinc/model';
 import {WorldRegistryService} from '../src/services/world_registry_service.js';
@@ -34,6 +35,22 @@ it('inherits only approved public Gene into a copied Git candidate before instal
  const plan=approvedGenePlan(f.active,f.workspace,f.source),frozen=await freezeLocalRelease(f.source,candidate,async(dir:string)=>{expect(readGeneCatalog(dir).assets).toHaveLength(1);},(dir:string)=>inheritApprovedGene(plan,f.active,dir));
  expect(frozen.hash).toBe(frozenReleaseHash(candidate));expect(frozenReleaseHash(f.active)).toBe(before);expect(execFileSync('git',['status','--porcelain'],{cwd:f.source,encoding:'utf8'})).toBe('');expect(plan.history).toHaveLength(1);expect(readGeneCatalog(candidate).assets[0]).toEqual(f.asset);
  checkInheritedGene(f.active,f.workspace,candidate);expect(fs.readFileSync(join(candidate,'genome',f.asset.file))).toEqual(fs.readFileSync(join(f.active,'genome',f.asset.file)));expect(sourceHash).toBeTruthy();
+});
+it.each(['nested','external'])('rechecks a %s frozen candidate against the approved Git origin and still rejects real custom Gene',async location=>{
+ const f=await fixture(),state=join(f.root,'state');fs.mkdirSync(state);fs.writeFileSync(join(f.source,'genome/default.txt'),'Approved Core Gene.');fs.copyFileSync(join(f.source,'genome/default.txt'),join(f.active,'genome/default.txt'));
+ const git=(args:string[])=>execFileSync('git',args,{cwd:f.source,encoding:'utf8',windowsHide:true}).trim();
+ git(['init','-b','main']);git(['add','.']);git(['-c','user.name=Test','-c','user.email=test@example.invalid','commit','-m','approved Core']);const commit=git(['rev-parse','HEAD']);
+ const approvals=new DatabaseSync(join(state,'evolution.sqlite3'));approvals.exec('CREATE TABLE candidates(id TEXT,state TEXT,request_json TEXT)');approvals.prepare('INSERT INTO candidates VALUES(?,?,?)').run('r2','BORN',JSON.stringify({owner_release:{source_commit:commit}}));approvals.close();
+ // The next official Core may change its contracts; its manifest must not replace the old origin baseline.
+ const file=join(f.source,'genome/manifest.json'),manifest=JSON.parse(fs.readFileSync(file,'utf8'));manifest.capability_contracts.next_contract={version:1};fs.writeFileSync(file,JSON.stringify(manifest));
+ const plan=approvedGenePlan(f.active,f.workspace,f.source,state),candidate=location==='nested'?join(f.source,'cache/candidate'):join(f.root,'candidate');
+ await freezeLocalRelease(f.source,candidate,async()=>{},(dir:string)=>inheritApprovedGene(plan,f.active,dir));expect(fs.existsSync(join(candidate,'.git'))).toBe(false);
+ // Nested cwd exercises --full-tree; external release uses an explicit maintenance repository.
+ const repository=location==='nested'?candidate:f.source;checkInheritedGene(f.active,f.workspace,candidate,state,repository);
+ expect(readGeneCatalog(candidate).assets).toContainEqual(f.asset);
+ fs.writeFileSync(join(f.active,'genome/default.txt'),'Unapproved custom Gene.');
+ expect(()=>checkInheritedGene(f.active,f.workspace,candidate,state,repository)).toThrow('CUSTOM_GENE_PATCH_NEEDS_REBASE');
+ expect(()=>approvedGenePlan(f.active,f.workspace,f.source,state)).toThrow('CUSTOM_GENE_PATCH_NEEDS_REBASE');
 });
 it.each(['content','version'])('rejects upstream %s conflict before any active file is changed',async(kind)=>{
  const f=await fixture(),before=frozenReleaseHash(f.active),candidate=join(f.root,'candidate'),plan=approvedGenePlan(f.active,f.workspace,f.source);fs.cpSync(f.source,candidate,{recursive:true});const a={...f.asset,version:kind==='version'?2:1,contentHash:createHash('sha256').update('different').digest('hex')};a.file=`assets/${a.id}/${a.version}.json`;fs.mkdirSync(join(candidate,'genome',a.file,'..'),{recursive:true});fs.writeFileSync(join(candidate,'genome',a.file),'different');fs.writeFileSync(join(candidate,'genome/assets/index.json'),JSON.stringify({schema:1,assets:[a]}));expect(()=>inheritApprovedGene(plan,f.active,candidate)).toThrow('GENE_ASSET_UPSTREAM_CONFLICT');expect(frozenReleaseHash(f.active)).toBe(before);
