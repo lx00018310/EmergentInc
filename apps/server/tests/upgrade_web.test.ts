@@ -412,6 +412,30 @@ describe('V27 dual-tree git upgrade', () => {
     fastForwardMain(repo.tip,repo.base,repo.directory);expect(repo.run('rev-parse','main')).toBe(repo.tip);expect(repo.run('branch','--show-current')).toBe('feature/skills');expect(repo.run('rev-parse','HEAD')).toBe(current);expect(repo.run('status','--porcelain')).toBe('');
   },30000);
 
+  it.each([false,true])('preserves a dirty development checkout while syncing main (separate main checkout: %s)',checkedOutMain=>{
+    const repo=gitRepo();repo.run('checkout','feature/skills');
+    let mainDirectory:string|undefined;
+    if(checkedOutMain){mainDirectory=fs.mkdtempSync(path.join(tmpdir(),'upgrade-main-clean-'));repo.run('worktree','add',mainDirectory,'main');const dir=mainDirectory;cleanups.push(async()=>{repo.run('worktree','remove','--force',dir);});}
+    fs.writeFileSync(path.join(repo.directory,'file.txt'),'Owner staged edit');repo.run('add','file.txt');fs.writeFileSync(path.join(repo.directory,'file.txt'),'Owner unstaged edit');fs.writeFileSync(path.join(repo.directory,'private-draft.txt'),'Owner untracked draft');
+    const before={head:repo.run('rev-parse','HEAD'),status:repo.run('status','--porcelain'),index:repo.run('ls-files','--stage'),staged:repo.run('show',':file.txt')};
+    fastForwardMain(repo.tip,repo.base,repo.directory);
+    expect(repo.run('rev-parse','main')).toBe(repo.tip);expect(repo.run('branch','--show-current')).toBe('feature/skills');
+    expect({head:repo.run('rev-parse','HEAD'),status:repo.run('status','--porcelain'),index:repo.run('ls-files','--stage'),staged:repo.run('show',':file.txt')}).toEqual(before);
+    expect(fs.readFileSync(path.join(repo.directory,'file.txt'),'utf8')).toBe('Owner unstaged edit');expect(fs.readFileSync(path.join(repo.directory,'private-draft.txt'),'utf8')).toBe('Owner untracked draft');
+    if(mainDirectory)expect(fs.readFileSync(path.join(mainDirectory,'file.txt'),'utf8')).toBe('polish SKILL.md');
+  },30000);
+
+  it.each(['zh-CN','en'])('clears the stale sync warning after main reaches the published commit (%s)',async lang=>{
+    const f=await fixture(),target='b'.repeat(40);f.data.candidates[0].request.owner_release.git_sync_target=target;
+    const data={...f.data,busy:false,job:{action:'publish',id:'local-v24-test',state:'succeeded',gitSyncState:'needs_git_sync'}};
+    const graph={available:true,refs:[],commits:[],mainHead:'c'.repeat(40)},responses={'/api/upgrades':data,'/api/git-graph':graph};
+    const {doc,poll}=await page(f,lang,'',responses);expect(doc.getElementById('git-sync-note').textContent).toContain('NEEDS_GIT_SYNC');
+    graph.mainHead=target;doc.getElementById('refresh-graph').click();
+    await vi.waitFor(()=>expect(doc.getElementById('git-sync-note').textContent).toBe(lang==='en'?'Published successfully; git main synced to this commit.':'发布成功，Git main 已同步到此提交。'));
+    expect(data.job.gitSyncState).toBe('needs_git_sync');expect(f.run).not.toHaveBeenCalled();
+    data.job.id='another-release';await poll();expect(doc.getElementById('git-sync-note').textContent).toContain('NEEDS_GIT_SYNC');
+  });
+
   it('updates a separately checked-out main worktree and refuses its uncommitted changes',()=>{
     const repo=gitRepo();repo.run('checkout','feature/skills');const mainDirectory=fs.mkdtempSync(path.join(tmpdir(),'upgrade-main-checkout-'));
     repo.run('worktree','add',mainDirectory,'main');cleanups.push(async()=>{repo.run('worktree','remove','--force',mainDirectory);});
@@ -562,12 +586,14 @@ describe('V27 dual-tree git upgrade', () => {
     await vi.waitFor(()=>{expect(jobOf().state).toBe('failed');expect(String(jobOf().error)).toContain('GIT_SYNC_MAIN_MOVED');});
     expect(repo.run('rev-parse','main')).not.toBe(repo.base);
     // With expectations intact, publish succeeds and main fast-forwards to the pinned commit.
-    const fresh=gitRepo();
+    const fresh=gitRepo();fresh.run('checkout','feature/skills');fs.writeFileSync(path.join(fresh.directory,'README.md'),'Owner pending documentation');
+    const pendingStatus=fresh.run('status','--porcelain');
     const freshApp=await launch(fresh,noop);
     const ok=await publishOf(freshApp.instance,freshApp.cookie,{reason:'V27',source_commit:fresh.tip,main_head_at_prepare:fresh.base,git_sync_target:fresh.tip});
     expect(ok.statusCode).toBe(202);
     await vi.waitFor(()=>{expect(jobOf().state).toBe('succeeded');expect(jobOf().gitSyncState).toBe('synced');});
     expect(fresh.run('rev-parse','main')).toBe(fresh.tip);
+    expect(fresh.run('status','--porcelain')).toBe(pendingStatus);expect(fs.readFileSync(path.join(fresh.directory,'README.md'),'utf8')).toBe('Owner pending documentation');
     // Main moves between preflight and post-apply sync: release published, job reports needs_git_sync.
     const racing=gitRepo();
     let raceRuns=0;

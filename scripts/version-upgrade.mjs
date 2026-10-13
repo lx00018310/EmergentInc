@@ -31,14 +31,13 @@ function generation(configFile,action,...args){return new Promise((resolve,rejec
 function gitOutput(args,{cwd=root,timeout=30000}={}){return execFileSync('git',args,{cwd,encoding:'utf8',windowsHide:true,timeout,maxBuffer:8*1024*1024}).trim();}
 /** Verifies main is an ancestor of sha (fast-forward condition) without touching any working tree. */
 export function ensureFastForwardable(sha,cwd=root){gitOutput(['merge-base','--is-ancestor','main',sha],{cwd});}
-/** Safely fast-forwards git main to sha; refuses when main moved, the tree is dirty or the merge is not a fast-forward. */
+/** Safely fast-forwards main; refuses moved/diverged main or changes in its own checkout. */
 export function fastForwardMain(sha,expectedMainHead,cwd=root){
   const head=()=>gitOutput(['rev-parse','main'],{cwd});
   const previous=head();
   if(expectedMainHead&&previous!==expectedMainHead)throw new Error('GIT_SYNC_MAIN_MOVED');
   ensureFastForwardable(sha,cwd);
-  // Fail closed when main (or any checkout of this repository here) has uncommitted changes: never dirty a developer's tree.
-  if(gitOutput(['status','--porcelain'],{cwd}))throw new Error('GIT_SYNC_DIRTY_WORKTREE');
+  // Only main's checkout is changed by a merge; other branches keep their files and index untouched.
   const mainWorktree=gitOutput(['worktree','list','--porcelain'],{cwd}).split(/\r?\n\r?\n/)
     .find(block=>block.split(/\r?\n/).includes('branch refs/heads/main'));
   if(mainWorktree){

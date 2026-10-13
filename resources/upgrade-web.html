@@ -196,17 +196,19 @@ async function loadGitGraph(){
  try{const value=await api('/api/git-graph');if(request!==graphRequest||!authenticated)return;gitGraph=value;gitGraphFailed=false;}
  catch(error){if(request!==graphRequest||!authenticated)return;gitGraph=null;gitGraphFailed=true;}
  finally{if(request===graphRequest)$('refresh-graph').disabled=false;}
- if(snapshot)renderTrees(snapshot);
+ if(snapshot)renderGraph(snapshot);
  selectedDetail=null;renderSelectedCommit();
  if(selectedSha&&gitGraph?.available)await selectCommit(selectedSha);
 }
 function renderGraph(data){
- const key=JSON.stringify([lang,data.active?.id,(data.versions??[]).map(v=>[v.id,v.state,v.label]),gitGraph?.available,gitGraph?.mainHead,gitGraph?.commits?.length,selectedSha,data.job?.error,data.job?.gitSyncState]);
+ const job=data.job;
+ const syncTarget=data.candidates.find(row=>row.id===job?.id)?.request?.owner_release?.git_sync_target;
+ const key=JSON.stringify([lang,data.active?.id,(data.versions??[]).map(v=>[v.id,v.state,v.label]),gitGraph?.available,gitGraph?.mainHead,gitGraph?.commits?.length,selectedSha,job?.id,job?.error,job?.gitSyncState,syncTarget]);
  if(key===graphRenderKey)return;graphRenderKey=key;renderTrees(data);
  const note=$('git-sync-note');
- const job=data.job;
- if(job?.action==='publish'&&job.state==='succeeded'&&job.gitSyncState==='needs_git_sync'){note.hidden=false;note.textContent=t('needsGitSync');}
- else if(job?.action==='publish'&&job.state==='succeeded'&&job.gitSyncState==='synced'){note.hidden=false;note.textContent=t('gitSynced');}
+ const mainSynced=gitGraph?.available&&syncTarget&&gitGraph.mainHead===syncTarget;
+ if(job?.action==='publish'&&job.state==='succeeded'&&(mainSynced||job.gitSyncState==='synced')){note.hidden=false;note.textContent=t('gitSynced');}
+ else if(job?.action==='publish'&&job.state==='succeeded'&&job.gitSyncState==='needs_git_sync'){note.hidden=false;note.textContent=t('needsGitSync');}
  else if(job?.error&&String(job.error).startsWith('GIT_SYNC_BLOCKED:')){note.hidden=false;note.textContent=t('gitSyncBlocked')+' '+String(job.error).slice('GIT_SYNC_BLOCKED:'.length);}
  else note.hidden=true;
 }
