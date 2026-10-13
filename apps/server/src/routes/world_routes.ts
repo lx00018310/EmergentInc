@@ -23,7 +23,7 @@ export async function registerWorldRoutes(app:FastifyInstance,s:WorldRouteServic
   // Existing portrait/narrative endpoints keep their contracts; physical identity is explicitly replaced by World.
   const runGate={getStatus:()=>({running:manager.list().some(w=>w.running)})} as RunService;
   await registerQianjiRoutes(app,{store:control,workspaceRoot:manager.registry.workspace,runService:runGate,worlds:manager,gateway,historyStore:s.legacy,historyWorkspace:s.legacy?manager.registry.workspace+'/system/legacy/v22/raw':undefined});
-  await registerGachaRoutes(app,new GachaService({store:control,workspaceRoot:manager.registry.workspace,provider:s.provider,usageMeter:s.meter,modelName:s.modelName,
+  await registerGachaRoutes(app,new GachaService({store:control,workspaceRoot:manager.registry.workspace,provider:s.provider&&manager.automation&&s.meter?manager.automation.provider(s.provider,s.meter,undefined,'gacha'):s.provider,usageMeter:s.meter,modelName:s.modelName,
     createWorld:(narrative,birth)=>manager.registry.create(narrative,{birthIdentity:birth}).qianji_id}),control,new GachaImageService(control,manager.registry.workspace));
   app.post('/qianji',async req=>{const b=req.body as any,checked=validateQianjiNarrative(b?.narrative);if(!checked.valid)throw new Error('QIANJI_NARRATIVE_INVALID');return manager.registry.create(checked.value);});
   app.get('/worlds',async()=>({items:manager.list()}));

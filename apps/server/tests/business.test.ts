@@ -8,6 +8,8 @@ import { InfrastructureFailureError } from "@emergentinc/model";
 import { BusinessService } from "../src/services/business_service.js";
 import { createServer } from "../src/app.js";
 import { runtimeConfig, acquireWorkspaceLock } from "../src/runtime_config.js";
+import { WorldRegistryStore } from '@emergentinc/persistence';
+import { OwnerAutomationGate } from '../src/services/owner_automation_gate.js';
 
 const resources: (() => void | Promise<void>)[] = [];
 afterEach(async () => { for (const dispose of resources.splice(0).reverse()) await dispose(); vi.useRealTimers(); });
@@ -30,6 +32,12 @@ function seed(store: BusinessStore, body = plan(), key = "seed", id?: string, re
 }
 
 describe("business authorization, costs and durable execution", () => {
+  it('obeys the company gate even for an earlier approved scheduled task and rejects paid drafting while OFF',async()=>{
+    const f=fixture();f.budget();f.store.addDataset('inquiries','Actual fixture data',[]);const p=seed(f.store);f.store.approve(p.id,p.revision,p.hash);
+    const control=new WorldRegistryStore();resources.push(()=>control.close());const gate=new OwnerAutomationGate(control);f.service.attachAutomation(gate);
+    await f.service.tick();expect(f.store.overview().tasks[0].state).toBe('READY');await expect(f.service.propose('Inspect data','gated-intent')).rejects.toThrow('OWNER_AUTOMATION_OFF');expect(f.call).not.toHaveBeenCalled();
+    gate.control({desiredMode:'ON',runMode:'CONTINUOUS',maxTokens:100000,expectedRevision:0,idempotencyKey:crypto.randomUUID()});await f.service.tick();expect(f.store.overview().tasks[0].state).toBe('SUCCEEDED');expect(f.call).not.toHaveBeenCalled();
+  });
   it("does not call a model without an initial Owner allowance", async () => {
     const { service, call } = fixture();
     await expect(service.propose("整理询盘", "intent-001")).rejects.toThrow("DRAFT_ALLOWANCE_REQUIRED"); expect(call).not.toHaveBeenCalled();

@@ -1,7 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { BusinessStore, BusinessTask, businessHash } from "@emergentinc/persistence";
 import { BusinessPlan, validateBusinessPlan } from "@emergentinc/protocol";
-import { InfrastructureFailureError, ModelProvider, ModelPricing } from "@emergentinc/model";
+import { InfrastructureFailureError, ModelProvider, ModelPricing, UsageMeter } from "@emergentinc/model";
+import type { OwnerAutomationGate } from './owner_automation_gate.js';
 import { BusinessConnections } from "./business_connections.js";
 import { LifeContext } from "./life_context.js";
 import { BodyGrowthService } from "./body_growth_service.js";
@@ -23,6 +24,14 @@ function cost(input: number, output: number, cached: number, pricing: ModelPrici
 }
 
 export class BusinessService {
+  private automation?: OwnerAutomationGate;
+  attachAutomation(gate: OwnerAutomationGate) {
+    if(this.automation===gate)return;
+    this.automation=gate;
+    if(this.provider&&this.model&&this.pricing)this.provider=gate.provider(this.provider,new UsageMeter({models:{[this.model]:this.pricing}}),undefined,'business');
+    gate.addUnknownCheck(()=>Boolean(this.store.db.prepare("SELECT 1 FROM business_operations WHERE state='OUTCOME_UNKNOWN'").get()||this.store.db.prepare("SELECT 1 FROM business_tasks WHERE state='OUTCOME_UNKNOWN'").get()));
+    gate.addInFlightCheck(()=>this.drafting||Boolean(this.taskInFlight));
+  }
   private drafting = false;
   private timer?: ReturnType<typeof setInterval>;
   private readonly workerId = randomUUID();
@@ -42,6 +51,7 @@ export class BusinessService {
   }
   /** Same frozen prices, allowance, integer ledger and unknown-outcome semantics as V21 drafting. */
   async lifeModel(purpose: "dream" | "body", key: string, input: unknown): Promise<string> {
+    this.automation?.assertOn();
     if (this.drafting) throw new Error("DECISION_ALREADY_RUNNING");
     if (!this.provider || !this.model || !this.pricing || this.pricing.currency !== "CNY") throw new Error("MODEL_AND_CNY_PRICE_REQUIRED");
     const system = purpose === "dream"
@@ -65,7 +75,7 @@ export class BusinessService {
       this.store.db.prepare("UPDATE business_operations SET purpose=? WHERE id=?").run(purpose, id);
       try { this.store.dispatch(id); } catch (e) { this.store.notSent(id); throw e; }
       let response;
-      try { response = await this.provider.call({ model: this.model, messages, promptHash: businessHash(messages), maxTokens }); }
+      try { response = await this.provider.call({ model: this.model, messages, promptHash: businessHash(messages), maxTokens, auditCallId:id }); }
       catch (e) {
         if (e instanceof InfrastructureFailureError) this.store.notSent(id);
         else this.store.settle(id, null, null, { reason: "provider_outcome_unknown", purpose });
@@ -129,6 +139,7 @@ export class BusinessService {
       validateBusinessPlan(JSON.parse(operation.response)), id, request.planId, request.expectedRevision);
   }
   async propose(direction: string, key: string, planId?: string, expectedRevision?: number) {
+    this.automation?.assertOn();
     if (!direction.trim() || direction.length > 8000 || !/^[\w-]{8,100}$/.test(key)) throw new Error("INVALID_DIRECTION_OR_KEY");
     if (this.drafting) throw new Error("DECISION_ALREADY_RUNNING");
     if (!this.provider || !this.model || !this.pricing || this.pricing.currency?.toUpperCase() !== "CNY") throw new Error("MODEL_AND_CNY_PRICE_REQUIRED");
@@ -172,7 +183,7 @@ export class BusinessService {
       if (!existing) {
         try { this.store.dispatch(operationId); } catch (e) { this.store.notSent(operationId); throw e; }
         let result;
-        try { result = await this.provider.call({ model: this.model, messages, promptHash: businessHash(messages), maxTokens: maxOutput }); }
+        try { result = await this.provider.call({ model: this.model, messages, promptHash: businessHash(messages), maxTokens: maxOutput, auditCallId:operationId }); }
         catch (e) {
           if (e instanceof InfrastructureFailureError) this.store.notSent(operationId);
           else this.store.settle(operationId, null, null, { reason: "provider_outcome_unknown" });
@@ -203,12 +214,14 @@ export class BusinessService {
     } finally { this.drafting = false; }
   }
   tick(): Promise<void> {
+    if(this.automation&&!this.automation.isOn())return Promise.resolve();
     if (this.stopping) return Promise.resolve();
     if (this.taskInFlight) return this.taskInFlight;
     this.taskInFlight = this.runTask().finally(() => { this.taskInFlight = undefined; });
     return this.taskInFlight;
   }
   private async runTask() {
+    if(this.automation&&!this.automation.isOn())return;
     if (!this.store.acquireWorker(this.workerId)) return;
     this.bodyGrowth?.syncBusinessResources();
     this.store.materializeSchedules();
@@ -235,7 +248,7 @@ export class BusinessService {
         try { this.store.dispatchTaskOperation(task, operationId); }
         catch (e) { this.store.notSent(operationId); throw e; }
         let receipt;
-        try { receipt = await send(operationId); } catch {
+        try { receipt = await (this.automation?this.automation.externalAction(operationId,()=>send(operationId)):send(operationId)); } catch {
           this.store.unknownTaskOperation(task, operationId);
           return;
         }
@@ -284,7 +297,7 @@ export class BusinessService {
       try { this.store.dispatchTaskOperation(task, operationId); }
       catch (e) { this.store.notSent(operationId); throw e; }
       let response;
-      try { response = await this.provider.call({ model: this.model, messages, promptHash: businessHash(messages), maxTokens: 2048 }); }
+      try { response = await this.provider.call({ model: this.model, messages, promptHash: businessHash(messages), maxTokens: 2048, auditCallId:operationId }); }
       catch (e) {
         if (e instanceof InfrastructureFailureError) { this.store.notSent(operationId); throw new Error("MODEL_REQUEST_NOT_SENT"); }
         this.store.unknownTaskOperation(task, operationId); return;

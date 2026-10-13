@@ -12,7 +12,11 @@ export async function listenTestHttp(server: Server): Promise<number> {
         server.listen(port, '127.0.0.1', () => { server.removeListener('error', error); done(); });
       });
       return port;
-    } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'EADDRINUSE') throw error; }
+    } catch (error) {
+      const code=(error as NodeJS.ErrnoException).code;
+      // Windows excluded dynamic ports can reject a free port with EACCES; choose another test-only port.
+      if(code!=='EADDRINUSE'&&!(process.platform==='win32'&&code==='EACCES'))throw error;
+    }
   }
   throw new Error('TEST_HTTP_PORT_UNAVAILABLE');
 }

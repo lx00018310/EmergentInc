@@ -5,6 +5,7 @@ import { OwnerChat } from './OwnerChat';
 import { OwnerInbox } from './OwnerInbox';
 import { OwnerActivity } from './OwnerActivity';
 import { OwnerWork } from './OwnerWork';
+import { OwnerGoals } from './OwnerGoals';
 import './owner.css';
 type OwnerTab='owner-mission'|'owner-inbox'|'owner-activity';
 const parseHash=():OwnerTab=>window.location.hash==='#owner-activity'?'owner-activity':window.location.hash==='#owner-inbox'?'owner-inbox':!window.location.hash&&new URLSearchParams(window.location.search).has('report')?'owner-activity':'owner-mission';
@@ -63,7 +64,10 @@ export function OwnerConsole(){
     </aside>
     <div className="owner-workspace">
       {/* Keep the chat mounted so switching pages preserves drafts and in-flight replies. */}
-      <section className="owner-mission" id="owner-mission" aria-label={t('Boss')} hidden={tab!=='owner-mission'}><OwnerStatusOverview data={data} error={error}/><OwnerChat missionControl onDone={()=>void refresh()}/></section>
+      <section className={`owner-mission${data?.automation?' owner-goal-page':''}`} id="owner-mission" aria-label={t('Boss')} hidden={tab!=='owner-mission'}>
+        {data?.goals&&data.automation&&<OwnerGoals goals={data.goals} automation={data.automation} onDone={refresh}/>}
+        <details open={!data?.automation}><summary>{t('Company status and chat')}</summary><OwnerStatusOverview data={data} error={error}/><OwnerChat missionControl onDone={()=>void refresh()}/></details>
+      </section>
       {tab!=='owner-mission'&&<div className="owner-list-page">
         <div className="owner-notices">
           {error&&<p role="alert">{t('Overview unavailable. Previously displayed data may be stale.')} {error}</p>}

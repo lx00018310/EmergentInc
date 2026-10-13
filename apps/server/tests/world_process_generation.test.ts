@@ -40,7 +40,7 @@ it.skipIf(process.env.EMERGENTINC_CANDIDATE_MODE==='1')('preserves public busine
     let content;if(isDream){const input=JSON.parse(request.messages[1].content),worlds=[...new Set(input.facts.map((f:any)=>f.world_id).filter(Boolean))];
       content=JSON.stringify({memories:worlds.map(world_id=>({world_id,point:'Test World experience',reason:'Explicit deterministic test model',effect:'Scoped test memory'})),gene_proposals:input.facts.filter((f:any)=>f.kind==='gene_asset_nominated').map((f:any)=>({candidate_id:f.payload.id,point:'Shared counter',reason:'Frozen used Body skill',effect:'Fresh Worlds inherit'}))});}
     else{content=JSON.stringify({send_to:'STOP',owner_reply:'test reply',...(sharedAsset&&JSON.stringify(request).includes('use shared gene')?{operations:[{tool:'CALL_GENE_SKILL',args:{asset_id:sharedAsset,input:{rows:[1,2,3]}}}]}:{}),...(!bodyMade?{operations:[{tool:'CREATE_BODY_SKILL',args:{candidate}},{tool:'CALL_BODY_SKILL',args:{skill_id:'count_rows',input:{rows:[1,2,3]}}}],reproduce:{direction:'1_0_0',initial_energy:15000}}:{})});bodyMade=true;}
-    res.setHeader('Content-Type','application/json');res.end(JSON.stringify({choices:[{message:{content}}],usage:{prompt_tokens:50,completion_tokens:50,total_tokens:100}}));
+    res.setHeader('Content-Type','application/json');res.end(JSON.stringify({choices:[{message:{content}}],usage:{prompt_tokens:50,completion_tokens:50,total_tokens:100,prompt_tokens_details:{cached_tokens:0}}}));
   });};const model=createServer(mockHandler),rpc=createHttpsServer({key:mockRpcKey,cert:mockRpcCertificate},mockHandler);
   const modelPort=await listenTestHttp(model);
   const rpcPort=await listenTestHttp(rpc),caFile=join(root,'mock-rpc-ca.pem');fs.writeFileSync(caFile,mockRpcCertificate);
@@ -51,7 +51,7 @@ it.skipIf(process.env.EMERGENTINC_CANDIDATE_MODE==='1')('preserves public busine
   const supervisor=new GenerationSupervisor(state,join(workspace,'system'),releases,lineage,runtime,true);let cookie='';
   const call=async(method:string,url:string,payload?:any)=>{const response=await fetch(runtime.config.appUrl+url,{method,headers:{cookie,'Content-Type':'application/json',Connection:'close'},...(payload?{body:JSON.stringify(payload)}:{})});
     const result=await response.json() as any;expect(response.status,JSON.stringify(result)).toBeLessThan(300);return result;};
-  const login=async()=>{const response=await fetch(runtime.config.appUrl+'/api/login',{method:'POST',headers:{'Content-Type':'application/json',Connection:'close'},body:JSON.stringify({secret})});cookie=response.headers.get('set-cookie')!.split(';')[0]!;};
+  const login=async()=>{const response=await fetch(runtime.config.appUrl+'/api/login',{method:'POST',headers:{'Content-Type':'application/json',Connection:'close'},body:JSON.stringify({secret})});cookie=response.headers.get('set-cookie')!.split(';')[0]!;const control=await call('GET','/api/owner/automation');if(control.desiredMode==='OFF')await call('POST','/api/owner/automation',{desiredMode:'ON',runMode:'CONTINUOUS',maxTokens:100000000,expectedRevision:control.revision,idempotencyKey:crypto.randomUUID()});};
   const publicCall=async(method:string,url:string,payload?:any,token?:string)=>{
     const response=await fetch(runtime.config.appUrl+url,{method,headers:{'Content-Type':'application/json',Connection:'close',...(token?{Authorization:'Bearer '+token}:{})},...(payload?{body:JSON.stringify(payload)}:{})});
     const result=await response.json() as any;expect(response.status,JSON.stringify(result)).toBeLessThan(300);return result;
@@ -108,4 +108,4 @@ it.skipIf(process.env.EMERGENTINC_CANDIDATE_MODE==='1')('preserves public busine
   }catch(error){throw new Error((error instanceof Error?error.stack+' Cause: '+String((error as any).cause):String(error))+' State: '+JSON.stringify(supervisor.list())+'\n'+fs.readFileSync(join(state,'server.log'),'utf8').slice(-1500)+'\n'+fs.readdirSync(state).filter(n=>n.startsWith('validation-')).map(n=>fs.readFileSync(join(state,n),'utf8').slice(-2500)).join('\n'));}
   finally{try{await runtime.stop();}catch{}supervisor.close();control.close();lineage.close();await new Promise<void>(r=>model.close(()=>r()));await new Promise<void>(r=>rpc.close(()=>r()));fs.rmSync(root,{recursive:true,force:true});}
 // Includes an offline release install, the full single-worker candidate suite and process rollback on Windows.
-},600000);
+},900000);

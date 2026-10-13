@@ -3,8 +3,36 @@ import type { OwnerOverviewService } from '../services/owner_overview_service.js
 import type { OwnerChatService } from '../services/owner_chat_service.js';
 import { proposeOwnerAction } from '../services/owner_actions.js';
 import type { OwnerWorkService } from '../services/owner_work_service.js';
+import type { OwnerAutomationGate } from '../services/owner_automation_gate.js';
+import type { OwnerGoalScheduler } from '../services/owner_goal_scheduler.js';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import { createHash } from 'node:crypto';
 
-export function registerOwnerRoutes(app:FastifyInstance, overview:OwnerOverviewService, chat?:OwnerChatService, work?:OwnerWorkService){
+export function registerOwnerRoutes(app:FastifyInstance, overview:OwnerOverviewService, chat?:OwnerChatService, work?:OwnerWorkService, gate?:OwnerAutomationGate, scheduler?:OwnerGoalScheduler){
+  if(gate){
+    const goals=gate.goals;
+    app.get('/owner/goals',req=>{const query=req.query as any;return {items:goals.list(query.archived==='true')};});
+    app.post('/owner/goals',req=>goals.create(req.body));
+    app.get<{Params:{id:string}}>('/owner/goals/:id',req=>goals.detail(req.params.id));
+    app.get<{Params:{id:string;evidenceId:string}}>('/owner/goals/:id/evidence/:evidenceId',async(req,reply)=>{
+      const evidence=goals.detail(req.params.id).evidence.find(e=>e.id===req.params.evidenceId&&e.kind==='artifact');
+      if(!evidence?.worldId||!work)return reply.status(404).send({detail:'OWNER_EVIDENCE_NOT_FOUND'});
+      const root=work.manager.registry.directory(evidence.worldId),parts=evidence.reference.split('/');
+      if(parts[0]!=='evidence'||parts.some(p=>!p||p==='.'||p==='..'||/[\\:]/.test(p)))return reply.status(409).send({detail:'OWNER_EVIDENCE_CHANGED'});
+      let file=root;for(const part of parts){file=path.join(file,part);if(!fs.existsSync(file)||fs.lstatSync(file).isSymbolicLink())return reply.status(409).send({detail:'OWNER_EVIDENCE_CHANGED'});}
+      if(!fs.statSync(file).isFile()||fs.statSync(file).size!==evidence.bytes||evidence.bytes>2000000)return reply.status(409).send({detail:'OWNER_EVIDENCE_CHANGED'});
+      const bytes=fs.readFileSync(file);if(createHash('sha256').update(bytes).digest('hex')!==evidence.sha256)return reply.status(409).send({detail:'OWNER_EVIDENCE_CHANGED'});
+      return reply.type('text/plain; charset=utf-8').header('Content-Security-Policy',"default-src 'none'; sandbox").send(bytes);
+    });
+    app.patch<{Params:{id:string}}>('/owner/goals/:id',async req=>{const goal=goals.edit(req.params.id,req.body);await scheduler?.tick();return goal;});
+    app.post<{Params:{id:string}}>('/owner/goals/:id/actions',async req=>{const goal=goals.action(req.params.id,req.body);if(goal.status==='READY'&&gate.isOn())await work?.manager.resumeInterrupted();await scheduler?.tick();return goals.get(goal.id);});
+    app.get('/owner/automation',()=>gate.view());
+    app.get('/owner/automation/report',()=>gate.report());
+    app.get('/owner/automation/calls',()=>({items:gate.modelCalls()}));
+    app.post<{Params:{id:string}}>('/owner/automation/calls/:id/reconcile',req=>gate.reconcileCall(req.params.id,req.body));
+    app.post('/owner/automation',async req=>{const state=gate.control(req.body);if(state.desiredMode==='ON')await work?.manager.resumeInterrupted();await scheduler?.tick();return gate.view();});
+  }
   app.get('/owner/overview',()=>overview.overview());
   app.post('/owner/chat',async(req,reply)=>{
     const b=req.body as any;

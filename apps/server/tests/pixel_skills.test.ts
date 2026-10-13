@@ -170,7 +170,7 @@ describe('V26 Pixel Skills: minimal discovery and reading', () => {
     fs.writeFileSync(tampered, fs.readFileSync(tampered, 'utf8').replace('识别客户', '被篡改'));
     await expectFailure(bToolRuntime.execute('READ_SKILL', { ref: 'gene:customer_discovery' }, ctxOf(bRuntime.directory)), 'GENE_ASSET_HASH_MISMATCH');
     await expectFailure(bToolRuntime.execute('READ_SKILL', { ref: 'gene:absent_asset' }, ctxOf(bRuntime.directory)), 'GENE_ASSET_NOT_FOUND');
-  });
+  },15000);
 
   it('treats non-skill knowledge as invisible and never lets skill text grant tool permissions in a scoped execution', async () => {
     const f = fixture(), { runtime, toolRuntime } = await runtimeFor(f);

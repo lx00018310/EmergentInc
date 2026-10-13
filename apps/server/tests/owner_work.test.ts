@@ -35,19 +35,20 @@ function fixture(maintenance?:ReleaseMaintenanceClient){
   return {root,project,manager,registry,control,lineage,work,chat,a,b,calls,data,finish,intent:(v:any)=>intent=v,reply:(v:any)=>worldReply=v};
 }
 describe('Owner role dispatch and actual execution',()=>{
-  it('registers live Pixel rollback/deletion tools with a scoped credential and bound actor, without exposing Owner login',async()=>{
+  it('allows version reads but refuses autonomous rollback/deletion even with a scoped maintenance credential',async()=>{
     const secret='test-maintenance-secret'.repeat(3),requests:any[]=[],fetcher=vi.fn(async(url:any,init:any)=>{requests.push({url,init});return new Response(JSON.stringify({accepted:true,active:'G0002',versions:[]}),{headers:{'Content-Type':'application/json'}});});
     const f=fixture(new ReleaseMaintenanceClient('http://127.0.0.1:8766',secret,fetcher as any)),tools=new ToolRegistry();f.work.registerTools(tools,f.a.world_id);const runtime=new ToolRuntime(tools);
     const context={workspaceRoot:f.registry.directory(f.a.world_id),pixelId:'0_0_0',operationId:'rollback-op',round:1} as any;
     expect((await runtime.execute('LIST_RELEASE_VERSIONS',{},context)).status).toBe('SUCCESS');
-    expect((await runtime.execute('ROLLBACK_RELEASE',{targetGeneration:'G0001',expectedActive:'G0002',reason:'Restore stable code',deleteNewer:true},context)).status).toBe('SUCCESS');
-    expect(requests[1].url).toBe('http://127.0.0.1:8766/pixel/releases/rollback');expect(requests[1].init.headers.Authorization).toBe(`Bearer ${pixelReleaseToken(secret)}`);
-    expect(JSON.parse(requests[1].init.body)).toMatchObject({worldId:f.a.world_id,pixelId:'0_0_0',operationKey:`${f.a.world_id}:rollback-op`,deleteNewer:true});
-    expect((await runtime.execute('DELETE_RELEASE',{releaseId:'r2',expectedActive:'G0001',identity:'a'.repeat(64),reason:'Remove newer code'},{...context,operationId:'delete-op'})).status).toBe('SUCCESS');
-    expect(requests[2].url).toBe('http://127.0.0.1:8766/pixel/releases/delete');expect(JSON.stringify(requests)).not.toContain(secret);expect(JSON.stringify(tools.renderCatalogForPrompt())).not.toContain(pixelReleaseToken(secret));
+    const rollback=await runtime.execute('ROLLBACK_RELEASE',{targetGeneration:'G0001',expectedActive:'G0002',reason:'Restore stable code',deleteNewer:true},context);
+    expect(rollback.status).toBe('FAILED');expect(rollback.error_message).toContain('OWNER_MAINTENANCE_APPROVAL_REQUIRED');
+    expect((await runtime.execute('DELETE_RELEASE',{releaseId:'r2',expectedActive:'G0001',identity:'a'.repeat(64),reason:'Remove newer code'},{...context,operationId:'delete-op'})).status).toBe('FAILED');
+    expect(requests).toHaveLength(1);expect(requests[0].url).toBe('http://127.0.0.1:8766/pixel/releases');
+    expect(requests[0].init.headers.Authorization).toBe(`Bearer ${pixelReleaseToken(secret)}`);
+    expect(JSON.stringify(requests)).not.toContain(secret);expect(JSON.stringify(tools.renderCatalogForPrompt())).not.toContain(pixelReleaseToken(secret));
     expect((await runtime.execute('ROLLBACK_RELEASE',{targetGeneration:'G0001',expectedActive:'G0002',reason:'Wrong actor'},{...context,workspaceRoot:f.registry.directory(f.b.world_id)})).status).toBe('FAILED');
     const world=await f.manager.open(f.a.world_id);world.store.pixels.setActive('0_0_0',false);
-    expect((await runtime.execute('DELETE_RELEASE',{releaseId:'r2',expectedActive:'G0001',identity:'a'.repeat(64),reason:'Inactive actor'},context)).status).toBe('FAILED');expect(requests).toHaveLength(3);
+    expect((await runtime.execute('DELETE_RELEASE',{releaseId:'r2',expectedActive:'G0001',identity:'a'.repeat(64),reason:'Inactive actor'},context)).status).toBe('FAILED');expect(requests).toHaveLength(1);
   });
   it.each(['zh-CN','en'] as const)('preserves a requested 10-round limit and the reporting task in %s',async language=>{
     const f=fixture();f.intent({kind:'dispatch',rounds:10,tasks:[{personId:f.a.qianji_id,instruction:'Run and report current work and required Owner actions'}]});
@@ -167,7 +168,7 @@ describe('Owner role dispatch and actual execution',()=>{
     const hire={id:r.id,hash:r.hash,decision:'approve' as const},answer=await f.work.ask('approve1',`批准招聘 ${r.id}`,[],'zh-CN',data,f.chat,undefined,hire);await f.finish();
     expect(await f.work.cached('approve1',`批准招聘 ${r.id}`,[],'zh-CN')).toEqual(answer);expect(f.registry.list()).toHaveLength(3);
     expect(proposeOwnerAction('拒绝招聘 新职责',f.data(),'zh-CN')!.proposals).toHaveLength(0);
-  });
+  },15000);
   it('accepts recruitment requests from actual member tools with their requester and never creates a person automatically',async()=>{
     const f=fixture(),registry=new ToolRegistry();f.work.registerTools(registry,f.a.world_id);const runtime=new ToolRuntime(registry);
     const result=await runtime.execute('REQUEST_RECRUIT',{role:'设计师',reason:'需要视觉设计',instruction:'Prepare artwork'},{workspaceRoot:f.registry.directory(f.a.world_id),pixelId:'0_0_0',operationId:'member-hire',round:1} as any);

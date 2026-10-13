@@ -9,14 +9,14 @@ export type OwnerAction =
   | { type: 'gene_proposal_approve' | 'gene_proposal_reject'; proposalId: string; expectedGeneration: string; expectedState: 'PROPOSED' };
 export interface OwnerActionProposal { id: string; explanation?: string; risk?: 'read' | 'normal' | 'sensitive'; requiresApproval: boolean; action: OwnerAction }
 export interface OwnerInboxItem {
-  id: string; type: 'gene' | 'plan' | 'resource' | 'run' | 'external' | 'upgrade' | 'recruit' | 'code';
+  id: string; type: 'gene' | 'plan' | 'resource' | 'run' | 'external' | 'upgrade' | 'recruit' | 'code' | 'goal';
   title: string; summary: string; priority: 'normal' | 'critical'; createdAt: number | null;
   source: string; href: string; actions?: OwnerActionProposal[];
   approveEffect?: string; rejectEffect?: string;
   approveEffectValues?: (string | number)[]; rejectEffectValues?: (string | number)[];
 }
-export interface OwnerAlert { id: string; kind: string; severity: 'normal' | 'critical'; title: string; summary: string; createdAt: number | null; source: string; href: string }
-export interface OwnerActivityItem { id: string; type: string; summary: string; createdAt: number; source: string; href: string }
+export interface OwnerAlert { id: string; kind: string; severity: 'normal' | 'critical'; title: string; summary: string; reasonKey?:string; createdAt: number | null; source: string; href: string }
+export interface OwnerActivityItem { id: string; type: string; summary: string; summaryKey?: string; summaryValues?: (string | number)[]; createdAt: number; source: string; href: string }
 export interface OwnerPerson { id: string; name: string; worldId: string; status: string; running: boolean; runStatus: string; role?: string | null; behaviorProfile?: string[]; infiniteEnergy?: boolean; gatewayPixelId?: string | null; round?: number; energy?: number; pixels?: unknown[] }
 export interface OwnerWorkTask {
   id: string; personId: string; personName: string; instruction: string;
@@ -34,6 +34,8 @@ export interface AppCodeReport {
 }
 export interface OwnerWork { tasks: OwnerWorkTask[]; requests: OwnerRecruitRequest[]; codeReports: (Omit<AppCodeReport,'files'> & {paths:string[]})[]; upgradeOrigin?: string; schedulerError?:string }
 export interface OwnerOverview {
+  goals?: OwnerGoal[];
+  automation?: OwnerAutomation;
   asOf: number;
   summary: { qianjiCount: number; activeWorlds: number; runningWorlds: number; inboxCount: number; currentGeneration: string | null;
     pixelCount?: number | null; availableEnergy?: number | null; pendingApprovals?: number; serviceStatus?: 'ready' | 'paused' | 'attention' };
@@ -43,3 +45,25 @@ export interface OwnerOverview {
   upgrade?: { active: string | null; busy: boolean };
   work?: OwnerWork;
 }
+
+export type OwnerGoalStatus = 'DRAFT' | 'READY' | 'RUNNING' | 'WAITING_APPROVAL' | 'WAITING_RESOURCE' | 'PAUSED' | 'BLOCKED' | 'FAILED' | 'COMPLETED' | 'STOPPED' | 'ARCHIVED';
+/** Only an artifact hash can satisfy artifact acceptance; reports are never business evidence. */
+export type OwnerGoalAcceptance = { kind: 'artifact'; filename: string; minBytes: number } | { kind: 'manual'; description: string } | {kind:'confirmed_payments';invoiceIds:string[];targetCount:number};
+export interface OwnerGoal {
+  id: string; revision: number; specificationRevision: number; title: string; objective: string;
+  acceptance: OwnerGoalAcceptance; maxTokens: number; status: OwnerGoalStatus;
+  nextAction: string; reason: string | null; verifiedCount: number; evidenceCount: number;
+  spentTokens: number; reservedTokens: number; createdAt: number; updatedAt: number; lastScheduledAt: number;
+}
+export interface OwnerGoalEvent { id: number; goalId: string; revision: number; kind: string; payload: unknown; createdAt: number }
+export interface OwnerGoalEvidence { id: string; goalId: string; specificationRevision: number; runId: string | null; worldId: string | null; kind: 'artifact' | 'report' | 'payment'; reference: string; sha256: string; bytes: number; createdAt: number }
+export interface OwnerGoalDetail { goal: OwnerGoal; events: OwnerGoalEvent[]; evidence: OwnerGoalEvidence[]; dispatches: { id: string; taskId: string | null; runId: string | null; worldId: string; state: string; reason: string | null }[] }
+export interface OwnerAutomation {
+  desiredMode: 'OFF' | 'ON'; runMode: 'CONTINUOUS' | 'BOUNDED'; requestedRounds: number | null;
+  startedRounds: number; completedRounds: number; reservedRounds: number;
+  maxTokens: number; spentTokens: number; reservedTokens: number; knownCostCny: number; unknownCostCalls: number;
+  revision: number; batchId: string; updatedAt: number; reason: string | null;
+  observedState: 'STOPPED' | 'STARTING' | 'RUNNING' | 'IDLE' | 'STOPPING' | 'BLOCKED' | 'LIMIT_REACHED' | 'ERROR';
+  inFlight: number;
+}
+export interface OwnerRunReport { asOf:number; automation:OwnerAutomation; goals:{goalId:string;title:string;status:OwnerGoalStatus;spentTokens:number;reservedTokens:number;knownCostCny:number;evidence:OwnerGoalEvidence[];reason:string|null}[] }

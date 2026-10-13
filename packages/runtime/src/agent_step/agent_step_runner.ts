@@ -33,6 +33,8 @@ export interface AgentStepRunnerOptions {
   usageMeter: UsageMeter;
   worldMode?: boolean;
   worldPrompt?: (pixelId:string) => string;
+  shouldSuspend?: () => boolean;
+  beforeStep?: (input: AgentStepInput) => void;
 }
 
 export class AgentStepRunner {
@@ -44,6 +46,8 @@ export class AgentStepRunner {
   private usageMeter: UsageMeter;
   private worldMode: boolean;
   private worldPrompt?: (pixelId:string) => string;
+  private shouldSuspend?: () => boolean;
+  private beforeStep?: (input: AgentStepInput) => void;
 
   constructor(options: AgentStepRunnerOptions) {
     this.workspaceRoot = options.workspaceRoot;
@@ -54,6 +58,8 @@ export class AgentStepRunner {
     this.usageMeter = options.usageMeter;
     this.worldMode = options.worldMode ?? false;
     this.worldPrompt = options.worldPrompt;
+    this.shouldSuspend = options.shouldSuspend;
+    this.beforeStep = options.beforeStep;
   }
 
   public isReadOnlyTool(name: string): boolean {
@@ -61,6 +67,7 @@ export class AgentStepRunner {
   }
 
   public async execute(input: AgentStepInput, signal?: AbortSignal): Promise<AgentStepResult> {
+    this.beforeStep?.(input);
     const { trace, pixelState, pixelMind, message, round } = input;
     if ((trace.executionId ?? null) !== (message.executionId ?? null)) {
       throw Object.assign(new Error("Message and Run execution scopes do not match"), { code: "EXECUTION_SCOPE_MESSAGE_CONFLICT", phase: "scope" });
@@ -236,7 +243,7 @@ export class AgentStepRunner {
       // 5. 调用模型与精准异常分类
       let rawResponse: any;
       try {
-        rawResponse = await this.provider.call(request, signal);
+        rawResponse = await this.provider.call({...request,auditCallId:callId}, signal);
         rawText = rawResponse.rawText;
       } catch (callErr: any) {
         if (!(callErr instanceof InfrastructureFailureError)) {
@@ -355,6 +362,7 @@ export class AgentStepRunner {
       signal,
       modelCallId: callId,
       worldMode: this.worldMode,
+      shouldSuspend: this.shouldSuspend,
     });
     await effectRuntime.applyEffects(effects);
 

@@ -37,6 +37,7 @@ export interface EffectRuntimeContext {
   signal?: AbortSignal;
   modelCallId?: string;
   worldMode?: boolean;
+  shouldSuspend?: () => boolean;
 }
 
 export class EffectRuntime {
@@ -76,6 +77,7 @@ export class EffectRuntime {
       }
 
       // 2. 根据类型派发执行
+      if (this.ctx.shouldSuspend?.()) throw Object.assign(new Error('SERVICE_SHUTDOWN'), { code: 'SERVICE_SHUTDOWN' });
       switch (effect.effectType) {
         case "UPDATE_MIND":
           this.ctx.store.transaction(() => this.applyUpdateMind(effect));

@@ -44,9 +44,9 @@ export class OwnerOverviewService {
       if (run && !run.running && (run.unfinalized_operations?.hasUnfinalized || waiting.length))
         alert(`run:${row.world_id}:${run.run_id}`,'run',run.unfinalized_operations?.hasUnfinalized?'critical':'normal','Run needs attention',`${name}: ${waiting.map(r=>`${r.status} (${r.count})`).join(', ') || run.result_status}`,runtime!.store.runs.getLatestRun()?.created_at ? Number(runtime!.store.runs.getLatestRun()!.created_at) * 1000 : null,'runs / operations',href);
       if (runtime) {
-        for (const r of runtime.store.db.prepare('SELECT run_id,status,stop_reason,created_at,finished_at FROM runs ORDER BY created_at DESC LIMIT 10').all())
+        for (const r of runtime.store.db.prepare('SELECT run_id,status,stop_reason,created_at,finished_at FROM runs ORDER BY created_at DESC LIMIT 10').all().filter(r=>!manager.automation||!control.db.prepare('SELECT 1 FROM owner_run_permits WHERE run_id=? AND goal_id IS NOT NULL').get(r.run_id)))
           add(`run:${row.world_id}:${r.run_id}`, 'Run', `${name}: ${r.stop_reason ?? r.status}`, Number(r.finished_at ?? r.created_at) * 1000, 'runs', href);
-        for (const r of runtime.store.db.prepare('SELECT turn_id,reply,created_at FROM world_outbox ORDER BY created_at DESC LIMIT 10').all())
+        for (const r of runtime.store.db.prepare('SELECT turn_id,reply,created_at FROM world_outbox ORDER BY created_at DESC LIMIT 10').all().filter(r=>!manager.automation||!control.db.prepare('SELECT 1 FROM owner_goal_dispatches d JOIN owner_work_tasks t ON t.id=d.task_id WHERE t.turn_id=?').get(r.turn_id)))
           add(`reply:${r.turn_id}`, 'Qianji reply', `${name}: ${r.reply}`, Number(r.created_at), 'world_outbox', `/QIAN?qianji=${encodeURIComponent(row.qianji_id)}`);
         for (const p of world!.pixels as any[]) if (p.tips_md?.trim())
           add(`tips:${row.world_id}:${p.id}:${p.tips_version}`, 'Tips', `${name} / ${p.id}: ${p.tips_md}`, Number(p.tips_version), 'tips.md', href);
@@ -68,12 +68,22 @@ export class OwnerOverviewService {
       add(`payment:${r.receipt_id}`, 'Payment received', `${r.asset}: ${Number(r.amount_atomic)/10**Number(r.decimals)}`, Number(r.created_at), 'world_revenue_events', r.world_id===null?'/GENE?view=public-site':`/YUAN?world=${encodeURIComponent(String(r.world_id))}`);
     const generation = manager.registry.effectiveGeneration().id;
     const work=this.work?.view();
+    const goals=manager.automation?.goals.list();
+    const automation=manager.automation?.view();
+    if(automation?.observedState==='BLOCKED'&&automation.reason!=='EVOLUTION_QUIESCED')alerts.push({id:'automation:review',kind:'automation',severity:'critical',title:'Company automation needs review',summary:'',reasonKey:automation.reason??'OWNER_OUTCOME_REVIEW_REQUIRED',createdAt:automation.updatedAt,source:'owner_automation_control',href:'/OWNER?automationReview=true'});
+    if(goals)for(const goal of goals){
+      if(['WAITING_APPROVAL','WAITING_RESOURCE','BLOCKED','FAILED'].includes(goal.status)&&goal.reason!=='OWNER_WAITING_PAYMENT')alerts.push({id:`goal:${goal.id}`,kind:'goal',severity:goal.status==='BLOCKED'?'critical':'normal',title:'Goal needs attention',summary:goal.title,reasonKey:goal.reason??`Goal status: ${goal.status}`,createdAt:goal.updatedAt,source:'owner_goals',href:`/OWNER?goal=${encodeURIComponent(goal.id)}`});
+      for(const event of manager.automation!.goals.detail(goal.id).events.filter(e=>!['running','ready'].includes(e.kind)).slice(0,10))activity.push({id:`goal-event:${event.id}`,type:'Goal update',summary:`${goal.title}: ${event.kind}`,summaryKey:`Goal event: ${event.kind}`,summaryValues:[goal.title],createdAt:event.createdAt,source:'owner_goal_events',href:`/OWNER?goal=${encodeURIComponent(goal.id)}`});
+    }
     if(work){
-      for(const r of work.requests.filter(r=>r.state==='PENDING'))inbox.push({id:`recruit:${r.id}`,type:'recruit',title:'Recruitment approval',summary:`${r.requester}: ${r.role} — ${r.reason}`,priority:'normal',createdAt:r.createdAt,source:'owner_recruit_requests',href:'/OWNER',
-        approveEffect:'Creates one person with this role and dispatches the initial task; model calls consume tokens; publication needs separate approval.',rejectEffect:'Stops this recruitment request; no person is created.',
+      for(const r of work.requests.filter(r=>r.state==='PENDING')){
+        const linked=manager.automation&&control.db.prepare('SELECT 1 FROM owner_goal_recruits WHERE request_id=?').get(r.id);
+        inbox.push({id:`recruit:${r.id}`,type:'recruit',title:'Recruitment approval',summary:`${r.requester}: ${r.role} — ${r.reason}`,priority:'normal',createdAt:r.createdAt,source:'owner_recruit_requests',href:'/OWNER',
+        approveEffect:linked?'Creates one person for this goal. Work continues only when the goal and company automation are authorized.':'Creates one person with this role and dispatches the initial task; model calls consume tokens; publication needs separate approval.',rejectEffect:linked?'Creates no person. The goal waits until its resource decision is resolved.':'Stops this recruitment request; no person is created.',
         actions:['recruit_approve','recruit_reject'].map(type=>({id:`${type}:${r.id}`,requiresApproval:true,action:{type:type as 'recruit_approve'|'recruit_reject',requestId:r.id,hash:r.hash,role:r.role,reason:r.reason,instruction:r.instruction}}))});
+      }
       for(const r of work.codeReports.filter(r=>r.baseGeneration===generation))inbox.push({id:`code:${r.id}`,type:'code',title:'Source change report',summary:`${r.personName}: ${r.title} — ${r.summary}`,priority:'normal',createdAt:r.createdAt,source:'owner_code_reports',href:`/OWNER?report=${encodeURIComponent(r.id)}#owner-activity`});
-      for(const task of work.tasks){add(`task:${task.id}`,'Assigned task',`${task.personName}: ${task.state} — ${task.instruction}`,task.updatedAt,'owner_work_tasks','/OWNER');if(task.state==='BLOCKED'||task.state==='NO_REPLY')alert(`task:${task.id}`,'task','normal','Assigned task needs attention',`${task.personName}: ${task.reason}`,task.updatedAt,'owner_work_tasks',`/QIAN?qianji=${encodeURIComponent(task.personId)}`);}
+      for(const task of work.tasks){if(manager.automation&&control.db.prepare('SELECT 1 FROM owner_goal_dispatches WHERE task_id=?').get(task.id))continue;add(`task:${task.id}`,'Assigned task',`${task.personName}: ${task.state} — ${task.instruction}`,task.updatedAt,'owner_work_tasks','/OWNER');if(task.state==='BLOCKED'||task.state==='NO_REPLY')alert(`task:${task.id}`,'task','normal','Assigned task needs attention',`${task.personName}: ${task.reason}`,task.updatedAt,'owner_work_tasks',`/QIAN?qianji=${encodeURIComponent(task.personId)}`);}
     }
     // Current-generation Gene proposals carry a symmetric direction decision: approving only sets
     // the direction; candidate freezing and the exact-hash publication remain separate approvals.
@@ -119,7 +129,7 @@ export class OwnerOverviewService {
     } catch { /* A disconnected independent service is explicitly reported, never projected as idle. */ }
     inbox.sort((a,b)=>Number(b.priority==='critical')-Number(a.priority==='critical')||(b.createdAt??0)-(a.createdAt??0)||a.id.localeCompare(b.id));
     activity.sort((a,b)=>b.createdAt-a.createdAt||a.id.localeCompare(b.id));
-    return {asOf:Date.now(),summary:{qianjiCount:people.length,activeWorlds:records.filter(r=>r.status==='ACTIVE').length,runningWorlds:records.filter(r=>r.running).length,inboxCount:inbox.length,currentGeneration:generation,
+    return {...(goals?{goals,automation:manager.automation!.view()}:{}),asOf:Date.now(),summary:{qianjiCount:people.length,activeWorlds:records.filter(r=>r.status==='ACTIVE').length,runningWorlds:records.filter(r=>r.running).length,inboxCount:inbox.length,currentGeneration:generation,
       pixelCount:metricsComplete?pixelCount:null,availableEnergy:metricsComplete?availableEnergy:null,
       pendingApprovals:inbox.filter(item=>item.actions?.some(action=>action.requiresApproval)).length,...(this.serviceStatus?{serviceStatus:this.serviceStatus()}:{} )},inbox,activity:activity.slice(0,50),people,alerts,availability,...(upgrade?{upgrade}:{}),...(work?{work}:{})};
   }

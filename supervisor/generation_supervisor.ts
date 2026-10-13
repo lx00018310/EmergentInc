@@ -9,6 +9,7 @@ import { ReleaseBuilder, releaseHash, evolutionHash } from "./release_builder.js
 import { snapshotDatabase,copyDirectoryNew } from "./migration_runner.js";
 import { GenerationMigrator } from "./generation_migrator.js";
 import { rollbackPlan, canDeleteRelease, ReleaseGeneration } from './release_history.js';
+import { checkOwnerAutomationRollback } from './owner_automation_compatibility.js';
 
 /** Installed administrator implementation. Its DB and approvals must be inaccessible to the app user. */
 export class GenerationSupervisor {
@@ -300,6 +301,7 @@ export class GenerationSupervisor {
       return;
     }
     this.db.prepare("UPDATE candidates SET state='ROLLING_BACK',phase='STOPPING',failure_reason=? WHERE id=?").run(reason, id);
+    checkOwnerAutomationRollback(path.join(this.workspace,'control/control.sqlite3'),path.join(this.releases,previous.release_id));
     this.runtime.checkRollback?.(path.join(this.releases, previous.release_id));
     await this.runtime.stop();
     await this.runtime.prepareRollback?.(path.join(this.releases, previous.release_id));
@@ -350,6 +352,7 @@ export class GenerationSupervisor {
   }
   private async rollbackCandidate(c:Record<string,any>,reason:string) {
       if(c.state!=='BORN'||this.lineage.activeGeneration()?.id!==c.target_generation)throw new Error('GENERATION_NOT_ACTIVE');
+      checkOwnerAutomationRollback(path.join(this.workspace,'control/control.sqlite3'),path.join(this.releases,c.request.base_release));
       this.runtime.checkRollback?.(path.join(this.releases, c.request.base_release));
       await this.runtime.quiesce();
       try { this.runtime.checkRollback?.(path.join(this.releases, c.request.base_release)); } catch (e) { await this.runtime.resume(); throw e; }
@@ -380,6 +383,7 @@ export class GenerationSupervisor {
           if(initial?.id!==previous.release_id||receipt.state!=='COMMITTED'||evolutionHash(initial)!==receipt.candidateHash||receipt.ownerAuthorization?.candidateHash!==receipt.candidateHash||initial.target!==previous.id||initial.geneHash!==previous.gene_hash||initial.release.directory!==directory||initial.release.hash!==releaseHash(directory))throw new Error('HISTORICAL_RELEASE_INTEGRITY_CONFLICT');
         }
       }
+      checkOwnerAutomationRollback(path.join(this.workspace,'control/control.sqlite3'),directory);
       this.runtime.checkRollback?.(directory);
     }
     this.busy=true;

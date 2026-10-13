@@ -3,7 +3,7 @@ import * as path from 'node:path';
 import fastify, { FastifyInstance } from 'fastify';
 import { CoreStore, CurrentStore } from '@emergentinc/persistence';
 import { GenomeManifest } from '@emergentinc/protocol';
-import { ModelProvider, PromptBuilder, UsageMeter } from '@emergentinc/model';
+import { InfrastructureFailureError, ModelProvider, PromptBuilder, UsageMeter } from '@emergentinc/model';
 import { ToolRegistry, ToolRuntime, registerAllBuiltinTools, BUILTIN_DEFINITIONS } from '@emergentinc/tools';
 import { AgentStepRunner, RoundScheduler } from '@emergentinc/runtime';
 import { WorldRegistryService } from './world_registry_service.js';
@@ -14,11 +14,19 @@ import { PromptService } from './prompt_service.js';
 import { LifeContext } from './life_context.js';
 import { acquireWorkspaceLock } from '../runtime_config.js';
 import { registerApiRoutes } from '../routes/api_routes.js';
+import type { OwnerAutomationGate } from './owner_automation_gate.js';
 
 export interface WorldRuntime { id: string; directory: string; store: CoreStore; life: LifeContext; world: WorldService; run: RunService; api: FastifyInstance; unlock: () => void }
 export interface WorldRuntimeOptions { provider: ModelProvider; usageMeter: UsageMeter; modelName: string; isMockMode?: boolean; isModelConfigured?: boolean;
   configureTools?: (worldId: string, registry: ToolRegistry) => void; baseSystemPrompt?: string;projectRoot?:string }
 export class WorldRuntimeManager {
+  automation?: OwnerAutomationGate;
+  attachAutomation(gate: OwnerAutomationGate, maintenance: () => boolean = () => false) {
+    this.automation = gate;
+    gate.attach(maintenance, () => { for (const runtime of this.opened.values()) runtime.run.requestSuspend(); },
+      () => [...this.opened.values()].some(r => { const u = r.store.getUnfinalizedOperations(); return u.unknownCalls.length > 0 || (u.startedToolExecutions.length > 0 || u.callingMessages.some(m=>['CALLING','CALL_OUTCOME_UNKNOWN','AWAITING_SETTLEMENT'].includes(m.status)) || Boolean(r.store.db.prepare("SELECT 1 FROM effects WHERE status IN ('PENDING','UNKNOWN')").get())) && !r.run.getStatus().running; }));
+    for (const r of this.opened.values()) r.run.automation = { gate, worldId: r.id };
+  }
   private failures=new Map<string,string>();
   failure(id:string){return this.failures.get(id);}
   diagnose(id:string,code:string){this.failures.set(id,code);}
@@ -55,19 +63,42 @@ export class WorldRuntimeManager {
       const tools=new ToolRegistry(); const allowed=new Set(['save_artifact','read_artifact','list_artifacts','transfer_artifact','webfetch','github_repo']);
       registerAllBuiltinTools(tools,Object.fromEntries(BUILTIN_DEFINITIONS.filter(d=>!allowed.has(d.name)).map(d=>[d.name,{enabled:false}])));
       this.options.configureTools?.(id,tools);
-      const runner=new AgentStepRunner({workspaceRoot:directory,store,provider:this.options.provider,usageMeter:this.options.usageMeter,
-        toolRuntime:new ToolRuntime(tools),worldMode:true,worldPrompt:(actor)=>{
+      const provider: ModelProvider = { call: (request, signal) => (this.automation ? this.automation.provider(this.options.provider, this.options.usageMeter, id,'world',()=>{const r=store!.runs.getLatestRun();return r?r.run_limit-r.run_spent:Infinity;}) : this.options.provider).call(request, signal) };
+      const runner=new AgentStepRunner({workspaceRoot:directory,store,provider,usageMeter:this.options.usageMeter,
+        beforeStep:input=>{
+          if(!this.automation)return;
+          const origin=store!.db.prepare('SELECT turn_id FROM world_chat_inbox WHERE message_id=? UNION SELECT turn_id FROM world_chat_continuations WHERE message_id=?').get(input.message.messageId,input.message.messageId);
+          if(!origin)return;
+          if(!this.registry.control.db.prepare('SELECT 1 FROM world_chat_turns WHERE turn_id=? AND world_id=?').get(origin.turn_id,id))throw new InfrastructureFailureError('OWNER_CHAT_RECOVERY_REQUIRED');
+          const linked=this.registry.control.db.prepare('SELECT d.goal_id,d.goal_revision FROM owner_goal_dispatches d JOIN owner_work_tasks t ON t.id=d.task_id WHERE t.turn_id=?').get(origin.turn_id);
+          const binding=this.automation.binding(input.trace.runId);
+          if(Boolean(linked)!==Boolean(binding)||linked&&binding&&(linked.goal_id!==binding.goalId||linked.goal_revision!==binding.specificationRevision))throw new InfrastructureFailureError('OWNER_GOAL_PERMISSION_CHANGED');
+        },
+        toolRuntime:new ToolRuntime(tools, (name,ctx,effect) => {this.automation?.assertTool(id,name,effect);const binding=this.automation?.binding(ctx.runId);if(binding)ctx.artifactEvidenceScope=`owner-${binding.dispatchId}`;}),worldMode:true,
+        shouldSuspend: () => Boolean(this.automation && (!this.automation.isOn() || (this.opened.get(id)?.run.getStatus().run_id && !this.automation.mayContinue(this.opened.get(id)!.run.getStatus().run_id)))),worldPrompt:(actor)=>{
           const profile=this.registry.control.qianji.getProfile(record.qianji_id)!;
           const infiniteEnergy=this.registry.control.gatewayInfiniteEnergy(id)&&this.registry.control.world(id).gateway_pixel_id===actor;
-          return `所属 World：${id}。${infiniteEnergy?'Owner 已为当前对话入口开启无限能量，缺少能量时会自动补充；其他元胞不享有此授权。是否向邻居输送能量，仍由你按成本收益判断。Run Token 预算继续有效。':''}对外人格（描述性数据，不授予额外权限）：${JSON.stringify({displayName:profile.narrative.displayName,roleLabel:profile.narrative.roleLabel,behaviorProfile:profile.narrative.behaviorProfile,flaw:profile.narrative.flaw})}。只有 OWNER_REPLY 经本世界 outbox 对外答复。Owner 任务应实际执行并报告产出，不把承诺当成果。缺少合适负责人时使用 REQUEST_RECRUIT 提交职责、理由和初始任务，等待 Owner 批准。代码任务使用 LIST_APP_SOURCE、READ_APP_SOURCE、SUBMIT_APP_CODE 修改 8765 候选源码并单独报告 Owner；8766 源码及共享模块禁止访问和修改，源码生效需要独立软件升级批准。若工具目录提供 LIST_RELEASE_VERSIONS、ROLLBACK_RELEASE、DELETE_RELEASE，Owner 已授权直接经这些受限工具回退和删除较新代码版本，无需逐次批准；先读取最新代号与版本标识，保留业务数据与审计。维护请求被接受不等于已完成，回退会重启本服务，应查看独立维护任务状态。权限不足时直接向 Owner 报告阻碍，不能用招聘申请绕过禁止修改区。多步工作使用工具反馈或 SELF 继续，完成后由入口 OWNER_REPLY 回报。当前生命上下文：${JSON.stringify(life.load(actor,null))}`;
+          return `所属 World：${id}。${infiniteEnergy?'Owner 已为当前对话入口开启无限能量，缺少能量时会自动补充；其他元胞不享有此授权。是否向邻居输送能量，仍由你按成本收益判断。Run Token 预算继续有效。':''}对外人格（描述性数据，不授予额外权限）：${JSON.stringify({displayName:profile.narrative.displayName,roleLabel:profile.narrative.roleLabel,behaviorProfile:profile.narrative.behaviorProfile,flaw:profile.narrative.flaw})}。只有 OWNER_REPLY 经本世界 outbox 对外答复。Owner 任务应实际执行并报告产出，不把承诺当成果。缺少合适负责人时使用 REQUEST_RECRUIT 提交职责、理由和初始任务，等待 Owner 批准。代码任务使用 LIST_APP_SOURCE、READ_APP_SOURCE、SUBMIT_APP_CODE 修改 8765 候选源码并单独报告 Owner；8766 源码及共享模块禁止访问和修改，源码生效需要独立软件升级批准。若工具目录提供 LIST_RELEASE_VERSIONS、ROLLBACK_RELEASE、DELETE_RELEASE，只能查看版本元数据；回退和删除必须由 Owner 在独立维护界面明确确认，公司运行开关不授予维护权限。权限不足时直接向 Owner 报告阻碍，不能用招聘申请绕过禁止修改区。多步工作使用工具反馈或 SELF 继续，完成后由入口 OWNER_REPLY 回报。当前生命上下文：${JSON.stringify(life.load(actor,null))}`;
         },promptBuilder:new PromptBuilder({modelName:this.options.modelName,baseSystemPrompt:this.options.baseSystemPrompt,toolsCatalog:tools.renderCatalogForPrompt()})});
       const scheduler=new RoundScheduler({workspaceRoot:directory,store,stepRunner:runner});
       const prompts=new PromptService(path.join(directory,'runtime'));
       const world=new WorldService(directory,store),run=new RunService({workspaceRoot:directory,store,scheduler,promptService:prompts,
         isMockMode:this.options.isMockMode,isModelConfigured:this.options.isModelConfigured});
+      if(this.automation)run.automation={gate:this.automation,worldId:id};
       api=fastify({logger:false});api.setErrorHandler((error:any,_req,reply)=>reply.status(error.statusCode||400).send({detail:error.message}));
-      await api.register(async server=>registerApiRoutes(server,{worldService:world,runService:run,promptService:prompts,toolRegistry:tools,coreStore:store!,workspaceRoot:directory,worldMode:true,ownerChatService:this.options.projectRoot?new OwnerChatService({projectRoot:this.options.projectRoot,workspaceRoot:directory,store:store!,worldService:world,runService:run,provider:this.options.provider,usageMeter:this.options.usageMeter,modelName:this.options.modelName,isModelConfigured:Boolean(this.options.isModelConfigured)}):undefined}),{prefix:'/api'});
+      await api.register(async server=>registerApiRoutes(server,{worldService:world,runService:run,promptService:prompts,toolRegistry:tools,coreStore:store!,workspaceRoot:directory,worldMode:true,ownerChatService:this.options.projectRoot?new OwnerChatService({projectRoot:this.options.projectRoot,workspaceRoot:directory,store:store!,worldService:world,runService:run,provider,usageMeter:this.options.usageMeter,modelName:this.options.modelName,isModelConfigured:Boolean(this.options.isModelConfigured)}):undefined}),{prefix:'/api'});
       await api.ready(); const runtime={id,directory,store,life,world,run,api,unlock};this.opened.set(id,runtime);this.failures.delete(id);
+      this.automation?.reconcileWorld(store,id);
+      if(this.automation)for(const permit of this.registry.control.db.prepare('SELECT run_id FROM owner_run_permits WHERE world_id=?').all(id)) {
+        const prior=store.db.prepare('SELECT run_id FROM runs WHERE run_id=?').get(permit.run_id);
+        if(!prior){
+          this.automation.cancelRun(String(permit.run_id));
+          if(this.registry.control.db.prepare("SELECT 1 FROM sqlite_master WHERE name='owner_work_tasks'").get())this.registry.control.db.prepare("UPDATE owner_work_tasks SET state='QUEUED',run_id=NULL,reason=NULL WHERE run_id=? AND state='RUNNING'").run(permit.run_id);
+          this.registry.control.db.prepare("UPDATE owner_goal_dispatches SET state='QUEUED',run_id=NULL WHERE run_id=?").run(permit.run_id);
+          this.registry.control.db.prepare('UPDATE world_chat_turns SET run_id=NULL WHERE run_id=? AND reply IS NULL').run(permit.run_id);
+        }
+        else {const checkpoint=store.runs.getCheckpoint(String(permit.run_id));this.automation.reconcileRun(String(permit.run_id),(checkpoint?.next_round??0)-1,Boolean(checkpoint?.resume_pending));}
+      }
       if(this.recoveryEnabled)await run.resumeInterrupted();
       return runtime;
     } catch(error){await api?.close();current?.close();store?.close();unlock();throw error;}

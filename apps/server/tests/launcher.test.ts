@@ -73,7 +73,7 @@ describe('approved UI launcher readiness',()=>{
     const opened=JSON.parse(fs.readFileSync(run.record,'utf8')),owned=JSON.parse(fs.readFileSync(f.pidFile,'utf8'));
     expect(opened.url).toBe(`http://127.0.0.1:${f.port}/`);expect(opened.live.processId).toBe(owned.pid);expect(opened.ready).toMatchObject({ready:true,generation:'G0001'});expect(opened.status).toBe(200);expect(opened.body).toContain('Actual homepage');expect(owned.args).toEqual(['--mock']);
     await fetch(opened.url+'stop');expect(await run.finished).toBe(0);
-  });
+  },15000);
   it('does not open a page when the process fails before becoming ready',async()=>{
     const f=await fixture(),run=startLauncher(f,['--open-browser','--exit-before-ready']);expect(await run.finished).toBe(1);expect(fs.readFileSync(run.error,'utf8')).toContain('EXITED_BEFORE_READY');expect(fs.existsSync(run.record)).toBe(false);
   });

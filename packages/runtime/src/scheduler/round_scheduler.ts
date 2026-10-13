@@ -211,6 +211,7 @@ export class RoundScheduler {
           break;
         }
       } catch (err: any) {
+        if (err.code === 'SERVICE_SHUTDOWN') { stopReason = 'SERVICE_SHUTDOWN'; break; }
         errorCode = err.code || (err instanceof InvalidModelResponseError ? "MODEL_RESPONSE_INVALID" : "INFRASTRUCTURE_FAILURE");
         errorSummary = err.summary || err.message || "Agent step failed";
         errorPhase = err.phase || (err instanceof InvalidModelResponseError ? "parse" : "agent_step");

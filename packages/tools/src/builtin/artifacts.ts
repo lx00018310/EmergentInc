@@ -110,8 +110,9 @@ export async function handleSaveArtifact(
     }
 
     let snapshotRelativePath: string | undefined;
-    if (ctx.executionScope) {
-      const executionId = ctx.executionScope.executionId;
+    if (ctx.executionScope || ctx.artifactEvidenceScope) {
+      const executionId = ctx.executionScope?.executionId ?? ctx.artifactEvidenceScope!;
+      if (!/^[\w-]+$/.test(executionId)) throw new Error('ARTIFACT_SNAPSHOT_PATH_INVALID');
       const snapshotSegments = ["evidence", executionId, "snapshots", ctx.operationId, pixelId, filename];
       const workspace = path.resolve(ctx.workspaceRoot);
       let current = workspace;

@@ -51,7 +51,7 @@ export function OwnerInbox({items,alerts=[],onDone}:{items:OwnerInboxItem[];aler
     </article>;})}
     {!!alerts.length&&<section className="owner-alerts" aria-label={t('Needs human verification')}>
       <h2>{t('Needs human verification')} ({alerts.length})</h2>
-      {alerts.map(a=><article key={a.id} className={a.severity==='critical'?'critical':''}><h3>{t(a.title)}</h3><p>{a.summary}</p><small>{a.source} · {a.createdAt===null?t('Time not recorded.'):new Date(a.createdAt).toLocaleString()}</small><a href={a.href}>{t('View details')}</a></article>)}
+      {alerts.map(a=><article key={a.id} className={a.severity==='critical'?'critical':''}><h3>{t(a.title)}</h3><p>{a.summary}{a.reasonKey&&<> · {t(a.reasonKey)}</>}</p><small>{a.source} · {a.createdAt===null?t('Time not recorded.'):new Date(a.createdAt).toLocaleString()}</small><a href={a.href}>{t('View details')}</a></article>)}
     </section>}
   </section>;
 }

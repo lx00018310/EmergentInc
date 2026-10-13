@@ -20,6 +20,11 @@ function fixture() {
   return { life, model, dream, gate };
 }
 describe("selective memory and Dream", () => {
+  it('blocks ordinary Dream while OFF and retains pre-upgrade facts without paid Final Dream calls',async()=>{
+    const f=fixture();f.life.current.event('body_need',{need:'Retain this real fixture fact'});f.dream.canRun=()=>false;
+    await expect(f.dream.run()).rejects.toThrow('OWNER_AUTOMATION_OFF');expect(await f.dream.finalDream()).toMatchObject({status:'DEFERRED',modelCalls:0,factsRetained:true});expect(f.model).not.toHaveBeenCalled();
+    expect(f.life.current.db.prepare("SELECT COUNT(*) n FROM current_events WHERE kind='body_need'").get()!.n).toBe(1);
+  });
   it("makes zero model calls without new facts, and advances cursors after strict output", async () => {
     const f = fixture(); expect((await f.dream.run()).status).toBe("SKIPPED"); expect(f.model).not.toHaveBeenCalled();
     f.life.current.event("body_run_succeeded", { skillId: "summary", outputHash: "receipt" }, "business");

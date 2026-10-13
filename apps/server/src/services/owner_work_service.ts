@@ -7,6 +7,7 @@ import { GachaService } from './gacha_service.js';
 import { AppCodeService } from './app_code_service.js';
 import type { OwnerChatService } from './owner_chat_service.js';
 import type { ReleaseMaintenanceClient } from './release_maintenance_client.js';
+import type { GoalRunBinding } from './owner_automation_gate.js';
 
 const digest = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const text = (value: unknown, max: number): value is string => typeof value === 'string' && Boolean(value.trim()) && value.length <= max;
@@ -47,14 +48,16 @@ export class OwnerWorkService {
     db.prepare('INSERT INTO owner_recruit_requests VALUES(?,?,?,\'PENDING\',NULL,?)').run(request.id,key,JSON.stringify(request),request.createdAt); return request;
   }
   registerTools(registry:ToolRegistry, worldId:string) {
-    const register=(name:string,description:string,properties:Record<string,any>,required:string[],effect:'read'|'write',handler:(args:any,pixel:string,key:string)=>unknown|Promise<unknown>)=>registry.register({name,description,effect,enabled:true,timeout_seconds:30,input_schema:{type:'object',properties,required,additionalProperties:false}},async(args,ctx)=>{
+    const register=(name:string,description:string,properties:Record<string,any>,required:string[],effect:'read'|'write',handler:(args:any,pixel:string,key:string,runId?:string)=>unknown|Promise<unknown>)=>registry.register({name,description,effect,enabled:true,timeout_seconds:30,input_schema:{type:'object',properties,required,additionalProperties:false}},async(args,ctx)=>{
       if(ctx.workspaceRoot!==this.manager.registry.directory(worldId))throw new Error('WORLD_TOOL_CONTEXT_CONFLICT');
-      return {operation_id:ctx.operationId,tool:name,status:'SUCCESS',output:await handler(args,ctx.pixelId,ctx.operationId),duration_ms:0,truncated:false,costCny:0};
+      return {operation_id:ctx.operationId,tool:name,status:'SUCCESS',output:await handler(args,ctx.pixelId,ctx.operationId,ctx.runId),duration_ms:0,truncated:false,costCny:0};
     });
-    register('REQUEST_RECRUIT','向 Owner 申请新人物。说明缺少的职责、现有人物无法胜任的理由及招聘后的任务。必须等待 Owner 批准，不自动创建。',{role:{type:'string'},reason:{type:'string'},instruction:{type:'string'}},['role','reason','instruction'],'write',async(a,p,k)=>{
+    register('REQUEST_RECRUIT','向 Owner 申请新人物。说明缺少的职责、现有人物无法胜任的理由及招聘后的任务。必须等待 Owner 批准，不自动创建。',{role:{type:'string'},reason:{type:'string'},instruction:{type:'string'}},['role','reason','instruction'],'write',async(a,p,k,runId)=>{
       const runtime=await this.manager.open(worldId);if(!runtime.store.pixels.getPixelAccount(p)?.active)throw new Error('OWNER_REQUEST_ACTOR_INACTIVE');
       const name=this.manager.registry.control.qianji.getProfile(this.manager.registry.control.world(worldId).qianji_id)!.narrative.displayName;
-      return this.requestRecruit(a,name,`${worldId}:${k}`);
+      const request=this.requestRecruit(a,name,`${worldId}:${k}`),binding=this.manager.automation?.binding(runId??'');
+      if(binding)this.manager.registry.control.db.prepare('INSERT OR IGNORE INTO owner_goal_recruits VALUES(?,?,?)').run(request.id,binding.goalId,binding.specificationRevision);
+      return request;
     });
     if(this.code){
       register('LIST_APP_SOURCE','列出可修改的 8765 应用源码。8766、共享鉴权/持久化/协议、依赖与配置禁止访问和修改。',{},[],'read',()=>this.code!.listFiles());
@@ -68,11 +71,12 @@ export class OwnerWorkService {
         return {worldId,pixelId,operationKey:`${worldId}:${operationKey}`};
       };
       register('LIST_RELEASE_VERSIONS','查看历史版本、可回退目标、回退后可删除的较新代码版本和维护任务状态。返回受限元数据，不含口令或私有路径。',{},[],'read',()=>this.releaseMaintenance!.list());
-      register('ROLLBACK_RELEASE','按发布代次回退到 LIST_RELEASE_VERSIONS 中可回退的 targetGeneration；expectedActive 必须来自最新列表。无需 Owner 再批准。返回接受状态后维护服务执行并重启 8765；不能把接受当完成。deleteNewer=true 会在回退成功后删除所有较新代码版本，保留业务数据和审计；旧版本可能不含本工具，可在同一次调用中明确选择清理。',{targetGeneration:generation,expectedActive:generation,reason,deleteNewer:{type:'boolean'}},['targetGeneration','expectedActive','reason'],'write',async(a,p,k)=>this.releaseMaintenance!.rollback(a,await actor(p,k)));
-      register('DELETE_RELEASE','仅在回退后删除列表中可删除的较新代码版本。releaseId、identity、expectedActive 必须来自最新列表。无需 Owner 再批准；不删除业务数据、账本、Current 快照或谱系。',{releaseId:{type:'string'},expectedActive:generation,identity:{type:'string',pattern:'^[a-f0-9]{64}$'},reason},['releaseId','expectedActive','identity','reason'],'write',async(a,p,k)=>this.releaseMaintenance!.delete(a,await actor(p,k)));
+      register('ROLLBACK_RELEASE','按发布代次回退到 LIST_RELEASE_VERSIONS 中可回退的 targetGeneration；expectedActive 必须来自最新列表。必须在独立维护界面由 Owner 确认；本工具只报告需要批准，不能自动回退或删除。',{targetGeneration:generation,expectedActive:generation,reason,deleteNewer:{type:'boolean'}},['targetGeneration','expectedActive','reason'],'write',async(a,p,k)=>{await actor(p,k);throw new Error('OWNER_MAINTENANCE_APPROVAL_REQUIRED');});
+      register('DELETE_RELEASE','仅在回退后删除列表中可删除的较新代码版本。releaseId、identity、expectedActive 必须来自最新列表。必须由 Owner 在独立维护界面确认；本工具禁止自主删除。',{releaseId:{type:'string'},expectedActive:generation,identity:{type:'string',pattern:'^[a-f0-9]{64}$'},reason},['releaseId','expectedActive','identity','reason'],'write',async(a,p,k)=>{await actor(p,k);throw new Error('OWNER_MAINTENANCE_APPROVAL_REQUIRED');});
     }
   }
-  async dispatch(tasks:{personId:string;instruction:string}[],key:string,rounds=20) {
+  async dispatch(tasks:{personId:string;instruction:string}[],key:string,rounds=20,binding?:GoalRunBinding) {
+    this.manager.automation?.assertOn();
     if(this.schedulerError)throw new Error('OWNER_WORKER_FAILED');
     if (!Number.isSafeInteger(rounds)||rounds<1||rounds>20||!Array.isArray(tasks)||!tasks.length||tasks.length>5||new Set(tasks.map(t=>t?.personId)).size!==tasks.length)throw new Error('OWNER_DISPATCH_INVALID');
     // Validate the entire batch before creating any work.
@@ -84,8 +88,9 @@ export class OwnerWorkService {
       const now=Date.now(),id=`task_${randomUUID().replaceAll('-','')}`;
       db.prepare("INSERT INTO owner_work_tasks VALUES(?,?,?,?,?,'QUEUED',NULL,NULL,NULL,NULL,?,?)").run(id,key,t.personId,profiles[i]!.narrative.displayName,t.instruction,now,now);
       db.prepare('INSERT INTO owner_work_run_limits VALUES(?,?)').run(id,rounds);
+      if(binding)db.prepare('UPDATE owner_goal_dispatches SET task_id=? WHERE id=? AND goal_id=? AND goal_revision=?').run(id,binding.dispatchId,binding.goalId,binding.specificationRevision);
     }));
-    await this.tick(); return this.view().tasks.filter(t=>tasks.some(a=>a.personId===t.personId)&&db.prepare('SELECT request_key FROM owner_work_tasks WHERE id=?').get(t.id)?.request_key===key);
+    await this.tick(binding?.dispatchId); return this.view().tasks.filter(t=>tasks.some(a=>a.personId===t.personId)&&db.prepare('SELECT request_key FROM owner_work_tasks WHERE id=?').get(t.id)?.request_key===key);
   }
   async energy(personId:string,refill:boolean,infinite:boolean|undefined,key:string) {
     const profile=this.manager.registry.control.qianji.getProfile(personId),world=this.manager.registry.control.worldForQianji(personId);
@@ -100,7 +105,7 @@ export class OwnerWorkService {
     const waiting=runtime.store.db.prepare("SELECT 1 FROM messages WHERE recipient=? AND status='WAITING_PIXEL_BUDGET' LIMIT 1").get(pixelId);
     const previous=runtime.store.runs.getLatestRun(),remaining=previous?Math.max(0,previous.run_limit-previous.run_spent-previous.run_reserved):0;
     const rounds=previous?.end_round==null?0:Math.max(1,Math.min(20,previous.end_round-runtime.run.getWorldRound()));
-    if((refill||infinite===true)&&waiting&&remaining>0&&rounds>0&&!runtime.run.getStatus().running&&!this.quiesced()&&runtime.run.getStatus().stop_reason!=='USER_STOPPED'&&!runtime.store.getUnfinalizedOperations().hasUnfinalized)
+    if((refill||infinite===true)&&waiting&&remaining>0&&rounds>0&&!runtime.run.getStatus().running&&!this.quiesced()&&(!this.manager.automation||this.manager.automation.isOn())&&runtime.run.getStatus().stop_reason!=='USER_STOPPED'&&!runtime.store.getUnfinalizedOperations().hasUnfinalized)
       await runtime.run.start({rounds,runBudgetTokens:remaining});
     return {personId,name:profile.narrative.displayName,pixelId,energy:runtime.store.pixels.getPixelAccount(pixelId)!.energy,infiniteEnergy:this.manager.registry.control.gatewayInfiniteEnergy(world.world_id),running:runtime.run.getStatus().running};
   }
@@ -109,16 +114,20 @@ export class OwnerWorkService {
     const promise=this.decideOnce(id,hash,decision);this.decisions.set(id,{hash,decision,promise});try{return await promise;}finally{this.decisions.delete(id);}
   }
   private async decideOnce(id:string,hash:string,decision:'approve'|'reject') {
+    if(decision==='approve')this.manager.automation?.assertOn();
     const db=this.manager.registry.control.db,row=db.prepare('SELECT * FROM owner_recruit_requests WHERE id=?').get(id);
+    const linked=this.manager.automation?db.prepare('SELECT * FROM owner_goal_recruits WHERE request_id=?').get(id):undefined;
     if(!row)throw new Error('OWNER_REQUEST_NOT_FOUND');const request=JSON.parse(String(row.request_json)) as OwnerRecruitRequest;
     if(hash!==request.hash)throw new Error('OWNER_REQUEST_CHANGED');
     const expected=decision==='approve'?'APPROVED':'REJECTED';
-    if(row.state!=='PENDING'){if(row.state!==expected)throw new Error('OWNER_REQUEST_CHANGED');if(row.person_id)await this.dispatch([{personId:String(row.person_id),instruction:request.instruction}],`recruit:${id}`);return this.view();}
-    if(decision==='reject'){db.prepare("UPDATE owner_recruit_requests SET state='REJECTED' WHERE id=? AND state='PENDING'").run(id);return this.view();}
-    const m=this.manager,service=new GachaService({store:m.registry.control,workspaceRoot:m.registry.workspace,provider:m.options.isModelConfigured?m.options.provider:undefined,usageMeter:m.options.usageMeter,modelName:m.options.modelName,
+    if(row.state!=='PENDING'){if(row.state!==expected)throw new Error('OWNER_REQUEST_CHANGED');if(row.person_id&&!linked)await this.dispatch([{personId:String(row.person_id),instruction:request.instruction}],`recruit:${id}`);return this.view();}
+    if(linked){const goal=this.manager.automation!.goals.get(String(linked.goal_id));if(goal.specificationRevision!==linked.goal_revision||['STOPPED','ARCHIVED','COMPLETED'].includes(goal.status))throw new Error('OWNER_GOAL_PERMISSION_CHANGED');}
+    if(decision==='reject'){db.prepare("UPDATE owner_recruit_requests SET state='REJECTED' WHERE id=? AND state='PENDING'").run(id);if(linked){const goal=this.manager.automation!.goals.get(String(linked.goal_id));this.manager.automation!.goals.state(goal.id,goal.status==='PAUSED'?'PAUSED':'BLOCKED','OWNER_RESOURCE_REJECTED');}return this.view();}
+    const m=this.manager,service=new GachaService({store:m.registry.control,workspaceRoot:m.registry.workspace,provider:m.options.isModelConfigured?(m.automation?m.automation.provider(m.options.provider,m.options.usageMeter,undefined,'gacha',undefined,linked?{goalId:String(linked.goal_id),specificationRevision:Number(linked.goal_revision),dispatchId:`recruit_${id}`,resourceApprovalId:id}:undefined):m.options.provider):undefined,usageMeter:m.options.usageMeter,modelName:m.options.modelName,
       createWorld:(narrative,birth)=>m.registry.create({...narrative,roleLabel:request.role,behaviorProfile:[`职责：${request.role}`,`Owner 批准的初始任务：${request.instruction}`]}, {birthIdentity:birth}).qianji_id});
     const profile=await service.recruit(`owner-recruit:${id}`);
     db.prepare("UPDATE owner_recruit_requests SET state='APPROVED',person_id=? WHERE id=? AND state='PENDING'").run(profile.qianjiId,id);
+    if(linked){const goal=this.manager.automation!.goals.get(String(linked.goal_id));if(goal.specificationRevision===linked.goal_revision&&!['PAUSED','ARCHIVED','STOPPED','COMPLETED'].includes(goal.status))this.manager.automation!.goals.state(goal.id,'READY');return this.view();}
     await this.dispatch([{personId:profile.qianjiId,instruction:request.instruction}],`recruit:${id}`);return this.view();
   }
   cached(key:string,question:string,history:unknown,language:string) {
@@ -152,11 +161,11 @@ export class OwnerWorkService {
     };
     const promise=run();this.requestFlights.set(key,promise);try{return await promise;}finally{this.requestFlights.delete(key);}
   }
-  tick():Promise<void> {
-    if(this.ticking)return this.ticking;
-    this.ticking=this.runTick().finally(()=>{this.ticking=undefined;});return this.ticking;
+  tick(goalDispatchId?:string):Promise<void> {
+    if(this.ticking)return goalDispatchId?this.ticking.then(()=>this.tick(goalDispatchId)):this.ticking;
+    this.ticking=this.runTick(goalDispatchId).finally(()=>{this.ticking=undefined;});return this.ticking;
   }
-  private async runTick() {
+  private async runTick(goalDispatchId?:string) {
     if(this.closed||this.quiesced())return;
     const db=this.manager.registry.control.db;
     for(const row of db.prepare("SELECT t.*,COALESCE(l.rounds,20) requested_rounds FROM owner_work_tasks t LEFT JOIN owner_work_run_limits l ON l.task_id=t.id WHERE t.state IN ('QUEUED','RUNNING') ORDER BY t.created_at").all()) {
@@ -166,14 +175,23 @@ export class OwnerWorkService {
         let turnId=row.turn_id?String(row.turn_id):null;
         // A new assignment waits for its own bounded Run instead of consuming another Run's budget.
         if(!turnId&&runtime.run.getStatus().running)continue;
-        if(!turnId){const turn=await this.gateway.enqueue(personId,String(row.instruction),String(row.id));turnId=String(turn.turn_id);db.prepare('UPDATE owner_work_tasks SET turn_id=? WHERE id=?').run(turnId,row.id);}
+        const linked=this.manager.automation?db.prepare('SELECT * FROM owner_goal_dispatches WHERE task_id=?').get(row.id):undefined;
+        const binding=linked?{goalId:String(linked.goal_id),specificationRevision:Number(linked.goal_revision),dispatchId:String(linked.id)}:undefined;
+        if(binding&&!row.run_id&&binding.dispatchId!==goalDispatchId)continue;
+        if(binding){const goal=this.manager.automation!.goals.get(binding.goalId);if(goal.specificationRevision!==binding.specificationRevision||!['READY','RUNNING'].includes(goal.status))continue;}
+        if(!turnId){if(this.manager.automation&&!this.manager.automation.isOn())continue;const turn=await this.gateway.enqueue(personId,String(row.instruction),String(row.id));turnId=String(turn.turn_id);db.prepare('UPDATE owner_work_tasks SET turn_id=? WHERE id=?').run(turnId,row.id);}
         const turn=(await this.gateway.turns(personId)).find(t=>t.turnId===turnId);
         if(turn?.status==='replied'){db.prepare("UPDATE owner_work_tasks SET state='REPLIED',reply=?,reason=NULL,updated_at=? WHERE id=?").run(turn.reply,Date.now(),row.id);continue;}
         if(turn?.status==='no_reply'||turn?.status==='failed'){db.prepare("UPDATE owner_work_tasks SET state=?,reason=?,updated_at=? WHERE id=?").run(turn.status==='failed'?'FAILED':'NO_REPLY',turn.blockReason??'Run ended without an Owner reply',Date.now(),row.id);continue;}
         if(!row.run_id&&!runtime.run.getStatus().running){
           if(this.closed||this.quiesced())return;
-          await runtime.run.start({rounds:Number(row.requested_rounds),runBudgetTokens:100000,onRunCreated:runId=>{db.prepare("UPDATE owner_work_tasks SET state='RUNNING',run_id=?,updated_at=? WHERE id=?").run(runId,Date.now(),row.id);db.prepare('UPDATE world_chat_turns SET run_id=? WHERE turn_id=?').run(runId,turnId);}});
+          if(this.manager.automation&&!this.manager.automation.isOn())continue;
+          if(this.manager.automation&&this.manager.list().some(w=>w.running))continue;
+          await runtime.run.start({rounds:Number(row.requested_rounds),runBudgetTokens:100000,goalBinding:binding,onRunCreated:runId=>{db.prepare("UPDATE owner_work_tasks SET state='RUNNING',run_id=?,updated_at=? WHERE id=?").run(runId,Date.now(),row.id);db.prepare('UPDATE world_chat_turns SET run_id=? WHERE turn_id=?').run(runId,turnId);if(binding)db.prepare('UPDATE owner_goal_dispatches SET run_id=? WHERE id=?').run(runId,binding.dispatchId);}});
+          if(binding)db.prepare('UPDATE owner_goals SET last_scheduled_at=? WHERE id=?').run(Date.now(),binding.goalId);
         } else if(row.run_id&&!runtime.run.getStatus().running) {
+          const checkpoint=runtime.store.runs.getCheckpoint(String(row.run_id));
+          if(checkpoint?.resume_pending){if(this.manager.automation?.isOn()&&runtime.run.getStatus().stop_reason==='SERVICE_SHUTDOWN')await runtime.run.resumeInterrupted();else if(runtime.run.getStatus().stop_reason==='INFRASTRUCTURE_FAILURE')db.prepare("UPDATE owner_work_tasks SET state='BLOCKED',reason=?,updated_at=? WHERE id=?").run(runtime.run.getStatus().error_summary??'INFRASTRUCTURE_FAILURE',Date.now(),row.id);continue;}
           const blocked=turn?.status==='blocked'||turn?.status==='queued'||turn?.status==='processing';
           db.prepare('UPDATE owner_work_tasks SET state=?,reason=?,updated_at=? WHERE id=?').run(blocked?'BLOCKED':'NO_REPLY',turn?.blockReason??runtime.run.getStatus().stop_reason??'No owner reply',Date.now(),row.id);
         }

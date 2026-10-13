@@ -3,7 +3,7 @@ import { ToolRegistry } from "./registry.js";
 import { ToolContext } from "./context.js";
 
 export class ToolRuntime {
-  constructor(public readonly registry: ToolRegistry) {}
+  constructor(public readonly registry: ToolRegistry, private beforeExecute?: (name: string, ctx: ToolContext, effect?: string) => void) {}
 
   public async execute(
     toolName: string,
@@ -67,6 +67,7 @@ export class ToolRuntime {
     };
 
     try {
+      this.beforeExecute?.(toolName, wrappedCtx, registered.definition.effect);
       const result = await registered.handler(args, wrappedCtx);
       result.duration_ms = Date.now() - startTime;
       return result;

@@ -10,6 +10,8 @@ export interface ToolContext {
   signal?: AbortSignal;
   mockVpsHandler?: (action: string, args: any) => any;
   extra?: Record<string, any>;
+  /** Server-bound immutable evidence directory; never accepted from tool arguments. */
+  artifactEvidenceScope?: string;
 }
 
 export interface ExecutionToolScope {

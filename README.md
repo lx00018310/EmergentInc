@@ -10,16 +10,29 @@ You provide the idea, resources and final decisions. EmergentInc provides AI-pow
 - **For customers:** EmergentInc itself also operates as a business and provides customization services.
 - **For developers:** EmergentInc is open source.
 
+## V29: manage goals, then turn on automation
+
+Deploy the approved release → open `/OWNER` → describe a business goal → confirm its evidence rule and token allowance → authorize the global token budget → choose continuous operation or a shared round count → start → review evidence and exceptions.
+
+Goals persist in the existing control SQLite database. Add, edit, pause, continue, stop, reopen, archive and restore them on one page. Existing people and Skills perform bounded work; when no person exists, Inbox requests recruitment approval. No person is created automatically. Chat and technical status remain available under the auxiliary section.
+
+Automation defaults **OFF**. A round means one actually started World scheduling round, including interrupted rounds. Goals share the session allowance; the scheduler dispatches one round at a time and preserves the existing 20-round / 100000-token Owner Run limits. Continuous mode still requires a token budget. OFF prevents new AI calls, tools and Runs, preserves in-flight receipts and shows Stopping until work drains. The public store, orders, payment monitoring and independent maintenance continue.
+
+Acceptance supports immutable draft-file receipts (filename, minimum bytes and SHA-256), finalized payments for exact Owner-selected invoice IDs, and results requiring human verification. A draft verifies delivery, not commercial quality; a payment verifies that invoice's receipt, not customer identity. Model claims never prove sales. Unknown billing and external outcomes block execution until audited reconciliation. Release rollback/deletion require independent Owner maintenance approval.
+
+See the [Owner guide](docs/guides/OWNER_GUIDE.md) and [V29 implementation report](docs/EmergentInc_V29_实施记录.md). This is a development candidate until separately approved and deployed; isolated mock tests do not prove real customer results.
+
 ## One business, one public website
 
 | Address | Purpose |
 | --- | --- |
 | `/` | Public store, product details, checkout and order lookup; no Owner login required |
+| `/OWNER` | Business goals, global automation, exceptions and result history |
 | `/QIAN` | Internal characters, conversations, Worlds and character income |
 | `/YUAN?world=<world_id>` | Internal Pixels, Runs, messages, artifacts, Body and collaboration |
 | `/GENE` | Internal business operations, Root of Trust, Gene, Evolution, Memory, payments and Public Site settings |
 
-All four entries support English and Chinese. English is the initial language; an explicit selection is saved in localStorage. User documents, conversations and business records retain their original language.
+All entries support English and Chinese. English is the initial language; an explicit selection is saved in localStorage. User documents, conversations and business records retain their original language.
 
 The public website belongs to the instance. All characters and Worlds work for the same business and may divide work or collaborate using existing capabilities. Public orders and revenue belong to the instance, without an arbitrary character attribution. Existing World invoices and revenue retain their original attribution.
 
@@ -68,7 +81,7 @@ workspace/
   workspace-layout.json
   system/
     active-generation.json
-    control/control.sqlite3       # Characters, Worlds, Public Site, product, orders
+    control/control.sqlite3       # Goals, automation permits, characters, Worlds, site, orders
     payment/payment.sqlite3       # Rails, invoices, receipts, revenue, outbox
     lineage/lineage.sqlite3        # Shared lineage, memories, business evidence
     generations/Gxxxx/current.sqlite3
@@ -84,7 +97,7 @@ workspace/
 
 Site settings and orders use the existing control database. Payments remain in the existing payment database. Business data never lives in frontend source, Git JSON files or a release directory.
 
-Run checkpoints, completed-message counts and resume intent are stored in the existing ledger database. After a crash, power loss or service shutdown, the next normal startup continues the same Run at its unfinished round, reuses stored model responses and tool receipts, and preserves the original round limit and spent token budget. Manual stops, exhausted budgets, normal completion and work awaiting approval do not resume automatically. Candidate validation and paused startup do not recover work. Unknown model billing, external tool outcomes or filesystem moves still require operator review. Older unresolved Runs without checkpoints retain the existing manual recovery flow.
+Run checkpoints, completed-message counts and resume intent are stored in the existing ledger database. After a crash, power loss or service shutdown, the next normal startup continues the same Run only when persisted company automation is ON and its original permit is valid; it resumes at its unfinished round, reuses stored model responses and tool receipts, and preserves the original round limit and spent token budget. Manual stops, exhausted budgets, normal completion and work awaiting approval do not resume automatically. Candidate validation and paused startup do not recover work. Unknown model billing, external tool outcomes or filesystem moves still require operator review. Older unresolved Runs without checkpoints retain the existing manual recovery flow.
 
 ## Run and develop
 

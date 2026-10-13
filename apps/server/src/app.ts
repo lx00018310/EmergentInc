@@ -16,6 +16,8 @@ import { OwnerChatService } from './services/owner_chat_service.js';
 import { registerOwnerRoutes } from './routes/owner_routes.js';
 import { OwnerWorkService } from './services/owner_work_service.js';
 import { ReleaseMaintenanceClient } from './services/release_maintenance_client.js';
+import { OwnerAutomationGate } from './services/owner_automation_gate.js';
+import { OwnerGoalScheduler } from './services/owner_goal_scheduler.js';
 
 export interface CreateServerOptions extends Partial<ApiRoutesOptions> {
   worlds?: WorldRouteServices;
@@ -50,7 +52,7 @@ export async function createServer(options: CreateServerOptions): Promise<Fastif
   });
   await app.register(cors, {
     origin: (origin, cb) => cb(null, Boolean(origin && allowedOrigins.has(origin))),
-    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
   });
 
   const mode = options.runtimeMode ?? "legacy";
@@ -61,6 +63,7 @@ export async function createServer(options: CreateServerOptions): Promise<Fastif
     app.addHook('onClose', async () => store.close());
   }
   app.addHook("onRequest", async (req, reply) => {
+    if(req.url.split('?')[0]==='/api/owner/automation')return;
     if (options.evolution?.quiesced?.() && req.method !== "GET" && req.url.startsWith("/api/") &&
         !["/api/login", "/api/logout", "/api/evolution/final-dream", "/api/evolution/quiesce", "/api/evolution/resume"].includes(req.url.split("?")[0]!))
       return reply.status(409).send({ detail: "EVOLUTION_QUIESCED" });
@@ -69,7 +72,7 @@ export async function createServer(options: CreateServerOptions): Promise<Fastif
   const serviceReady = () => !options.businessService?.status().schedulerFailure && !options.worlds?.manager.list().some(w=>w.runtimeFailure) && !ownerWork?.hasFailure();
   app.get("/health/ready", async (_req, reply) => {
     const ready = serviceReady();
-    return reply.status(ready ? 200 : 503).send({ ready, mode, version: options.worlds ? "v24-public-1" : options.evolution ? "v22-life-1" : "v21-business-1",
+    return reply.status(ready ? 200 : 503).send({ ready, mode, version: options.worlds ? "v29-goals-1" : options.evolution ? "v22-life-1" : "v21-business-1",
       ...(options.evolution ? { generation: options.evolution.life.current.meta().generation_id,
         geneHash: options.evolution.life.current.meta().gene_hash, bodyRevision: options.evolution.life.current.meta().body_revision } : {}) });
   });
@@ -91,16 +94,22 @@ export async function createServer(options: CreateServerOptions): Promise<Fastif
       // Product routes coexist: Gene workbench does not replace QIAN/YUAN's runtime.
       if(options.worlds) {
         const manager = options.worlds.manager;
+        const gate=manager.automation??new OwnerAutomationGate(manager.registry.control);
+        manager.attachAutomation(gate,()=>Boolean(options.evolution?.quiesced?.()));
+        options.businessService?.attachAutomation(gate);
+        if(options.evolution?.dream)options.evolution.dream.canRun=()=>gate.isOn();
         const work = options.worlds.ownerWork ?? new OwnerWorkService(manager,()=>Boolean(options.evolution?.quiesced?.()),options.ownerUpgradeOrigin,
           options.ownerUpgradeOrigin&&options.ownerAuth?new ReleaseMaintenanceClient(options.ownerUpgradeOrigin,options.ownerAuth.secret):undefined);
         ownerWork=work;
+        const scheduler=new OwnerGoalScheduler(manager,work,gate,options.worlds.payments);
         if(!options.worlds.ownerWork){const previous=manager.options.configureTools;manager.options.configureTools=(id,tools)=>{previous?.(id,tools);work.registerTools(tools,id);};}
         app.addHook('onReady',async()=>work.start());app.addHook('onClose',async()=>work.close());
+        app.addHook('onReady',async()=>scheduler.start());app.addHook('onClose',async()=>scheduler.close());
         await registerWorldRoutes(api,options.worlds);
         const overview = new OwnerOverviewService(options.worlds, options.businessService, options.ownerUpgradeOrigin,work,
           () => !serviceReady() || manager.list().some(w=>w.blockedReason) ? 'attention' : options.evolution?.quiesced?.() ? 'paused' : 'ready');
         const chat = manager.options.projectRoot && manager.options.isModelConfigured ? new OwnerChatService({projectRoot:manager.options.projectRoot,workspaceRoot:options.workspaceRoot,
-          store:manager.registry.control,provider:manager.options.provider,usageMeter:manager.options.usageMeter,modelName:manager.options.modelName,isModelConfigured:Boolean(manager.options.isModelConfigured),
+          store:manager.registry.control,provider:gate.provider(manager.options.provider,manager.options.usageMeter),usageMeter:manager.options.usageMeter,modelName:manager.options.modelName,isModelConfigured:Boolean(manager.options.isModelConfigured),
           snapshot:async()=>{
             const data=await overview.overview();
             const people=data.people.slice(0,20).map(p=>({...p,pixels:p.pixels?.slice(0,5).map((pixel:any)=>({...pixel,mind:String(pixel.mind).slice(0,300),tips:String(pixel.tips).slice(0,160)}))}));
@@ -109,7 +118,7 @@ export async function createServer(options: CreateServerOptions): Promise<Fastif
               sources:['Owner overview / control (qianji_worlds / qianji_profiles)','control_events','runs / pixel_accounts / world_outbox / tips.md','life_events / current_events','world_revenue_events',
                 ...(data.availability.business?['business_plans / business_requests / business_events']:[]),...(data.availability.upgrade==='available'?['Upgrade Service /status']:[])]};
           }}) : undefined;
-        registerOwnerRoutes(api,overview,chat,work);
+        registerOwnerRoutes(api,overview,chat,work,gate,scheduler);
       }
       else if (mode === "legacy" || options.coreStore) {
         if (!options.coreStore || !options.worldService || !options.runService || !options.promptService || !options.toolRegistry) throw new Error("LEGACY_SERVICES_REQUIRED");

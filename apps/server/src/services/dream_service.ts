@@ -10,6 +10,7 @@ const currentKinds = ["working_state_changed", "objective_changed", "body_need",
 const businessKinds = ["owner_feedback", "payment_evidence_recorded", "owner_order_updated", "task_failed", "task_completed"];
 
 export class DreamService {
+  canRun: () => boolean = () => true;
   private busy = false;
   private timer?: ReturnType<typeof setInterval>;
   private inFlight?: Promise<unknown>;
@@ -70,6 +71,7 @@ export class DreamService {
     return this.runInput("owner_retry", id);
   }
   private async runInput(trigger: string, retryId?: string) {
+    if(!this.canRun())throw new Error('OWNER_AUTOMATION_OFF');
     if (this.busy) throw new Error("DREAM_ALREADY_RUNNING");
     const db = this.life.lineage.db;
     const pending = db.prepare("SELECT id FROM dream_runs WHERE status IN ('RUNNING','OUTCOME_UNKNOWN') ORDER BY created_at LIMIT 1").get();
@@ -120,6 +122,11 @@ export class DreamService {
     } finally { this.busy = false; }
   }
   async finalDream() {
+    if(!this.canRun()){
+      const count=this.facts().facts.length;
+      this.life.lineage.lifeEvent(this.life.current.meta().generation_id,'maintenance_facts_retained',{pendingFactCount:count,reason:'OWNER_AUTOMATION_OFF',modelCalls:0});
+      return {status:'DEFERRED',modelCalls:0,pendingFactCount:count,factsRetained:true};
+    }
     // Drain bounded batches. Do not silently birth while important pre-birth facts remain.
     for (let i = 0; i < 100; i++) {
       const result = await this.run("final");
@@ -176,7 +183,7 @@ export class DreamService {
     const specification = { kind: "daily" as const, time: this.time, timezone: this.timezone, maxOccurrences: 366 };
     let next = nextBusinessOccurrence(specification, Date.now());
     this.timer = setInterval(() => {
-      if (Date.now() < next || this.busy) return;
+      if (Date.now() < next || this.busy || !this.canRun()) return;
       next = nextBusinessOccurrence(specification, Date.now());
       this.inFlight = this.run("daily").catch(e => { this.failure = (e as Error).message; }).finally(() => { this.inFlight = undefined; });
     }, 30000);

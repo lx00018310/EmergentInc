@@ -3,8 +3,10 @@ import * as path from "node:path";
 import { CoreStore } from "@emergentinc/persistence";
 import { RoundScheduler, RoundSummary } from "@emergentinc/runtime";
 import { PromptService } from "./prompt_service.js";
+import type { OwnerAutomationGate, GoalRunBinding } from './owner_automation_gate.js';
 
 export interface RunStartOptions {
+  goalBinding?: GoalRunBinding;
   rounds: number;
   commandText?: string; // Deprecated: never dispatched to agents.
   runBudgetTokens: number;
@@ -26,6 +28,7 @@ export interface RunServiceOptions {
 }
 
 export class RunService {
+  public automation?: { gate: OwnerAutomationGate; worldId: string };
   private workspaceRoot: string;
   private store: CoreStore;
   private scheduler: RoundScheduler;
@@ -182,6 +185,7 @@ export class RunService {
   }
 
   public async start(options: RunStartOptions): Promise<any> {
+    this.automation?.gate.assertOn();
     if (!this.isModelConfigured && !this.isMockMode) {
       throw new Error(
         "MODEL_NOT_CONFIGURED: Valid MCL_API_KEY is not configured. Set environment variable or start server with --mock for sandbox testing."
@@ -191,6 +195,7 @@ export class RunService {
     if (!Number.isSafeInteger(options.rounds) || options.rounds <= 0) {
       throw new Error("rounds must be a positive integer.");
     }
+    if(this.automation&&options.rounds>20)throw Object.assign(new Error('OWNER_RUN_ROUND_LIMIT'),{statusCode:400});
     if (!Number.isSafeInteger(options.runBudgetTokens) || options.runBudgetTokens <= 0) {
       throw new Error("run_budget_tokens must be positive.");
     }
@@ -215,7 +220,8 @@ export class RunService {
     // 数据库事务是唯一的 Run 互斥点：检查旧未决状态并创建新 Run 必须原子完成。
     const genesisPrompt = this.promptService?.getPrompt("genesis_prompt.json");
     const genesisRevision = genesisPrompt?.revision || 1;
-    this.store.transaction(() => {
+    this.automation?.gate.reserveRun(this.automation.worldId, runId, startRound, options.rounds, options.goalBinding);
+    try { this.store.transaction(() => {
       const unfinalized = this.store.getUnfinalizedOperations();
       if (unfinalized.hasUnfinalized) {
         this.lastStopReason = "PAUSED_RECOVERY_REQUIRED";
@@ -241,7 +247,8 @@ export class RunService {
       this.store.runs.createCheckpoint(runId, startRound);
       if (options.onRunCreated) options.onRunCreated(runId);
       this.store.messages.resetWaitingRunBudgetMessages(executionId);
-    });
+    }); } catch (e) { this.automation?.gate.cancelRun(runId); throw e; }
+    this.automation?.gate.runCreated(runId);
     if (executionId && options.onRunFinalized) this.executionFinalizers.set(runId, options.onRunFinalized);
 
     this.currentRunId = runId;
@@ -295,6 +302,7 @@ export class RunService {
   }
 
   public async resumeInterrupted(): Promise<boolean> {
+    if (this.automation && !this.automation.gate.isOn()) return false;
     if (this.isRunning || (!this.isModelConfigured && !this.isMockMode)) return false;
     const run = this.store.runs.getLatestRun();
     const checkpoint = run && this.store.runs.getCheckpoint(run.run_id);
@@ -322,6 +330,7 @@ export class RunService {
         unfinalized.pendingRuns.every(id => id === run.run_id);
     });
     if (!ready) return false;
+    if (this.automation) { try { this.automation.gate.resume(run.run_id); } catch { return false; } }
     this.store.db.prepare("UPDATE runs SET status='RUNNING',stop_reason=NULL,error_code=NULL,error_summary=NULL,finished_at=NULL WHERE run_id=?").run(run.run_id);
     this.currentRunId = run.run_id;
     this.currentExecutionId = run.execution_id ?? null;
@@ -367,9 +376,15 @@ export class RunService {
           break;
         }
 
+        if (this.automation && !this.automation.gate.mayContinue(runId)) {
+          this.lastStopReason = "SERVICE_SHUTDOWN";
+          break;
+        }
+
         this.currentRound = r;
+        this.automation?.gate.beginRound(runId, r);
         if (executionId) this.store.executions.beginScopeRound(executionId, runId, r);
-        const summary: RoundSummary = await this.scheduler.executeRound(r, runId, signal, executionId, () => this.suspendRequested);
+        const summary: RoundSummary = await this.scheduler.executeRound(r, runId, signal, executionId, () => this.suspendRequested || Boolean(this.automation && !this.automation.gate.mayContinue(runId)));
 
         const diagnostic = summary as RoundSummary & { errorCode?: string; errorSummary?: string; errorPhase?: string };
         if (diagnostic.errorCode) this.errorCode = diagnostic.errorCode;
@@ -399,6 +414,7 @@ export class RunService {
           }
         });
         if (!executionId) this.updateWorldRound(r);
+        this.automation?.gate.completeRound(runId, r);
 
         if (summary.stopReason) {
           this.lastStopReason = summary.stopReason;
@@ -435,6 +451,8 @@ export class RunService {
       this.store.runs.updateRunStatus(runId, "FAILED", "INFRASTRUCTURE_FAILURE", this.errorCode, this.lastError);
       // Keep the execution and original budget attached to the interrupted Run.
     } finally {
+      const checkpoint = this.store.runs.getCheckpoint(runId);
+      this.automation?.gate.finished(runId, Boolean(checkpoint?.resume_pending));
       this.isRunning = false;
       this.abortController = null;
       // Marks that this process has executed a run loop, so status reporting can

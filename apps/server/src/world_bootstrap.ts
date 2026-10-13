@@ -18,6 +18,7 @@ import { DreamService } from './services/dream_service.js';
 import { MemoryGate } from './services/memory_gate.js';
 import { OwnerWorkService } from './services/owner_work_service.js';
 import { ReleaseMaintenanceClient } from './services/release_maintenance_client.js';
+import { OwnerAutomationGate } from './services/owner_automation_gate.js';
 
 /** V23 is an explicit workspace format. Never reinterpret a V22 database at normal startup. */
 export async function bootstrapWorlds(projectRoot:string,config:ReturnType<typeof runtimeConfig>,unlock:()=>void){
@@ -48,12 +49,15 @@ export async function bootstrapWorlds(projectRoot:string,config:ReturnType<typeo
   const ownerUpgradeOrigin=!candidate&&config.host==='127.0.0.1'&&process.env.EMERGENTINC_LOCAL_EVOLUTION_CONFIG?`http://127.0.0.1:${Number(process.env.PORT||8765)+1}`:undefined;
   const manager=new WorldRuntimeManager(registry,{...manifest,generation:Number(active.generation_no)},{provider,usageMeter,modelName,isModelConfigured:modelConfigured,isMockMode:mock,
     projectRoot,baseSystemPrompt:fs.readFileSync(path.join(projectRoot,'resources/prompts/v9_system_prompt.md'),'utf8'),configureTools:(id,tools)=>{registerWorldTools(tools,id,promotion,payments);ownerWork.registerTools(tools,id);}});
+  manager.attachAutomation(new OwnerAutomationGate(control),()=>paused||starting);
+  business.attachAutomation(manager.automation!);
   promotion=new GenePromotionService(manager,projectRoot,lineage);
   ownerWork=new OwnerWorkService(manager,()=>paused||starting,ownerUpgradeOrigin,ownerUpgradeOrigin?new ReleaseMaintenanceClient(ownerUpgradeOrigin,config.ownerAuth.secret):undefined);
   for(const world of manager.list().filter(w=>w.status==='ACTIVE'&&!w.blockedReason)){
     try{await manager.open(world.world_id);}catch(error){const e=error as any;if(candidate||!['WORLD_ACTIVE_CURRENT_MISSING','CURRENT_NOT_INITIALIZED','WORLD_ACTIVE_GENOME_MISMATCH','WORLD_IDENTITY_CONFLICT','WORLD_CORE_MISSING'].includes(e.message)&&!['ERR_SQLITE_ERROR'].includes(e.code))throw error;manager.diagnose(world.world_id,e.code==='ERR_SQLITE_ERROR'?'WORLD_DATABASE_UNAVAILABLE':e.message);}
   }
   const dream=new DreamService(life,candidate?undefined:business.lifeModel.bind(business),process.env.EMERGENTINC_DREAM_TIME,process.env.EMERGENTINC_DREAM_TIMEZONE,()=>manager.currents());
+  dream.canRun=()=>Boolean(manager.automation?.isOn());
   const memoryGate=new MemoryGate(lineage,()=>String(current.meta().generation_id));
   const preparePromotion=async(proposalId:string)=>{
     const row=lineage.db.prepare('SELECT id,snapshot_hash,kind FROM gene_promotion_candidates WHERE proposal_id=?').get(proposalId);if(!row)return;
@@ -77,6 +81,6 @@ export async function bootstrapWorlds(projectRoot:string,config:ReturnType<typeo
   if(!paused)await manager.resumeInterrupted();
   starting=false;
   if(!paused){promotion.reconcileInherited();payments.deliverMemories();monitor.start();dream.start();business.start({exclusiveWorkspaceLockHeld:true});await ownerWork.tick();}
-  console.log(`[EmergentInc V24] ${active.id}, ${registry.list().length} Worlds, http://${config.host}:${process.env.PORT||8765}`);
+  console.log(`[EmergentInc V29] ${active.id}, ${registry.list().length} Worlds, http://${config.host}:${process.env.PORT||8765}`);
   return app;
 }

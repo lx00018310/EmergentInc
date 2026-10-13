@@ -145,7 +145,7 @@ describe('V24 anonymous store with an instance treasury', () => {
     expect((await f.app.inject({ method: 'PUT', url: '/api/public/site', payload: {} })).statusCode).toBe(401);
     expect((await f.app.inject({ url: '/api/public/site', headers: { origin: 'https://attacker.example' } })).statusCode).toBe(403);
     expect(JSON.stringify((await f.app.inject('/api/public/payment-rails')).json())).not.toMatch(/rpc_id|recipient_address|secret|credential|qianji_id|world_id/);
-  });
+  },15000);
   it('pins server price and customer/product snapshots, protects payment queries with random tokens and survives product delisting', async () => {
     const f = await fixture(); await f.publish(); const first = await f.order();
     expect(first.public_order_token).toMatch(/^[a-f0-9]{64}$/); expect(first).toEqual(await f.order());

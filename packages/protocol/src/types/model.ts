@@ -15,6 +15,8 @@ export interface ModelUsage {
  * 组装后的模型请求结构
  */
 export interface PreparedModelRequest {
+  /** Trusted ledger correlation, not included in provider payloads or accepted from HTTP input. */
+  auditCallId?: string;
   model: string;
   messages: Array<{
     role: "system" | "user" | "assistant";

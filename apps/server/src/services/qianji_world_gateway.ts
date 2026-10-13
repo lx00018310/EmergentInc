@@ -1,6 +1,6 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { randomUUID } from 'node:crypto';
+import { createHash } from 'node:crypto';
 import { WorldRuntimeManager } from './world_runtime_manager.js';
 import { lifeId, lifeText } from '@emergentinc/protocol';
 
@@ -12,15 +12,18 @@ export class QianjiWorldGateway {
     const pixel=world.gateway_pixel_id;if(!pixel||!runtime.store.pixels.getPixelAccount(pixel)?.active)throw new Error('WORLD_GATEWAY_NOT_AVAILABLE');
     const requestKey=`${qianjiId}:${key}`,old=control.db.prepare('SELECT * FROM world_chat_turns WHERE request_key=?').get(requestKey);
     if(old){if(old.question!==content)throw new Error('IDEMPOTENCY_CONFLICT');return old;}
-    const turnId=`turn_${randomUUID()}`,messageId=`msg_${randomUUID()}`;
+    this.manager.automation?.assertOn();
+    // Stable IDs bridge the two SQLite transactions: a crash after inbox persistence cannot enqueue the paid task twice.
+    const identity=createHash('sha256').update(requestKey).digest('hex').slice(0,32),turnId=`turn_${identity}`,messageId=`msg_${identity}`;
     const state=JSON.parse(fs.readFileSync(path.join(runtime.directory,'live/pixels',pixel,'state.json'),'utf8'));
     if(!Number.isSafeInteger(state.incarnation)||state.incarnation<1)throw new Error('GATEWAY_INCARNATION_INVALID');
+    const previous=runtime.store.db.prepare('SELECT * FROM world_chat_inbox WHERE turn_id=?').get(turnId),message=runtime.store.messages.getMessage(messageId);
+    if(previous&&(previous.qianji_id!==qianjiId||previous.entry_pixel_id!==pixel||Number(previous.entry_incarnation)!==state.incarnation||message?.content!==content))throw new Error('OWNER_CHAT_RECOVERY_REQUIRED');
     runtime.store.transaction(()=>{
-      runtime.store.messages.enqueueMessage({messageId,roundNum:runtime.run.getWorldRound()+1,sender:'owner',recipient:pixel,content,sourceType:'human'});
-      runtime.store.db.prepare('INSERT INTO world_chat_inbox VALUES(?,?,?,?,?,?)').run(turnId,qianjiId,messageId,pixel,state.incarnation,Date.now());
+      if(!previous){runtime.store.messages.enqueueMessage({messageId,roundNum:runtime.run.getWorldRound()+1,sender:'owner',recipient:pixel,content,sourceType:'human'});
+      runtime.store.db.prepare('INSERT INTO world_chat_inbox VALUES(?,?,?,?,?,?)').run(turnId,qianjiId,messageId,pixel,state.incarnation,Date.now());}
     });
-    try{control.db.prepare('INSERT INTO world_chat_turns VALUES(?,?,?,?,?,?,?,NULL,NULL,NULL,?,NULL)').run(turnId,qianjiId,world.world_id,messageId,pixel,requestKey,content,Date.now());}
-    catch(error){runtime.store.transaction(()=>{runtime.store.db.prepare('DELETE FROM world_chat_inbox WHERE turn_id=?').run(turnId);runtime.store.db.prepare('DELETE FROM messages WHERE message_id=?').run(messageId);});throw error;}
+    control.db.prepare('INSERT INTO world_chat_turns VALUES(?,?,?,?,?,?,?,NULL,NULL,NULL,?,NULL)').run(turnId,qianjiId,world.world_id,messageId,pixel,requestKey,content,Date.now());
     return control.db.prepare('SELECT * FROM world_chat_turns WHERE turn_id=?').get(turnId)!;
   }
   async turns(qianjiId:string){

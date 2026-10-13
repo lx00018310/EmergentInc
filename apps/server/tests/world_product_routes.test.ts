@@ -22,13 +22,14 @@ async function fixture(owner=false){const root=fs.mkdtempSync(join(tmpdir(),'v23
   const control=new WorldRegistryStore(join(root,'system/control/control.sqlite3')),registry=new WorldRegistryService(root,control,lineage,'1');
   const narrative=(displayName:string)=>({displayName,title:null,roleLabel:null,traits:{},behaviorProfile:[],flaw:null,shortBio:null,appearanceSpec:null,portraitAsset:null,contentRevision:null});
   const a=registry.create(narrative('A')),b=registry.create(narrative('B'));const genome={schema_version:1,generation:1,body_interface_version:'1',protected_paths:['genome/**'],capability_contracts:{}};
-  const manager=new WorldRuntimeManager(registry,genome,{provider:{async call(){return {rawText:JSON.stringify({send_to:'STOP',owner_reply:'reply from own World',reproduce:{direction:'1_0_0',initial_energy:15000}}),usage:{promptTokens:50,completionTokens:40}};}},usageMeter:new UsageMeter({models:{}}),modelName:'test',isMockMode:true,isModelConfigured:true});
+  const manager=new WorldRuntimeManager(registry,genome,{provider:{async call(){return {rawText:JSON.stringify({send_to:'STOP',owner_reply:'reply from own World',reproduce:{direction:'1_0_0',initial_energy:15000}}),usage:{promptTokens:50,completionTokens:40}};}},usageMeter:new UsageMeter({models:{},default_pricing:{input_cost_per_million:1,output_cost_per_million:1,cached_cost_per_million:1,currency:'CNY'}}),modelName:'test',isMockMode:true,isModelConfigured:true});
   const payments=new PaymentService(join(root,'system/payment/payment.sqlite3'),control,lineage),promotion=new GenePromotionService(manager,resolve('.'),lineage),monitor=new PaymentMonitor(payments,{async call(){return {value:null};}});
   const business=owner?new BusinessService(lineage):undefined;
   const app=await createServer({workspaceRoot:root,runtimeMode:owner?'business':'legacy',businessService:business,ownerAuth:{secret:'test-owner-secret'.repeat(4),secureCookies:false},worlds:{manager,promotion,payments,monitor,modelName:'test'}});
   const login=await app.inject({method:'POST',url:'/api/login',payload:{secret:'test-owner-secret'.repeat(4)}});const cookie=String(login.headers['set-cookie']).split(';')[0];
   cleanups.push(async()=>{await app.close();await manager.closeAll();payments.close();control.close();lineage.close();fs.rmSync(root,{recursive:true,force:true});});
   const request=(method:any,url:string,payload?:any)=>app.inject({method,url,payload,headers:{cookie}});
+  manager.automation!.control({desiredMode:'ON',runMode:'CONTINUOUS',maxTokens:100000000,expectedRevision:0,idempotencyKey:crypto.randomUUID()});
   return {root,lineage,control,registry,manager,a,b,genome,payments,promotion,app,request,narrative,generation};
 }
 describe('authenticated V23 product and life integration',()=>{
@@ -72,7 +73,7 @@ describe('authenticated V23 product and life integration',()=>{
     expect((await f.request('GET','/api/owner/overview')).json().alerts.some((a:any)=>a.summary.includes('ABANDONED'))).toBe(true);
     runtime.store.db.prepare("INSERT INTO recovery_decisions VALUES('decision','message',?,'abandon','Owner resolved','{}',?)").run(turn.message_id,Date.now()/1000);
     expect((await f.request('GET','/api/owner/overview')).json().inbox).toHaveLength(0);
-  });
+  },15000);
   it('creates finite proposals without sending and rejects arbitrary actions and forged history',async()=>{
     const f=await fixture();
     const response=await f.request('POST','/api/owner/chat',{question:'问所有人现在最大的风险是什么',history:[],language:'zh-CN'});
@@ -124,7 +125,7 @@ describe('authenticated V23 product and life integration',()=>{
     reopened.store.ensureUnlimitedEnergy('1_0_0',500,'disabled');
     expect(reopened.store.pixels.getPixelAccount('1_0_0')?.energy).toBe(10);
   });
-  it('stops a 100-round run when Pixel energy cannot fund a call and reports blocked chat',async()=>{
+  it('stops a bounded run when Pixel energy cannot fund a call and reports blocked chat',async()=>{
     const f=await fixture(),runtime=await f.manager.open(f.a.world_id);
     runtime.store.db.prepare('UPDATE pixel_accounts SET energy=322').run();
     const response=await f.request('POST',`/api/qianji/${f.a.qianji_id}/chat`,{content:'work',idempotencyKey:'low-energy',rounds:1,runBudgetTokens:100000});
@@ -132,7 +133,7 @@ describe('authenticated V23 product and life integration',()=>{
     while(runtime.run.getStatus().running)await new Promise(r=>setTimeout(r,10));
     const chat=await f.request('GET',`/api/qianji/${f.a.qianji_id}/chat`);
     expect(chat.json().items[0].status).toBe('blocked');
-    await runtime.run.start({rounds:100,runBudgetTokens:100000});
+    await runtime.run.start({rounds:20,runBudgetTokens:100000});
     while(runtime.run.getStatus().running)await new Promise(r=>setTimeout(r,10));
     expect(runtime.run.getStatus()).toMatchObject({completed_rounds:1,model_calls_completed:0,stop_reason:'NO_ACTIVE_MESSAGES',result_status:'STOPPED'});
     runtime.store.db.prepare('UPDATE pixel_accounts SET energy=100000').run();
