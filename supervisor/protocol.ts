@@ -1,13 +1,14 @@
 export interface GenePatchFile { path: string; content: string | null }
 export interface GeneRequest {
   id: string; base_generation: string; base_release: string; proposal_id: string; patch: GenePatchFile[];
-  owner_release?: { label?: string; reason: string; source_commit: string; release_hash: string };
+  owner_release?: { label?: string; reason: string; source_commit: string; release_hash: string; inherited_gene_count?: number };
 }
 export interface GeneCandidate {
   id: string; base_generation: string; base_release: string; proposal_id: string;
   patch_hash: string; gene_hash: string; candidate_release_hash: string; candidate_hash: string;
   release_id: string; directory: string;
   owner_release?: GeneRequest["owner_release"];
+  instance_compatibility?: unknown;
 }
 export interface EvolutionRuntime {
   validateRelease(directory: string): Promise<void>;
@@ -33,10 +34,10 @@ export function classifyChange(paths: string[]): "BODY" | "GENE" | "ROOT" {
   const shared=new Set(['apps/server/src/owner_auth.ts','apps/server/src/routes/public_routes.ts','apps/server/src/services/public_store.ts',
     'apps/server/src/services/public_products_migration.ts','apps/server/src/services/payment_assets.ts','apps/server/src/services/solana_payment.ts',
     'apps/server/src/services/app_code_policy.ts','apps/server/src/services/app_code_service.ts','apps/server/src/services/release_maintenance_client.ts','scripts/prepare-app-code.mjs',
-    'apps/server/src/services/owner_automation_gate.ts','apps/server/src/services/owner_goal_service.ts']);
+    'apps/server/src/services/owner_automation_gate.ts','apps/server/src/services/owner_goal_service.ts','apps/server/src/services/instance_extension_service.ts','apps/server/src/services/gene_catalog.ts','apps/server/src/services/safe_path.ts','apps/server/src/services/skill_library.ts','apps/server/src/services/world_registry_service.ts','packages/tools/src/business/pure_skill.ts','packages/tools/src/context.ts']);
   if(normalized.some(p=>shared.has(p)||p.startsWith('packages/persistence/')||p.startsWith('packages/protocol/')))return 'ROOT';
   if (normalized.some(p => p.startsWith("supervisor/") || p === "scripts/generation-supervisor.mjs" || p === "scripts/local-upgrade.mjs" ||
-    p === "scripts/version-upgrade.mjs" || p === "scripts/upgrade-web.mjs" || p === "resources/upgrade-web.html" || p === "emergentinc_upgrade.bat" || p === "scripts/local-release.mjs" || p === "scripts/launch-approved.mjs" || p === "emergentinc_ui.bat" || p === "emergentinc_ui.ps1" || p === "emergentinc_ui.sh" ||
+    p === "scripts/version-upgrade.mjs" || p === "scripts/inherit-approved-gene.mjs" || p === "scripts/upgrade-web.mjs" || p === "resources/upgrade-web.html" || p === "emergentinc_upgrade.bat" || p === "scripts/local-release.mjs" || p === "scripts/launch-approved.mjs" || p === "emergentinc_ui.bat" || p === "emergentinc_ui.ps1" || p === "emergentinc_ui.sh" ||
     p === "scripts/v23-migration-dry-run.mjs" || p === "scripts/v23-world-migrate.mjs" || p === "scripts/v23-generation.mjs" || p === "scripts/v23-upgrade.mjs" || p === "scripts/v23-approved-release.mjs" ||
     p === "apps/recovery" || p.startsWith("apps/recovery/"))) return "ROOT";
   return paths.every(p => /^workspace\/generations\/G\d{4,}\/body\/skills\/[a-zA-Z0-9_/-]+\.json$/.test(p)) ? "BODY" : "GENE";

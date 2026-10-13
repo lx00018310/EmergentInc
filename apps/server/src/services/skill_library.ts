@@ -1,9 +1,9 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { createHash } from 'node:crypto';
-import { ToolContext, getArtifactsRoot } from '@emergentinc/tools';
+import { ToolContext, getArtifactsRoot } from '../../../../packages/tools/dist/context.js';
 import { lifeId } from '@emergentinc/protocol';
-import { loadGeneAsset, readGeneCatalog } from './gene_promotion_service.js';
+import { loadGeneAsset, readGeneCatalog } from './gene_catalog.js';
 
 // V26 minimal Agent Skills subset: single-file Markdown with a flat `name`/`description`
 // frontmatter. It is advisory documentation for Pixels, never an execution permission.

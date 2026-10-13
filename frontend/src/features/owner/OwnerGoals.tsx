@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { language, t, useLanguage } from '../../i18n';
 import { ownerError, ownerGoalRequest, type OwnerAutomation, type OwnerGoal, type OwnerGoalDetail, type OwnerRunReport } from '../../api/owner';
 import { OwnerAutomationReview } from './OwnerAutomationReview';
+import { OwnerExtensions } from './OwnerExtensions';
 
 type GoalForm = { id?: string; revision?: number; title: string; objective: string; maxTokens: string; kind: 'artifact' | 'manual' | 'confirmed_payments'; invoiceIds:string;targetCount:string; filename: string; minBytes: string; description: string };
 const emptyForm = (): GoalForm => ({ title: '', objective: '', maxTokens: '', kind: 'manual', invoiceIds:'',targetCount:'1', filename: 'result.md', minBytes: '100', description: t('Verify the stated business result against real source evidence.') });
@@ -94,6 +95,7 @@ export function OwnerGoals({ goals, automation, onDone }: { goals: OwnerGoal[]; 
         <p>{t('Review the source files first. This records your explicit verification; it does not create payment or customer facts.')}</p><label>{t('Verification evidence and reason')}<textarea required minLength={8} maxLength={1000} value={verification} onChange={e=>setVerification(e.target.value)}/></label><button disabled={busy||!detail.evidence.some(e=>e.kind!=='report'&&e.specificationRevision===detail.goal.specificationRevision)}>{t('Confirm verified result')}</button>
       </form>}
       <details><summary>{t('Advanced execution details')}</summary><pre>{JSON.stringify(detail.dispatches,null,2)}</pre><p><a href="/QIAN">QIAN</a> · <a href="/YUAN">YUAN</a> · <a href="/GENE">GENE</a></p></details>
+      <OwnerExtensions key={detail.goal.id} worldIds={[...new Set(detail.dispatches.map(d=>d.worldId))]}/>
     </section>}
     <details className="owner-run-report" onToggle={async event=>{if(event.currentTarget.open)try{setReport(await ownerGoalRequest<OwnerRunReport>('automation/report'));}catch(e){setError(ownerError(e));}}}><summary>{t('Run report')}</summary>{report&&<><p>{t('Read at')} {new Date(report.asOf).toLocaleString(language())} · {t('Started {0} / {1} rounds this session',[report.automation.startedRounds,report.automation.requestedRounds??t('Continuous operation')])}</p><ul>{report.goals.map(g=><li key={g.goalId}>{g.title}: {status(g.status)} · {t('Session tokens: {0}; known cost: ¥{1}; new evidence: {2}',[g.spentTokens,g.knownCostCny.toFixed(6),g.evidence.length])}{g.reason&&` · ${t(g.reason)}`}</li>)}</ul>{report.automation.reason&&<p>{t(report.automation.reason)}</p>}</>}</details>
   </section>;

@@ -5,6 +5,8 @@ import {execFileSync,spawn} from 'node:child_process';
 import {pathToFileURL} from 'node:url';
 import {freezeLocalRelease,frozenReleaseHash,ownerEnvironment} from './local-release.mjs';
 import {LineageStore} from '../packages/persistence/dist/index.js';
+import {approvedWorldRelease} from './v23-approved-release.mjs';
+import {approvedGenePlan,inheritApprovedGene,checkInheritedGene} from './inherit-approved-gene.mjs';
 
 const root=path.resolve(import.meta.dirname,'..');
 export function ownerReleaseInput(version,reason,now=new Date()){
@@ -113,14 +115,18 @@ pinned commit.`);return;
     const lineage=new LineageStore(path.join(config.workspace,'system/lineage/lineage.sqlite3'),{v23:true});
     let worktreeRemoved=false;
     try{
-      const base=lineage.activeGeneration();if(!base)throw new Error('ACTIVE_GENERATION_REQUIRED');
+      const active=approvedWorldRelease(config.workspace,configFile),base=lineage.activeGeneration();if(!base||active.generation.id!==base.id)throw new Error('ACTIVE_GENERATION_REQUIRED');
       const number=Number(lineage.db.prepare('SELECT MAX(generation_no)+1 n FROM generations').get().n);
-      await freezeLocalRelease(sourceDirectory,directory);
-      const manifestFile=path.join(directory,'genome/manifest.json'),manifest=JSON.parse(fs.readFileSync(manifestFile,'utf8'));
-      manifest.generation=number;fs.writeFileSync(manifestFile,JSON.stringify(manifest,null,2)+'\n');
+      const inherited=approvedGenePlan(active.directory,config.workspace,sourceDirectory,config.stateDirectory);
+      await freezeLocalRelease(sourceDirectory,directory,undefined,target=>{
+        inheritApprovedGene(inherited,active.directory,target);
+        const file=path.join(target,'genome/manifest.json'),manifest=JSON.parse(fs.readFileSync(file,'utf8'));
+        manifest.generation=number;fs.writeFileSync(file,JSON.stringify(manifest,null,2)+'\n');
+      });
+      checkInheritedGene(active.directory,config.workspace,directory,config.stateDirectory);
       const proposal=lineage.proposeGene(base.id,'owner',{point:`Owner software upgrade ${version}`,reason,effect:'All Worlds share the approved release; raw facts retained for later Dream'},`owner-version:${id}`);
       lineage.decideProposal(proposal.id,'APPROVED');
-      const request={id,base_generation:base.id,base_release:base.release_id,proposal_id:proposal.id,patch:[],owner_release:{label:version,reason,source_commit:sourceCommit,release_hash:frozenReleaseHash(directory),
+      const request={id,base_generation:base.id,base_release:base.release_id,proposal_id:proposal.id,patch:[],owner_release:{label:version,reason,source_commit:sourceCommit,release_hash:frozenReleaseHash(directory),inherited_gene_count:inherited.inherited.length,
         ...(mainHeadAtPrepare?{main_head_at_prepare:mainHeadAtPrepare,git_sync_target:sourceCommit}:{})}};
       const requestFile=path.join(config.stateDirectory,id+'.request.json');fs.writeFileSync(requestFile,JSON.stringify(request,null,2),{flag:'wx'});
       await generation(configFile,'submit-owner-release',requestFile);

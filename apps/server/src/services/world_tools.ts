@@ -14,6 +14,14 @@ export function registerWorldTools(registry:ToolRegistry,worldId:string,promotio
   register('CREATE_BODY_SKILL','生成并测试本 World 的纯 JSON JavaScript 技能；不改变 Gene。','write',
     {candidate:{type:'object',description:'skill_id,purpose,source,interface_version,tests'}},['candidate'],(a,p)=>promotion.createBodySkill(worldId,p,a.candidate));
   register('CALL_BODY_SKILL','执行本 World 已验证的 Body 技能。','write',{skill_id:{type:'string'},input:{}},['skill_id','input'],a=>promotion.runBodySkill(worldId,a.skill_id,a.input));
+  const extensions=async(pixel?:string)=>{if(pixel){const r=await promotion.manager.open(worldId);if(!r.store.pixels.getPixelAccount(pixel)?.active)throw new Error('EXTENSION_ACTOR_INVALID');}return promotion.manager.extensions(worldId);};
+  register('LIST_EXTENSIONS','列出本 World 私有扩展、版本、哈希、契约及阻断原因；不读取其他 World。','read',{},[],async(_a,p)=> (await extensions(p)).list());
+  register('RUN_EXTENSION','通过现有纯 JSON 解释器执行本 World 已启用扩展；不能访问网络、文件、数据库或凭据。','read',{id:{type:'string'},input:{}},['id','input'],async(a,p)=>(await extensions(p)).run(a.id,a.input));
+  register('SUBMIT_EXTENSION','默认将私有纯计算程序保存为独立扩展，不改变 Core 或 Generation。manifest 须含 schema=1、id、version、engine、requiredContracts、dataSchemaVersion、source、至少两个 tests。expectedRevision/expectedHash 来自 LIST_EXTENSIONS，首次为 0/null；不支持的宿主代码只存档，不加载。','write',{manifest:{type:'object'},expectedRevision:{type:'integer'},expectedHash:{type:['string','null']}},['manifest','expectedRevision','expectedHash'],async(a,p,key)=>{
+    const runtime=await promotion.manager.open(worldId);if(!runtime.store.pixels.getPixelAccount(p)?.active)throw new Error('EXTENSION_ACTOR_INVALID');
+    const service=await extensions(),saved=service.submit(p,a.manifest);return saved.supported?service.action(saved.id,{action:'activate',hash:saved.hash,expectedRevision:a.expectedRevision,expectedHash:a.expectedHash,idempotencyKey:key}):saved;
+  });
+  register('SET_EXTENSION_STATE','按准确版本和指针 revision 激活、停用或回退本 World 私有扩展；保留所有版本与数据。','write',{id:{type:'string'},action:{type:'string',enum:['activate','disable','rollback']},hash:{type:'string'},expectedRevision:{type:'integer'},expectedHash:{type:['string','null']}},['id','action','expectedRevision','expectedHash'],async(a,p,key)=>{const {id,...input}=a;return (await extensions(p)).action(id,{...input,idempotencyKey:key});});
   register('NOMINATE_GENE_ASSET','冻结本 World 资产快照并提名；等待 Owner 隐私审查与批准，不自动晋升。','write',
     {kind:{type:'string',enum:['knowledge','template','dataset','skill','code']},sourcePath:{type:'string'},metadata:{type:'object'}},['kind','sourcePath','metadata'],(a,p)=>promotion.nominate(worldId,p,a));
   register('PROMOTE_BODY_SKILL','提名已实际成功运行的本 World Body 技能，保留创建者和使用证据，等待 Owner 审批。','write',

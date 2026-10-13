@@ -9,19 +9,9 @@ import { WorldRuntimeManager } from './world_runtime_manager.js';
 import { containedPath } from './safe_path.js';
 
 const hash=(value:string|Buffer)=>createHash('sha256').update(value).digest('hex');
-export interface GeneAsset {id:string;version:number;kind:string;file:string;contentHash:string;license:string}
-export interface GeneCatalog {schema:1;assets:GeneAsset[]}
-export function readGeneCatalog(release:string):GeneCatalog {
-  const file=path.join(release,'genome/assets/index.json');if(!fs.existsSync(file))return {schema:1,assets:[]};
-  const catalog=JSON.parse(fs.readFileSync(file,'utf8'));if(catalog.schema!==1||!Array.isArray(catalog.assets))throw new Error('GENE_CATALOG_INVALID');
-  for(const asset of catalog.assets){lifeId(asset.id);if(!Number.isSafeInteger(asset.version)||asset.version<1||asset.file!==`assets/${asset.id}/${asset.version}.json`||!/^[a-f0-9]{64}$/.test(asset.contentHash))throw new Error('GENE_CATALOG_INVALID');}
-  return catalog;
-}
-export function loadGeneAsset(release:string,id:string){
-  lifeId(id);const asset=readGeneCatalog(release).assets.find(a=>a.id===id);if(!asset)throw new Error('GENE_ASSET_NOT_FOUND');
-  const file=containedPath(path.join(release,'genome'),...asset.file.split('/')),bytes=fs.readFileSync(file);
-  if(hash(bytes)!==asset.contentHash)throw new Error('GENE_ASSET_HASH_MISMATCH');return {asset,content:JSON.parse(bytes.toString('utf8'))};
-}
+export {readGeneCatalog,loadGeneAsset} from './gene_catalog.js';
+export type {GeneAsset,GeneCatalog} from './gene_catalog.js';
+import {readGeneCatalog,loadGeneAsset,type GeneAsset} from './gene_catalog.js';
 export function executeGeneSkill(release:string,id:string,input:unknown,geneHash:string){
   const loaded=loadGeneAsset(release,id);if(!['skill','code'].includes(loaded.asset.kind))throw new Error('GENE_ASSET_NOT_EXECUTABLE');
   return {origin:'gene',assetId:id,version:loaded.asset.version,geneHash,implementationHash:compilePureSkill(loaded.content.source).sourceHash,

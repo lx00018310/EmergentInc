@@ -1,4 +1,4 @@
-# Owner Guide / Owner 使用指南 — V29
+# Owner Guide / Owner 使用指南 — V30
 
 ## Main path / 主路径
 
@@ -80,3 +80,36 @@ Review original provider bills and external receipts first. World recovery uses 
 Never edit SQLite, credentials, frozen releases or Pixel minds to bypass review. Keep workspace data and secrets out of Git. Deployment, real customer outcomes and real payment acceptance require separate evidence.
 
 不得通过手工修改 SQLite、凭据、冻结版本或元胞心智绕过核实。工作区数据与秘密不得提交 Git。部署、真实客户结果和真实收款验收必须另留证据。
+
+
+## Core and private extensions / Core 与私有扩展
+
+Use private extensions for pure business computation. Supply a manifest with `schema=1`, a lowercase safe ID, a semantic version label, `engine=pure-ast-json@1`, `requiredContracts` including `pure_skill@1`, `dataSchemaVersion`, source and at least two JSON tests. `SUBMIT_EXTENSION` validates and activates using the exact pointer revision/hash from `LIST_EXTENSIONS` (initially `0`/`null`). The operation receipt is the retry key. `RUN_EXTENSION` uses explicit JSON only. `SET_EXTENSION_STATE` activates, disables or restores the previous immutable version without deleting data or creating a Generation.
+
+私有纯业务计算优先使用扩展。声明包含 `schema=1`、安全小写 ID、语义版本标签、`engine=pure-ast-json@1`、含 `pure_skill@1` 的 `requiredContracts`、`dataSchemaVersion`、源码和至少两个 JSON 测试。`SUBMIT_EXTENSION` 按 `LIST_EXTENSIONS` 的准确指针版本/哈希验证并激活（首次为 `0`/`null`），操作回执 ID 用于重试。`RUN_EXTENSION` 只接收显式 JSON；`SET_EXTENSION_STATE` 激活、停用或恢复上一个不可变版本，不删除数据、不创建 Generation。
+
+The interpreter has no host imports, network, filesystem, database, payment or credential access. `extension-data/` is retained storage owned by the user; it is never implicitly available to the pure program. Unsupported host programs can be archived as manifest candidates and cannot be enabled. Full Node/React applications and stateful plugins require a separate design. Markdown Skills keep their existing format and scope.
+
+解释器没有宿主模块、网络、文件、数据库、支付或凭据权限。`extension-data/` 是用户拥有的保留存储，不会自动开放给程序。不支持的宿主程序可作为声明候选存档，不能启用。完整 Node/React 应用和有状态插件需要另外设计；Markdown Skill 保留既有格式和作用域。
+
+Open a goal's Details → Private World extensions to inspect its Worlds, creators, versions, SHA-256, required contracts, effective state and blocking reasons. Enable/disable/rollback uses exact CAS and retry keys. No physical cleanup is offered. Owner HTTP routes use the existing session and Origin protection:
+
+打开目标详情中的“World 私有扩展”，可查看对应 World、创建元胞、版本、SHA-256、契约、实际状态及阻断原因。启停/回退使用准确 CAS 与重试键，不提供物理删除。以下 Owner HTTP 接口沿用现有会话和 Origin 防护：
+
+```text
+GET/POST /api/worlds/:id/extensions
+POST     /api/worlds/:id/extensions/:extension/actions
+POST     /api/worlds/:id/extensions/:extension/run
+```
+
+POST submission archives a validated manifest with a trusted active `pixelId`; activation is a separate action with `action`, `hash`, `expectedRevision`, `expectedHash`, `idempotencyKey`. Execution obeys global automation. Inspection and explicit pointer maintenance do not call models. Private extensions cannot be listed or executed from another World's tool context; public sharing still needs existing Gene review and exact release approval.
+
+POST 提交使用已激活的 `pixelId` 保存声明；激活另提交 `action`、`hash`、`expectedRevision`、`expectedHash`、`idempotencyKey`。执行受全局运行许可约束，查看及显式指针维护不调用模型。另一 World 的工具上下文不能列出或执行私有扩展，公共共享仍需既有 Gene 审查与准确 Release 批准。
+
+Official Core preparation inherits only approved public Gene assets into the candidate, before final hashes. Historical public versions and provenance stay available. Conflicts or unidentifiable non-asset Gene changes stop preparation. Compatibility summaries appear in 8766 before approval and are checked again before switching. A changed execution-asset set requires a newly prepared candidate. Incompatible private extensions retain their files/data but cannot execute; manual disable persists. No arbitrary application code is imported into the trusted Supervisor.
+
+官方 Core 准备只在最终哈希前将已批准公共 Gene 继承到候选；历史公共版本和来源继续可查。冲突或无法识别的非资产 Gene 定制停止准备。8766 在批准前显示兼容摘要，切换前再次检查；运行资产集合变化后须重新准备候选。不兼容私有扩展保留文件和数据但不能执行，人工停用状态保持。不把任意应用代码导入可信 Supervisor。
+
+`SUBMIT_APP_CODE` remains the channel for genuine Core changes. Old reports and approved releases are retained; V30 shows `CORE_PATCH_REBASE_REQUIRED` when private source candidates need review against new Core. It never silently ports old Core patches or discards payment, ledger or Goal facts to force a rollback. Back up the entire Workspace and trusted maintenance records separately from Git Core.
+
+真正的 Core 修改继续使用 `SUBMIT_APP_CODE`；旧报告和已批准 Release 保留。私有源码候选需要针对新 Core 重检时显示 `CORE_PATCH_REBASE_REQUIRED`，不静默移植旧 Core 补丁，也不为强制回退丢弃收款、账本或目标事实。完整 Workspace 与可信维护记录应独立于 Git Core 备份。

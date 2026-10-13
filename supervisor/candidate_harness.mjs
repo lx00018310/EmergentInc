@@ -58,6 +58,19 @@ if (action === 'build') {
       if(storefront.revenue.scope!=='INSTANCE'||!Array.isArray(storefront.orders))throw new Error('CANDIDATE_PUBLIC_PERSISTENCE_FAILED');
       const worlds=(await get('/api/worlds',cookie)).items;
       for(const item of worlds.filter(w=>w.status==='ACTIVE'&&!w.blockedReason)){const scoped=await get('/api/worlds/'+item.world_id, cookie);if(scoped.current.generation_id!==generation)throw new Error('CANDIDATE_WORLD_GENERATION_FAILED');}
+      const fixtureLayout=JSON.parse(fs.readFileSync(join(workspace,'workspace-layout.json'),'utf8'));
+      if(fixtureLayout.synthetic){const automation=await get('/api/owner/automation',cookie);if(automation.desiredMode!=='OFF'||automation.inFlight!==0)throw new Error('CANDIDATE_V29_OFF_FAILED');}
+      const candidateManifest=JSON.parse(fs.readFileSync(join(directory,'genome/manifest.json'),'utf8'));
+      if(candidateManifest.capability_contracts['extension@1']){
+        const {InstanceExtensionService}=await import(pathToFileURL(join(directory,'apps/server/dist/services/instance_extension_service.js')).href);
+        const program={schema:1,id:'compatibility-counter',version:'1.0.0',engine:'pure-ast-json@1',requiredContracts:['pure_skill@1'],dataSchemaVersion:1,source:'export default input=>({count:input.rows.length})',tests:[{input:{rows:[]},expected:{count:0}},{input:{rows:[1,2]},expected:{count:2}}]};
+        const a=new InstanceExtensionService(join(workspace,'extension-fixture-a'),'fixture_A',candidateManifest.capability_contracts),b=new InstanceExtensionService(join(workspace,'extension-fixture-b'),'fixture_B',candidateManifest.capability_contracts);
+        fs.mkdirSync(a.directory,{recursive:true});fs.mkdirSync(b.directory,{recursive:true});const saved=a.submit('0_0_0',program);
+        const active=a.action(program.id,{action:'activate',hash:saved.hash,expectedRevision:0,expectedHash:null,idempotencyKey:'candidate-extension-fixture'});
+        if(a.run(program.id,{rows:[1,2,3]}).result.count!==3||b.list().length)throw new Error('CANDIDATE_EXTENSION_ISOLATION_FAILED');
+        a.action(program.id,{action:'disable',expectedRevision:active.revision,expectedHash:active.hash,idempotencyKey:'candidate-extension-disable'});
+        if(a.describe(program.id).enabled)throw new Error('CANDIDATE_EXTENSION_DISABLE_FAILED');
+      }
       const {readGeneCatalog,executeGeneSkill}=await import(pathToFileURL(join(directory,'apps/server/dist/services/gene_promotion_service.js')).href);
       const catalog=readGeneCatalog(directory);
       if(catalog.assets.length){

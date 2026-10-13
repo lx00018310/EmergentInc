@@ -9,10 +9,21 @@ import {WorldRuntimeManager} from '../src/services/world_runtime_manager.js';
 import {GenePromotionService,executeGeneSkill} from '../src/services/gene_promotion_service.js';
 import {GenerationSupervisor} from '../../../supervisor/generation_supervisor.js';
 import {EvolutionRuntime} from '../../../supervisor/protocol.js';
+import {OwnerAutomationGate} from '../src/services/owner_automation_gate.js';
+import {InstanceExtensionService} from '../src/services/instance_extension_service.js';
+import {instanceCompatibility} from '../../../supervisor/instance_compatibility.js';
+import {createHash} from 'node:crypto';
+import {execFileSync} from 'node:child_process';
+import {evolutionHash} from '../../../supervisor/release_builder.js';
+// @ts-ignore Standalone trusted Core preparation modules.
+import {approvedGenePlan,inheritApprovedGene} from '../../../scripts/inherit-approved-gene.mjs';
+// @ts-ignore Standalone trusted Core preparation modules.
+import {freezeLocalRelease,frozenReleaseHash} from '../../../scripts/local-release.mjs';
 
 const cleanup:(()=>Promise<void>)[]=[];afterEach(async()=>{for(const fn of cleanup.splice(0).reverse())await fn();});
 function fixture(){const root=fs.mkdtempSync(join(tmpdir(),'V23-多World-')),workspace=join(root,'workspace'),releases=join(root,'releases'),base=join(releases,'r1');
-  fs.mkdirSync(join(base,'genome'),{recursive:true});fs.writeFileSync(join(base,'genome/manifest.json'),JSON.stringify({schema_version:1,gene_hash_version:2,generation:1,body_interface_version:'1',protected_paths:['genome/**'],capability_contracts:{}}));
+  fs.mkdirSync(join(base,'genome'),{recursive:true});fs.writeFileSync(join(base,'genome/manifest.json'),JSON.stringify({schema_version:1,gene_hash_version:2,generation:1,body_interface_version:'1',protected_paths:['genome/**'],capability_contracts:JSON.parse(fs.readFileSync(join(process.cwd(),'genome/manifest.json'),'utf8')).capability_contracts}));
+  fs.mkdirSync(join(base,'apps/server/dist/services'),{recursive:true});fs.copyFileSync(join(process.cwd(),'apps/server/dist/services/owner_automation_gate.js'),join(base,'apps/server/dist/services/owner_automation_gate.js'));
   let release=base;const genome=readGenome(base),lineage=new LineageStore(join(workspace,'system/lineage/lineage.sqlite3'),{v23:true});
   const generation=lineage.createGeneration({id:'G0001',number:1,geneHash:genome.geneHash,releaseId:'r1',state:'ACTIVE'});writeGenerationPointer(join(workspace,'system'),'G0001');
   const admin=new CurrentStore(join(workspace,'system/generations/G0001/current.sqlite3'));admin.initialize(generation,'1');admin.close();fs.mkdirSync(join(workspace,'system/generations/G0001/body/skills'),{recursive:true});
@@ -22,7 +33,7 @@ function fixture(){const root=fs.mkdtempSync(join(tmpdir(),'V23-多World-')),wor
   const options={provider:{async call(){throw new Error('NO_LLM_CALL_EXPECTED')}},usageMeter:new UsageMeter({models:{}}),modelName:'test'};
   let manager=new WorldRuntimeManager(registry,genome.manifest,options);
   const runtime:EvolutionRuntime={
-    validateRelease:vi.fn(async()=>{}),quiesce:vi.fn(async()=>manager.quiesceAll()),finalDream:vi.fn(async()=>{}),
+    validateRelease:vi.fn(async directory=>{fs.mkdirSync(join(directory,'apps/server/dist/services'),{recursive:true});fs.copyFileSync(join(process.cwd(),'apps/server/dist/services/owner_automation_gate.js'),join(directory,'apps/server/dist/services/owner_automation_gate.js'));}),quiesce:vi.fn(async()=>manager.quiesceAll()),finalDream:vi.fn(async()=>{}),
     worlds:()=>registry.list().filter(w=>w.status==='ACTIVE').map(w=>({id:w.world_id,directory:registry.directory(w.world_id)})),
     smoke:vi.fn(async(directory,candidateWorkspace,generationId)=>{
       const l=new LineageStore(join(candidateWorkspace,'system/lineage/lineage.sqlite3'),{v23:true}),c=new WorldRegistryStore(join(candidateWorkspace,'system/control/control.sqlite3'));
@@ -51,6 +62,36 @@ function fixture(){const root=fs.mkdtempSync(join(tmpdir(),'V23-多World-')),wor
   return {workspace,lineage,control,registry,supervisor,runtime,a,b,narrative,prepare,manager:()=>manager,release:()=>release};
 }
 describe('real Supervisor with all World Currents (process adapter doubles)',()=>{
+  it('retains but refuses a legacy validated or approved candidate without an instance compatibility summary',async()=>{
+    const f=fixture();await f.prepare();const old={...f.supervisor.get('r2').candidate};delete old.instance_compatibility;const {candidate_hash:_,directory:__,...bound}=old;old.candidate_hash=evolutionHash(bound);
+    const db=(f.supervisor as any).db;db.prepare("UPDATE candidates SET state='VALIDATED',approval_hash=NULL,candidate_json=? WHERE id='r2'").run(JSON.stringify(old));f.lineage.db.prepare('UPDATE gene_proposals SET candidate_hash=? WHERE id=?').run(old.candidate_hash,old.proposal_id);
+    expect(()=>f.supervisor.approve('r2',old.candidate_hash)).toThrow('INSTANCE_ASSETS_CHANGED');await expect(f.supervisor.validate('r2')).rejects.toThrow('INSTANCE_ASSETS_CHANGED');
+    db.prepare("UPDATE candidates SET state='APPROVED',approval_hash=? WHERE id='r2'").run(old.candidate_hash);await expect(f.supervisor.birth('r2')).rejects.toThrow('INSTANCE_ASSETS_CHANGED');expect(f.runtime.quiesce).not.toHaveBeenCalled();expect(f.lineage.activeGeneration()!.id).toBe('G0001');expect(fs.existsSync(f.supervisor.get('r2').directory)).toBe(true);
+  },20000);
+  it('updates an isolated Git Core while retaining approved Gene, two private Worlds, extension/data hashes and V29 OFF facts through upgrade and rollback',async()=>{
+    const f=fixture(),prepared=await f.prepare();await f.supervisor.birth('r2');new GenePromotionService(f.manager(),f.release(),f.lineage).recordInherited(String(prepared.nomination.id),prepared.patch.asset,'G0002');
+    const gate=new OwnerAutomationGate(f.control),goal=gate.goals.create({title:'Retained goal',objective:'Keep real evidence',maxTokens:123456,acceptance:{kind:'manual',description:'Verify source evidence'},idempotencyKey:'v30-retained-goal'});gate.goals.action(goal.id,{action:'pause',expectedRevision:1,idempotencyKey:'v30-pause-goal'});
+    f.control.db.prepare("INSERT INTO owner_model_permits VALUES('unknown-fixture','initial',?,?,?,'UNKNOWN',1000,NULL,NULL,?)").run(f.a.world_id,goal.id,1,Date.now());
+    const a=await f.manager().open(f.a.world_id),extension=await f.manager().extensions(f.a.world_id),program={schema:1,id:'customer-analysis',version:'1.0.0',engine:'pure-ast-json@1',requiredContracts:['pure_skill@1'],dataSchemaVersion:1,source:'export default input=>({count:input.rows.length})',tests:[{input:{rows:[]},expected:{count:0}},{input:{rows:[1]},expected:{count:1}}]},saved=extension.submit('0_0_0',program);
+    extension.action(program.id,{action:'activate',hash:saved.hash,expectedRevision:0,expectedHash:null,idempotencyKey:'v30-extension-active'});
+    expect((await f.manager().extensions(f.b.world_id)).list()).toEqual([]);
+    const data=join(a.directory,'extension-data/customer-analysis/customers.json'),markdown=join(a.directory,'live/artifacts/0_0_0/private.skill.md'),report=join(a.directory,'code-candidates/old-report/report.json');for(const file of [data,markdown,report])fs.mkdirSync(join(file,'..'),{recursive:true});fs.writeFileSync(data,'{"syntheticCustomer":"private-fixture-only"}');fs.writeFileSync(markdown,'---\nname: Private workflow\ndescription: Synthetic scoped method\n---\nDo not publish customer data.');fs.writeFileSync(report,'{"status":"CORE_PATCH_REBASE_REQUIRED","private":"retained"}');
+    a.store.db.exec("CREATE TABLE v30_customer_fixture(id TEXT PRIMARY KEY,contact TEXT); INSERT INTO v30_customer_fixture VALUES('fixture','private@example.invalid')");
+    a.store.runs.createRun({run_id:'checkpoint-fixture',start_round:0,requested_rounds:1,run_limit:100000,run_spent:42,run_reserved:0,genesis_revision:0,created_at:1,finished_at:2,status:'STOPPED',stop_reason:'SERVICE_SHUTDOWN',started_at:1,ended_at:2} as any);a.store.runs.createCheckpoint('checkpoint-fixture',1);a.store.runs.setResumePending('checkpoint-fixture',true);
+    const checkpoint=a.store.runs.getCheckpoint('checkpoint-fixture'),goalBefore=gate.goals.get(goal.id),pointerBefore=gate.view(),digest=(file:string)=>createHash('sha256').update(fs.readFileSync(file)).digest('hex'),files=[data,markdown,report,join(a.directory,'extensions',program.id,'active.json'),join(a.directory,'extensions',program.id,'versions',saved.hash+'.json')],before=files.map(digest);
+    const root=join(f.workspace,'..'),source=join(root,'upstream'),checkout=join(root,'pinned'),candidate=join(root,'releases/core-v30');fs.mkdirSync(join(source,'genome'),{recursive:true});fs.copyFileSync(join(root,'releases/r1/genome/manifest.json'),join(source,'genome/manifest.json'));fs.writeFileSync(join(source,'README.md'),'Core before');
+    const git=(args:string[],cwd=source)=>execFileSync('git',args,{cwd,encoding:'utf8',windowsHide:true}).trim();git(['init','-b','main']);git(['add','.']);git(['-c','user.name=Test','-c','user.email=test@example.invalid','commit','-m','Core before']);fs.writeFileSync(join(source,'README.md'),'Core after');git(['add','.']);git(['-c','user.name=Test','-c','user.email=test@example.invalid','commit','-m','Core after']);const sha=git(['rev-parse','HEAD']);git(['worktree','add','--detach',checkout,sha]);
+    const plan=approvedGenePlan(f.release(),f.workspace,checkout);await freezeLocalRelease(checkout,candidate,async()=>{},(dir:string)=>{inheritApprovedGene(plan,f.release(),dir);const file=join(dir,'genome/manifest.json'),m=JSON.parse(fs.readFileSync(file,'utf8'));m.generation=3;fs.writeFileSync(file,JSON.stringify(m));fs.mkdirSync(join(dir,'apps/server/dist/services'),{recursive:true});fs.copyFileSync(join(process.cwd(),'apps/server/dist/services/owner_automation_gate.js'),join(dir,'apps/server/dist/services/owner_automation_gate.js'));});
+    const proposal=f.lineage.proposeGene('G0002','owner',{point:'Core upstream',reason:'Isolated Git update',effect:'Retain instance assets'});f.lineage.decideProposal(proposal.id,'APPROVED');f.supervisor.submitOwnerRelease({id:'core-v30',base_generation:'G0002',base_release:'r2',proposal_id:proposal.id,patch:[],owner_release:{source_commit:sha,release_hash:frozenReleaseHash(candidate),reason:'Isolated upstream Core'}});const checked=await f.supervisor.validate('core-v30');expect(checked.candidate.instance_compatibility.extensions[0].enabled).toBe(true);expect(checked.candidate.instance_compatibility.corePatches).toContain(f.a.world_id);f.supervisor.approve('core-v30',checked.candidate.candidate_hash);await f.supervisor.birth('core-v30');
+    expect(f.lineage.activeGeneration()!.id).toBe('G0003');expect(executeGeneSkill(f.release(),'shared_count',{rows:[1,2,3]},f.lineage.activeGeneration()!.gene_hash).result).toEqual({count:3});expect((await f.manager().extensions(f.a.world_id)).run(program.id,{rows:[1,2]}).result).toEqual({count:2});expect(files.map(digest)).toEqual(before);expect(gate.goals.get(goal.id)).toEqual(goalBefore);expect(gate.view()).toEqual(pointerBefore);
+    const reopened=await f.manager().open(f.a.world_id);expect(reopened.store.runs.getCheckpoint('checkpoint-fixture')).toEqual(checkpoint);expect(reopened.store.db.prepare('SELECT COUNT(*) n FROM v30_customer_fixture').get()!.n).toBe(1);
+    const smoke=join(root,'trusted/candidate-workspaces/core-v30');expect(fs.existsSync(join(smoke,'worlds',f.a.world_id,'extension-data'))).toBe(false);expect(fs.readFileSync(join(smoke,'worlds',f.a.world_id,'live/environment.md'),'utf8')).not.toContain('private@example.invalid');
+    await f.supervisor.rollback('core-v30','Isolated compatibility rollback');expect(files.map(digest)).toEqual(before);expect(gate.goals.get(goal.id)).toEqual(goalBefore);expect(gate.view().desiredMode).toBe('OFF');expect(f.control.db.prepare("SELECT state FROM owner_model_permits WHERE id='unknown-fixture'").get()!.state).toBe('UNKNOWN');expect(git(['status','--porcelain'])).toBe('');git(['worktree','remove',checkout]);console.info('V30_ISOLATED_DEMO '+JSON.stringify({upstreamCommit:sha,geneContentHash:prepared.patch.asset.contentHash,extensionHash:saved.hash,privateFileHashesBefore:before,privateFileHashesAfter:files.map(digest),worlds:2,goalStatePreserved:true,automation:'OFF',unknownCallsPreserved:1,checkpointTokens:42,rollback:'G0002'}));
+  },30000);
+  it('blocks a critical missing Gene/Body contract and reports noncritical extensions without changing their files or data',async()=>{
+    const f=fixture();await f.prepare();const candidate=join(f.workspace,'../releases/r2'),file=join(candidate,'genome/manifest.json'),m=JSON.parse(fs.readFileSync(file,'utf8')),original=fs.readFileSync(file);delete m.capability_contracts['pure_skill@1'];fs.writeFileSync(file,JSON.stringify(m));await expect(instanceCompatibility(join(f.workspace,'system'),'G0001',candidate,f.runtime.worlds!())).rejects.toThrow('INSTANCE_GENE_CONTRACT_UNSUPPORTED');fs.writeFileSync(file,original);
+    const ext=new InstanceExtensionService(f.registry.directory(f.a.world_id),f.a.world_id,m.capability_contracts);const archived=ext.submit('0_0_0',{schema:1,id:'archived-host',version:'1.0.0',engine:'node@1',requiredContracts:[],dataSchemaVersion:1,source:'process.exit(1)',tests:[{input:1,expected:1},{input:2,expected:2}]});expect(archived.reason).toBe('EXTENSION_ENGINE_UNSUPPORTED');const summary=await instanceCompatibility(join(f.workspace,'system'),'G0001',candidate,f.runtime.worlds!());expect(summary.extensions[0].enabled).toBe(false);
+  },20000);
   it('migrates every World, switches one global generation and executes inherited source in an entirely new World',async()=>{
     const f=fixture(),prepared=await f.prepare();await f.supervisor.birth('r2');
     expect(f.lineage.activeGeneration()!.id).toBe('G0002');for(const world of [f.a,f.b])expect((await f.manager().open(world.world_id)).life.current.meta().generation_id).toBe('G0002');
@@ -66,7 +107,7 @@ describe('real Supervisor with all World Currents (process adapter doubles)',()=
     await expect(f.supervisor.birth('r2')).rejects.toThrow();
     expect(f.lineage.activeGeneration()!.id).toBe('G0001');expect(f.runtime.switchRelease).not.toHaveBeenCalled();
     fs.writeFileSync(file,original);expect((await f.manager().open(f.a.world_id)).life.current.meta().generation_id).toBe('G0001');expect((await f.manager().open(f.b.world_id)).life.current.meta().generation_id).toBe('G0001');
-    expect(f.lineage.generation('G0002').state).toBe('FAILED');
+    expect(f.lineage.db.prepare("SELECT id FROM generations WHERE id='G0002'").get()).toBeUndefined();
   },20000);
   it('restores every previous Current after post-switch health failure and retains failure history',async()=>{
     const f=fixture();await f.prepare();vi.mocked(f.runtime.healthy).mockRejectedValueOnce(new Error('WORLD_HEALTH_FAILED'));

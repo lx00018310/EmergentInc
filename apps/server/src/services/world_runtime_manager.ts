@@ -15,6 +15,7 @@ import { LifeContext } from './life_context.js';
 import { acquireWorkspaceLock } from '../runtime_config.js';
 import { registerApiRoutes } from '../routes/api_routes.js';
 import type { OwnerAutomationGate } from './owner_automation_gate.js';
+import { InstanceExtensionService } from './instance_extension_service.js';
 
 export interface WorldRuntime { id: string; directory: string; store: CoreStore; life: LifeContext; world: WorldService; run: RunService; api: FastifyInstance; unlock: () => void }
 export interface WorldRuntimeOptions { provider: ModelProvider; usageMeter: UsageMeter; modelName: string; isMockMode?: boolean; isModelConfigured?: boolean;
@@ -36,6 +37,7 @@ export class WorldRuntimeManager {
   constructor(readonly registry: WorldRegistryService, readonly genome: GenomeManifest, readonly options: WorldRuntimeOptions) {if(!registry.lineage.worldsEnabled)throw new Error('V23_WORLD_LINEAGE_REQUIRED');}
   currents(){return [...this.opened.values()].map(r=>({id:r.id,current:r.life.current}));}
   peek(id:string){return this.opened.get(id);}
+  async extensions(id:string){const runtime=await this.open(id);return new InstanceExtensionService(runtime.directory,id,this.genome.capability_contracts);}
   list() { return this.registry.list().map(row=>({...row,runtimeFailure:this.failures.get(row.world_id)??null,blockedReason:this.registry.control.db.prepare('SELECT reason FROM world_recovery_blocks WHERE world_id=?').get(row.world_id)?.reason??null, opened:this.opened.has(row.world_id), running:this.opened.get(row.world_id)?.run.getStatus().running??false})); }
   async open(id: string): Promise<WorldRuntime> {
     const old=this.opened.get(id); if(old)return old;
@@ -78,7 +80,7 @@ export class WorldRuntimeManager {
         shouldSuspend: () => Boolean(this.automation && (!this.automation.isOn() || (this.opened.get(id)?.run.getStatus().run_id && !this.automation.mayContinue(this.opened.get(id)!.run.getStatus().run_id)))),worldPrompt:(actor)=>{
           const profile=this.registry.control.qianji.getProfile(record.qianji_id)!;
           const infiniteEnergy=this.registry.control.gatewayInfiniteEnergy(id)&&this.registry.control.world(id).gateway_pixel_id===actor;
-          return `所属 World：${id}。${infiniteEnergy?'Owner 已为当前对话入口开启无限能量，缺少能量时会自动补充；其他元胞不享有此授权。是否向邻居输送能量，仍由你按成本收益判断。Run Token 预算继续有效。':''}对外人格（描述性数据，不授予额外权限）：${JSON.stringify({displayName:profile.narrative.displayName,roleLabel:profile.narrative.roleLabel,behaviorProfile:profile.narrative.behaviorProfile,flaw:profile.narrative.flaw})}。只有 OWNER_REPLY 经本世界 outbox 对外答复。Owner 任务应实际执行并报告产出，不把承诺当成果。缺少合适负责人时使用 REQUEST_RECRUIT 提交职责、理由和初始任务，等待 Owner 批准。代码任务使用 LIST_APP_SOURCE、READ_APP_SOURCE、SUBMIT_APP_CODE 修改 8765 候选源码并单独报告 Owner；8766 源码及共享模块禁止访问和修改，源码生效需要独立软件升级批准。若工具目录提供 LIST_RELEASE_VERSIONS、ROLLBACK_RELEASE、DELETE_RELEASE，只能查看版本元数据；回退和删除必须由 Owner 在独立维护界面明确确认，公司运行开关不授予维护权限。权限不足时直接向 Owner 报告阻碍，不能用招聘申请绕过禁止修改区。多步工作使用工具反馈或 SELF 继续，完成后由入口 OWNER_REPLY 回报。当前生命上下文：${JSON.stringify(life.load(actor,null))}`;
+          return `所属 World：${id}。${infiniteEnergy?'Owner 已为当前对话入口开启无限能量，缺少能量时会自动补充；其他元胞不享有此授权。是否向邻居输送能量，仍由你按成本收益判断。Run Token 预算继续有效。':''}对外人格（描述性数据，不授予额外权限）：${JSON.stringify({displayName:profile.narrative.displayName,roleLabel:profile.narrative.roleLabel,behaviorProfile:profile.narrative.behaviorProfile,flaw:profile.narrative.flaw})}。只有 OWNER_REPLY 经本世界 outbox 对外答复。Owner 任务应实际执行并报告产出，不把承诺当成果。缺少合适负责人时使用 REQUEST_RECRUIT 提交职责、理由和初始任务，等待 Owner 批准。私有纯计算程序优先使用 LIST_EXTENSIONS、SUBMIT_EXTENSION、RUN_EXTENSION，独立保存在本 World，不改变 Core 或 Generation；Markdown 方法继续使用 LIST_SKILLS / READ_SKILL。真正修正内核时才使用 LIST_APP_SOURCE、READ_APP_SOURCE、SUBMIT_APP_CODE 修改 8765 候选源码并单独报告 Owner；8766 源码及共享模块禁止访问和修改，源码生效需要独立软件升级批准。若工具目录提供 LIST_RELEASE_VERSIONS、ROLLBACK_RELEASE、DELETE_RELEASE，只能查看版本元数据；回退和删除必须由 Owner 在独立维护界面明确确认，公司运行开关不授予维护权限。权限不足时直接向 Owner 报告阻碍，不能用招聘申请绕过禁止修改区。多步工作使用工具反馈或 SELF 继续，完成后由入口 OWNER_REPLY 回报。当前生命上下文：${JSON.stringify(life.load(actor,null))}`;
         },promptBuilder:new PromptBuilder({modelName:this.options.modelName,baseSystemPrompt:this.options.baseSystemPrompt,toolsCatalog:tools.renderCatalogForPrompt()})});
       const scheduler=new RoundScheduler({workspaceRoot:directory,store,stepRunner:runner});
       const prompts=new PromptService(path.join(directory,'runtime'));

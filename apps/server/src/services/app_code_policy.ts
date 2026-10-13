@@ -7,10 +7,11 @@ import type { AppCodeFile, AppCodeReport } from '@emergentinc/protocol';
 const protectedServer = new Set(['owner_auth.ts', 'routes/public_routes.ts', 'services/public_store.ts',
   'services/public_products_migration.ts', 'services/payment_assets.ts', 'services/solana_payment.ts',
   'services/app_code_policy.ts', 'services/app_code_service.ts', 'services/release_maintenance_client.ts',
-  'services/owner_automation_gate.ts', 'services/owner_goal_service.ts']);
+  'services/owner_automation_gate.ts', 'services/owner_goal_service.ts', 'services/instance_extension_service.ts','services/gene_catalog.ts','services/safe_path.ts','services/skill_library.ts','services/world_registry_service.ts']);
 export const sourceHash = (content: string | Buffer) => createHash('sha256').update(content).digest('hex');
 export function appCodePath(value: unknown): string {
   if (typeof value !== 'string' || !/^[a-zA-Z0-9_./\-]+$/.test(value) || value.split('/').some(p => !p || p === '.' || p === '..' || /^(?:con|prn|aux|nul|com\d|lpt\d)(?:\.|$)/i.test(p))) throw new Error('APP_CODE_PATH_DENIED');
+  if(['packages/tools/src/business/pure_skill.ts','packages/tools/src/context.ts'].includes(value))throw new Error('APP_CODE_PATH_DENIED');
   // Case-sensitive canonical names also prevent Windows case aliases of protected files.
   const server = value.startsWith('apps/server/src/') && value.endsWith('.ts') && !protectedServer.has(value.slice('apps/server/src/'.length));
   const frontend = /^frontend\/(?:src|tests)\/.+\.(?:ts|tsx|css|svg)$/.test(value);

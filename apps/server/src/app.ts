@@ -72,7 +72,7 @@ export async function createServer(options: CreateServerOptions): Promise<Fastif
   const serviceReady = () => !options.businessService?.status().schedulerFailure && !options.worlds?.manager.list().some(w=>w.runtimeFailure) && !ownerWork?.hasFailure();
   app.get("/health/ready", async (_req, reply) => {
     const ready = serviceReady();
-    return reply.status(ready ? 200 : 503).send({ ready, mode, version: options.worlds ? "v29-goals-1" : options.evolution ? "v22-life-1" : "v21-business-1",
+    return reply.status(ready ? 200 : 503).send({ ready, mode, version: options.worlds ? "v30-assets-1" : options.evolution ? "v22-life-1" : "v21-business-1",
       ...(options.evolution ? { generation: options.evolution.life.current.meta().generation_id,
         geneHash: options.evolution.life.current.meta().gene_hash, bodyRevision: options.evolution.life.current.meta().body_revision } : {}) });
   });

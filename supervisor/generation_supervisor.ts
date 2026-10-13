@@ -10,6 +10,8 @@ import { snapshotDatabase,copyDirectoryNew } from "./migration_runner.js";
 import { GenerationMigrator } from "./generation_migrator.js";
 import { rollbackPlan, canDeleteRelease, ReleaseGeneration } from './release_history.js';
 import { checkOwnerAutomationRollback } from './owner_automation_compatibility.js';
+import { pathToFileURL } from 'node:url';
+import {instanceCompatibility,prepareCompatibilityFixture} from './instance_compatibility.js';
 
 /** Installed administrator implementation. Its DB and approvals must be inaccessible to the app user. */
 export class GenerationSupervisor {
@@ -98,20 +100,28 @@ export class GenerationSupervisor {
     return this.get(request.id);
   }
   private nextNumber() { return Number(this.lineage.db.prepare("SELECT COALESCE(MAX(generation_no),0)+1 n FROM generations").get()!.n); }
+  private async inheritedPreflight(c: Record<string, any>) {
+    if(!c.request.owner_release||!this.runtime.worlds)return;
+    const root=path.resolve(import.meta.dirname,path.basename(import.meta.dirname)==='dist'?'../..':'..');
+    const {checkInheritedGene}=await import(pathToFileURL(path.join(root,'scripts/inherit-approved-gene.mjs')).href);
+    checkInheritedGene(path.join(this.releases,c.request.base_release),path.dirname(this.workspace),c.directory,this.directory);
+  }
   async validate(id: string) {
     if (this.busy) throw new Error("EVOLUTION_BUSY");
     const c = this.get(id), base = this.base(c.request);
-    if (["VALIDATED", "APPROVED"].includes(c.state)) { this.checked(c); return c; }
+    await this.inheritedPreflight(c);
+    if (["VALIDATED", "APPROVED"].includes(c.state)) { const candidate=this.checked(c);if(this.runtime.worlds&&!candidate.instance_compatibility)throw new Error('INSTANCE_ASSETS_CHANGED');return c; }
     if (c.state !== "SUBMITTED") throw new Error("GENE_NOT_VALIDATABLE");
     this.busy = true;
     try {
       await this.runtime.validateRelease(c.directory); // Fixed trusted sequence: typecheck, test, build.
+      const compatibility=this.runtime.worlds?await instanceCompatibility(this.workspace,c.request.base_generation,c.directory,this.runtime.worlds()):undefined;
       const genome = readGenome(c.directory);
       if (genome.geneHash === base.gene_hash) throw new Error("GENE_HASH_MUST_CHANGE");
       if (genome.manifest.generation !== this.nextNumber()) throw new Error("GENOME_GENERATION_NUMBER_CONFLICT");
       const bound = { id, base_generation: c.request.base_generation, base_release: c.request.base_release,
         proposal_id: c.request.proposal_id, patch_hash: evolutionHash(c.request.patch), gene_hash: genome.geneHash,
-        candidate_release_hash: releaseHash(c.directory), release_id: id, ...(c.request.owner_release ? {owner_release: c.request.owner_release} : {}) };
+        candidate_release_hash: releaseHash(c.directory), release_id: id, ...(compatibility?{instance_compatibility:compatibility}:{}), ...(c.request.owner_release ? {owner_release: c.request.owner_release} : {}) };
       const candidate: GeneCandidate = { ...bound, candidate_hash: evolutionHash(bound), directory: c.directory };
       this.db.transaction(() => {
         this.db.prepare("UPDATE candidates SET state='VALIDATED',candidate_json=? WHERE id=?").run(JSON.stringify(candidate), id);
@@ -140,6 +150,7 @@ export class GenerationSupervisor {
   approve(id: string, exactHash: string) {
     if (this.busy) throw new Error("EVOLUTION_BUSY");
     const c = this.get(id), candidate = this.checked(c); this.base(c.request);
+    if(this.runtime.worlds&&!candidate.instance_compatibility)throw new Error('INSTANCE_ASSETS_CHANGED');
     if (exactHash !== candidate.candidate_hash) throw new Error("OWNER_CANDIDATE_HASH_CONFLICT");
     if (!["VALIDATED", "APPROVED"].includes(c.state)) throw new Error("GENE_NOT_APPROVABLE");
     this.lineage.db.prepare("UPDATE gene_proposals SET candidate_hash=? WHERE id=?").run(exactHash, candidate.proposal_id);
@@ -159,6 +170,7 @@ export class GenerationSupervisor {
     if (c.state === "BORN") return c;
     const candidate = this.checked(c), previous = this.base(c.request);
     if (c.state !== "APPROVED" || c.approval_hash !== candidate.candidate_hash) throw new Error("OWNER_EXACT_CANDIDATE_APPROVAL_REQUIRED");
+    if(this.runtime.worlds&&!candidate.instance_compatibility)throw new Error('INSTANCE_ASSETS_CHANGED');
     if (this.lineage.proposal(candidate.proposal_id).candidate_hash !== candidate.candidate_hash) throw new Error("GENE_PROPOSAL_CANDIDATE_CONFLICT");
     if (this.db.prepare("SELECT id FROM candidates WHERE state IN ('BIRTHING','ROLLING_BACK')").get()) throw new Error("EVOLUTION_RECOVERY_REQUIRED");
     const number = this.nextNumber(), generation = `G${String(number).padStart(4, "0")}`;
@@ -170,6 +182,11 @@ export class GenerationSupervisor {
     try {
       await this.runtime.checkRunning?.(previous.id); runningChecked = true;
       await this.runtime.quiesce(); quiesced = true;
+      await this.inheritedPreflight(c);
+      if(this.runtime.worlds){const fresh=await instanceCompatibility(this.workspace,previous.id,candidate.directory,this.runtime.worlds()),saved=candidate.instance_compatibility as any;
+        if(saved&&evolutionHash({body:saved.bodyHashes,extensions:saved.extensions})!==evolutionHash({body:fresh.bodyHashes,extensions:fresh.extensions}))throw new Error('INSTANCE_ASSETS_CHANGED');
+        this.event(id,'instance_compatibility_preflight',fresh);
+      }
       await snapshotDatabase(this.lineage.db.dbPath, path.join(snapshots, "lineage-before.sqlite3"));
       if(this.runtime.worlds){
         await snapshotDatabase(path.join(this.workspace,'control/control.sqlite3'),path.join(snapshots,'control-before.sqlite3'));
@@ -215,8 +232,11 @@ export class GenerationSupervisor {
           policy:"RAW_FACTS_RETAINED_NO_MODEL_NO_COMPLETED_DREAM"
         }, `owner-maintenance-dream:${id}`);
       }
-      // Entirely separate workspace: cloned Lineage, cloned Current, no private credentials.
+      // World candidates see synthetic facts only. Production snapshots remain in trusted maintenance storage.
       const testWorkspace = path.join(this.directory, "candidate-workspaces", id);
+      if(this.runtime.worlds){
+        await prepareCompatibilityFixture(testWorkspace,target,genome,worlds.map(w=>w.id));
+      }else{
       const testSystem=this.runtime.worlds?path.join(testWorkspace,'system'):testWorkspace;
       const testLineagePath = path.join(testSystem, "lineage/lineage.sqlite3");
       await snapshotDatabase(this.lineage.db.dbPath, testLineagePath);
@@ -229,19 +249,6 @@ export class GenerationSupervisor {
       await snapshotDatabase(path.join(newDirectory, "current.sqlite3"), path.join(testGeneration, "current.sqlite3"));
       copyDirectoryNew(path.join(newDirectory, "body"), path.join(testGeneration, "body"));
       writeGenerationPointer(testSystem, generation);
-      if(this.runtime.worlds){
-        await snapshotDatabase(path.join(this.workspace,'control/control.sqlite3'),path.join(testSystem,'control/control.sqlite3'));
-        const paymentFile=path.join(this.workspace,'payment/payment.sqlite3');
-        if(fs.existsSync(paymentFile))await snapshotDatabase(paymentFile,path.join(testSystem,'payment/payment.sqlite3'));
-        for(const world of worlds){const copied=path.join(testWorkspace,'worlds',world.id);
-          copyDirectoryNew(path.join(world.directory,'live'),path.join(copied,'live'));
-          fs.copyFileSync(path.join(world.directory,'world.json'),path.join(copied,'world.json'),fs.constants.COPYFILE_EXCL);
-          await snapshotDatabase(path.join(world.directory,'ledger/v9_core.sqlite3'),path.join(copied,'ledger/v9_core.sqlite3'));
-          const nextWorld=path.join(world.directory,'generations',generation),testWorld=path.join(copied,'generations',generation);
-          await snapshotDatabase(path.join(nextWorld,'current.sqlite3'),path.join(testWorld,'current.sqlite3'));
-          copyDirectoryNew(path.join(nextWorld,'body'),path.join(testWorld,'body'));
-        }
-        fs.writeFileSync(path.join(testWorkspace,'workspace-layout.json'),JSON.stringify({schema:1,version:23,candidate:true}),{flag:'wx'});
       }
       this.phase(id, "CANDIDATE_SMOKE");
       await this.runtime.smoke(candidate.directory, testWorkspace, generation);

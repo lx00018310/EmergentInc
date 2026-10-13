@@ -42,6 +42,13 @@ export async function registerWorldRoutes(app:FastifyInstance,s:WorldRouteServic
     }
   });
   app.get<{Params:{id:string}}>('/worlds/:id/current',async req=>(await manager.open(req.params.id)).life.current.meta());
+  app.get<{Params:{id:string}}>('/worlds/:id/extensions',async req=>({items:(await manager.extensions(req.params.id)).list()}));
+  app.post<{Params:{id:string}}>('/worlds/:id/extensions',async req=>{
+    const b=req.body as any,r=await manager.open(req.params.id);if(!r.store.pixels.getPixelAccount(b?.pixelId)?.active)throw new Error('EXTENSION_ACTOR_INVALID');
+    return (await manager.extensions(req.params.id)).submit(b.pixelId,b.manifest);
+  });
+  app.post<{Params:{id:string;extension:string}}>('/worlds/:id/extensions/:extension/actions',async req=>(await manager.extensions(req.params.id)).action(req.params.extension,req.body));
+  app.post<{Params:{id:string;extension:string}}>('/worlds/:id/extensions/:extension/run',async req=>{manager.automation?.assertOn();return (await manager.extensions(req.params.id)).run(req.params.extension,(req.body as any)?.input);});
   app.post<{Params:{id:string}}>('/worlds/:id/body/skills',async req=>{const b=req.body as any;return promotion.createBodySkill(req.params.id,b?.pixel_id,b?.candidate);});
   app.post<{Params:{id:string;skill:string}}>('/worlds/:id/body/skills/:skill/run',async req=>promotion.runBodySkill(req.params.id,req.params.skill,(req.body as any)?.input));
   app.post<{Params:{id:string}}>('/worlds/:id/promotions',async req=>{const b=req.body as any;return promotion.nominate(req.params.id,b?.pixel_id,b);});

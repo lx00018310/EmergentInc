@@ -22,6 +22,16 @@ Acceptance supports immutable draft-file receipts (filename, minimum bytes and S
 
 See the [Owner guide](docs/guides/OWNER_GUIDE.md) and [V29 implementation report](docs/EmergentInc_V29_实施记录.md). This is a development candidate until separately approved and deployed; isolated mock tests do not prove real customer results.
 
+## V30: keep Core and instance assets separate
+
+Git Core commits, approved Releases/Generations, and private extension versions are independent identities. Updating Core does not move private World assets into Git. During official Core candidate preparation (HEAD or a pinned commit), V30 verifies the active approved Release and public Gene provenance, then inherits approved active and historical asset files into the private candidate before installation and final hashes. Conflicting versions/content or unknown non-asset Gene customization stop preparation. The new Core manifest keeps its own contracts and protected paths.
+
+New private pure programs use `LIST_EXTENSIONS`, `SUBMIT_EXTENSION`, `RUN_EXTENSION` and `SET_EXTENSION_STATE`. Immutable programs and CAS activation pointers live in each World's `extensions/`; `extension-data/` stays separate and is not accessible to the interpreter. The existing `pure-ast-json@1` engine validates JSON input/output and at least two tests. Extension updates do not create a Generation. Host Node/React programs are archived as unsupported candidates and are never imported. Markdown methods continue to use the existing Skills library.
+
+Compatibility preflight checks Gene, Body, scoped Markdown methods, extension hashes/contracts and persisted V29 control facts. Critical incompatibilities block publication; incompatible extensions retain their files and requested state while execution is disabled. Manually disabled extensions stay disabled. Synthetic candidate smoke fixtures contain no production customer rows or private files; original snapshots stay in trusted maintenance storage. Historical `APP_CODE` reports remain available and are marked for explicit rebase review against a new Core. Core patches still require the existing exact-hash maintenance approval.
+
+The Owner goal details expose private extensions without a new main navigation page. See the [V30 implementation report](docs/EmergentInc_V30_实施记录.md) for the isolated Git upgrade/rollback evidence and supported limits. No claim is made that arbitrary Core source patches, host applications or destructive schema changes automatically remain compatible.
+
 ## One business, one public website
 
 | Address | Purpose |

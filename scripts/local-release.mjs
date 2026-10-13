@@ -45,7 +45,7 @@ export async function installReleaseDependencies(directory) {
   });
 }
 
-export async function freezeLocalRelease(source, destination, install = installReleaseDependencies) {
+export async function freezeLocalRelease(source, destination, install = installReleaseDependencies, prepare) {
   if (fs.existsSync(destination)) throw new Error('LOCAL_RELEASE_TARGET_EXISTS');
   const copy = relative => {
     const from = path.join(source, relative), to = path.join(destination, relative), stat = fs.lstatSync(from);
@@ -60,7 +60,7 @@ export async function freezeLocalRelease(source, destination, install = installR
     } else if (stat.isFile()) fs.copyFileSync(from, to, fs.constants.COPYFILE_EXCL);
     else throw new Error('LOCAL_RELEASE_SPECIAL_FILE');
   };
-  copy(''); await install(destination);
+  copy(''); if (prepare) await prepare(destination); await install(destination);
   return { directory: destination, hash: frozenReleaseHash(destination) };
 }
 

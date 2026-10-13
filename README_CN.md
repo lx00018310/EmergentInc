@@ -22,6 +22,16 @@
 
 详见 [Owner 指南](docs/guides/OWNER_GUIDE.md) 和 [V29 实施记录](docs/EmergentInc_V29_实施记录.md)。独立批准和部署前属于开发候选；隔离模拟测试不代表真实客户经营结果。
 
+## V30：Core 与实例资产分离
+
+Git Core 提交、已批准 Release/Generation、私有扩展版本是独立身份。更新 Core 不会把 World 私有资产搬进 Git。官方 Core 候选准备（HEAD 或指定提交）先核实真实已批准 Release 和公共 Gene 来源，再在安装与最终哈希前把已批准的现役及历史资产继承到私有候选。同 ID 版本/内容冲突、无法识别的非资产 Gene 定制会停止准备；新 Core 保留自己的契约与保护路径。
+
+新私有纯计算程序使用 `LIST_EXTENSIONS`、`SUBMIT_EXTENSION`、`RUN_EXTENSION`、`SET_EXTENSION_STATE`。不可变程序和 CAS 启用指针保存在各 World 的 `extensions/`；`extension-data/` 独立保留，解释器不能访问。继续使用现有 `pure-ast-json@1`，验证 JSON 输入输出及至少两个测试；扩展更新不创建 Generation。宿主 Node/React 程序只作为不支持的候选存档，绝不动态加载。Markdown 工作方法继续用原 Skills 库。
+
+兼容预检检查 Gene、Body、有作用域的 Markdown 方法、扩展哈希/契约和 V29 控制事实。关键不兼容阻止发布；不兼容扩展保留原文件和原启用意图，禁止执行；Owner 主动停用的扩展继续停用。候选烟测使用模拟 fixture，不包含生产客户行或私有文件，原始快照留在可信维护目录。历史 `APP_CODE` 报告保留，并提示针对新 Core 显式检查和 rebase；Core 补丁仍须现有准确哈希维护批准。
+
+Owner 目标详情可查看私有扩展，不增加主要导航页。隔离 Git 升级/回退证据及支持边界见 [V30 实施记录](docs/EmergentInc_V30_实施记录.md)。不承诺任意 Core 源码补丁、宿主应用或破坏性 Schema 变更自动兼容。
+
 ## 一门生意，一个对外网站
 
 | 地址 | 用途 |

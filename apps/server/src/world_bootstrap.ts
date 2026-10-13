@@ -81,6 +81,6 @@ export async function bootstrapWorlds(projectRoot:string,config:ReturnType<typeo
   if(!paused)await manager.resumeInterrupted();
   starting=false;
   if(!paused){promotion.reconcileInherited();payments.deliverMemories();monitor.start();dream.start();business.start({exclusiveWorkspaceLockHeld:true});await ownerWork.tick();}
-  console.log(`[EmergentInc V29] ${active.id}, ${registry.list().length} Worlds, http://${config.host}:${process.env.PORT||8765}`);
+  console.log(`[EmergentInc V30] ${active.id}, ${registry.list().length} Worlds, http://${config.host}:${process.env.PORT||8765}`);
   return app;
 }

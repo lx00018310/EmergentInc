@@ -103,6 +103,14 @@
       "scope": "instance",
       "payment_schema": 3,
       "rollback_to_v23": "only_without_instance_payment_facts"
+    },
+    "extension@1": {
+      "engine": "pure-ast-json@1",
+      "scope": "world",
+      "identity": "sha256",
+      "host_imports": false,
+      "data_access": false,
+      "activation": "compare_and_swap"
     }
   }
 }

@@ -51,7 +51,7 @@ it.skipIf(process.env.EMERGENTINC_CANDIDATE_MODE==='1')('preserves public busine
   const supervisor=new GenerationSupervisor(state,join(workspace,'system'),releases,lineage,runtime,true);let cookie='';
   const call=async(method:string,url:string,payload?:any)=>{const response=await fetch(runtime.config.appUrl+url,{method,headers:{cookie,'Content-Type':'application/json',Connection:'close'},...(payload?{body:JSON.stringify(payload)}:{})});
     const result=await response.json() as any;expect(response.status,JSON.stringify(result)).toBeLessThan(300);return result;};
-  const login=async()=>{const response=await fetch(runtime.config.appUrl+'/api/login',{method:'POST',headers:{'Content-Type':'application/json',Connection:'close'},body:JSON.stringify({secret})});cookie=response.headers.get('set-cookie')!.split(';')[0]!;const control=await call('GET','/api/owner/automation');if(control.desiredMode==='OFF')await call('POST','/api/owner/automation',{desiredMode:'ON',runMode:'CONTINUOUS',maxTokens:100000000,expectedRevision:control.revision,idempotencyKey:crypto.randomUUID()});};
+  const login=async(authorize=true)=>{const response=await fetch(runtime.config.appUrl+'/api/login',{method:'POST',headers:{'Content-Type':'application/json',Connection:'close'},body:JSON.stringify({secret})});cookie=response.headers.get('set-cookie')!.split(';')[0]!;const control=await call('GET','/api/owner/automation');if(authorize&&control.desiredMode==='OFF')await call('POST','/api/owner/automation',{desiredMode:'ON',runMode:'CONTINUOUS',maxTokens:100000000,expectedRevision:control.revision,idempotencyKey:crypto.randomUUID()});};
   const publicCall=async(method:string,url:string,payload?:any,token?:string)=>{
     const response=await fetch(runtime.config.appUrl+url,{method,headers:{'Content-Type':'application/json',Connection:'close',...(token?{Authorization:'Bearer '+token}:{})},...(payload?{body:JSON.stringify(payload)}:{})});
     const result=await response.json() as any;expect(response.status,JSON.stringify(result)).toBeLessThan(300);return result;
@@ -84,13 +84,24 @@ it.skipIf(process.env.EMERGENTINC_CANDIDATE_MODE==='1')('preserves public busine
     const proposal=await call('POST',`/api/evolution/promotions/${nomination.id}/propose`,{shareConsent:true,privacy:'PUBLIC',license:'MIT',genericity:'JSON independent rows',point:'Shared counter',reason:'Tested on two inputs',effect:'Fresh Worlds inherit'});
     const direction=await call('POST',`/api/evolution/proposals/${proposal.id}/decision`,{decision:'APPROVED'});
     expect(direction.candidateRequest.patch).toHaveLength(3);supervisor.submit(direction.candidateRequest);
+    const offBefore=await call('GET','/api/owner/automation');await call('POST','/api/owner/automation',{desiredMode:'OFF',expectedRevision:offBefore.revision,idempotencyKey:crypto.randomUUID()});
+    const goal=await call('POST','/api/owner/goals',{title:'Synthetic retained goal',objective:'Retain evidence across a real process upgrade',maxTokens:123456,acceptance:{kind:'manual',description:'Verify retained original source evidence'},idempotencyKey:crypto.randomUUID()});
+    const pausedGoal=await call('POST',`/api/owner/goals/${goal.id}/actions`,{action:'pause',expectedRevision:goal.revision,idempotencyKey:crypto.randomUUID()});
+    const program={schema:1,id:'process-counter',version:'1.0.0',engine:'pure-ast-json@1',requiredContracts:['pure_skill@1'],dataSchemaVersion:1,source:'export default i=>({count:i.rows.length})',tests:[{input:{rows:[]},expected:{count:0}},{input:{rows:[1]},expected:{count:1}}]};
+    const ext=await call('POST',`/api/worlds/${a.world_id}/extensions`,{pixelId:'0_0_0',manifest:program});await call('POST',`/api/worlds/${a.world_id}/extensions/${program.id}/actions`,{action:'activate',hash:ext.hash,expectedRevision:0,expectedHash:null,idempotencyKey:crypto.randomUUID()});
+    const extensionData=join(registry.directory(a.world_id),'extension-data/process-counter/retained.json');fs.mkdirSync(join(extensionData,'..'),{recursive:true});fs.writeFileSync(extensionData,'{"synthetic":true,"retained":1}');
     const checked=await supervisor.validate(direction.candidateRequest.id);expect(()=>supervisor.approve(checked.id,'wrong')).toThrow('OWNER_CANDIDATE_HASH');
-    supervisor.approve(checked.id,checked.candidate.candidate_hash);await supervisor.birth(checked.id);await login();
+    supervisor.approve(checked.id,checked.candidate.candidate_hash);await supervisor.birth(checked.id);await login(false);
+    expect((await call('GET','/api/owner/automation')).desiredMode).toBe('OFF');expect((await call('GET',`/api/owner/goals/${goal.id}`)).goal).toEqual(pausedGoal);
+    expect((await call('GET',`/api/worlds/${a.world_id}/extensions`)).items[0]).toMatchObject({hash:ext.hash,enabled:true});expect(fs.readFileSync(extensionData,'utf8')).toBe('{"synthetic":true,"retained":1}');
+    expect(fs.existsSync(join(state,'candidate-workspaces',checked.id,'worlds',a.world_id,'extension-data'))).toBe(false);
+
     expect((await call('GET','/api/public-site')).orders).toHaveLength(2);expect((await call('GET','/api/public-site')).revenue.mainnetAtomic).toBe('10000001');
     expect((await publicCall('GET',`/api/public/orders/${publicOrder.order_id}/payment`,undefined,publicOrder.public_order_token)).status).toBe('PAID');
     expect((await publicCall('GET',`/api/public/orders/${pendingOrder.order_id}/payment`,undefined,pendingOrder.public_order_token)).status).toBe('AWAITING_PAYMENT');
     expect(fs.existsSync(join(state,'snapshots',checked.id,'control-before.sqlite3'))).toBe(true);expect(fs.existsSync(join(state,'snapshots',checked.id,'payment-before.sqlite3'))).toBe(true);
     expect((await call('GET',`/api/worlds/${a.world_id}`)).current.generation_id).toBe('G0002');expect((await call('GET',`/api/worlds/${b.world_id}`)).current.generation_id).toBe('G0002');
+    await login();
     const fresh=await call('POST','/api/qianji/recruit',{idempotencyKey:'fresh'}),freshWorld=control.worldForQianji(fresh.profile.qianjiId);
     const info=await call('GET',`/api/worlds/${freshWorld.world_id}`);expect(info.current.generation_id).toBe('G0002');expect(fs.readdirSync(join(registry.directory(freshWorld.world_id),'generations/G0002/body/skills'))).toEqual([]);
     const catalog=await call('GET','/api/gene/assets'),asset=catalog.assets[0];sharedAsset=asset.id;expect(catalog.provenance[0].world_id).toBe(a.world_id);
@@ -99,7 +110,10 @@ it.skipIf(process.env.EMERGENTINC_CANDIDATE_MODE==='1')('preserves public busine
     for(let i=0;i<100;i++){if(!(await call('GET',`/api/worlds/${freshWorld.world_id}/api/run/status`)).running)break;await new Promise(r=>setTimeout(r,30));}
     const freshCore=new (await import('@emergentinc/persistence')).CoreStore(join(registry.directory(freshWorld.world_id),'ledger/v9_core.sqlite3'),{readOnly:true});
     try{const executed=freshCore.db.prepare("SELECT result,status FROM tool_executions WHERE tool='CALL_GENE_SKILL'").get();expect(executed?.status).toBe('SUCCESS');expect(String(executed?.result)).toContain('"origin":"gene"');}finally{freshCore.close();}
-    await supervisor.rollback(checked.id,'Explicit test rollback after a new World was born');await login();
+    const beforeRollback=await call('GET','/api/owner/automation');await call('POST','/api/owner/automation',{desiredMode:'OFF',expectedRevision:beforeRollback.revision,idempotencyKey:crypto.randomUUID()});
+    await supervisor.rollback(checked.id,'Explicit test rollback after a new World was born');await login(false);
+    expect((await call('GET','/api/owner/automation')).desiredMode).toBe('OFF');expect((await call('GET',`/api/owner/goals/${goal.id}`)).goal).toEqual(pausedGoal);expect(fs.readFileSync(extensionData,'utf8')).toBe('{"synthetic":true,"retained":1}');
+
     expect((await publicCall('GET',`/api/public/orders/${publicOrder.order_id}/payment`,undefined,publicOrder.public_order_token)).status).toBe('PAID');
     expect((await publicCall('GET',`/api/public/orders/${pendingOrder.order_id}/payment`,undefined,pendingOrder.public_order_token)).status).toBe('AWAITING_PAYMENT');
     expect((await call('GET','/api/public-site')).revenue.mainnetAtomic).toBe('10000001');expect((await call('GET','/api/public-site')).orders).toHaveLength(2);

@@ -190,7 +190,7 @@ export class OwnerAutomationGate {
     const run = this.store.db.prepare("SELECT run_id FROM owner_run_permits WHERE world_id=? AND state='ACTIVE'").get(worldId);
     if (run) this.assertGoal(this.binding(String(run.run_id)));
     // World tools have no trusted publication approval. Business connectors retain their own exact approvals.
-    if (effect === 'write' && !['save_artifact', 'transfer_artifact', 'REQUEST_RECRUIT', 'SUBMIT_APP_CODE', 'CREATE_BODY_SKILL', 'CALL_BODY_SKILL', 'NOMINATE_GENE_ASSET', 'PROMOTE_BODY_SKILL'].includes(name)) ownerConflict('OWNER_EXTERNAL_APPROVAL_REQUIRED');
+    if (effect === 'write' && !['save_artifact', 'transfer_artifact', 'REQUEST_RECRUIT', 'SUBMIT_APP_CODE', 'CREATE_BODY_SKILL', 'CALL_BODY_SKILL', 'SUBMIT_EXTENSION', 'SET_EXTENSION_STATE', 'NOMINATE_GENE_ASSET', 'PROMOTE_BODY_SKILL'].includes(name)) ownerConflict('OWNER_EXTERNAL_APPROVAL_REQUIRED');
     if (['ROLLBACK_RELEASE', 'DELETE_RELEASE'].includes(name)) ownerConflict('OWNER_MAINTENANCE_APPROVAL_REQUIRED');
   }
   provider(provider: ModelProvider, meter: UsageMeter, worldId?: string,sourceKind=worldId?'world':'owner_chat',capacity:()=>number=()=>Infinity,resourceBinding?:GoalRunBinding): ModelProvider {
