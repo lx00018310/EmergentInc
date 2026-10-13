@@ -1476,3 +1476,28 @@ export const zhCN: Record<string, string> = {
   "按准确版本和指针 revision 激活、停用或回退本 World 私有扩展；保留所有版本与数据。": "按准确版本和指针 revision 激活、停用或回退本 World 私有扩展；保留所有版本与数据。",
   "Activate extension version {0}": "启用扩展版本 {0}",
 };
+
+Object.assign(zhCN, {
+  "Describe work to assign by role. AI calls use the company token quota; recruitment, external publication and upgrades require Owner approval.": "描述任务，系统按职责派工。AI 调用使用公司 Token 总额度；招聘、对外发布和软件升级需 Owner 批准。",
+  "AI calls use the company token quota.": "AI 调用统一使用公司 Token 总额度。",
+  "Approval authorizes the displayed actions, including external writes. AI calls use the company token quota.": "批准所展示的动作，包括对外写入。AI 调用统一使用公司 Token 总额度。",
+  "Authorizes revision R{0} and its displayed tasks and external writes. AI calls use the company token quota. Approval is not completion.": "批准 R{0} 版本展示的任务及对外写入。AI 调用使用公司 Token 总额度；批准不等于完成。",
+  "Review new feedback using the company token quota; revisions still need approval. Purpose:": "使用公司 Token 总额度复盘新反馈；修订仍需批准。用途：",
+  "Business information": "经营信息",
+  "Available tokens": "可用 Token",
+  "Company token quota": "公司 Token 总额度",
+  "Company tokens: {0} used, {1} reserved / {2} total": "Tokens：已用 {0}，预留 {1} / 总额度 {2}",
+  "Token quota needs Owner approval. Increase the total quota to continue.": "Token 总额度不足，等待 Owner 审批增加额度后继续。",
+  "New total token quota": "新的 Token 总额度",
+  "Approve token quota": "批准 Token 总额度",
+  "One quota for all AI calls. OFF/ON and restarts never reset usage; only Owner can increase the total.": "所有 AI 调用共享一个累计总额度。开关和重启不清零用量；只有 Owner 可以批准增加总额度。",
+  "Saving confirms this goal and its acceptance rule. It uses the company token quota; external publication and maintenance need separate approval.": "保存即确认目标与验收规则，执行使用公司 Token 总额度；对外发布和维护仍需单独批准。",
+  "Confirm goal": "确认目标",
+  "Describe a goal to get started. It uses the company token quota.": "描述目标即可开始，执行使用公司 Token 总额度。",
+  "Goal tokens used: {0}": "目标已用 Tokens：{0}",
+  "Tokens used: {0}; known cost: ¥{1}; evidence: {2}": "已用 Tokens：{0}；已知费用 ¥{1}；证据 {2} 条",
+  "Active Worlds only. Running tasks count active Runs; available tokens are the company quota minus usage and reservations.": "仅统计活跃 World。运行中任务按正在执行的 Run 计数；可用 Token 为公司总额度扣除已用和预留。",
+  "Company token quota needs approval": "公司 Token 总额度需要审批",
+  "OWNER_TOKEN_LIMIT": "公司 Token 总额度不足，等待 Owner 增加额度。",
+  "OWNER_BUDGET_BELOW_SPENT": "总额度只能增加，且不得低于已用及预留的 Tokens。"
+});

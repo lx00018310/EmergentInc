@@ -61,7 +61,6 @@ export class OwnerGoalService {
   private validate(input: any) {
     ownerInput(typeof input.title === 'string' && input.title.trim().length > 0 && input.title.length <= 160);
     ownerInput(typeof input.objective === 'string' && input.objective.trim().length > 0 && input.objective.length <= 1200);
-    ownerInput(Number.isSafeInteger(input.maxTokens) && input.maxTokens > 0 && input.maxTokens <= 1_000_000_000);
     const a = input.acceptance as OwnerGoalAcceptance;
     ownerInput(a && ['artifact', 'manual','confirmed_payments'].includes(a.kind));
     if (a.kind === 'artifact') {
@@ -75,7 +74,7 @@ export class OwnerGoalService {
     exactKeys(input, ['title', 'objective', 'acceptance', 'maxTokens', 'idempotencyKey']); this.validate(input);
     return this.request(input.idempotencyKey, { create: input }, () => {
       const id = `goal_${randomUUID()}`, now = Date.now();
-      this.store.db.prepare("INSERT INTO owner_goals(id,revision,specification_revision,title,objective,acceptance,max_tokens,status,created_at,updated_at) VALUES(?,1,1,?,?,?,?,'READY',?,?)").run(id, input.title.trim(), input.objective.trim(), JSON.stringify(input.acceptance), input.maxTokens, now, now);
+      this.store.db.prepare("INSERT INTO owner_goals(id,revision,specification_revision,title,objective,acceptance,max_tokens,status,created_at,updated_at) VALUES(?,1,1,?,?,?,?,'READY',?,?)").run(id, input.title.trim(), input.objective.trim(), JSON.stringify(input.acceptance), 0, now, now);
       const goal = this.get(id); this.snapshot(goal); this.event(id, 'created', { acceptance: goal.acceptance }); return goal;
     });
   }
@@ -84,8 +83,7 @@ export class OwnerGoalService {
     return this.request(input.idempotencyKey, { edit: id, input }, () => {
       const old = this.get(id); if (old.revision !== input.expectedRevision) ownerConflict();
       if (old.status === 'ARCHIVED') ownerConflict('OWNER_GOAL_ARCHIVED');
-      ownerInput(input.maxTokens >= old.spentTokens + old.reservedTokens, 'OWNER_BUDGET_BELOW_SPENT');
-      this.store.db.prepare("UPDATE owner_goals SET revision=revision+1,specification_revision=specification_revision+1,title=?,objective=?,acceptance=?,max_tokens=?,status='READY',reason=NULL,verified_count=0,evidence_count=0,next_action='',updated_at=? WHERE id=?").run(input.title.trim(), input.objective.trim(), JSON.stringify(input.acceptance), input.maxTokens, Date.now(), id);
+      this.store.db.prepare("UPDATE owner_goals SET revision=revision+1,specification_revision=specification_revision+1,title=?,objective=?,acceptance=?,max_tokens=?,status='READY',reason=NULL,verified_count=0,evidence_count=0,next_action='',updated_at=? WHERE id=?").run(input.title.trim(), input.objective.trim(), JSON.stringify(input.acceptance), 0, Date.now(), id);
       const goal = this.get(id); this.snapshot(goal); this.event(id, 'edited', { previousRevision: old.specificationRevision }); return goal;
     });
   }

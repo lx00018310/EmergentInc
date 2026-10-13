@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import { OwnerCompany, OwnerTokenQuota } from '../src/features/owner/OwnerCompany';
 import { OwnerGoals } from '../src/features/owner/OwnerGoals';
 import { OwnerConsole } from '../src/features/owner/OwnerConsole';
 import { setLanguage, t } from '../src/i18n';
@@ -17,34 +18,34 @@ describe('V29 goal-first bilingual Owner UI',()=>{
     render(<OwnerGoals goals={[]} automation={automation} onDone={done}/>);
     fireEvent.click(screen.getByRole('button',{name:t('Add goal')}));fireEvent.change(screen.getByLabelText(t('Acceptance rule')),{target:{value:'artifact'}});
     fireEvent.change(screen.getByLabelText(t('Describe the business goal')),{target:{value:'Validate a service research draft'}});
-    fireEvent.change(screen.getByLabelText(t('Goal token authorization')),{target:{value:'100000'}});
-    await act(async()=>fireEvent.click(screen.getByRole('button',{name:t('Confirm goal and budget')})));await vi.waitFor(()=>expect(done).toHaveBeenCalledOnce());
+    await act(async()=>fireEvent.click(screen.getByRole('button',{name:t('Confirm goal')})));await vi.waitFor(()=>expect(done).toHaveBeenCalledOnce());
     expect(fetch.mock.calls[0][0]).toBe('/api/owner/goals');const body=JSON.parse(fetch.mock.calls[0][1]!.body as string);
-    expect(body).toMatchObject({objective:'Validate a service research draft',maxTokens:100000,acceptance:{kind:'artifact',filename:'result.md',minBytes:100}});expect(body.idempotencyKey).toBeTruthy();expect(fetch.mock.calls.some(c=>String(c[0]).includes('/chat'))).toBe(false);
+    expect(body).toMatchObject({objective:'Validate a service research draft',acceptance:{kind:'artifact',filename:'result.md',minBytes:100}});expect(body.idempotencyKey).toBeTruthy();expect(fetch.mock.calls.some(c=>String(c[0]).includes('/chat'))).toBe(false);
   });
   it('keeps goal drafts on language changes and uses one stable request key after a lost response',async()=>{
     const fetch=vi.spyOn(globalThis,'fetch').mockRejectedValueOnce(new Error('Network disconnected')).mockResolvedValue(response(goal));
-    render(<OwnerGoals goals={[]} automation={automation} onDone={async()=>{}}/>);fireEvent.click(screen.getByRole('button',{name:'Add goal'}));fireEvent.change(screen.getByLabelText('Describe the business goal'),{target:{value:'Preserve this draft'}});fireEvent.change(screen.getByLabelText('Goal token authorization'),{target:{value:'100000'}});
-    await act(async()=>fireEvent.click(screen.getByRole('button',{name:'Confirm goal and budget'})));expect(screen.getByRole('alert').textContent).toContain('Network disconnected');
+    render(<OwnerGoals goals={[]} automation={automation} onDone={async()=>{}}/>);fireEvent.click(screen.getByRole('button',{name:'Add goal'}));fireEvent.change(screen.getByLabelText('Describe the business goal'),{target:{value:'Preserve this draft'}});
+    await act(async()=>fireEvent.click(screen.getByRole('button',{name:'Confirm goal'})));expect(screen.getByRole('alert').textContent).toContain('Network disconnected');
     act(()=>setLanguage('zh-CN'));expect((screen.getByLabelText('描述经营目标') as HTMLTextAreaElement).value).toBe('Preserve this draft');
-    await act(async()=>fireEvent.click(screen.getByRole('button',{name:'确认目标及预算'})));
+    await act(async()=>fireEvent.click(screen.getByRole('button',{name:'确认目标'})));
     const bodies=fetch.mock.calls.map(c=>JSON.parse(c[1]!.body as string));expect(bodies[1].idempotencyKey).toBe(bodies[0].idempotencyKey);
   });
-  it('shows true STOPPING and verified draft counts, keeping the stop action usable when settings are incomplete',async()=>{
-    const fetch=vi.spyOn(globalThis,'fetch').mockResolvedValue(response({}));
-    const {rerender}=render(<OwnerGoals goals={[goal]} automation={{...automation,desiredMode:'ON',observedState:'RUNNING',startedRounds:3}} onDone={async()=>{}}/>);
-    expect(screen.getByText(/Started 3 \/ 7 rounds this session/)).toBeTruthy();expect(screen.getAllByText('Verified draft: 0 / 1').length).toBeGreaterThan(0);
-    await act(async()=>fireEvent.click(screen.getByRole('button',{name:'Pause company automation'})));
-    expect(JSON.parse(fetch.mock.calls[0][1]!.body as string)).toMatchObject({desiredMode:'OFF',expectedRevision:0});
-    rerender(<OwnerGoals goals={[goal]} automation={{...automation,observedState:'STOPPING',inFlight:2}} onDone={async()=>{}}/>);
-    expect(screen.getByText('Stopping')).toBeTruthy();expect((screen.getByRole('button',{name:'Authorize and start'}) as HTMLButtonElement).disabled).toBe(true);
+  it.each(['en','zh-CN'] as const)('shows only the company title and switch, with business information on its own page (%s)',async lang=>{
+    setLanguage(lang);const fetch=vi.spyOn(globalThis,'fetch').mockResolvedValue(response({asOf:Date.now(),goals:[goal],automation,summary:{currentGeneration:'G0025'},people:[],inbox:[],activity:[],availability:{business:true,upgrade:'not_configured'}}));
+    render(<OwnerConsole/>);await screen.findByRole('switch',{name:t('Company automation')});
+    const company=screen.getByRole('region',{name:t('My AI company')});expect(within(company).getAllByRole('switch')).toHaveLength(1);expect(within(company).getByRole('heading',{name:t('My AI company')})).toBeTruthy();
+    expect(screen.queryByRole('table',{name:t('Status overview')})).toBeNull();expect(screen.queryByRole('region',{name:t('Business goals')})).toBeNull();expect(screen.queryByRole('spinbutton')).toBeNull();
+    await act(async()=>fireEvent.click(screen.getByRole('switch')));expect(JSON.parse(fetch.mock.calls.find(c=>c[0]==='/api/owner/automation')![1]!.body as string)).toMatchObject({desiredMode:'ON',expectedRevision:0});
+    fireEvent.click(screen.getByRole('link',{name:t('Business goals')}));expect(screen.getByRole('heading',{name:'Market research'})).toBeTruthy();expect(screen.getByRole('table',{name:t('Status overview')})).toBeTruthy();expect(screen.getByRole('spinbutton',{name:t('New total token quota')})).toBeTruthy();expect(screen.queryByLabelText(t('Run mode'))).toBeNull();expect(screen.queryByLabelText(t('Goal token authorization'))).toBeNull();
+    fireEvent.click(screen.getByRole('link',{name:new RegExp(t('To-dos'))}));expect(screen.queryByRole('table')).toBeNull();
   });
-  it('places goals above auxiliary chat and preserves the Inbox/History tabs',async()=>{
-    vi.spyOn(globalThis,'fetch').mockResolvedValue(response({asOf:Date.now(),goals:[goal],automation,summary:{},people:[],inbox:[],activity:[],availability:{business:true,upgrade:'not_configured'}}));
-    render(<OwnerConsole/>);const section=await screen.findByRole('region',{name:'Business goals'});expect(within(section).getByRole('heading',{name:'Market research'})).toBeTruthy();
-    expect(screen.getByText('Company status and chat').parentElement?.hasAttribute('open')).toBe(false);
-    fireEvent.click(screen.getByRole('link',{name:'To-dos 0'}));expect(screen.queryByRole('region',{name:'Business goals'})).toBeNull();
-    fireEvent.click(screen.getByRole('link',{name:'Boss'}));expect(screen.getByRole('heading',{name:'Market research'})).toBeTruthy();
+  it('keeps OFF usable while stopping and approves a shared quota without changing the switch',async()=>{
+    const fetch=vi.spyOn(globalThis,'fetch').mockResolvedValue(response({}));const done=async()=>{};
+    const {unmount}=render(<OwnerCompany automation={{...automation,desiredMode:'ON',observedState:'RUNNING'}} onDone={done}/>);
+    await act(async()=>fireEvent.click(screen.getByRole('switch')));expect(JSON.parse(fetch.mock.calls[0][1]!.body as string)).toMatchObject({desiredMode:'OFF'});unmount();
+    render(<OwnerTokenQuota automation={{...automation,desiredMode:'ON',observedState:'LIMIT_REACHED',maxTokens:100,spentTokens:100}} onDone={done}/>);
+    expect(screen.getByRole('status').textContent).toContain('Owner approval');fireEvent.change(screen.getByLabelText('New total token quota'),{target:{value:'200'}});
+    await act(async()=>fireEvent.click(screen.getByRole('button',{name:'Approve token quota'})));const body=JSON.parse(fetch.mock.calls.at(-1)![1]!.body as string);expect(body.maxTokens).toBe(200);expect(body.desiredMode).toBeUndefined();expect(body.runMode).toBeUndefined();expect(body.requestedRounds).toBeUndefined();
   });
   it('has matching English and Chinese keys for every new goal/control label',()=>{
     for(const key of Object.keys(en).filter(k=>k.startsWith('Goal status:')||k.startsWith('Goal event:')||k.startsWith('Automation state:')||k.startsWith('OWNER_'))){expect(zhCN[key],key).toBeTruthy();expect(en[key],key).not.toBe(key);}

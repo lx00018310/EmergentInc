@@ -229,3 +229,15 @@
 .owner-goal-detail li { margin:12px 0; }
 .owner-run-report { margin:24px 0; }
 @media(max-width:600px) { .owner-goals { padding:12px; }.owner-automation { padding:16px; }.owner-control-form { align-items:stretch; }.owner-control-form label,.owner-control-form input { width:100%; }.owner-goal-heading h2 { flex-basis:100%; } }
+
+.owner-company { min-height:460px; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:24px; }
+.owner-company h1 { margin:0; font-size:28px; font-weight:600; }
+.owner-company-switch { display:flex; gap:4px; padding:5px; border:1px solid #dce3e8; border-radius:999px; background:#edf0f3; color:#667085; }
+.owner-company-switch span { padding:10px 26px; border-radius:999px; font-size:16px; }
+.owner-company-switch .selected { background:#fff; color:#344054; box-shadow:0 1px 4px #16223118; }
+.owner-company-switch.is-on .selected { background:#267454; color:#fff; }
+.owner-goal-page { display:flex; flex-direction:column; gap:24px; padding:24px; }
+.owner-goal-page[hidden] { display:none; }
+.owner-token-quota { padding:20px; margin-bottom:24px; border:1px solid #dce3e8; border-radius:12px; background:#fff; }
+.owner-token-quota h2 { margin-top:0; }
+@media(max-width:600px) { .owner-goal-page { padding:12px; } .owner-company { min-height:340px; } }

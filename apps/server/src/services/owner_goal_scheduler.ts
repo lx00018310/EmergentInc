@@ -41,7 +41,7 @@ export class OwnerGoalScheduler {
       if (runtime?.run.getStatus().running) {if(goal.status==='READY')goals.state(goal.id,'RUNNING');continue;}
       const added = this.evaluator.collect(goal, String(d.id), String(d.world_id), task.reply as string | null);
       if (runtime?.store.runs.getCheckpoint(String(task.run_id))?.resume_pending) {
-        if(runtime.run.getStatus().stop_reason==='INFRASTRUCTURE_FAILURE'&&goal.status!=='BLOCKED')goals.state(goal.id,'BLOCKED',runtime.run.getStatus().error_summary??'INFRASTRUCTURE_FAILURE');
+        if(runtime.run.getStatus().stop_reason==='INFRASTRUCTURE_FAILURE'&&!String(runtime.run.getStatus().error_summary).includes('OWNER_TOKEN_LIMIT')&&goal.status!=='BLOCKED')goals.state(goal.id,'BLOCKED',runtime.run.getStatus().error_summary??'INFRASTRUCTURE_FAILURE');
         continue;
       }
       if(db.prepare("SELECT 1 FROM owner_goal_recruits r JOIN owner_recruit_requests q ON q.id=r.request_id WHERE r.goal_id=? AND r.goal_revision=? AND q.state='PENDING'").get(goal.id,goal.specificationRevision)){
@@ -50,6 +50,7 @@ export class OwnerGoalScheduler {
       if (task.state === 'QUEUED' || task.state === 'RUNNING') continue;
       if (goals.get(goal.id).status === 'COMPLETED') { this.finish(String(d.id)); continue; }
       const reason = String(task.reason ?? runtime?.run.getStatus().stop_reason ?? 'OWNER_GOAL_NEEDS_VERIFICATION');
+      if(reason.includes('OWNER_TOKEN_LIMIT')){db.prepare("UPDATE owner_work_tasks SET state='QUEUED',run_id=NULL,reason=NULL WHERE id=?").run(task.id);goals.state(goal.id,'READY');continue;}
       if (['BLOCKED', 'NO_REPLY'].includes(String(task.state)) && ['ROUND_LIMIT_REACHED', 'MESSAGE_LIMIT_REACHED'].includes(reason)) {
         const attempts = added ? 0 : Number(d.attempts) + 1;
         db.prepare('UPDATE owner_goal_steps SET attempts=? WHERE id=?').run(attempts, d.id);
@@ -72,7 +73,6 @@ export class OwnerGoalScheduler {
     if(continuation&&(!eligible.length||Number(continuation.last_scheduled_at)<=eligible[0]!.lastScheduledAt)){await this.work.tick(String(continuation.id));return;}
     if (!eligible.length) return;
     const goal = eligible[0]!;
-    if (goal.spentTokens + goal.reservedTokens >= goal.maxTokens) { goals.state(goal.id, 'BLOCKED', 'OWNER_GOAL_TOKEN_LIMIT'); return; }
     // Reuse real role/behavior profiles; avoid a paid routing call when choosing between existing people.
     const people = this.manager.list().filter(w => w.status === 'ACTIVE' && !w.blockedReason && !w.runtimeFailure && !db.prepare("SELECT 1 FROM owner_goal_dispatches WHERE world_id=? AND state IN ('RUNNING','QUEUED')").get(w.world_id));
     if (!people.length) {

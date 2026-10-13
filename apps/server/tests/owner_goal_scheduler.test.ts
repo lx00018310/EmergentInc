@@ -3,6 +3,20 @@ import { goalFixture } from './fixtures/owner_goals.js';
 import { TRANSFER_TOPIC } from '../src/services/payment_assets.js';
 const cleanups:(()=>Promise<void>)[]=[];afterEach(async()=>{for(const fn of cleanups.splice(0).reverse())await fn();});
 describe('V29 real World goal scheduler',()=>{
+  it('resumes quota-blocked goals after a total increase without per-goal, Run or pixel budgets',async()=>{
+    const f=goalFixture();cleanups.push(f.close);const goal=f.goal();expect(goal.maxTokens).toBe(0);
+    for(const world of f.manager.list()){
+      const runtime=await f.manager.open(world.world_id),start=runtime.run.start.bind(runtime.run);
+      runtime.store.db.prepare('UPDATE pixel_accounts SET energy=0').run();
+      vi.spyOn(runtime.run,'start').mockImplementation(options=>start({...options,runBudgetTokens:1}));
+    }
+    let count=0;f.respond(async()=>({rawText:JSON.stringify(++count===1?{operations:[{tool:'save_artifact',args:{filename:'result.md',content:'Actual retained draft after Owner quota increase.'}}],send_to:'STOP'}:{owner_reply:'Draft retained for inspection',send_to:'STOP'}),usage:{promptTokens:20,completionTokens:10,cachedTokens:0}}));
+    f.on(null,1);await f.scheduler.tick();
+    await vi.waitFor(async()=>{await f.work.tick();await f.scheduler.tick();expect(f.manager.list().some(w=>w.running)).toBe(false);expect(f.gate.view().observedState).toBe('LIMIT_REACHED');});
+    expect(f.calls).toHaveLength(0);expect(f.gate.view().desiredMode).toBe('ON');expect(f.gate.goals.get(goal.id).status).not.toBe('BLOCKED');
+    f.gate.control({maxTokens:100000,expectedRevision:f.gate.view().revision,idempotencyKey:crypto.randomUUID()});
+    await f.finish();expect(f.gate.goals.get(goal.id).status).toBe('COMPLETED');expect(f.gate.view().spentTokens).toBe(60);expect(f.calls).toHaveLength(2);
+  });
   it('binds an agent recruitment request to its goal budget, preserves pause on approval and routes resumed work to the approved specialist',async()=>{
     const f=goalFixture();cleanups.push(f.close);const goal=f.goal('Research draft');let worldCalls=0;
     f.respond(async request=>({rawText:JSON.stringify(request.messages[0].content.includes('人物设定编辑')?{displayName:'Specialist',shortBio:'Approved research specialist',appearanceSpec:'Neutral portrait'}:++worldCalls===1?{operations:[{tool:'REQUEST_RECRUIT',args:{role:'Research specialist',reason:'This goal requires specialist research capacity',instruction:'Produce the verifiable research draft'}}],send_to:'STOP'}:worldCalls===3?{operations:[{tool:'save_artifact',args:{filename:'result.md',content:'Specialist research draft with retained actual sources.'}}],send_to:'STOP'}:{owner_reply:'Review the real work and resource decision',send_to:'STOP'}),usage:{promptTokens:20,completionTokens:10,cachedTokens:0}}));
@@ -50,7 +64,7 @@ describe('V29 real World goal scheduler',()=>{
     const request=f.work.view().requests[0];await f.work.decide(request.id,request.hash,'approve');expect(f.registry.list()).toHaveLength(3);await f.scheduler.tick();await f.finish();
     expect(f.gate.goals.get(goal.id).status).toBe('WAITING_APPROVAL');expect(f.control.db.prepare('SELECT COUNT(*) n FROM owner_run_permits').get()!.n).toBe(1);
   });
-  it('fairly shares seven actual single-round Runs across two continuing goals and stops precisely at seven',async()=>{
+  it('fairly continues past the old shared round limit until each goal requires evidence review',async()=>{
     const f=goalFixture();cleanups.push(f.close);f.goal('Research draft');await new Promise(r=>setTimeout(r,2));f.goal('Marketing draft');
     for(const world of f.manager.list()){
       const runtime=await f.manager.open(world.world_id),start=runtime.run.start.bind(runtime.run);
@@ -58,10 +72,10 @@ describe('V29 real World goal scheduler',()=>{
     }
     const drafted=new Set<string>();
     f.respond(async()=>{const world=String(f.control.db.prepare("SELECT world_id FROM owner_run_permits WHERE state='ACTIVE'").get()!.world_id),first=!drafted.has(world);drafted.add(world);return {rawText:JSON.stringify({...first?{operations:[{tool:'save_artifact',args:{filename:'partial.md',content:`Actual partial evidence for ${world}`}}]}:{},message_md:'Continue the next small step',send_to:'SELF'}),usage:{promptTokens:20,completionTokens:10,cachedTokens:0}};});
-    f.on(7);await vi.waitFor(async()=>{await f.work.tick();await f.scheduler.tick();expect(f.gate.view().desiredMode,JSON.stringify({view:f.gate.view(),goals:f.gate.goals.list(),tasks:f.work.view().tasks})).toBe('OFF');},{timeout:10000,interval:10});
-    expect(f.gate.view()).toMatchObject({startedRounds:7,completedRounds:7,reservedRounds:0,observedState:'LIMIT_REACHED'});
+    f.on(7);await vi.waitFor(async()=>{await f.work.tick();await f.scheduler.tick();expect(f.gate.goals.list().every(g=>g.status==='BLOCKED'&&g.reason==='OWNER_NO_PROGRESS')).toBe(true);},{timeout:10000,interval:10});
+    expect(f.gate.view()).toMatchObject({desiredMode:'ON',startedRounds:8,completedRounds:8,reservedRounds:0,observedState:'IDLE'});
     const grouped=f.control.db.prepare('SELECT goal_id,COUNT(*) n FROM owner_run_permits GROUP BY goal_id').all();expect(grouped).toHaveLength(2);expect(grouped.every(r=>Number(r.n)>=3)).toBe(true);
-    expect(f.control.db.prepare("SELECT COUNT(*) n FROM owner_round_permits").get()!.n).toBe(7);
+    expect(f.control.db.prepare("SELECT COUNT(*) n FROM owner_round_permits").get()!.n).toBe(8);
   },15000);
   it('coordinates two existing people, verifies immutable draft bytes and never claims a report proves a sale',async()=>{
     const f=goalFixture();cleanups.push(f.close);const a=f.goal('Research draft');await new Promise(r=>setTimeout(r,2));const b=f.goal('Marketing real customers','manual');let count=0;

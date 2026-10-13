@@ -31,7 +31,7 @@ export function registerOwnerRoutes(app:FastifyInstance, overview:OwnerOverviewS
     app.get('/owner/automation/report',()=>gate.report());
     app.get('/owner/automation/calls',()=>({items:gate.modelCalls()}));
     app.post<{Params:{id:string}}>('/owner/automation/calls/:id/reconcile',req=>gate.reconcileCall(req.params.id,req.body));
-    app.post('/owner/automation',async req=>{const state=gate.control(req.body);if(state.desiredMode==='ON')await work?.manager.resumeInterrupted();await scheduler?.tick();return gate.view();});
+    app.post('/owner/automation',async req=>{gate.control(req.body);if(gate.isOn())await work?.manager.resumeInterrupted();await scheduler?.tick();return gate.view();});
   }
   app.get('/owner/overview',()=>overview.overview());
   app.post('/owner/chat',async(req,reply)=>{

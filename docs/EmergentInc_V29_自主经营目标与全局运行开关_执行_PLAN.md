@@ -468,6 +468,23 @@ Owner 选择归档 Goal-A → 默认清单移除，可在归档查回历史
 
 ## 执行记录 / Execution record
 
+### 2026-10-13 Owner 后续确认：简化公司入口与统一额度
+
+本节覆盖前文关于指定轮数、目标独立预算和每次开启重新授权额度的要求：
+
+- “我的 AI 公司”主页只保留标题和 ON/OFF。经营目标与状态总览移到左侧独立经营目标页。
+- ON 推进未完成经营任务及已到期定时任务；没有任务时待命。单个任务待审批，不阻止其他可执行任务。
+- 所有 AI 调用使用一个累计公司 Token 总额度；不再用目标、Run、元胞能量或经营方案金额额度阻止公司任务。实际费用与未知账单继续留痕。
+- OFF/ON、重启和提高额度均不重置历史用量。额度不足保持 ON 意图，等待 Owner 增加总额度，随后续跑尚未完成任务；未发送的定时复盘保留原任务。
+- 技术上的单次输出长度、执行片段轮数、无进展审查以及招聘、对外写入、软件升级和未知结果核实的审批边界保留。
+- 本次只修改开发候选；运行实例仍须通过现有 8766 准备、校验和精确批准流程升级。
+
+The company home now contains only its title and ON/OFF switch. Business goals and the status overview have a separate sidebar page. ON advances unfinished goals and due scheduled work, while approval blocks only its associated task. All AI calls share one cumulative company token quota; toggles, restarts and quota increases preserve usage. Insufficient quota waits for an Owner-approved total increase and resumes eligible work afterwards. Existing publication, maintenance, unknown-outcome and no-progress review boundaries remain. Deployment still uses the independent upgrade approval flow.
+
+验收记录：TypeScript 与前端构建通过，中英文隔离预览已核对；前端 191 项通过。全量初跑 977 项通过、2 项可选测试跳过；剩余 3 项在源码固定后串行复核通过，其中真实进程升级/回滚测试还完成了候选的完整校验。重点覆盖累计额度、并发预留、零目标/Run/元胞预算下执行、额度不足后增额续跑、到期定时任务与独立审批。未操作真实实例开关、额度、模型调用或部署。
+
+Validation: type checking, frontend build, bilingual isolated previews and 191 frontend tests passed. The initial full run passed 977 tests and skipped two optional tests; all three failures passed serial rechecks with fixed source, including a real-process upgrade/rollback test that also validated the complete frozen candidate. No live instance control, quota grant, paid call or deployment was performed.
+
 2026-10-13：P1/P2/P3 开发候选已实施。最终完整回归 946 项通过、2 项可选进程测试跳过；TypeScript 检查及前端构建通过。改动、Gate 挂载点、证据、未运行验收和实际边界见 [V29 实施记录](./EmergentInc_V29_实施记录.md)。未部署、未连接真实付费模型或钱包。
 
 The P1/P2/P3 development candidate is implemented. The complete suite passed 946 tests with two opt-in process tests skipped; type checking and the frontend build passed. See the implementation report for evidence and limits. No deployment or live model/payment acceptance was performed.

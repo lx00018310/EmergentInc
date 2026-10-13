@@ -70,7 +70,8 @@ export class OwnerOverviewService {
     const work=this.work?.view();
     const goals=manager.automation?.goals.list();
     const automation=manager.automation?.view();
-    if(automation?.observedState==='BLOCKED'&&automation.reason!=='EVOLUTION_QUIESCED')alerts.push({id:'automation:review',kind:'automation',severity:'critical',title:'Company automation needs review',summary:'',reasonKey:automation.reason??'OWNER_OUTCOME_REVIEW_REQUIRED',createdAt:automation.updatedAt,source:'owner_automation_control',href:'/OWNER?automationReview=true'});
+    if(automation?.observedState==='LIMIT_REACHED')alert('automation:quota','automation','normal','Company token quota needs approval','',automation.updatedAt,'owner_automation_control','/OWNER#owner-goals');
+    if(automation?.observedState==='BLOCKED'&&automation.reason!=='EVOLUTION_QUIESCED')alerts.push({id:'automation:review',kind:'automation',severity:'critical',title:'Company automation needs review',summary:'',reasonKey:automation.reason??'OWNER_OUTCOME_REVIEW_REQUIRED',createdAt:automation.updatedAt,source:'owner_automation_control',href:'/OWNER?automationReview=true#owner-goals'});
     if(goals)for(const goal of goals){
       if(['WAITING_APPROVAL','WAITING_RESOURCE','BLOCKED','FAILED'].includes(goal.status)&&goal.reason!=='OWNER_WAITING_PAYMENT')alerts.push({id:`goal:${goal.id}`,kind:'goal',severity:goal.status==='BLOCKED'?'critical':'normal',title:'Goal needs attention',summary:goal.title,reasonKey:goal.reason??`Goal status: ${goal.status}`,createdAt:goal.updatedAt,source:'owner_goals',href:`/OWNER?goal=${encodeURIComponent(goal.id)}`});
       for(const event of manager.automation!.goals.detail(goal.id).events.filter(e=>!['running','ready'].includes(e.kind)).slice(0,10))activity.push({id:`goal-event:${event.id}`,type:'Goal update',summary:`${goal.title}: ${event.kind}`,summaryKey:`Goal event: ${event.kind}`,summaryValues:[goal.title],createdAt:event.createdAt,source:'owner_goal_events',href:`/OWNER?goal=${encodeURIComponent(goal.id)}`});
@@ -98,7 +99,7 @@ export class OwnerOverviewService {
       for (const p of data.plans.filter(p=>p.state==='AWAITING_APPROVAL')) {
         const actions:OwnerActionProposal[]=['business_plan_approve','business_plan_reject'].map(type=>({id:`${type}:${p.id}:${p.revision}:${p.hash}`,requiresApproval:true,action:{type:type as 'business_plan_approve'|'business_plan_reject',plan:p}}));
         inbox.push({id:`plan:${p.id}`,type:'plan',title:'Business plan approval',summary:p.plan.title,priority:'normal',createdAt:Number(this.business.store.db.prepare('SELECT created_at FROM business_plans WHERE id=?').get(p.id)!.created_at),source:'business_plans',href:`/GENE?view=plans&id=${encodeURIComponent(p.id)}`,actions,
-          approveEffect:'Authorizes revision R{0} exactly as displayed: budget ¥{1}, its tasks and permitted external writes. Execution follows afterwards; approving is not completing the plan.',approveEffectValues:[p.revision,(p.plan.budgetMicros/1e6).toFixed(4)],
+          approveEffect:automation?'Authorizes revision R{0} and its displayed tasks and external writes. AI calls use the company token quota. Approval is not completion.':'Authorizes revision R{0} exactly as displayed: budget ¥{1}, its tasks and permitted external writes. Execution follows afterwards; approving is not completing the plan.',approveEffectValues:automation?[p.revision]:[p.revision,(p.plan.budgetMicros/1e6).toFixed(4)],
           rejectEffect:'Stops this pending revision R{0}; its tasks will not be authorized.',rejectEffectValues:[p.revision]});
       }
       for (const r of data.requests) {

@@ -4,16 +4,28 @@ import { BusinessHome } from '../src/features/business/BusinessHome';
 import { readTable } from '../src/features/business/read_table';
 import { businessDecision } from '../src/features/business/business_api';
 import { lifeFixture } from './life_fixture';
+import { setLanguage,t } from '../src/i18n';
 
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 describe('business owner journey', () => {
+  it('uses the shared company quota instead of cash authorization in both languages',async()=>{
+    const payload={companyTokenQuota:true,modelConfigured:true,plans:[],datasets:[],requests:[],unknownOperations:[],tasks:[],spentMicros:0,reservedMicros:0};
+    vi.spyOn(globalThis,'fetch').mockImplementation(async url=>({ok:true,json:async()=>String(url).includes('/evolution/')?lifeFixture():payload} as Response));
+    for(const lang of ['zh-CN','en'] as const){
+      setLanguage(lang);render(<BusinessHome/>);fireEvent.click(screen.getByRole('button',{name:t('经营'),exact:true}));
+      await screen.findByRole('link',{name:t('Company token quota')});
+      expect(screen.queryByText(t('费用授权'))).toBeNull();expect(screen.queryByLabelText(t('总费用上限（元）'))).toBeNull();
+      expect(screen.getByRole('button',{name:t('让 Pixel 提方案')})).toHaveProperty('disabled',false);cleanup();
+    }
+    setLanguage('zh-CN');
+  });
   it('loads the current budget into the authorization form and preserves edits while polling', async () => {
     const payload = { settings: { limit_micros: 50000000, draft_limit_micros: 8000000, draft_call_limit: 17, draft_expires_at: Date.now() + 3 * 86400000 },
       modelConfigured: false, plans: [], datasets: [], requests: [], unknownOperations: [], tasks: [], spentMicros: 0, reservedMicros: 0 };
     vi.spyOn(globalThis, 'fetch').mockImplementation(async url => ({ ok: true, json: async () => String(url).includes('/evolution/') ? lifeFixture() : payload } as Response));
     render(<BusinessHome />); fireEvent.click(screen.getByRole('button', { name: '经营', exact: true }));
     await screen.findByText('已确认费用'); fireEvent.click(screen.getByText(/^费用授权/));
-    expect(screen.getByLabelText('总费用上限（元）')).toHaveProperty('value', '50');
+    await waitFor(()=>expect(screen.getByLabelText('总费用上限（元）')).toHaveProperty('value', '50'));
     expect(screen.getByLabelText('其中用于拟定方案（元）')).toHaveProperty('value', '8');
     expect(screen.getByLabelText('累计拟定次数上限')).toHaveProperty('value', '17');
     expect(screen.getByLabelText('有效天数')).toHaveProperty('value', '3');

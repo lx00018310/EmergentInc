@@ -1476,3 +1476,28 @@ export const en: Record<string, string> = {
   "按准确版本和指针 revision 激活、停用或回退本 World 私有扩展；保留所有版本与数据。": "Activate, disable or restore the previous private extension version using its exact pointer revision/hash; retain all files and data.",
   "Activate extension version {0}": "Activate extension version {0}",
 };
+
+Object.assign(en, {
+  "Describe work to assign by role. AI calls use the company token quota; recruitment, external publication and upgrades require Owner approval.": "Describe work to assign by role. AI calls use the company token quota; recruitment, external publication and upgrades require Owner approval.",
+  "AI calls use the company token quota.": "AI calls use the company token quota.",
+  "Approval authorizes the displayed actions, including external writes. AI calls use the company token quota.": "Approval authorizes the displayed actions, including external writes. AI calls use the company token quota.",
+  "Authorizes revision R{0} and its displayed tasks and external writes. AI calls use the company token quota. Approval is not completion.": "Authorizes revision R{0} and its displayed tasks and external writes. AI calls use the company token quota. Approval is not completion.",
+  "Review new feedback using the company token quota; revisions still need approval. Purpose:": "Review new feedback using the company token quota; revisions still need approval. Purpose:",
+  "Business information": "Business information",
+  "Available tokens": "Available tokens",
+  "Company token quota": "Company token quota",
+  "Company tokens: {0} used, {1} reserved / {2} total": "Company tokens: {0} used, {1} reserved / {2} total",
+  "Token quota needs Owner approval. Increase the total quota to continue.": "Token quota needs Owner approval. Increase the total quota to continue.",
+  "New total token quota": "New total token quota",
+  "Approve token quota": "Approve token quota",
+  "One quota for all AI calls. OFF/ON and restarts never reset usage; only Owner can increase the total.": "One quota for all AI calls. OFF/ON and restarts never reset usage; only Owner can increase the total.",
+  "Saving confirms this goal and its acceptance rule. It uses the company token quota; external publication and maintenance need separate approval.": "Saving confirms this goal and its acceptance rule. It uses the company token quota; external publication and maintenance need separate approval.",
+  "Confirm goal": "Confirm goal",
+  "Describe a goal to get started. It uses the company token quota.": "Describe a goal to get started. It uses the company token quota.",
+  "Goal tokens used: {0}": "Goal tokens used: {0}",
+  "Tokens used: {0}; known cost: ¥{1}; evidence: {2}": "Tokens used: {0}; known cost: ¥{1}; evidence: {2}",
+  "Active Worlds only. Running tasks count active Runs; available tokens are the company quota minus usage and reservations.": "Active Worlds only. Running tasks count active Runs; available tokens are the company quota minus usage and reservations.",
+  "Company token quota needs approval": "Company token quota needs approval",
+  "OWNER_TOKEN_LIMIT": "The company token quota is insufficient. Awaiting an Owner-approved increase.",
+  "OWNER_BUDGET_BELOW_SPENT": "The total quota may only increase and must cover used and reserved tokens."
+});

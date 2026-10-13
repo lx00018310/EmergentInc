@@ -39,50 +39,43 @@ export class OwnerAutomationGate {
   }
   attach(maintenance: () => boolean, suspend: () => void, unresolved: () => boolean) { this.maintenance = maintenance; this.suspend = suspend; this.unresolved = unresolved; }
   private row() { return this.store.db.prepare('SELECT * FROM owner_automation_control WHERE id=1').get()!; }
-  isOn() { return this.row().desired_mode === 'ON' && !this.maintenance() && !this.hasUnknown(); }
+  private usage(){return this.store.db.prepare("SELECT COALESCE(SUM(actual_tokens),0) spent,COALESCE(SUM(CASE WHEN state IN ('SENT','UNKNOWN') THEN MAX(0,reserved_tokens-COALESCE(actual_tokens,0)) ELSE 0 END),0) reserved,COALESCE(SUM(cost_cny),0) cost,SUM(state!='NOT_SENT' AND cost_cny IS NULL) unknown_cost FROM owner_model_permits").get()!;}
+  isOn() { const r=this.row(),v=this.usage();return r.desired_mode==='ON'&&!this.maintenance()&&!this.hasUnknown()&&r.reason!=='OWNER_TOKEN_LIMIT'&&Number(v.spent)<Number(r.max_tokens); }
   private hasUnknown() { return Boolean(this.store.db.prepare("SELECT 1 FROM owner_model_permits WHERE state='UNKNOWN'").get()) || this.unresolved() || this.unknownChecks.some(check=>check()); }
   assertOn() {
-    if (!this.isOn()) throw Object.assign(new InfrastructureFailureError(this.maintenance() ? 'EVOLUTION_QUIESCED' : this.hasUnknown() ? 'OWNER_OUTCOME_REVIEW_REQUIRED' : 'OWNER_AUTOMATION_OFF'), { statusCode: 409 });
+    if (!this.isOn()) throw Object.assign(new InfrastructureFailureError(this.maintenance() ? 'EVOLUTION_QUIESCED' : this.hasUnknown() ? 'OWNER_OUTCOME_REVIEW_REQUIRED' : this.row().desired_mode==='ON'?'OWNER_TOKEN_LIMIT':'OWNER_AUTOMATION_OFF'), { statusCode: 409 });
   }
   private assertGoal(binding?: GoalRunBinding) {
     if (!binding) return;
     const goal = this.goals.get(binding.goalId);
     const resource=binding.resourceApprovalId&&this.store.db.prepare("SELECT 1 FROM owner_goal_recruits r JOIN owner_recruit_requests q ON q.id=r.request_id WHERE r.request_id=? AND r.goal_id=? AND r.goal_revision=? AND q.state IN ('PENDING','APPROVED')").get(binding.resourceApprovalId,binding.goalId,binding.specificationRevision);
     if (goal.specificationRevision !== binding.specificationRevision || !(resource?!['ARCHIVED','STOPPED','COMPLETED'].includes(goal.status):['READY', 'RUNNING'].includes(goal.status))) ownerConflict('OWNER_GOAL_PERMISSION_CHANGED');
-    if (goal.spentTokens + goal.reservedTokens >= goal.maxTokens) ownerConflict('OWNER_GOAL_TOKEN_LIMIT');
   }
   control(input: any): OwnerAutomation {
     exactKeys(input, ['desiredMode', 'runMode', 'requestedRounds', 'maxTokens', 'expectedRevision', 'idempotencyKey']);
-    ownerInput(['ON', 'OFF'].includes(input.desiredMode) && Number.isSafeInteger(input.expectedRevision));
-    const result = this.goals.request(input.idempotencyKey, { control: input }, () => {
-      const old = this.row(); if (old.revision !== input.expectedRevision) ownerConflict();
-      const current = this.view();
-      if (input.desiredMode === 'ON') {
-        if (this.maintenance()) ownerConflict('EVOLUTION_QUIESCED');
-        if (this.hasUnknown()) ownerConflict('OWNER_OUTCOME_REVIEW_REQUIRED');
-        if (old.desired_mode === 'OFF' && (this.live.size || this.calls.size || this.external.size || this.serviceFlights())) ownerConflict('OWNER_AUTOMATION_STOPPING');
-        ownerInput(['CONTINUOUS', 'BOUNDED'].includes(input.runMode));
-        ownerInput(Number.isSafeInteger(input.maxTokens) && input.maxTokens > 0 && input.maxTokens <= 1_000_000_000);
-        ownerInput(input.runMode !== 'BOUNDED' || Number.isSafeInteger(input.requestedRounds) && input.requestedRounds > 0 && input.requestedRounds <= 1_000_000);
-        if (old.desired_mode === 'ON') {
-          ownerInput(input.maxTokens >= current.spentTokens + current.reservedTokens, 'OWNER_BUDGET_BELOW_SPENT');
-          ownerInput(input.runMode !== 'BOUNDED' || input.requestedRounds >= current.startedRounds + current.reservedRounds, 'OWNER_ROUNDS_BELOW_STARTED');
-        }
+    ownerInput((input.desiredMode===undefined&&input.maxTokens!==undefined||['ON','OFF'].includes(input.desiredMode))&&Number.isSafeInteger(input.expectedRevision));
+    const result=this.goals.request(input.idempotencyKey,{control:input},()=>{
+      const old=this.row();if(old.revision!==input.expectedRevision)ownerConflict();
+      const current=this.view(),desired=input.desiredMode??old.desired_mode,total=input.maxTokens??Number(old.max_tokens);
+      ownerInput(Number.isSafeInteger(total)&&total>=0&&total<=1_000_000_000);
+      if(input.maxTokens!==undefined)ownerInput(total>=Math.max(Number(old.max_tokens),current.spentTokens+current.reservedTokens),'OWNER_BUDGET_BELOW_SPENT');
+      if(desired==='ON'){
+        if(this.maintenance())ownerConflict('EVOLUTION_QUIESCED');
+        if(this.hasUnknown())ownerConflict('OWNER_OUTCOME_REVIEW_REQUIRED');
+        if(old.desired_mode==='OFF'&&(this.live.size||this.calls.size||this.external.size||this.serviceFlights()))ownerConflict('OWNER_AUTOMATION_STOPPING');
       }
-      const on = input.desiredMode === 'ON';
-      const batch = on && old.desired_mode === 'OFF' ? randomUUID() : String(old.batch_id);
-      if(on && old.desired_mode === 'OFF') {
-        const held=Number(this.store.db.prepare("SELECT COUNT(*) n FROM owner_round_permits WHERE state='RESERVED'").get()!.n);
-        ownerInput(input.runMode!=='BOUNDED'||input.requestedRounds>=held,'OWNER_ROUNDS_BELOW_STARTED');
-        this.store.db.prepare("UPDATE owner_round_permits SET batch_id=? WHERE state='RESERVED'").run(batch);
-      }
-      // Suspended work remains charged to its original authorization; a new session never replays it as new work.
-      this.store.db.prepare('UPDATE owner_automation_control SET desired_mode=?,run_mode=?,requested_rounds=?,max_tokens=?,revision=revision+1,batch_id=?,updated_at=?,reason=NULL WHERE id=1').run(input.desiredMode, on ? input.runMode : old.run_mode, on ? input.runMode === 'BOUNDED' ? input.requestedRounds : null : old.requested_rounds, on ? input.maxTokens : old.max_tokens, batch, Date.now());
-      this.store.db.prepare('INSERT INTO control_events(kind,world_id,payload,created_at) VALUES(?,NULL,?,?)').run('owner_automation_changed', JSON.stringify({ desiredMode: input.desiredMode, batchId: batch, revision: Number(old.revision) + 1, maxTokens: on ? input.maxTokens : old.max_tokens }), Date.now());
+      // One cumulative authorization; switching OFF/ON never renews spent tokens.
+      const reason=old.reason==='OWNER_TOKEN_LIMIT'&&total===Number(old.max_tokens)?old.reason:null;
+      this.store.db.prepare("UPDATE owner_automation_control SET desired_mode=?,run_mode='CONTINUOUS',requested_rounds=NULL,max_tokens=?,revision=revision+1,updated_at=?,reason=? WHERE id=1").run(desired,total,Date.now(),reason);
+      this.store.db.prepare('INSERT INTO control_events(kind,world_id,payload,created_at) VALUES(?,NULL,?,?)').run(input.maxTokens!==undefined?'owner_token_quota_approved':'owner_automation_changed',JSON.stringify({desiredMode:desired,batchId:old.batch_id,revision:Number(old.revision)+1,maxTokens:total}),Date.now());
       return this.view();
     });
-    if (input.desiredMode === 'OFF' && this.row().desired_mode==='OFF') this.suspend();
-    return { ...result, observedState: this.view().observedState, inFlight: this.view().inFlight };
+    if(this.row().desired_mode==='OFF')this.suspend();
+    return {...result,observedState:this.view().observedState,inFlight:this.view().inFlight};
+  }
+  private quotaReached(){
+    this.store.db.prepare("UPDATE owner_automation_control SET reason='OWNER_TOKEN_LIMIT',revision=revision+1,updated_at=? WHERE id=1 AND (reason IS NULL OR reason!='OWNER_TOKEN_LIMIT')").run(Date.now());
+    this.suspend();
   }
   halt(reason: string) {
     this.store.db.prepare("UPDATE owner_automation_control SET desired_mode='OFF',reason=?,revision=revision+1,updated_at=? WHERE id=1 AND (desired_mode!='OFF' OR reason IS NULL)").run(reason, Date.now());
@@ -90,24 +83,21 @@ export class OwnerAutomationGate {
   }
   view(): OwnerAutomation {
     const r = this.row(), db = this.store.db;
-    const rounds = db.prepare("SELECT SUM(state IN ('STARTED','COMPLETED')) started,SUM(state='COMPLETED') completed,SUM(state='RESERVED') reserved FROM owner_round_permits WHERE batch_id=?").get(r.batch_id)!;
-    const usage = db.prepare("SELECT COALESCE(SUM(actual_tokens),0) spent,COALESCE(SUM(CASE WHEN state IN ('SENT','UNKNOWN') THEN MAX(0,reserved_tokens-COALESCE(actual_tokens,0)) ELSE 0 END),0) reserved,COALESCE(SUM(cost_cny),0) cost,SUM(state!='NOT_SENT' AND cost_cny IS NULL) unknown_cost FROM owner_model_permits WHERE batch_id=?").get(r.batch_id)!;
+    const rounds = db.prepare("SELECT SUM(state IN ('STARTED','COMPLETED')) started,SUM(state='COMPLETED') completed,SUM(state='RESERVED') reserved FROM owner_round_permits").get()!;
+    const usage=this.usage();
     const inFlight = this.live.size + this.calls.size + this.external.size + this.serviceFlights();
     const unknown = this.hasUnknown();
-    const observedState = r.desired_mode === 'OFF' ? inFlight ? 'STOPPING' : unknown ? 'BLOCKED' : r.reason === 'OWNER_ROUND_LIMIT' || r.reason === 'OWNER_TOKEN_LIMIT' ? 'LIMIT_REACHED' : 'STOPPED'
-      : this.maintenance() || unknown ? 'BLOCKED' : inFlight ? 'RUNNING' : 'IDLE';
-    return { desiredMode: r.desired_mode as 'ON' | 'OFF', runMode: r.run_mode as 'CONTINUOUS' | 'BOUNDED', requestedRounds: r.requested_rounds as number | null, maxTokens: Number(r.max_tokens), revision: Number(r.revision), batchId: String(r.batch_id), updatedAt: Number(r.updated_at), reason: this.maintenance()?'EVOLUTION_QUIESCED':r.reason as string | null ?? (unknown?'OWNER_OUTCOME_REVIEW_REQUIRED':null), observedState, inFlight, startedRounds: Number(rounds.started ?? 0), completedRounds: Number(rounds.completed ?? 0), reservedRounds: Number(rounds.reserved ?? 0), spentTokens: Number(usage.spent), reservedTokens: Number(usage.reserved), knownCostCny: Number(usage.cost), unknownCostCalls: Number(usage.unknown_cost ?? 0) };
+    const observedState = r.desired_mode === 'OFF' ? inFlight ? 'STOPPING' : unknown ? 'BLOCKED' : r.reason === 'OWNER_TOKEN_LIMIT' ? 'LIMIT_REACHED' : 'STOPPED'
+      : this.maintenance() || unknown ? 'BLOCKED' : r.reason==='OWNER_TOKEN_LIMIT'?'LIMIT_REACHED':inFlight?'RUNNING':Number(usage.spent)>=Number(r.max_tokens)?'LIMIT_REACHED':'IDLE';
+    return { desiredMode: r.desired_mode as 'ON' | 'OFF', runMode:'CONTINUOUS',requestedRounds:null, maxTokens: Number(r.max_tokens), revision: Number(r.revision), batchId: String(r.batch_id), updatedAt: Number(r.updated_at), reason: this.maintenance()?'EVOLUTION_QUIESCED':r.reason as string | null ?? (unknown?'OWNER_OUTCOME_REVIEW_REQUIRED':observedState==='LIMIT_REACHED'?'OWNER_TOKEN_LIMIT':null), observedState, inFlight, startedRounds: Number(rounds.started ?? 0), completedRounds: Number(rounds.completed ?? 0), reservedRounds: Number(rounds.reserved ?? 0), spentTokens: Number(usage.spent), reservedTokens: Number(usage.reserved), knownCostCny: Number(usage.cost), unknownCostCalls: Number(usage.unknown_cost ?? 0) };
   }
   reserveRun(worldId: string, runId: string, startRound: number, rounds: number, binding?: GoalRunBinding) {
     this.assertOn(); this.assertGoal(binding);
-    const held=(batch:unknown)=>Number(this.store.db.prepare("SELECT COUNT(*) n FROM owner_round_permits WHERE batch_id=? AND state IN ('RESERVED','STARTED','COMPLETED')").get(String(batch))!.n);
     let control=this.row();
-    if(control.run_mode==='BOUNDED'&&held(control.batch_id)+rounds>Number(control.requested_rounds)){this.enforceLimits();ownerConflict('OWNER_RUN_EXCEEDS_REMAINING_ROUNDS');}
     this.store.transaction(() => {
       this.assertOn(); this.assertGoal(binding);
       control=this.row();
       if(!binding&&this.store.db.prepare("SELECT 1 FROM owner_goal_dispatches WHERE world_id=? AND state IN ('QUEUED','RUNNING')").get(worldId))ownerConflict('OWNER_AUTOMATION_BUSY');
-      if(control.run_mode==='BOUNDED'&&held(control.batch_id)+rounds>Number(control.requested_rounds))ownerConflict('OWNER_RUN_EXCEEDS_REMAINING_ROUNDS');
       if (this.store.db.prepare("SELECT 1 FROM owner_run_permits WHERE state IN ('ACTIVE','PREPARING') AND run_id!=?").get(runId)) ownerConflict('OWNER_AUTOMATION_BUSY');
       this.store.db.prepare("INSERT INTO owner_run_permits VALUES(?,?,?,?,?,?,'PREPARING',?)").run(runId, worldId, control.batch_id!, binding?.goalId ?? null, binding?.specificationRevision ?? null, binding?.dispatchId ?? null, Date.now());
       for (let r = startRound; r < startRound + rounds; r++) this.store.db.prepare("INSERT INTO owner_round_permits VALUES(?,?,?,'RESERVED')").run(runId, r, control.batch_id!);
@@ -145,11 +135,8 @@ export class OwnerAutomationGate {
   }
   enforceLimits() {
     const r=this.row();if(r.desired_mode!=='ON'||this.live.size)return;
-    const started=Number(this.store.db.prepare("SELECT COUNT(*) n FROM owner_round_permits WHERE batch_id=? AND state IN ('STARTED','COMPLETED')").get(r.batch_id!)!.n);
-    if(r.run_mode==='BOUNDED'&&started>=Number(r.requested_rounds)){this.halt('OWNER_ROUND_LIMIT');return;}
     if(this.calls.size||this.external.size||this.serviceFlights())return;
-    const usage=this.store.db.prepare("SELECT COALESCE(SUM(COALESCE(actual_tokens,0)+CASE WHEN state IN ('SENT','UNKNOWN') THEN MAX(0,reserved_tokens-COALESCE(actual_tokens,0)) ELSE 0 END),0) total FROM owner_model_permits WHERE batch_id=?").get(r.batch_id!)!;
-    if(Number(usage.total)>=Number(r.max_tokens))this.halt('OWNER_TOKEN_LIMIT');
+    const usage=this.view();if(usage.spentTokens+usage.reservedTokens>=Number(r.max_tokens))this.quotaReached();
   }
   async externalAction<T>(key: string, action: () => Promise<T>): Promise<T> {
     this.assertOn(); this.external.add(key); try { return await action(); } finally { this.external.delete(key); }
@@ -165,10 +152,10 @@ export class OwnerAutomationGate {
   }
   modelCalls() { return this.store.db.prepare("SELECT p.*,s.source_id,s.source_kind FROM owner_model_permits p LEFT JOIN owner_model_sources s ON s.permit_id=p.id WHERE p.state='UNKNOWN' ORDER BY p.created_at").all(); }
   report():OwnerRunReport {
-    const automation=this.view(),started=Number(this.store.db.prepare("SELECT MIN(created_at) time FROM control_events WHERE kind='owner_automation_changed' AND json_extract(payload,'$.batchId')=?").get(automation.batchId)!.time??Date.now());
+    const automation=this.view();
     return {asOf:Date.now(),automation,goals:[...this.goals.list(),...this.goals.list(true)].map(goal=>{
-      const usage=this.store.db.prepare("SELECT COALESCE(SUM(actual_tokens),0) spent,COALESCE(SUM(CASE WHEN state IN ('SENT','UNKNOWN') THEN MAX(0,reserved_tokens-COALESCE(actual_tokens,0)) ELSE 0 END),0) reserved,COALESCE(SUM(cost_cny),0) cost FROM owner_model_permits WHERE batch_id=? AND goal_id=?").get(automation.batchId,goal.id)!;
-      return {goalId:goal.id,title:goal.title,status:goal.status,spentTokens:Number(usage.spent),reservedTokens:Number(usage.reserved),knownCostCny:Number(usage.cost),evidence:this.goals.detail(goal.id).evidence.filter(e=>e.createdAt>=started),reason:goal.reason};
+      const usage=this.store.db.prepare("SELECT COALESCE(SUM(actual_tokens),0) spent,COALESCE(SUM(CASE WHEN state IN ('SENT','UNKNOWN') THEN MAX(0,reserved_tokens-COALESCE(actual_tokens,0)) ELSE 0 END),0) reserved,COALESCE(SUM(cost_cny),0) cost FROM owner_model_permits WHERE goal_id=?").get(goal.id)!;
+      return {goalId:goal.id,title:goal.title,status:goal.status,spentTokens:Number(usage.spent),reservedTokens:Number(usage.reserved),knownCostCny:Number(usage.cost),evidence:this.goals.detail(goal.id).evidence,reason:goal.reason};
     })};
   }
   reconcileCall(id:string,input:any) {
@@ -201,16 +188,15 @@ export class OwnerAutomationGate {
       const price = meter.getPricingForModel(request.model);
       if (!price || price.currency&&price.currency.toUpperCase()!=='CNY' || ![price.input_cost_per_million, price.output_cost_per_million].every(v => Number.isFinite(v) && v >= 0)) throw new InfrastructureFailureError('MODEL_PRICE_REQUIRED');
       const v = this.view(), overhead = Buffer.byteLength(JSON.stringify(request.messages), 'utf8') + 1024;
-      const goal = binding ? this.goals.get(binding.goalId) : undefined;
-      const available = Math.min(v.maxTokens-v.spentTokens-v.reservedTokens,goal ? goal.maxTokens-goal.spentTokens-goal.reservedTokens : Infinity,capacity());
+      const available = v.maxTokens-v.spentTokens-v.reservedTokens;
       const output = Math.min(request.maxTokens ?? 0, binding ? 4096 : Infinity, available-overhead);
+      if(available<=overhead){if(v.reservedTokens===0)this.quotaReached();throw new InfrastructureFailureError('OWNER_TOKEN_LIMIT');}
       if (!Number.isSafeInteger(output) || output! <= 0) throw new InfrastructureFailureError('OWNER_MODEL_OUTPUT_LIMIT_REQUIRED');
       const reserve = overhead + output;
       const id = `model_${randomUUID()}`;
       this.store.transaction(() => {
         this.assertOn(); this.assertGoal(binding);
         const v = this.view(); if (v.spentTokens + v.reservedTokens + reserve > v.maxTokens) throw new InfrastructureFailureError('OWNER_TOKEN_LIMIT');
-        if (binding) { const goal = this.goals.get(binding.goalId); if (goal.spentTokens + goal.reservedTokens + reserve > goal.maxTokens) throw new InfrastructureFailureError('OWNER_GOAL_TOKEN_LIMIT'); }
         this.store.db.prepare("INSERT INTO owner_model_permits VALUES(?,?,?,?,?,'SENT',?,NULL,NULL,?)").run(id, v.batchId, worldId ?? null, binding?.goalId ?? null, binding?.specificationRevision ?? null, reserve, Date.now());
         if(request.auditCallId)this.store.db.prepare('INSERT INTO owner_model_sources VALUES(?,?,?)').run(id,request.auditCallId,sourceKind);
       });

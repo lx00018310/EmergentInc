@@ -1,11 +1,11 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { language, t, useLanguage } from '../../i18n';
 import { ownerError, ownerGoalRequest, type OwnerAutomation, type OwnerGoal, type OwnerGoalDetail, type OwnerRunReport } from '../../api/owner';
-import { OwnerAutomationReview } from './OwnerAutomationReview';
+import { OwnerTokenQuota } from './OwnerCompany';
 import { OwnerExtensions } from './OwnerExtensions';
 
-type GoalForm = { id?: string; revision?: number; title: string; objective: string; maxTokens: string; kind: 'artifact' | 'manual' | 'confirmed_payments'; invoiceIds:string;targetCount:string; filename: string; minBytes: string; description: string };
-const emptyForm = (): GoalForm => ({ title: '', objective: '', maxTokens: '', kind: 'manual', invoiceIds:'',targetCount:'1', filename: 'result.md', minBytes: '100', description: t('Verify the stated business result against real source evidence.') });
+type GoalForm = { id?: string; revision?: number; title: string; objective: string; kind: 'artifact' | 'manual' | 'confirmed_payments'; invoiceIds:string;targetCount:string; filename: string; minBytes: string; description: string };
+const emptyForm = (): GoalForm => ({ title: '', objective: '', kind: 'manual', invoiceIds:'',targetCount:'1', filename: 'result.md', minBytes: '100', description: t('Verify the stated business result against real source evidence.') });
 const status = (value: string) => t(`Goal status: ${value}`);
 
 export function OwnerGoals({ goals, automation, onDone }: { goals: OwnerGoal[]; automation: OwnerAutomation; onDone: () => Promise<void> }) {
@@ -14,7 +14,6 @@ export function OwnerGoals({ goals, automation, onDone }: { goals: OwnerGoal[]; 
   const [detail, setDetail] = useState<OwnerGoalDetail>(), [error, setError] = useState(''), [busy, setBusy] = useState(false);
   const [verification,setVerification]=useState('');
   const [report,setReport]=useState<OwnerRunReport>();
-  const [mode, setMode] = useState<'BOUNDED' | 'CONTINUOUS'>(automation.runMode), [rounds, setRounds] = useState(String(automation.requestedRounds ?? 10)), [budget, setBudget] = useState(automation.maxTokens ? String(automation.maxTokens) : '');
   const pending = useRef<{ hash: string; key: string }>();
   const detailRequest = useRef(0);
   const list = archived ? archiveList : goals;
@@ -32,49 +31,29 @@ export function OwnerGoals({ goals, automation, onDone }: { goals: OwnerGoal[]; 
   const save=async(event:FormEvent)=>{
     event.preventDefault();if(!form)return;
     const acceptance=form.kind==='artifact'?{kind:'artifact',filename:form.filename,minBytes:Number(form.minBytes)}:form.kind==='confirmed_payments'?{kind:form.kind,invoiceIds:form.invoiceIds.split(/[\s,]+/).filter(Boolean),targetCount:Number(form.targetCount)}:{kind:'manual',description:form.description};
-    if(await mutate(form.id?`goals/${encodeURIComponent(form.id)}`:'goals',form.id?'PATCH':'POST',{title:form.title||form.objective.slice(0,120),objective:form.objective,maxTokens:Number(form.maxTokens),acceptance,...(form.id?{expectedRevision:form.revision}:{})}))setForm(null);
+    if(await mutate(form.id?`goals/${encodeURIComponent(form.id)}`:'goals',form.id?'PATCH':'POST',{title:form.title||form.objective.slice(0,120),objective:form.objective,acceptance,...(form.id?{expectedRevision:form.revision}:{})}))setForm(null);
   };
-  const edit=(goal:OwnerGoal)=>{setForm({id:goal.id,revision:goal.revision,title:goal.title,objective:goal.objective,maxTokens:String(goal.maxTokens),kind:goal.acceptance.kind,invoiceIds:goal.acceptance.kind==='confirmed_payments'?goal.acceptance.invoiceIds.join(', '):'',targetCount:goal.acceptance.kind==='confirmed_payments'?String(goal.acceptance.targetCount):'1',filename:goal.acceptance.kind==='artifact'?goal.acceptance.filename:'result.md',minBytes:goal.acceptance.kind==='artifact'?String(goal.acceptance.minBytes):'100',description:goal.acceptance.kind==='manual'?goal.acceptance.description:''});};
-  const control=(event:FormEvent)=>{event.preventDefault();void mutate('automation','POST',{desiredMode:'ON',runMode:mode,requestedRounds:mode==='BOUNDED'?Number(rounds):null,maxTokens:Number(budget),expectedRevision:automation.revision});};
+  const edit=(goal:OwnerGoal)=>{setForm({id:goal.id,revision:goal.revision,title:goal.title,objective:goal.objective,kind:goal.acceptance.kind,invoiceIds:goal.acceptance.kind==='confirmed_payments'?goal.acceptance.invoiceIds.join(', '):'',targetCount:goal.acceptance.kind==='confirmed_payments'?String(goal.acceptance.targetCount):'1',filename:goal.acceptance.kind==='artifact'?goal.acceptance.filename:'result.md',minBytes:goal.acceptance.kind==='artifact'?String(goal.acceptance.minBytes):'100',description:goal.acceptance.kind==='manual'?goal.acceptance.description:''});};
   const number=(n:number)=>n.toLocaleString(language());
   return <section className="owner-goals" aria-label={t('Business goals')}>
-    <div className="owner-automation">
-      <h1>{t('My AI company')}</h1>
-      <p className="owner-automation-state" role="status">{t('Company automation')}: <strong>{t(`Automation state: ${automation.observedState}`)}</strong> · {automation.desiredMode==='ON'?t('Switch on'):t('Switch off')}</p>
-      <p>{t('AI automation can pause. The public store, incoming orders, payments and independent maintenance stay available.')}</p>
-      <form onSubmit={control} className="owner-control-form">
-        <label>{t('Run mode')}<select value={mode} onChange={e=>setMode(e.target.value as typeof mode)}><option value="BOUNDED">{t('Specified rounds')}</option><option value="CONTINUOUS">{t('Continuous operation')}</option></select></label>
-        {mode==='BOUNDED'&&<label>{t('Shared round limit')}<input type="number" min="1" max="1000000" required value={rounds} onChange={e=>setRounds(e.target.value)}/></label>}
-        <label>{t('Global token authorization')}<input type="number" min="1" max="1000000000" required value={budget} onChange={e=>setBudget(e.target.value)}/></label>
-        <button type="button" disabled={busy} onClick={()=>setBudget('100000')}>{t('Use draft allowance (100,000 tokens)')}</button>
-        <button disabled={busy||automation.observedState==='STOPPING'||automation.observedState==='BLOCKED'} type="submit">{automation.desiredMode==='ON'?t('Apply limits'):t('Authorize and start')}</button>
-        {automation.desiredMode==='ON'&&<button disabled={busy} type="button" className="owner-stop" onClick={()=>void mutate('automation','POST',{desiredMode:'OFF',expectedRevision:automation.revision})}>{t('Pause company automation')}</button>}
-      </form>
-      <p>{t('Started {0} / {1} rounds this session',[number(automation.startedRounds),automation.requestedRounds===null?t('Continuous operation'):number(automation.requestedRounds)])} · {t('Completed rounds: {0}',[number(automation.completedRounds)])}</p>
-      <p>{t('Tokens: {0} used, {1} reserved / {2}',[number(automation.spentTokens),number(automation.reservedTokens),number(automation.maxTokens)])} · {t('Known cost: ¥{0}; {1} calls awaiting cost verification',[automation.knownCostCny.toFixed(6),automation.unknownCostCalls])}</p>
-      {automation.inFlight>0&&<p>{t('In-flight work: {0}',[automation.inFlight])}</p>}
-      {automation.reason&&<p role="status">{t(automation.reason)}</p>}
-      <p className="owner-status-scope">{t('A round is a started World scheduling round. Draft files verify delivery, not sales or business quality. Token limits are hard authorization; displayed money is known usage, not a payment guarantee.')}</p>
-      <OwnerAutomationReview revision={automation.revision} onDone={onDone}/>
-    </div>
+    <OwnerTokenQuota automation={automation} onDone={onDone}/>
     {error&&<p role="alert">{error}</p>}
     <div className="owner-goal-heading"><h2>{t('Business goals')}</h2><button disabled={busy} onClick={()=>setForm(emptyForm())}>{t('Add goal')}</button><button disabled={busy} aria-pressed={archived} onClick={async()=>{setError('');try{if(!archived)await loadArchives();setArchived(!archived);}catch(e){setError(ownerError(e));}}}>{archived?t('Current goals'):t('Archived goals')}</button></div>
     {form&&<form onSubmit={save} className="owner-goal-form" aria-label={form.id?t('Edit goal'):t('Add goal')}>
       <label>{t('Describe the business goal')}<textarea required maxLength={1200} value={form.objective} onChange={e=>setForm({...form,objective:e.target.value})}/></label>
       <label>{t('Goal title')}<input maxLength={160} value={form.title} onChange={e=>setForm({...form,title:e.target.value})}/></label>
-      <label>{t('Goal token authorization')}<input required type="number" min="1" max="1000000000" value={form.maxTokens} onChange={e=>setForm({...form,maxTokens:e.target.value})}/></label><button type="button" disabled={busy} onClick={()=>setForm({...form,maxTokens:'100000'})}>{t('Use draft allowance (100,000 tokens)')}</button>
       <label>{t('Acceptance rule')}<select value={form.kind} onChange={e=>setForm({...form,kind:e.target.value as GoalForm['kind']})}><option value="artifact">{t('Verifiable draft file')}</option><option value="manual">{t('Result requiring human verification')}</option><option value="confirmed_payments">{t('Confirmed invoice payments')}</option></select></label>
       {form.kind==='artifact'?<details><summary>{t('File acceptance settings')}</summary><label>{t('Required filename')}<input required value={form.filename} onChange={e=>setForm({...form,filename:e.target.value})}/></label><label>{t('Minimum UTF-8 bytes')}<input type="number" min="1" max="1000000" required value={form.minBytes} onChange={e=>setForm({...form,minBytes:e.target.value})}/></label></details>:form.kind==='confirmed_payments'?<><label>{t('Owner-selected invoice IDs')}<textarea required value={form.invoiceIds} onChange={e=>setForm({...form,invoiceIds:e.target.value})}/></label><label>{t('Required confirmed payments')}<input type="number" min="1" max="100" required value={form.targetCount} onChange={e=>setForm({...form,targetCount:e.target.value})}/></label><p>{t('Only finalized receipts for these exact invoices count. This does not verify customer identity or service quality.')}</p></>:<label>{t('Evidence needed for acceptance')}<textarea required maxLength={1000} value={form.description} onChange={e=>setForm({...form,description:e.target.value})}/></label>}
-      <p>{t('Saving confirms this goal, its acceptance rule and token limit. Internal drafts only; external publication and maintenance need separate approval.')}</p>
-      <button disabled={busy} type="submit">{t('Confirm goal and budget')}</button><button disabled={busy} type="button" onClick={()=>setForm(null)}>{t('Cancel')}</button>
+      <p>{t('Saving confirms this goal and its acceptance rule. It uses the company token quota; external publication and maintenance need separate approval.')}</p>
+      <button disabled={busy} type="submit">{t('Confirm goal')}</button><button disabled={busy} type="button" onClick={()=>setForm(null)}>{t('Cancel')}</button>
     </form>}
-    {!list.length&&<p>{archived?t('No archived goals.'):t('Describe a goal and authorize its budget to get started.')}</p>}
+    {!list.length&&<p>{archived?t('No archived goals.'):t('Describe a goal to get started. It uses the company token quota.')}</p>}
     <ul className="owner-goal-list">{list.map(goal=><li key={goal.id} className="owner-goal-card">
       <div><h3>{goal.title}</h3><strong>{status(goal.status)}</strong></div><p>{goal.objective}</p>
       {['READY','RUNNING'].includes(goal.status)&&automation.desiredMode==='OFF'&&<p>{t('Goal ready · company automation paused')}</p>}
       <p>{goal.acceptance.kind==='artifact'?t('Verified draft: {0} / 1',[goal.verifiedCount]):goal.acceptance.kind==='confirmed_payments'?t('Verified payments: {0} / {1}',[goal.verifiedCount,goal.acceptance.targetCount]):goal.verifiedCount?t('Owner verified the result against source evidence'):t('{0} evidenced stages; business result awaits verification',[goal.evidenceCount])}</p>
       <p>{t('Next step')}: {goal.reason?t(goal.reason):goal.status==='COMPLETED'?t('Review the verified evidence'):t('Wait for an authorized execution slot')}</p>
-      <small>{t('Goal tokens: {0} / {1}',[number(goal.spentTokens),number(goal.maxTokens)])} · <time>{new Date(goal.updatedAt).toLocaleString(language())}</time></small>
+      <small>{t('Goal tokens used: {0}',[number(goal.spentTokens)])} · <time>{new Date(goal.updatedAt).toLocaleString(language())}</time></small>
       <div className="owner-goal-actions"><button onClick={()=>void loadDetail(goal.id)}>{t('Details')}</button>
         {['READY','RUNNING','WAITING_APPROVAL','WAITING_RESOURCE','BLOCKED'].includes(goal.status)&&<button disabled={busy} onClick={()=>action(goal,'pause')}>{t('Pause goal')}</button>}
         {['PAUSED','WAITING_RESOURCE'].includes(goal.status)&&<button disabled={busy} onClick={()=>action(goal,'resume')}>{t('Continue goal')}</button>}
@@ -97,6 +76,6 @@ export function OwnerGoals({ goals, automation, onDone }: { goals: OwnerGoal[]; 
       <details><summary>{t('Advanced execution details')}</summary><pre>{JSON.stringify(detail.dispatches,null,2)}</pre><p><a href="/QIAN">QIAN</a> · <a href="/YUAN">YUAN</a> · <a href="/GENE">GENE</a></p></details>
       <OwnerExtensions key={detail.goal.id} worldIds={[...new Set(detail.dispatches.map(d=>d.worldId))]}/>
     </section>}
-    <details className="owner-run-report" onToggle={async event=>{if(event.currentTarget.open)try{setReport(await ownerGoalRequest<OwnerRunReport>('automation/report'));}catch(e){setError(ownerError(e));}}}><summary>{t('Run report')}</summary>{report&&<><p>{t('Read at')} {new Date(report.asOf).toLocaleString(language())} · {t('Started {0} / {1} rounds this session',[report.automation.startedRounds,report.automation.requestedRounds??t('Continuous operation')])}</p><ul>{report.goals.map(g=><li key={g.goalId}>{g.title}: {status(g.status)} · {t('Session tokens: {0}; known cost: ¥{1}; new evidence: {2}',[g.spentTokens,g.knownCostCny.toFixed(6),g.evidence.length])}{g.reason&&` · ${t(g.reason)}`}</li>)}</ul>{report.automation.reason&&<p>{t(report.automation.reason)}</p>}</>}</details>
+    <details className="owner-run-report" onToggle={async event=>{if(event.currentTarget.open)try{setReport(await ownerGoalRequest<OwnerRunReport>('automation/report'));}catch(e){setError(ownerError(e));}}}><summary>{t('Run report')}</summary>{report&&<><p>{t('Read at')} {new Date(report.asOf).toLocaleString(language())} · {t('Completed rounds: {0}',[report.automation.completedRounds])}</p><ul>{report.goals.map(g=><li key={g.goalId}>{g.title}: {status(g.status)} · {t('Tokens used: {0}; known cost: ¥{1}; evidence: {2}',[g.spentTokens,g.knownCostCny.toFixed(6),g.evidence.length])}{g.reason&&` · ${t(g.reason)}`}</li>)}</ul>{report.automation.reason&&<p>{t(report.automation.reason)}</p>}</>}</details>
   </section>;
 }
