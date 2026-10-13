@@ -66,7 +66,7 @@ describe('Owner Mission Control',()=>{
     expect(within(table).getByRole('row',{name:'To-dos 0'})).toBeTruthy();
     expect(within(table).getByRole('row',{name:'Available tokens 123,456'})).toBeTruthy();
     expect(within(table).getByRole('row',{name:'Service status Ready'})).toBeTruthy();
-    expect(table.compareDocumentPosition(screen.getByRole('textbox'))&Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.queryByRole('textbox')).toBeNull();
     act(()=>setLanguage('zh-CN'));
     expect(screen.getByRole('table',{name:'状态总览'})).toBe(table);
     expect(within(table).getByRole('row',{name:'服务状态 正常'})).toBeTruthy();
@@ -118,13 +118,16 @@ describe('Owner Mission Control',()=>{
   it('uses the global endpoint even when a World was selected',async()=>{
     enableWorlds(true);selectWorld('world-a');const fetch=vi.spyOn(globalThis,'fetch').mockResolvedValue(response({}));await fetchOwnerOverview();expect(fetch.mock.calls[0]![0]).toBe('/api/owner/overview');
   });
-  it('defaults to the company switch and keeps business, Inbox and History separate in both languages',async()=>{
+  it('defaults to the company switch and keeps business, Boss chat, Inbox and History separate in both languages',async()=>{
     window.history.replaceState(null,'','/OWNER');
     window.location.hash='';
     vi.spyOn(globalThis,'fetch').mockResolvedValue(response({asOf:Date.now(),summary:{qianjiCount:2,activeWorlds:2,runningWorlds:1,inboxCount:0,currentGeneration:'G0001'},inbox:[],activity:[{id:'tip',type:'Tips',summary:'Actual customer reminder',source:'tips.md',createdAt:Date.now(),href:'/YUAN?world=a'}],availability:{business:true,upgrade:'unavailable'},work:{tasks:[{id:'task1',personName:'A',state:'RUNNING',instruction:'Separate work summary',updatedAt:1}],codeReports:[]}}));
     const {container}=render(<OwnerConsole/>);await screen.findByRole('link',{name:/To-dos\s*0/});expect(screen.getByRole('link',{name:t('My AI company')}).getAttribute('aria-current')).toBe('page');expect(screen.queryByRole('textbox')).toBeNull();fireEvent.click(screen.getByRole('link',{name:t('Business goals')}));
+    expect(screen.queryByRole('textbox')).toBeNull();expect(screen.getByRole('table',{name:t('Status overview')})).toBeTruthy();
+    fireEvent.click(screen.getByRole('link',{name:t('Boss chat')}));
     expect(screen.getByRole('textbox',{name:'Ask the Owner assistant'})).toBeTruthy();
-    expect(screen.getByRole('link',{name:t('Business goals')}).getAttribute('aria-current')).toBe('page');
+    expect(screen.getByRole('link',{name:t('Boss chat')}).getAttribute('aria-current')).toBe('page');
+    expect(screen.queryByRole('table')).toBeNull();
     expect(screen.queryByRole('heading',{name:'To-dos (0)'})).toBeNull();
     expect(screen.queryByText('Actual customer reminder')).toBeNull();
     expect(screen.queryByText('Separate work summary')).toBeNull();
@@ -144,11 +147,13 @@ describe('Owner Mission Control',()=>{
       expect(screen.queryByRole('heading',{name:`${todos} (0)`})).toBeNull();
       expect(screen.queryByRole('textbox')).toBeNull();
       fireEvent.click(screen.getByRole('link',{name:t('Business goals')}));
+      expect(screen.queryByRole('textbox')).toBeNull();
+      fireEvent.click(screen.getByRole('link',{name:t('Boss chat')}));
       expect((screen.getByRole('textbox') as HTMLTextAreaElement).value).toBe('Unsent draft');
       expect(screen.queryByText('Actual customer reminder')).toBeNull();
     }
   });
-  it('follows direct links and hash changes for all three pages',async()=>{
+  it('follows direct links and hash changes including the dedicated chat page',async()=>{
     window.location.hash='#owner-activity';
     const activity=[{id:'tip',type:'Tips',summary:'Timeline item',source:'tips.md',createdAt:Date.now(),href:'/YUAN?world=a'}];
     vi.spyOn(globalThis,'fetch').mockResolvedValue(response({asOf:Date.now(),summary:{qianjiCount:1,activeWorlds:1,runningWorlds:0,inboxCount:1,currentGeneration:'G0001'},
@@ -164,6 +169,9 @@ describe('Owner Mission Control',()=>{
     expect(screen.getByRole('switch')).toBeTruthy();expect(screen.queryByRole('textbox')).toBeNull();
     expect(screen.queryByText('Business plan approval')).toBeNull();
     expect(screen.getByRole('link',{name:t('My AI company')}).getAttribute('aria-current')).toBe('page');
+    window.location.hash='#owner-chat';act(()=>{window.dispatchEvent(new HashChangeEvent('hashchange'));});
+    expect(screen.getByRole('textbox')).toBeTruthy();expect(screen.queryByRole('switch')).toBeNull();expect(screen.queryByRole('table')).toBeNull();
+    expect(screen.getByRole('link',{name:t('Boss chat')}).getAttribute('aria-current')).toBe('page');
   });
   it('executes the approve decision with one click and shows both effects, per item',async()=>{
     window.location.hash='#owner-inbox';
@@ -242,25 +250,28 @@ describe('Owner Mission Control',()=>{
       render(<OwnerConsole/>);await act(async()=>{});
       expect(screen.getByRole('row',{name:'To-dos 1'})).toBeTruthy();
       await act(async()=>{await vi.advanceTimersByTimeAsync(5000);});
+      fireEvent.click(screen.getByRole('link',{name:t('Boss chat')}));
       fireEvent.change(screen.getByRole('textbox'),{target:{value:'Handle the task'}});
       await act(async()=>{fireEvent.click(screen.getByRole('button',{name:'Send'}));});
+      fireEvent.click(screen.getByRole('link',{name:t('Business goals')}));
       expect(screen.getByRole('row',{name:'To-dos 0'})).toBeTruthy();
       await act(async()=>{finishOld(response({...data,asOf:2}));});
       expect(screen.getByRole('row',{name:'To-dos 0'})).toBeTruthy();
       expect(screen.getByRole('link',{name:/To-dos\s*0/})).toBeTruthy();
     } finally {vi.useRealTimers();}
   });
-  it('retains a reply that finishes while another page is open',async()=>{
+  it.each(['en','zh-CN'] as const)('opens Boss chat directly and retains a reply that finishes while another page is open (%s)',async lang=>{
+    setLanguage(lang);window.history.replaceState(null,'','/OWNER#owner-chat');
     let finish!:(value:Response)=>void;
     vi.spyOn(globalThis,'fetch').mockImplementation(async input=>String(input)==='/api/owner/chat'?new Promise(resolve=>{finish=resolve;}):response({asOf:Date.now(),summary:{},inbox:[],activity:[],availability:{business:true,upgrade:'available'}}));
     render(<OwnerConsole/>);
     fireEvent.change(screen.getByRole('textbox'),{target:{value:'Report progress'}});
-    fireEvent.click(screen.getByRole('button',{name:'Send'}));
-    fireEvent.click(screen.getByRole('link',{name:'History'}));
+    fireEvent.click(screen.getByRole('button',{name:t('发送')}));
+    fireEvent.click(screen.getByRole('link',{name:t('History')}));
     await act(async()=>finish(response({answer:'Reply completed in background',sources:[],as_of:new Date().toISOString(),usage:{tokens:1,cost_cny:null}})));
     expect(screen.queryByRole('textbox')).toBeNull();
-    fireEvent.click(screen.getByRole('link',{name:t('Business goals')}));
+    fireEvent.click(screen.getByRole('link',{name:t('Boss chat')}));
     expect(screen.getByText('Reply completed in background')).toBeTruthy();
-    expect((screen.getByRole('button',{name:'Clear chat'}) as HTMLButtonElement).disabled).toBe(false);
+    expect((screen.getByRole('button',{name:t('清空对话')}) as HTMLButtonElement).disabled).toBe(false);
   });
 });

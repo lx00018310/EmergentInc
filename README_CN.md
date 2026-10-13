@@ -4,157 +4,176 @@
 
 **一个帮助每个人利用 AI 开启并运营线上生意的开源系统。**
 
-你提供想法、资源和最终决策。EmergentInc 提供 AI 人物与元胞，帮助探索机会、构建产品、推广销售、服务客户，并在真实经营中持续进化。
+**不满足于只做聊天助手。它让 AI 自主跑业务、自我升级、闭环经营。**
 
-- **用户：**部署 EmergentInc，建立自己的 AI 线上生意。
-- **客户：**EmergentInc 本身也是一门生意，提供定制服务。
-- **开发者：**EmergentInc 是开源项目。
+你设定经营目标、分配预算、做出最终决策。EmergentInc 提供拥有独立身份的 AI 人物与元胞，自主探索机会、构建产品、推广销售、服务客户、收取加密货币，并在真实商业活动中自我进化。
 
-## V29：管理目标，再打开自主运行
+100% 开源，拉下代码就能跑。
 
-部署已批准版本 → 打开 `/OWNER` → 描述经营目标 → 确认验收规则和目标 Token 额度 → 授权全局 Token 预算 → 选择持续运行或共享轮数 → 开启 → 查看证据和例外待办。
+![EmergentInc 系统架构图](Imag_EmergentInc.png)
 
-目标保存在原有 control SQLite 数据库中；同页支持新增、编辑、暂停、继续、停止、重开、归档和恢复。系统复用现有人物和 Skills 执行受限工作；没有人物时在待办提出招聘审批，批准前不自动创建人物。原聊天和技术状态保留为辅助入口。
+---
 
-自主运行默认 **OFF**。一轮指实际开始的一次 World 调度轮次，中断轮次也计入。多个目标共享当次额度，调度器每次只派 1 轮，保留 Owner 单次 Run 最多 20 轮 / 100000 Tokens 的限制。持续模式仍需预算。OFF 禁止新 AI 调用、工具和 Run，保留在途回执，收尾期间显示“停止中”；公开商店、下单、付款监听和独立维护继续工作。
+## 快速上手 (Quick Start)
 
-验收支持不可变草稿文件回执（文件名、最低字节数、SHA-256）、Owner 指定准确发票 ID 的最终确认收款，以及需人工核实的结果。草稿只证明交付，不证明经营质量；收款只证明对应发票的回执，不证明客户身份。模型自述不能证明成交。未知计费和外部结果必须经过审计对账才可继续；版本回退与删除必须经独立 Owner 维护确认。
+5 分钟内完成本地部署并跑通系统。
 
-详见 [Owner 指南](docs/guides/OWNER_GUIDE.md) 和 [V29 实施记录](docs/EmergentInc_V29_实施记录.md)。独立批准和部署前属于开发候选；隔离模拟测试不代表真实客户经营结果。
+### 前置条件
 
-## V30：Core 与实例资产分离
+- **Node.js**: v24.x（必须）
+- **包管理器**: `pnpm` (v9+)
+- **操作系统**: Windows 或 Linux（也支持 macOS 开发调试）
 
-Git Core 提交、已批准 Release/Generation、私有扩展版本是独立身份。更新 Core 不会把 World 私有资产搬进 Git。官方 Core 候选准备（HEAD 或指定提交）先核实真实已批准 Release 和公共 Gene 来源，再在安装与最终哈希前把已批准的现役及历史资产继承到私有候选。同 ID 版本/内容冲突、无法识别的非资产 Gene 定制会停止准备；新 Core 保留自己的契约与保护路径。
+### 1. 克隆代码与安装依赖
 
-新私有纯计算程序使用 `LIST_EXTENSIONS`、`SUBMIT_EXTENSION`、`RUN_EXTENSION`、`SET_EXTENSION_STATE`。不可变程序和 CAS 启用指针保存在各 World 的 `extensions/`；`extension-data/` 独立保留，解释器不能访问。继续使用现有 `pure-ast-json@1`，验证 JSON 输入输出及至少两个测试；扩展更新不创建 Generation。宿主 Node/React 程序只作为不支持的候选存档，绝不动态加载。Markdown 工作方法继续用原 Skills 库。
+```bash
+# 克隆代码仓库
+git clone https://github.com/lx00018310/EmergentInc.git
+cd EmergentInc
 
-兼容预检检查 Gene、Body、有作用域的 Markdown 方法、扩展哈希/契约和 V29 控制事实。关键不兼容阻止发布；不兼容扩展保留原文件和原启用意图，禁止执行；Owner 主动停用的扩展继续停用。候选烟测使用模拟 fixture，不包含生产客户行或私有文件，原始快照留在可信维护目录。历史 `APP_CODE` 报告保留，并提示针对新 Core 显式检查和 rebase；Core 补丁仍须现有准确哈希维护批准。
+# 安装项目依赖（Windows 环境推荐使用 pnpm.cmd）
+pnpm install --frozen-lockfile --ignore-scripts
+```
 
-Owner 目标详情可查看私有扩展，不增加主要导航页。隔离 Git 升级/回退证据及支持边界见 [V30 实施记录](docs/EmergentInc_V30_实施记录.md)。不承诺任意 Core 源码补丁、宿主应用或破坏性 Schema 变更自动兼容。
+### 2. 配置环境变量
 
-## 一门生意，一个对外网站
+复制 `.env.example` 为 `.env` 并填写核心配置：
 
-| 地址 | 用途 |
-| --- | --- |
-| `/` | 无需 Owner 登录的商城、商品详情、下单与查单入口 |
-| `/OWNER` | 经营目标、全局自主运行、例外待办与结果历史 |
-| `/QIAN` | 内部人物、对话、World 与人物收入 |
-| `/YUAN?world=<world_id>` | 内部元胞、Run、消息、交付物、Body 与协作 |
-| `/GENE` | 内部经营、信任根、基因、进化、记忆、支付与 Public Site 设置 |
+```bash
+cp .env.example .env
+```
 
-所有入口均支持英文与中文，首次访问默认英文，主动切换后保存到 localStorage。用户资料、对话与经营记录保持原文。
+`.env` 必需配置项：
+- `EMERGENTINC_OWNER_SECRET`：至少 32 位的随机口令（保护 `/OWNER` 控制台与后台接口）。
+- `MCL_API_KEY`：大语言模型 API 密钥（兼容 OpenAI 格式）。
+- `MCL_BASE_URL`：API 基础地址（默认 `https://api.openai.com/v1`）。
+- `MCL_MODEL`：默认模型代号（如 `gpt-4o`、`gpt-4o-mini` 或其他兼容模型）。
 
-官网属于整个实例。所有人物与 World 服务于同一门生意，可用现有能力协作与分工。官网订单及收入归属实例，不随意挂到某个人物；旧 World 发票与收入保留原归属。
+### 3. 构建与启动
 
-商城支持多个商品，初始展示两个空商品占位，名称、说明与价格留空、购买关闭。Owner 在 `/GENE` → 对外网站中逐个编辑中英文内容、价格与上下架，也可新增空商品。主页顶部“后台”要求输入 `.env` 中的 `EMERGENTINC_OWNER_SECRET`，通过服务端验证后进入 `/QIAN`；口令不会打包进前端。QIAN / YUAN / GENE 顶部均提供三个页面的切换入口。
+**Windows 环境：**
+```powershell
+.\EmergentInc_UI.bat
+```
+*(或手动执行：`pnpm.cmd --dir frontend build` 然后 `node scripts/launch-approved.mjs`)*
 
-## World、千机与元胞
+**Linux 环境：**
+```bash
+bash ./EmergentInc_UI.sh
+```
 
-千机是拥有稳定身份、人设与独立 World 的人物。一个 World 内可有多个元胞，其运行记录、消息与文件独立。入口元胞死亡后人物仍存在，Owner 可以更换为本 World 的活跃元胞。对话启动有限额度 Run，经 outbox 返回答复。
+启动脚本会自动完成健康检查并在浏览器中打开 `http://127.0.0.1:8765/`。
 
-`/OWNER` 控制台将待办与动态分为两个互斥视图（`#owner-inbox` / `#owner-activity`）；每条真实待办提供“同意 / 拒绝 / 详情”一键入口并直接显示服务端生成的后果说明，运行恢复、外部结果未知与软件升级以“需人工核实”告警呈现，绝不伪装成可决策按钮。
+### 4. 首次使用指引
 
-信任根、Genome 与 Evolution 全局共享。各 World 的 Current、Body 技能与账本独立，相同坐标不共享消息或文件。V23 旧会议历史归档保留；V24 不新增协作架构。
+1. 浏览器访问 **`http://127.0.0.1:8765/OWNER`**。
+2. 输入你在 `.env` 中设定的 `EMERGENTINC_OWNER_SECRET` 进入老板控制台。
+3. 设立你的第一个经营目标（例如：“调研轻量数字商品需求并设计初始上架物料”）。
+4. 设定 Token 预算与运行轮数上限，将自主运行开关切换为 **ON**。
 
-## Body、Gene 与进化
+---
 
-Body 技能在遗传权限内生成、测试和执行。最小契约 `pure-ast-json@1` 用 JSON 用例验证 JavaScript 函数，通过解释器执行；不使用 eval，不访问主机文件、凭据、网络、子进程或安装依赖。Body Revision 不形成新一代。
+## 它是如何工作的 (How It Works)
 
-除可执行的 pure Skill 外，Pixel 还能按需加载基于 Markdown 的工作方法 Skill（`LIST_SKILLS` / `READ_SKILL`）；与可执行 Skill 不同，它们只是参考文档，不构成执行许可。
+EmergentInc 围绕着完整的商业闭环持续运转：
 
-资产晋升冻结不可变快照，记录 World、元胞、代号与来源哈希。Owner 审查隐私、共享许可和通用性，批准的方向形成 Gene Patch。完整 release 必须通过类型检查、测试、构建和烟测，可信 Supervisor 才能接受**准确候选哈希**审批。
+```
+[Owner 设立目标] ──> [AI 拆解并沙箱执行] ──> [对外独立站 / 订单与收款]
+       ▲                                                 │
+       │                                                 ▼
+[Gene 基因沉淀与升级] <── [人工审核 / 交付回执] <────────┘
+```
 
-所有 World 准备好下一代 Current 后才切换全局指针。失败回退代码与投影；谱系、付款与失败事实保留。新 World 从 Gene 继承已晋升能力，不复制私有 Body 文件。
+1. **设定目标**：你在 `/OWNER` 下达目标，并指定验收规则（草稿文件交付、指定发票付款回执或人工审核）与预算。
+2. **自主执行**：AI 人物与元胞将目标拆解为受限的 Run 轮次，在严密的 `pure-ast-json` 沙箱内生成工具、编写代码或输出交付物。
+3. **对外营商**：生成的商品直接挂载至实例集成的独立站（`/`），支持 Solana、BSC、Polygon、TRON 四大公链的 USDT 扫码结算。
+4. **决策把关**：涉及代码发布、资金通道开启或超出预算的关键决策，汇集于 Owner 待办收件箱，一键确认或驳回。
+5. **自我进化**：验证有效的执行技能沉淀为系统 Gene（基因），新角色自动继承；支持版本平滑升级与回退。
 
-自进化受已验证契约和审批约束；Agent 不能编辑运行中的正式 Release，或悄悄增加任意依赖。
+---
 
-8766 升级页并排显示已批准版本谱系与本地 Git 提交图；可对可 fast-forward 的提交固定 SHA 准备候选，发布成功后安全同步 git `main`（绝不 rebase 或强推）。
+## 控制台与系统入口
 
-## 订单与 USDT 收款
+| 访问路径 | 角色定位 | 功能职责 |
+| --- | --- | --- |
+| `/` | 对外面向客户的商城 | 访客浏览商品、下单购买与订单查询（无需登录）。 |
+| `/OWNER` | 老板经营控制台 | 目标管理、全局运行开关、决策收件箱与实时动态流。 |
+| `/QIAN` | 千机阁 | 人物花名册、人设故事线、对话交互与各角色营收看板。 |
+| `/YUAN?world=<id>` | 元胞工作间 | 元胞运行日志、消息交互、实时交付物与多元胞协作。 |
+| `/GENE` | 基因与资产中心 | 信任根、谱系演进、系统记忆、支付通道与独立站管理。 |
+| `http://127.0.0.1:8766/` | 独立升级服务 | 独立的版本管理面板，支持候选发布、预检与安全回退。 |
 
-商城 → 选择已上架商品 → 客户信息 → Order → USDT Invoice / 二维码 → 现有监听 → 确认到账 → 订单已付款 → `/GENE` 可见实例收入。
+*全站所有入口原生支持中英文实时切换，偏好持久化。*
 
-先在 `/GENE` 启用收款 Rail。系统不提供默认商户地址，不保存钱包私钥、不签名、不转出资金。继续使用现有 Solana USDT、BSC Binance-Peg USDT、Polygon PoS USDT0、TRON TRC-20 USDT 主网实现。
+---
 
-Solana 用独立 Reference；其他链增加永久唯一的 0.000001–0.009999 USDT 尾数。必须支付**页面显示的完整金额**。TRON 二维码仅含收款地址，钱包中选择 TRC-20 USDT 并手动输入完整金额。到账遵循现有链终局和 Transfer 核验；迟到或取消后付款待审核，未确认观察不计收入。
+## 核心特性 (Key Features)
 
-公开购买用不可预测 token 查询付款状态，请保管返回的订单链接。公开接口仅暴露网站、商品与 token 授权的付款信息；其余 `/api/*` 需要 Owner 登录，已有 session/login 接口继续开放。
+- **自主经营目标驱动**：支持拆解多阶段目标，严格受控于 Token 消耗预算与全局轮次上限。
+- **多人物与 World 隔离**：人物拥有独立记忆与运行空间，避免跨环境数据污染。
+- **非托管 Web3 支付**：内置主流公链 USDT 监听，零私钥存储，资金安全纯靠链上终局性校验。
+- **受控 AST 沙箱**：基于 `pure-ast-json@1` 解释器执行技能，彻底杜绝恶意 `eval`、网络盗取与磁盘越权。
+- **私有扩展与资产继承 (V30)**：各 World 的计算扩展保存在本地私有目录，官方 Core 更新可无损继承已批准资产。
+- **数据与代码物理隔离**：系统代码在 Git，业务账本在 SQLite，升级主程序绝不丢失商业数据。
 
-私有 RPC 环境变量：`EMERGENTINC_SOLANA_RPC_MAINNET`、`EMERGENTINC_SOLANA_WS_MAINNET`、`EMERGENTINC_BSC_RPC_MAINNET`、`EMERGENTINC_POLYGON_RPC_MAINNET`、`EMERGENTINC_TRON_RPC_MAINNET`、`EMERGENTINC_TRON_API_KEY`。凭据不进入公开响应或模型。
+---
 
-## 持久 Workspace
+## 数据持久化与升级 (Workspace & Upgrades)
 
 **代码可以变化，业务数据持续存在。**
 
+### 存储目录结构
+
 ```text
 workspace/
-  workspace-layout.json
   system/
-    active-generation.json
-    control/control.sqlite3       # 目标、运行许可、人物、World、网站、订单
-    payment/payment.sqlite3       # Rail、发票、回执、收入、outbox
-    lineage/lineage.sqlite3        # 共享谱系、记忆与经营证据
-    generations/Gxxxx/current.sqlite3
-    evolution/{promotions,requests}/
-    legacy/v22/{raw,snapshots}/
+    control/control.sqlite3       # 经营目标、运行许可、人物、订单与独立站设置
+    payment/payment.sqlite3       # 支付通道、发票、收款回执与实例营收
+    lineage/lineage.sqlite3        # 进化谱系、系统记忆与经营证据
   worlds/<world_id>/
-    world.json
-    ledger/v9_core.sqlite3
-    live/{pixels,artifacts,shared}/
-    runtime/
-    generations/Gxxxx/{current.sqlite3,body/skills}/
+    ledger/v9_core.sqlite3         # 检查点、Run 记录、消息历史
+    extensions/                    # World 私有计算扩展与启用指针 (V30)
+    live/                          # 交付物、生成文件与共享资源
 ```
 
-网站配置与订单使用现有 control 数据库，付款继续使用现有 payment 数据库。业务数据不存进前端源码、Git JSON 或 Release 目录。
+### 安全升级原则
 
-Run 在原有账本数据库中保存轮次检查点、已完成消息数与续跑意图。崩溃、断电或服务关闭后，下次正常启动仅在公司自主运行持久状态为 ON、原许可仍有效时，从未完成轮次继续同一个 Run，复用已保存的模型响应和工具回执，保留原轮数上限与已消费的 Token 预算。主动点击停止、预算耗尽、正常结束和等待审批的任务不会自动续跑；候选验证及暂停启动不会执行恢复。模型计费、外部工具结果或文件搬移结果未知时，仍须人工核实。升级前没有检查点的旧未决 Run 保留原人工恢复流程。
+- **物理隔离保护**：`workspace/` 独立于 Git 仓库源码及构建产物，拉取新代码或发布新版本绝不会覆盖业务数据。
+- **独立升级入口**：访问 `http://127.0.0.1:8766/`（或运行 `EmergentInc_Upgrade.bat`），支持准确候选哈希校验、兼容性预检与一键切换。
+- **平滑回退保障**：若新版本未能通过健康检查，系统自动安全回滚至上一稳定版本，订单、收款与数据分毫不受影响。
 
-## 启动与开发
+---
 
-使用 Node.js 24 与 pnpm，Windows 命令使用 `pnpm.cmd`。本机 `.env` 配置至少 32 个随机字符的 Owner 口令以及模型报价，凭据不入 Git。
+## 安全与能力边界 (Security)
 
-```powershell
-pnpm.cmd install --frozen-lockfile --ignore-scripts
-pnpm.cmd typecheck
-pnpm.cmd test --maxWorkers=4
-pnpm.cmd --dir frontend build
-node scripts/launch-approved.mjs --check
-node scripts/launch-approved.mjs
-```
+- **绝不托管私钥**：EmergentInc 不存储任何钱包私钥，不执行链上签名与资金转出，仅被动监听公开账本。
+- **Owner 鉴权保护**：`EMERGENTINC_OWNER_SECRET` 仅在服务端校验，绝不泄露至前端构建包中。
+- **沙箱安全铁律**：解释器限制单次执行步数与内存大小，禁止直接访问宿主操作系统与敏感网络。
+- **客观原则**：自主运行默认保持 **OFF**。外部结果未知或模型调用计费异常时，系统主动挂起等待人工核查。
 
-`EmergentInc_UI.bat` 也可以启动批准版本。启动核对冻结代码、代号、Current、指针与 Owner 审批回执，编辑开发源码不会更新正式实例。
+---
 
-Windows 启动器会等待本次启动的进程就绪、首页正常响应后再打开网页。Linux 运行 `bash ./EmergentInc_UI.sh`，同样在前台启动；桌面会话使用 `xdg-open` 打开网页，无桌面会话则显示访问地址。先安装 Node.js 24 和 pnpm，并将 `.env` 与 Owner 发布配置中的路径改为 Linux 路径。这个本机启动器不替代生产 systemd 服务，也不迁移 Windows Workspace。
+## 常见问题与深入文档 (Troubleshooting & Docs)
 
-受控升级替换启动进程后，启动器核对切换记录、准确批准及新进程就绪状态，确认成功后显示交接提示。新服务独立运行，输出写入提示中的运行日志。普通崩溃仍返回错误。
+### 常见问题
 
-日常升级使用独立网页 `http://127.0.0.1:8766/`。`EmergentInc_Upgrade.bat` 保留为可选的命令行查看版本、回退和恢复入口；网页升级服务不依赖这个批处理文件。
+- **Node 版本报错**：系统要求 Node.js 24.x，请通过 `node -v` 核查当前运行环境。
+- **Owner 密码提示过短**：`.env` 中的 `EMERGENTINC_OWNER_SECRET` 长度必须达到 32 位及以上。
+- **端口冲突**：业务系统默认占用 `8765` 端口，升级服务占用 `8766` 端口，启动前请确保端口空闲。
 
-版本标签支持中文、空格和符号，最多 200 个字符。标签留空时自动生成时间标签，修改说明仍须填写。显示标签与系统生成的内部版本编号分别保存。
+### 深入技术文档与历史报告
 
-Owner 与 Agent 使用独立 branch / worktree。正式 Release 永远冻结，不修改 `/srv/emergentinc/current`，不在运行目录 `git pull`。测试与本地提交完成后再合并、审批发布。禁止多人同时直接编辑同一 working tree。
+底层技术细节与版本演进记录已完整归档至 `docs/`：
+- [Owner 操作指南](docs/guides/OWNER_GUIDE.md)
+- [V30 Core 资产与扩展实施记录](docs/EmergentInc_V30_实施记录.md)
+- [V29 经营目标全链路实施记录](docs/EmergentInc_V29_实施记录.md)
+- [版本升级与维护入口说明](docs/版本升级入口.md)
+- [系统安全边界规范](docs/security_boundary.md)
 
-## 升级与回退
+---
 
-Linux 代码位于 `/srv/emergentinc/releases/<release_id>`，`current` 指向批准版本；数据位于 `/var/lib/emergentinc/workspace`，升级不得覆盖它。
+## 开源许可与支持
 
-顺序：类型检查 → 测试 → 前端构建 → 冻结候选 → 停机 → Workspace 备份 → 必要迁移 → 切换版本 → 启动 → 健康检查。失败回退代码，订单、付款、收入、记忆与谱系事实保留。
-
-V22 Workspace 必须显式迁移至 V23：
-
-```powershell
-node scripts/v23-migration-dry-run.mjs <已停止的V22-workspace> <新备份目录>
-node scripts/v23-upgrade.mjs prepare <V22-workspace> <已验证备份目录> <新的Owner目录>
-node scripts/v23-upgrade.mjs approve <Owner目录> <准确候选哈希> "批准原因"
-node scripts/v23-upgrade.mjs apply <Owner目录> <准确候选哈希>
-```
-
-V23 → V24 及保持此 Workspace 布局的后续软件版本，使用根目录 `EmergentInc_Upgrade.bat`：status / prepare / show / approve / apply / rollback / recover。完整命令和历史版本入口见 [版本升级入口](docs/版本升级入口.md)。World 的 Gene 变更仍使用 `scripts/v23-generation.mjs` 的 submit / validate / approve / birth，不能修改 Root。
-
-Owner 软件维护保留未整理事实及快照，不调用模型或生成虚假 Dream。V24 出现实例发票后拒绝直接回退 V23；兼容性和验证证据见 [V24 实施记录](docs/EmergentInc_V24_实施记录.md)。
-
-## 验证状态
-
-V24 在准确 Release 获批且部署前仍是开发候选。本地测试使用隔离 Workspace 与模拟 RPC，不证明真实客户付款或 Linux 正式环境验收。部署与真实收款必须单独记录。
-
-计划与历史：[V24 Plan](docs/EmergentInc%20V24%20产品化收口执行%20Plan.md)、[V23 实施记录](docs/EmergentInc_V23_实施记录.md)、[V22 整改记录](docs/EmergentInc_V22_整改实施记录.md)、[原始首发材料](docs/launch/README.md)。
+- **开源协议**：本项目基于 [MIT License](LICENSE) 开源（以仓库 LICENSE 文件为准）。
+- **问题反馈**：欢迎通过 [GitHub Issues](https://github.com/lx00018310/EmergentInc/issues) 提交漏洞报告与需求建议。
+- **商务与定制咨询**：如需企业级定制化 Agent 部署与方案支持，请通过 `/OWNER` 控制台或项目维护者联系。

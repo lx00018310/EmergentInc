@@ -468,6 +468,10 @@ Owner 选择归档 Goal-A → 默认清单移除，可在归档查回历史
 
 ## 执行记录 / Execution record
 
+2026-10-14：辅助聊天从经营目标页移到左侧独立“Boss 对话 / Boss chat”页面（`/OWNER#owner-chat`），专门用于对话；切换导航保留草稿与正在接收的回复。中英文同步，192 项前端测试及前端构建通过。
+
+The auxiliary chat now has a dedicated Boss chat sidebar page at `/OWNER#owner-chat`. Business information no longer embeds the chat. Drafts and in-flight replies persist across navigation. Both languages, 192 frontend tests and the frontend build passed.
+
 ### 2026-10-13 Owner 后续确认：简化公司入口与统一额度
 
 本节覆盖前文关于指定轮数、目标独立预算和每次开启重新授权额度的要求：

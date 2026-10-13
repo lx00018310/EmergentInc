@@ -37,6 +37,8 @@ describe('V29 goal-first bilingual Owner UI',()=>{
     expect(screen.queryByRole('table',{name:t('Status overview')})).toBeNull();expect(screen.queryByRole('region',{name:t('Business goals')})).toBeNull();expect(screen.queryByRole('spinbutton')).toBeNull();
     await act(async()=>fireEvent.click(screen.getByRole('switch')));expect(JSON.parse(fetch.mock.calls.find(c=>c[0]==='/api/owner/automation')![1]!.body as string)).toMatchObject({desiredMode:'ON',expectedRevision:0});
     fireEvent.click(screen.getByRole('link',{name:t('Business goals')}));expect(screen.getByRole('heading',{name:'Market research'})).toBeTruthy();expect(screen.getByRole('table',{name:t('Status overview')})).toBeTruthy();expect(screen.getByRole('spinbutton',{name:t('New total token quota')})).toBeTruthy();expect(screen.queryByLabelText(t('Run mode'))).toBeNull();expect(screen.queryByLabelText(t('Goal token authorization'))).toBeNull();
+    expect(screen.queryByRole('textbox')).toBeNull();fireEvent.click(screen.getByRole('link',{name:t('Boss chat')}));
+    expect(screen.getByRole('heading',{name:t('Boss chat')})).toBeTruthy();expect(screen.getByRole('textbox')).toBeTruthy();expect(screen.queryByRole('table')).toBeNull();expect(screen.queryByRole('spinbutton')).toBeNull();
     fireEvent.click(screen.getByRole('link',{name:new RegExp(t('To-dos'))}));expect(screen.queryByRole('table')).toBeNull();
   });
   it('keeps OFF usable while stopping and approves a shared quota without changing the switch',async()=>{

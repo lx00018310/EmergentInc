@@ -89,6 +89,7 @@
 .owner-effect strong { color: inherit; font-weight: 600; }
 .owner-mission,.owner-inbox,.owner-activity { min-width: 0; }
 .owner-mission { display: flex; flex-direction: column; flex: 1; min-height: 0; padding: 24px 32px; }
+.owner-boss > h1 { margin-bottom: 20px; }
 .owner-status-overview { flex-shrink: 0; margin-bottom: 20px; }
 .owner-status-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
 .owner-console .owner-status-heading h2 { margin: 0; font-size: 14px; }

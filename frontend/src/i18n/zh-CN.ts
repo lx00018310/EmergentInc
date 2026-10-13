@@ -60,6 +60,7 @@ export const zhCN: Record<string, string> = {
   "Read at": "读取时间",
   "Owner Chat": "老板窗口",
   "Boss": "Boss",
+  "Boss chat": "Boss 对话",
   "To-dos": "待办事项",
   "History": "历史记录",
   "No history recorded.": "暂无历史记录。",

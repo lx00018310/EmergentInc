@@ -2,159 +2,178 @@ English | [中文](README_CN.md)
 
 # EmergentInc
 
-**AI that helps anyone start and run an online business.**
+**The open-source AI engine that helps anyone start and run an online business.**
 
-You provide the idea, resources and final decisions. EmergentInc provides AI-powered characters and Pixels that explore opportunities, build products, market, sell, serve customers and continuously evolve through real business activity.
+**Beyond chatbots. Autonomous AI that executes operations, self-upgrades, and delivers real business value.**
 
-- **For users:** deploy EmergentInc and build your own AI-powered online business.
-- **For customers:** EmergentInc itself also operates as a business and provides customization services.
-- **For developers:** EmergentInc is open source.
+You set business goals, allocate token budgets, and make final decisions. EmergentInc provides autonomous AI characters and Pixels that explore opportunities, build products, run marketing, serve customers, accept crypto payments, and continuously evolve through real business activity.
 
-## V29: manage goals, then turn on automation
+100% open source. Clone, configure, and run.
 
-Deploy the approved release → open `/OWNER` → describe a business goal → confirm its evidence rule and token allowance → authorize the global token budget → choose continuous operation or a shared round count → start → review evidence and exceptions.
+![EmergentInc Architecture](Imag_EmergentInc.png)
 
-Goals persist in the existing control SQLite database. Add, edit, pause, continue, stop, reopen, archive and restore them on one page. Existing people and Skills perform bounded work; when no person exists, Inbox requests recruitment approval. No person is created automatically. Chat and technical status remain available under the auxiliary section.
+---
 
-Automation defaults **OFF**. A round means one actually started World scheduling round, including interrupted rounds. Goals share the session allowance; the scheduler dispatches one round at a time and preserves the existing 20-round / 100000-token Owner Run limits. Continuous mode still requires a token budget. OFF prevents new AI calls, tools and Runs, preserves in-flight receipts and shows Stopping until work drains. The public store, orders, payment monitoring and independent maintenance continue.
+## Quick Start
 
-Acceptance supports immutable draft-file receipts (filename, minimum bytes and SHA-256), finalized payments for exact Owner-selected invoice IDs, and results requiring human verification. A draft verifies delivery, not commercial quality; a payment verifies that invoice's receipt, not customer identity. Model claims never prove sales. Unknown billing and external outcomes block execution until audited reconciliation. Release rollback/deletion require independent Owner maintenance approval.
+Get your instance running in 5 minutes.
 
-See the [Owner guide](docs/guides/OWNER_GUIDE.md) and [V29 implementation report](docs/EmergentInc_V29_实施记录.md). This is a development candidate until separately approved and deployed; isolated mock tests do not prove real customer results.
+### Prerequisites
 
-## V30: keep Core and instance assets separate
+- **Node.js**: v24.x (required)
+- **Package Manager**: `pnpm` (v9+)
+- **OS**: Windows or Linux (macOS supported for development)
 
-Git Core commits, approved Releases/Generations, and private extension versions are independent identities. Updating Core does not move private World assets into Git. During official Core candidate preparation (HEAD or a pinned commit), V30 verifies the active approved Release and public Gene provenance, then inherits approved active and historical asset files into the private candidate before installation and final hashes. Conflicting versions/content or unknown non-asset Gene customization stop preparation. The new Core manifest keeps its own contracts and protected paths.
+### 1. Clone & Install
 
-New private pure programs use `LIST_EXTENSIONS`, `SUBMIT_EXTENSION`, `RUN_EXTENSION` and `SET_EXTENSION_STATE`. Immutable programs and CAS activation pointers live in each World's `extensions/`; `extension-data/` stays separate and is not accessible to the interpreter. The existing `pure-ast-json@1` engine validates JSON input/output and at least two tests. Extension updates do not create a Generation. Host Node/React programs are archived as unsupported candidates and are never imported. Markdown methods continue to use the existing Skills library.
+```bash
+# Clone repository
+git clone https://github.com/lx00018310/EmergentInc.git
+cd EmergentInc
 
-Compatibility preflight checks Gene, Body, scoped Markdown methods, extension hashes/contracts and persisted V29 control facts. Critical incompatibilities block publication; incompatible extensions retain their files and requested state while execution is disabled. Manually disabled extensions stay disabled. Synthetic candidate smoke fixtures contain no production customer rows or private files; original snapshots stay in trusted maintenance storage. Historical `APP_CODE` reports remain available and are marked for explicit rebase review against a new Core. Core patches still require the existing exact-hash maintenance approval.
+# Install dependencies (Windows: pnpm.cmd)
+pnpm install --frozen-lockfile --ignore-scripts
+```
 
-The Owner goal details expose private extensions without a new main navigation page. See the [V30 implementation report](docs/EmergentInc_V30_实施记录.md) for the isolated Git upgrade/rollback evidence and supported limits. No claim is made that arbitrary Core source patches, host applications or destructive schema changes automatically remain compatible.
+### 2. Configure Environment
 
-## One business, one public website
+Copy `.env.example` to `.env` and configure your credentials:
 
-| Address | Purpose |
-| --- | --- |
-| `/` | Public store, product details, checkout and order lookup; no Owner login required |
-| `/OWNER` | Business goals, global automation, exceptions and result history |
-| `/QIAN` | Internal characters, conversations, Worlds and character income |
-| `/YUAN?world=<world_id>` | Internal Pixels, Runs, messages, artifacts, Body and collaboration |
-| `/GENE` | Internal business operations, Root of Trust, Gene, Evolution, Memory, payments and Public Site settings |
+```bash
+cp .env.example .env
+```
 
-All entries support English and Chinese. English is the initial language; an explicit selection is saved in localStorage. User documents, conversations and business records retain their original language.
+Required settings in `.env`:
+- `EMERGENTINC_OWNER_SECRET`: Random string with **at least 32 characters** (protects `/OWNER` and backend management).
+- `MCL_API_KEY`: Your LLM API key (OpenAI-compatible).
+- `MCL_BASE_URL`: API base URL (default: `https://api.openai.com/v1`).
+- `MCL_MODEL`: Default model (e.g., `gpt-4o`, `gpt-4o-mini`, or any compatible model).
 
-The public website belongs to the instance. All characters and Worlds work for the same business and may divide work or collaborate using existing capabilities. Public orders and revenue belong to the instance, without an arbitrary character attribution. Existing World invoices and revenue retain their original attribution.
+### 3. Build & Launch
 
-The store supports multiple products and initially displays two blank placeholders with empty names, descriptions and prices, and purchasing disabled. Edit both languages, price and availability for each product, or add a blank product, in `/GENE` → Public Site. The homepage Backend button requires the existing `.env` `EMERGENTINC_OWNER_SECRET`, validated by the server before opening `/QIAN`; the secret never enters the frontend bundle. QIAN / YUAN / GENE each provide all three page links in their top bar.
+**On Windows:**
+```powershell
+.\EmergentInc_UI.bat
+```
+*(Alternatively, run manually: `pnpm.cmd --dir frontend build` then `node scripts/launch-approved.mjs`)*
 
-## World, Qianji and Pixel
+**On Linux:**
+```bash
+bash ./EmergentInc_UI.sh
+```
 
-A Qianji is a persistent character with a narrative and its own World. A World contains multiple Pixels with independent runtime records, messages and files. Characters remain after gateway Pixel death; the Owner can replace the gateway with an active Pixel from that World. Chat starts a bounded Run and returns replies through its outbox.
+The launcher starts the server and automatically opens `http://127.0.0.1:8765/`.
 
-The `/OWNER` console separates pending decisions from the activity timeline (`#owner-inbox` / `#owner-activity`); each real decision offers one-click Approve / Reject / Details with server-written effects, while runs, external unknowns and software upgrades stay as human-verification alerts instead of fake buttons.
+### 4. First Steps
 
-Root, Genome and Evolution are global. Each World's Current, Body Skills and ledger are separate. Identical coordinates in different Worlds do not share files or messages. V23's legacy meeting history is archived; V24 does not introduce a new collaboration architecture.
+1. Visit **`http://127.0.0.1:8765/OWNER`** in your browser.
+2. Enter your `EMERGENTINC_OWNER_SECRET` to unlock the Owner Console.
+3. Define your first business goal (e.g., "Research market demand and draft a digital tool").
+4. Set token allowance and round limit, then toggle **Automation ON**.
 
-## Body, Gene and evolution
+---
 
-Body Skills grow, test and execute within inherited permissions. The minimal contract, `pure-ast-json@1`, interprets JavaScript functions using JSON tests without eval, host files, credentials, network, subprocesses or dependency installation. Body revisions do not create a new generation.
+## How It Works
 
-Beyond executable Body Skills, Pixels can also load reusable Markdown working-method Skills on demand (`LIST_SKILLS` / `READ_SKILL`): unlike executable pure Skills, these are advisory documents, not execution permissions.
+EmergentInc operates as a closed-loop business cycle:
 
-Promotion freezes an immutable snapshot with World, Pixel, generation and source hashes. The Owner reviews privacy, sharing rights and generality. Approved directions become Gene patches. Full releases must pass typecheck, tests, builds and smoke checks before the trusted Supervisor receives approval for the **exact candidate hash**.
+```
+[Owner Sets Goal] ──> [AI Deconstructs & Executes] ──> [Public Storefront / Checkout]
+       ▲                                                           │
+       │                                                           ▼
+[Gene Evolution & Upgrades] <── [Human Approval / Receipts] <──────┘
+```
 
-All Worlds must prepare their next Current before the global generation pointer changes. Failure rolls back code and projections; Lineage, payments and failure evidence persist. New Worlds inherit promoted Gene capabilities without copying private Body files.
+1. **Set Goals**: The Owner defines goals in `/OWNER`, setting evidence rules (draft delivery, confirmed payment, or human review) and token limits.
+2. **Autonomous Execution**: Characters and Pixels break goals into bounded Runs, writing code, generating tools, or preparing products inside a secure `pure-ast-json` sandbox.
+3. **Run Business**: Products are published to the integrated public storefront (`/`), supporting on-chain USDT payments across Solana, BSC, Polygon, and TRON.
+4. **Human in the Loop**: Key sensitive actions—code releases, large budget adjustments, or wallet rail toggles—require one-click Owner approval in the Inbox.
+5. **Self-Evolution**: High-performing executable skills are promoted into system "Genes", inherited across Worlds and preserved through software upgrades.
 
-Self-evolution stays within verified contracts and approvals. Agents cannot edit a live production release or silently add arbitrary dependencies.
+---
 
-The 8766 upgrade page shows the approved release lineage beside the local Git commit graph; fast-forwardable commits can be pinned as candidates and a successful publish safely fast-forwards git `main` (never rebase or force).
+## Control Consoles & Endpoints
 
-## Orders and USDT payments
+| Route | Role | Description |
+| --- | --- | --- |
+| `/` | Public Storefront | Product browsing, checkout, and order lookup for visitors (no login required). |
+| `/OWNER` | Owner Console | Business goal management, automation switch, decision inbox, and live timeline. |
+| `/QIAN` | Qianji Hall | Character roster, narrative identities, conversational tasks, and income tracking. |
+| `/YUAN?world=<id>` | Pixel Workspace | World-level Pixels, execution logs, live artifacts, and multi-agent collaboration. |
+| `/GENE` | Gene & Assets | Root of trust, evolution lineage, memory, payment rails, and storefront settings. |
+| `http://127.0.0.1:8766/` | Upgrade Service | Independent web service for version checks, candidates, releases, and safe rollback. |
 
-Store → select a listed product → customer details → Order → USDT Invoice / QR → existing Payment Monitor → confirmed payment → paid Order → instance revenue visible in `/GENE`.
+*All UI routes support both English and Chinese with persistence.*
 
-Enable a payment rail in `/GENE`. No merchant address is supplied by default. The server stores no wallet private key, signs no transaction and sends no funds. Supported rails reuse existing mainnet Solana USDT, BSC Binance-Peg USDT, Polygon PoS USDT0 and TRON TRC-20 USDT.
+---
 
-Solana invoices have distinct references. Other rails add a permanently unique suffix of 0.000001–0.009999 USDT. Pay the **exact displayed amount**, including all decimals. TRON QR codes contain the receiving address; select TRC-20 USDT and enter the exact amount manually. Existing chain finality and transfer verification govern receipts. Late or cancelled payments require review; unconfirmed observations create no revenue.
+## Key Features
 
-Public checkout uses an unpredictable token to query payment state. Keep the returned order link private. Public endpoints expose only site, product and token-authorized payment information. Other `/api/*` endpoints require Owner authentication; existing session and login endpoints remain available.
+- **Autonomous Business Goals**: Deconstruct goals into measurable runs with hard token caps and round limits.
+- **Multi-Character & World Isolation**: Characters maintain independent identities, memory, and runtime files without cross-world corruption.
+- **Non-Custodial Web3 Payments**: Built-in payment monitoring for Solana, BSC, Polygon, and TRON USDT. Zero private key storage—verification relies purely on public on-chain finality.
+- **Safe Sandboxed Execution**: Executes custom skills via `pure-ast-json@1` without arbitrary `eval`, disk escapes, network access, or untrusted package installation.
+- **Private Extensions & Gene Heritage (V30)**: World-level private computation extensions are preserved locally, while approved system assets inherit cleanly into new Core releases.
+- **Complete Physical Data Isolation**: Code lives in Git, business facts live in SQLite. Core software updates never overwrite your business data.
 
-Private RPC settings: `EMERGENTINC_SOLANA_RPC_MAINNET`, `EMERGENTINC_SOLANA_WS_MAINNET`, `EMERGENTINC_BSC_RPC_MAINNET`, `EMERGENTINC_POLYGON_RPC_MAINNET`, `EMERGENTINC_TRON_RPC_MAINNET`, `EMERGENTINC_TRON_API_KEY`. Credentials never enter public responses or models.
+---
 
-## Persistent workspace
+## Persistent Workspace & Upgrades
 
-**Code changes. Business data continues.**
+**Code updates. Business data continues.**
+
+### Storage Structure
 
 ```text
 workspace/
-  workspace-layout.json
   system/
-    active-generation.json
-    control/control.sqlite3       # Goals, automation permits, characters, Worlds, site, orders
-    payment/payment.sqlite3       # Rails, invoices, receipts, revenue, outbox
-    lineage/lineage.sqlite3        # Shared lineage, memories, business evidence
-    generations/Gxxxx/current.sqlite3
-    evolution/{promotions,requests}/
-    legacy/v22/{raw,snapshots}/
+    control/control.sqlite3       # Goals, permits, characters, orders, storefront settings
+    payment/payment.sqlite3       # Payment rails, invoices, receipts, instance revenue
+    lineage/lineage.sqlite3        # Evolutionary lineage, memory, business evidence
   worlds/<world_id>/
-    world.json
-    ledger/v9_core.sqlite3
-    live/{pixels,artifacts,shared}/
-    runtime/
-    generations/Gxxxx/{current.sqlite3,body/skills}/
+    ledger/v9_core.sqlite3         # Checkpoints, runs, message history
+    extensions/                    # World-private extensions and active pointers (V30)
+    live/                          # Artifacts, generated files, shared resources
 ```
 
-Site settings and orders use the existing control database. Payments remain in the existing payment database. Business data never lives in frontend source, Git JSON files or a release directory.
+### Safe Upgrades
 
-Run checkpoints, completed-message counts and resume intent are stored in the existing ledger database. After a crash, power loss or service shutdown, the next normal startup continues the same Run only when persisted company automation is ON and its original permit is valid; it resumes at its unfinished round, reuses stored model responses and tool receipts, and preserves the original round limit and spent token budget. Manual stops, exhausted budgets, normal completion and work awaiting approval do not resume automatically. Candidate validation and paused startup do not recover work. Unknown model billing, external tool outcomes or filesystem moves still require operator review. Older unresolved Runs without checkpoints retain the existing manual recovery flow.
+- **Zero Overwrite**: The `workspace/` directory is strictly separated from repository source code and frozen release directories.
+- **Independent Upgrade Portal**: Access `http://127.0.0.1:8766/` (or run `EmergentInc_Upgrade.bat`) to inspect candidate releases, run dry-run compatibility checks, approve hashes, and switch releases.
+- **Atomic Rollback**: If a new release fails health checks or compatibility validation, the system rolls back cleanly with zero loss to orders, revenue, or memories.
 
-## Run and develop
+---
 
-Use Node.js 24 and pnpm. On Windows use `pnpm.cmd`. Configure a random Owner secret of at least 32 characters and model pricing in local `.env`; keep credentials out of Git.
+## Security & Boundary
 
-```powershell
-pnpm.cmd install --frozen-lockfile --ignore-scripts
-pnpm.cmd typecheck
-pnpm.cmd test --maxWorkers=4
-pnpm.cmd --dir frontend build
-node scripts/launch-approved.mjs --check
-node scripts/launch-approved.mjs
-```
+- **No Private Keys**: EmergentInc does not store wallet private keys, sign transactions, or hold custody of funds. Payment rails only listen to public blockchain transactions.
+- **Owner Authentication**: The `EMERGENTINC_OWNER_SECRET` is verified strictly server-side and never injected into the client-side JavaScript bundle.
+- **Sandbox Bounds**: Pure AST interpreter restricts tool execution to verified AST trees with strict byte and execution step caps.
+- **Reality Principle**: Automation defaults to **OFF**. Unknown model billing or unverified external states pause execution until audited by the Owner.
 
-`EmergentInc_UI.bat` also launches the approved release. Startup verifies frozen code against generation, Current, pointer and Owner approval receipts. Editing development source does not update a running instance.
+---
 
-Windows launchers open the page only after the launched process reports readiness and its homepage responds. On Linux, run `bash ./EmergentInc_UI.sh` for the same foreground startup. A desktop session uses `xdg-open`; a headless session prints the URL. Install Node.js 24 and pnpm, and configure Linux paths in `.env` and the Owner release configuration. This local launcher does not replace the production systemd units or migrate a Windows workspace.
+## Troubleshooting & Documentation
 
-After a controlled upgrade replaces the launched process, the launcher checks the switch record, exact approval and new process readiness before reporting a successful handoff. The new service runs independently, with output in the displayed runtime log. An ordinary crash still returns an error.
+### Common Issues
 
-Daily upgrades use the independent page at `http://127.0.0.1:8766/`. `EmergentInc_Upgrade.bat` remains an optional command-line entry for status, rollback and recovery; the web upgrade service does not depend on this batch file.
+- **Node Version Error**: EmergentInc requires Node.js 24. Ensure your active runtime matches (`node -v`).
+- **Owner Secret Too Short**: `EMERGENTINC_OWNER_SECRET` must be at least 32 characters.
+- **Port Conflict**: Default runtime port is `8765`, upgrade service port is `8766`. Ensure both ports are free.
 
-Version labels accept free text, including Chinese, spaces and symbols (up to 200 characters). Leave the label blank to generate a timestamp label; a change description is still required. Display labels are stored separately from the system-generated release IDs.
+### Deep Architecture & Implementation Guides
 
-Owner and Agent development use separate branches / worktrees. Keep production releases frozen. Do not edit `/srv/emergentinc/current` or `git pull` into a live production directory. Tests and a local commit precede merging and release approval. Do not share a working tree between simultaneous editors.
+All technical deep dives and historical implementation notes are maintained in `docs/`:
+- [Owner Operating Guide](docs/guides/OWNER_GUIDE.md)
+- [V30 Core Assets & Extensions Report](docs/EmergentInc_V30_实施记录.md)
+- [V29 Goal Control Implementation](docs/EmergentInc_V29_实施记录.md)
+- [Version Upgrade Entry Points](docs/版本升级入口.md)
+- [Security Boundary Specification](docs/security_boundary.md)
 
-## Upgrade and rollback
+---
 
-Linux code stays in `/srv/emergentinc/releases/<release_id>` with `current` pointing to the approved release. Data stays in `/var/lib/emergentinc/workspace`. Never overwrite that workspace.
+## License & Support
 
-Sequence: typecheck → tests → frontend build → frozen candidate → stop instance → workspace backup → required migration → switch release → start → health check. Failed health checks roll back code. Orders, payments, revenue, Memory and Lineage remain as facts.
-
-V22 workspaces require explicit V23 migration:
-
-```powershell
-node scripts/v23-migration-dry-run.mjs <stopped-V22-workspace> <new-backup-directory>
-node scripts/v23-upgrade.mjs prepare <V22-workspace> <verified-backup-directory> <new-owner-directory>
-node scripts/v23-upgrade.mjs approve <owner-directory> <exact-candidate-hash> "reason"
-node scripts/v23-upgrade.mjs apply <owner-directory> <exact-candidate-hash>
-```
-
-For V23 → V24 and later software releases retaining the same Workspace layout, use `EmergentInc_Upgrade.bat` or `node scripts/version-upgrade.mjs`: status / prepare / show / approve / apply / rollback / recover. See [version upgrade entry points](docs/版本升级入口.md). Owner software maintenance archives unsynthesized facts without calling a model. Direct rollback to V23 is refused after any instance invoice exists. Normal Gene upgrades retain their Root restrictions and Final Dream requirement.
-
-Subsequent approved changes use `scripts/v23-generation.mjs` submit / validate / approve / birth. V24 retains the V23 workspace layout and adds no new Gene mechanism. See the [V24 implementation record](docs/EmergentInc_V24_实施记录.md) for schema compatibility and validation evidence.
-
-## Validation status
-
-V24 is a development candidate until its exact release is approved and deployed. Local tests use isolated workspaces and simulated RPC evidence. They do not prove real customer payments or Linux production acceptance. Record deployment and real payment acceptance separately.
-
-Plans and history: [V24 Plan](docs/EmergentInc%20V24%20产品化收口执行%20Plan.md), [V23 implementation](docs/EmergentInc_V23_实施记录.md), [V22 rectification](docs/EmergentInc_V22_整改实施记录.md), [original launch materials](docs/launch/README.md).
+- **License**: Open-source under [MIT License](LICENSE) (see repository LICENSE).
+- **Feedback & Issues**: Submit bugs and discussions via [GitHub Issues](https://github.com/lx00018310/EmergentInc/issues).
+- **Customization Services**: For commercial deployments and enterprise agent customization, contact via `/OWNER` or project maintainers.

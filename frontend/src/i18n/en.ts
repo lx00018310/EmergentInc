@@ -60,6 +60,7 @@ export const en: Record<string, string> = {
   "Read at": "Read at",
   "Owner Chat": "Owner Chat",
   "Boss": "Boss",
+  "Boss chat": "Boss chat",
   "To-dos": "To-dos",
   "History": "History",
   "No history recorded.": "No history recorded.",
