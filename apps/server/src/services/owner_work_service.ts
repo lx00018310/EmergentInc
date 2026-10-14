@@ -8,12 +8,14 @@ import { AppCodeService } from './app_code_service.js';
 import type { OwnerChatService } from './owner_chat_service.js';
 import type { ReleaseMaintenanceClient } from './release_maintenance_client.js';
 import type { GoalRunBinding } from './owner_automation_gate.js';
+import type { OwnerProductService } from './owner_product_service.js';
 
 const digest = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const text = (value: unknown, max: number): value is string => typeof value === 'string' && Boolean(value.trim()) && value.length <= max;
 const record = (value: unknown): value is Record<string, any> => Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 const only = (v: Record<string, any>, keys: string[]) => Object.keys(v).every(k => keys.includes(k));
 export class OwnerWorkService {
+  products?: OwnerProductService;
   readonly code?: AppCodeService;
   private gateway: QianjiWorldGateway;
   private timer?: ReturnType<typeof setInterval>;
@@ -80,7 +82,7 @@ export class OwnerWorkService {
     if(this.schedulerError)throw new Error('OWNER_WORKER_FAILED');
     if (!Number.isSafeInteger(rounds)||rounds<1||rounds>20||!Array.isArray(tasks)||!tasks.length||tasks.length>5||new Set(tasks.map(t=>t?.personId)).size!==tasks.length)throw new Error('OWNER_DISPATCH_INVALID');
     // Validate the entire batch before creating any work.
-    const profiles=tasks.map(t=>{if(!record(t)||!only(t,['personId','instruction'])||!text(t.personId,100)||!text(t.instruction,2000))throw new Error('OWNER_DISPATCH_INVALID');const p=this.manager.registry.control.qianji.getProfile(t.personId);if(!p||p.careerStatus==='retired'||this.manager.registry.control.worldForQianji(t.personId).status!=='ACTIVE')throw new Error('OWNER_PERSON_UNAVAILABLE');return p;});
+    const profiles=tasks.map(t=>{if(!record(t)||!only(t,['personId','instruction'])||!text(t.personId,100)||!text(t.instruction,binding?4000:2000))throw new Error('OWNER_DISPATCH_INVALID');const p=this.manager.registry.control.qianji.getProfile(t.personId);if(!p||p.careerStatus==='retired'||this.manager.registry.control.worldForQianji(t.personId).status!=='ACTIVE')throw new Error('OWNER_PERSON_UNAVAILABLE');return p;});
     const db=this.manager.registry.control.db;
     this.manager.registry.control.transaction(()=>tasks.forEach((t,i)=>{
       const old=db.prepare('SELECT t.instruction,COALESCE(l.rounds,20) requested_rounds FROM owner_work_tasks t LEFT JOIN owner_work_run_limits l ON l.task_id=t.id WHERE t.request_key=? AND t.person_id=?').get(key,t.personId);
@@ -130,20 +132,29 @@ export class OwnerWorkService {
     if(linked){const goal=this.manager.automation!.goals.get(String(linked.goal_id));if(goal.specificationRevision===linked.goal_revision&&!['PAUSED','ARCHIVED','STOPPED','COMPLETED'].includes(goal.status))this.manager.automation!.goals.state(goal.id,'READY');return this.view();}
     await this.dispatch([{personId:profile.qianjiId,instruction:request.instruction}],`recruit:${id}`);return this.view();
   }
+  private routed(key:string) {
+    if(!this.manager.automation)return undefined;
+    const row=this.manager.registry.control.db.prepare('SELECT response FROM owner_control_requests WHERE key=?').get(`chat_route_${digest(key)}`);
+    return row?JSON.parse(String(row.response)):undefined;
+  }
   cached(key:string,question:string,history:unknown,language:string) {
     const old=this.manager.registry.control.db.prepare('SELECT * FROM owner_dispatch_calls WHERE request_key=?').get(key);
     if(!old)return null;if(old.payload_hash!==digest({question,history,language}))throw new Error('IDEMPOTENCY_CONFLICT');
-    if(old.response_json)return Promise.resolve(JSON.parse(String(old.response_json)));if(this.requestFlights.has(key))return this.requestFlights.get(key)!;throw new Error(String(old.error??'OWNER_REQUEST_IN_PROGRESS'));
+    if(old.response_json)return Promise.resolve(JSON.parse(String(old.response_json)));if(this.requestFlights.has(key))return this.requestFlights.get(key)!;
+    if(['create_goal','configure_product'].includes(this.routed(key)?.intent?.kind))return null;
+    throw new Error(String(old.error??'OWNER_REQUEST_IN_PROGRESS'));
   }
   async ask(key:string,question:string,history:{role:'user'|'assistant';content:string}[],language:'en'|'zh-CN',data:OwnerOverview,chat:OwnerChatService,forced?:{personId:string;instruction:string}[],hire?:{id:string;hash:string;decision:'approve'|'reject'}) {
     const payloadHash=digest({question,history,language}),db=this.manager.registry.control.db,old=db.prepare('SELECT * FROM owner_dispatch_calls WHERE request_key=?').get(key);
-    if(old){if(old.payload_hash!==payloadHash)throw new Error('IDEMPOTENCY_CONFLICT');if(old.response_json)return JSON.parse(String(old.response_json));if(this.requestFlights.has(key))return this.requestFlights.get(key)!;throw new Error(String(old.error??'OWNER_REQUEST_IN_PROGRESS'));}
-    db.prepare("INSERT INTO owner_dispatch_calls VALUES(?,?,'IN_FLIGHT',NULL,NULL,?)").run(key,payloadHash,Date.now());
+    const checkpoint=old?this.routed(key):undefined;
+    if(old){if(old.payload_hash!==payloadHash)throw new Error('IDEMPOTENCY_CONFLICT');if(old.response_json)return JSON.parse(String(old.response_json));if(this.requestFlights.has(key))return this.requestFlights.get(key)!;if(!['create_goal','configure_product'].includes(checkpoint?.intent?.kind))throw new Error(String(old.error??'OWNER_REQUEST_IN_PROGRESS'));}
+    else db.prepare("INSERT INTO owner_dispatch_calls(request_key,payload_hash,state,created_at) VALUES(?,?,'IN_FLIGHT',?)").run(key,payloadHash,Date.now());
     const run=async()=>{
       try {
-        const routed=hire?{intent:{kind:'recruit_decision',...hire},usage:{tokens:0,cost_cny:0}}:forced?{intent:{kind:'dispatch',tasks:forced},usage:{tokens:0,cost_cny:0}}:await chat.route(question,history,data,language);
+        const routed=checkpoint??(hire?{intent:{kind:'recruit_decision',...hire},usage:{tokens:0,cost_cny:0}}:forced?{intent:{kind:'dispatch',tasks:forced},usage:{tokens:0,cost_cny:0}}:await chat.route(question,history,data,language,this.products?.catalog()));
         const i=routed.intent, say=(zh:string,en:string)=>language==='en'?en:zh;
         if(!record(i)||typeof i.kind!=='string')throw new Error('OWNER_DISPATCH_INVALID');
+        if(['create_goal','configure_product'].includes(i.kind)&&!checkpoint)this.manager.automation!.goals.request(`chat_route_${digest(key)}`,{payloadHash},()=>routed);
         let answer:string,extra:Record<string,unknown>={};
         if(i.kind==='answer'&&only(i,['kind'])){
           const response=await chat.ask(question,history,language);response.usage.tokens=response.usage.tokens!==null&&routed.usage.tokens!==null?response.usage.tokens+routed.usage.tokens:null;response.usage.cost_cny=response.usage.cost_cny!==null&&routed.usage.cost_cny!==null?response.usage.cost_cny+routed.usage.cost_cny:null;
@@ -151,6 +162,22 @@ export class OwnerWorkService {
         } else if(hire&&i.kind==='recruit_decision'){
           await this.decide(hire.id,hire.hash,hire.decision);answer=hire.decision==='approve'?say('招聘已批准。新人物及其实际任务会显示在下方。','Recruitment was approved. The new person and their actual work appear below.'):say('招聘申请已拒绝，未创建人物。','Recruitment was rejected. No person was created.');
         } else if(i.kind==='clarify'&&only(i,['kind','answer'])&&text(i.answer,2000))answer=i.answer;
+        else if(i.kind==='create_goal'&&only(i,['kind','title','objective','filename','publication'])&&text(i.title,160)&&text(i.objective,1200)){
+          this.manager.automation?.assertOn();
+          if(!this.manager.automation)throw new Error('OWNER_GOALS_UNAVAILABLE');
+          if(i.filename!==undefined&&(!text(i.filename,100)||!/^[-\w]+\.(?:json|md|txt|csv)$/.test(i.filename)))throw new Error('OWNER_DISPATCH_INVALID');
+          const command=question.replace(/“[^”]*”|「[^」]*」|"[^"]*"/g,' ').trim();
+          if(!/^(?:(?:请|帮我|给我|我要|我希望|我需要|再)\s*)*(?:建立|创建|设立|持续|长期|先|调查|调研|研究)|^(?:(?:please|I want to|I'd like to)\s+)*(?:create|set up|research|investigate|first)\b/i.test(command))throw new Error('OWNER_GOAL_AUTH_REQUIRED');
+          const goal=this.manager.registry.control.transaction(()=>{
+            const goal=this.manager.automation!.goals.create({title:i.title,objective:i.objective,acceptance:{kind:'manual',description:'Verify real business results and traceable source evidence; a draft alone proves neither demand nor revenue. 按真实业务成果和可追溯证据核验；不得仅凭草稿宣称营收或需求成立。'},idempotencyKey:`chat_goal_${digest(key)}`});
+            if(i.publication!==undefined){if(!this.products)throw new Error('OWNER_PRODUCTS_UNAVAILABLE');const bound=db.prepare('SELECT 1 FROM owner_product_intents WHERE goal_id=?').get(goal.id);if(!bound)this.products.bind(goal,key,question,i.publication,i.filename??'product.json');}
+            return goal;
+          });extra.createdGoal=goal;answer=say('已创建经营目标，等待既有调度器安排执行。实际产物、证据和阻碍会显示在目标详情。','The business goal was created and is waiting for scheduling. Actual deliverables, evidence and blockers will appear in goal details.');
+        }
+        else if(i.kind==='configure_product'&&this.products){
+          const {kind,...input}=i;const product=this.products.configure(key,question,input);extra.configuredProduct=product;
+          answer=product.enabled?say(`已在公开商城上架「${product.nameZh}」，价格 ${product.price} USDT。`,`Published “${product.nameEn}” in the public store at ${product.price} USDT.`):product.reason?say(`已保存商品草稿，价格 ${product.price} USDT；未上架：缺少收款通道。请在高级商城设置配置收款通道后明确要求上架。`,`Product draft saved at ${product.price} USDT; it is not published because a payment rail is missing. Configure a payment rail in Advanced store settings, then request publication.`):say('商品已更新并保持未上架。','The product was updated and is unpublished.');
+        }
         else if(i.kind==='dispatch'&&only(i,['kind','tasks','rounds'])){const rounds=i.rounds===undefined?20:i.rounds;extra.tasks=await this.dispatch(i.tasks,key,rounds);answer=say(`已按分工派发任务并进入运行队列。下方会显示实际运行、阻塞和人物回复；每个执行片段最多 ${rounds} 轮，所有模型调用使用公司 Token 总额度。`,`Tasks were assigned and queued for execution. Actual runs, blockers and person replies appear below. Each execution segment uses up to ${rounds} rounds; all model calls use the company token quota.`);}
         else if(i.kind==='energy'&&only(i,['kind','personId','refill','infinite'])&&typeof i.personId==='string'&&(i.refill===undefined||typeof i.refill==='boolean')&&(i.infinite===undefined||typeof i.infinite==='boolean')&&(i.refill===true||typeof i.infinite==='boolean')){
           const result=await this.energy(i.personId,i.refill===true,i.infinite,key);extra.energy=result;answer=say(`${result.name}：当前入口元胞 ${result.pixelId} 的能量为 ${result.energy}，无限能量${result.infiniteEnergy?'已开启':'已关闭'}。其他元胞是否获能仍由入口自主决定，Run 预算和实际计费继续有效。`,`${result.name}: gateway ${result.pixelId} has ${result.energy} energy; automatic replenishment is ${result.infiniteEnergy?'enabled':'disabled'}. The gateway decides whether to supply other cells. Run budgets and actual billing remain in effect.`);

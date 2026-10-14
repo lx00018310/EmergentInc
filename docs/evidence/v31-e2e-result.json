@@ -1,0 +1,50 @@
+{
+  "isolated": true,
+  "realModel": "glm-5.3-flash",
+  "rail": "SYNTHETIC_TEST_ONLY",
+  "realTransferPerformed": false,
+  "workspace": "C:/Users/ASUS/AppData/Local/Temp/emergentinc-v31-e2e-8R9znF",
+  "automation": {
+    "desired_mode": "OFF",
+    "max_tokens": 10000000,
+    "revision": 7
+  },
+  "usage": {
+    "calls": 4,
+    "spent_tokens": 6684,
+    "configured_cost_cny": 0.000167
+  },
+  "autoQuotaGrants": 1,
+  "goals": [
+    {
+      "id": "goal_c7099d51-1d03-4646-b88a-2109e3018c4c",
+      "status": "WAITING_APPROVAL"
+    }
+  ],
+  "products": [
+    {
+      "product_id": "custom-service",
+      "product_enabled": 1,
+      "product_price": "19.900000"
+    },
+    {
+      "product_id": "product-2",
+      "product_enabled": 0,
+      "product_price": null
+    }
+  ],
+  "orders": [
+    {
+      "status": "AWAITING_PAYMENT",
+      "count": 1
+    }
+  ],
+  "invoices": [
+    {
+      "status": "WAITING",
+      "count": 1
+    }
+  ],
+  "receipts": 0,
+  "revenue": 0
+}

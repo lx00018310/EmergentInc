@@ -95,7 +95,7 @@ describe('authenticated V23 product and life integration',()=>{
     expect((await f.request('POST','/api/business/plans/plan-test/revoke',{revision:1,hash:'a'.repeat(64)})).statusCode).toBe(200);
     expect((await f.request('GET','/api/owner/overview')).json().inbox).toHaveLength(0);
   });
-  it('uses company token authorization for all active cells while preserving legacy gateway settings',async()=>{
+  it('replenishes only the current enabled gateway and preserves manual disable across restart',async()=>{
     const f=await fixture(),a=await f.manager.open(f.a.world_id),b=await f.manager.open(f.b.world_id);
     a.store.db.prepare('UPDATE pixel_accounts SET energy=10').run();
     b.store.db.prepare('UPDATE pixel_accounts SET energy=10').run();
@@ -118,12 +118,12 @@ describe('authenticated V23 product and life integration',()=>{
     reopened.store.db.prepare('UPDATE pixel_accounts SET energy=10').run();
     reopened.store.ensureUnlimitedEnergy('0_0_0',500,'old-gateway');
     reopened.store.ensureUnlimitedEnergy('1_0_0',500,'new-gateway');
-    expect(reopened.store.pixels.getPixelAccount('0_0_0')?.energy).toBe(100000);
+    expect(reopened.store.pixels.getPixelAccount('0_0_0')?.energy).toBe(10);
     expect(reopened.store.pixels.getPixelAccount('1_0_0')?.energy).toBe(100000);
     await f.request('PUT',url,{enabled:false});
     reopened.store.db.prepare("UPDATE pixel_accounts SET energy=10 WHERE pixel_id='1_0_0'").run();
     reopened.store.ensureUnlimitedEnergy('1_0_0',500,'disabled');
-    expect(reopened.store.pixels.getPixelAccount('1_0_0')?.energy).toBe(100000);
+    expect(reopened.store.pixels.getPixelAccount('1_0_0')?.energy).toBe(10);
     f.manager.automation!.control({desiredMode:'OFF',expectedRevision:f.manager.automation!.view().revision,idempotencyKey:crypto.randomUUID()});
     reopened.store.db.prepare("UPDATE pixel_accounts SET energy=10 WHERE pixel_id='1_0_0'").run();
     reopened.store.ensureUnlimitedEnergy('1_0_0',500,'company-off');expect(reopened.store.pixels.getPixelAccount('1_0_0')?.energy).toBe(10);

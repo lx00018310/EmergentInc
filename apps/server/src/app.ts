@@ -18,6 +18,7 @@ import { OwnerWorkService } from './services/owner_work_service.js';
 import { ReleaseMaintenanceClient } from './services/release_maintenance_client.js';
 import { OwnerAutomationGate } from './services/owner_automation_gate.js';
 import { OwnerGoalScheduler } from './services/owner_goal_scheduler.js';
+import { OwnerProductService } from './services/owner_product_service.js';
 
 export interface CreateServerOptions extends Partial<ApiRoutesOptions> {
   worlds?: WorldRouteServices;
@@ -35,6 +36,7 @@ export interface CreateServerOptions extends Partial<ApiRoutesOptions> {
 
 export async function createServer(options: CreateServerOptions): Promise<FastifyInstance> {
   let ownerWork:OwnerWorkService|undefined;
+  let publicStore:PublicStore|undefined;
   const app = fastify({
     logger: false,
     trustProxy: options.trustLoopbackProxy ? ["127.0.0.1", "::1"] : false,
@@ -59,6 +61,7 @@ export async function createServer(options: CreateServerOptions): Promise<Fastif
   registerOwnerAuth(app, options.ownerAuth, mode, Boolean(options.worlds));
   if (options.worlds) {
     const store = new PublicStore(options.worlds.payments.control, options.worlds.payments);
+    publicStore=store;
     registerPublicRoutes(app, store);
     app.addHook('onClose', async () => store.close());
   }
@@ -101,6 +104,7 @@ export async function createServer(options: CreateServerOptions): Promise<Fastif
         const work = options.worlds.ownerWork ?? new OwnerWorkService(manager,()=>Boolean(options.evolution?.quiesced?.()),options.ownerUpgradeOrigin,
           options.ownerUpgradeOrigin&&options.ownerAuth?new ReleaseMaintenanceClient(options.ownerUpgradeOrigin,options.ownerAuth.secret):undefined);
         ownerWork=work;
+        work.products=new OwnerProductService(publicStore!,gate,manager);
         const scheduler=new OwnerGoalScheduler(manager,work,gate,options.worlds.payments);
         if(!options.worlds.ownerWork){const previous=manager.options.configureTools;manager.options.configureTools=(id,tools)=>{previous?.(id,tools);work.registerTools(tools,id);};}
         app.addHook('onReady',async()=>work.start());app.addHook('onClose',async()=>work.close());

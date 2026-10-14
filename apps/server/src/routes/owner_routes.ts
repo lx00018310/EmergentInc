@@ -10,6 +10,12 @@ import * as path from 'node:path';
 import { createHash } from 'node:crypto';
 
 export function registerOwnerRoutes(app:FastifyInstance, overview:OwnerOverviewService, chat?:OwnerChatService, work?:OwnerWorkService, gate?:OwnerAutomationGate, scheduler?:OwnerGoalScheduler){
+  const assertModelReady=()=>{
+    if(!work)return;
+    if(!work.manager.options.isModelConfigured)throw Object.assign(new Error('MODEL_NOT_CONFIGURED'),{statusCode:409});
+    const pricing=work.manager.options.usageMeter.getPricingForModel(work.manager.options.modelName);
+    if(!pricing||pricing.currency&&pricing.currency.toUpperCase()!=='CNY'||![pricing.input_cost_per_million,pricing.output_cost_per_million].every(v=>Number.isFinite(v)&&v>=0))throw Object.assign(new Error('MODEL_PRICE_REQUIRED'),{statusCode:409});
+  };
   if(gate){
     const goals=gate.goals;
     app.get('/owner/goals',req=>{const query=req.query as any;return {items:goals.list(query.archived==='true')};});
@@ -31,7 +37,10 @@ export function registerOwnerRoutes(app:FastifyInstance, overview:OwnerOverviewS
     app.get('/owner/automation/report',()=>gate.report());
     app.get('/owner/automation/calls',()=>({items:gate.modelCalls()}));
     app.post<{Params:{id:string}}>('/owner/automation/calls/:id/reconcile',req=>gate.reconcileCall(req.params.id,req.body));
-    app.post('/owner/automation',async req=>{gate.control(req.body);if(gate.isOn())await work?.manager.resumeInterrupted();await scheduler?.tick();return gate.view();});
+    app.post('/owner/automation',async req=>{
+      if ((req.body as any)?.desiredMode === 'ON')assertModelReady();
+      gate.control(req.body);if(gate.isOn())await work?.manager.resumeInterrupted();await scheduler?.tick();return gate.view();
+    });
   }
   app.get('/owner/overview',()=>overview.overview());
   app.post('/owner/chat',async(req,reply)=>{
@@ -40,6 +49,29 @@ export function registerOwnerRoutes(app:FastifyInstance, overview:OwnerOverviewS
       return reply.status(400).send({detail:'INVALID_OWNER_CHAT'});
     if(b.requestKey!==undefined&&(!/^[a-zA-Z0-9_-]{1,128}$/.test(b.requestKey)||typeof b.requestKey!=='string'))return reply.status(400).send({detail:'INVALID_OWNER_CHAT'});
     if(work&&b.requestKey){const cached=work.cached(b.requestKey,b.question,b.history,b.language);if(cached)return cached;}
+    const command = b.question.trim().replace(/[。.!！]+$/, '');
+    const controlKey=`chat_control_${createHash('sha256').update(b.requestKey??'').digest('hex')}`;
+    const controlPayload={question:b.question,history:b.history,language:b.language};
+    if (gate && b.requestKey && /^(?:先|请)?(?:暂停|停止运行|暂停自动经营)$|^(?:please )?(?:pause|stop running)$/i.test(command)) {
+      return gate.goals.request(controlKey,controlPayload,()=>{
+        const automation=gate.control({desiredMode:'OFF',expectedRevision:gate.view().revision,idempotencyKey:`pause_${controlKey}`});
+        return {answer:b.language==='en'?'Automatic operation is paused. Usage and work are retained.':'自动经营已暂停；用量和工作状态保留。',automation,sources:['owner_automation_control'],as_of:new Date().toISOString(),usage:{tokens:0,cost_cny:0}};
+      });
+    }
+    const resume = /^(?:请)?(?:继续(?:运行|执行|自动经营)?|开始执行|开始运行)$|^(?:please )?(?:resume|continue(?: running)?|start running)$/i.test(command);
+    // Bootstrap only a current executable Owner command. Queries/history never wake a paused company.
+    const actionable = /^(?:(?:请|帮我|给我|我要|我希望|我需要|再|先)\s*)*(?:建立|创建|设立|调查|调研|研究|安排|让|派|招聘|招募|上架|发布商品|新增商品|把|将|修改商品|更新商品|问|询问|运行|你决定)|^(?:(?:please|I want to|I'd like to|first)\s+)*(?:create|set up|research|investigate|assign|ask|recruit|hire|publish|update|change|run|decide)\s/i.test(command);
+    if (gate && work && b.requestKey && (resume || actionable)) {
+      if (resume) {
+        const response=gate.goals.request(controlKey,controlPayload,()=>{
+          assertModelReady();gate.ensureAutoQuota('owner_chat',0,'resume');
+          return {answer:b.language==='en'?'Automatic operation has resumed.':'自动经营已恢复。',automation:gate.view(),sources:['owner_automation_control'],as_of:new Date().toISOString(),usage:{tokens:0,cost_cny:0}};
+        });
+        if(gate.isOn())await work.manager.resumeInterrupted();await scheduler?.tick();
+        return response;
+      }
+      assertModelReady();gate.ensureAutoQuota('owner_chat',0,'initial');
+    }
     const data=await overview.overview(), proposal=proposeOwnerAction(b.question.trim(),data,b.language);
     const hire=proposal?.proposals[0]?.action;
     if(work&&b.requestKey&&hire&&(hire.type==='recruit_approve'||hire.type==='recruit_reject')){

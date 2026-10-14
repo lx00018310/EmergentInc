@@ -46,7 +46,7 @@ describe('Qianji detail panels', () => {
   it.each([['zh-CN','运行轮数（1–20）','发送'],['en','Run rounds (1–20)','Send']])('sends an explicitly selected 10-round budget in %s',async(lang,label,send)=>{
     localStorage.setItem('emergentinc.language',lang);vi.mocked(qianjiApi.postQianjiChat).mockResolvedValue({} as any);const onSent=vi.fn();
     render(<QianjiChatPanel item={{...item,world:{world_id:'world_a',status:'ACTIVE'}}} onSent={onSent}/>);
-    const number=screen.getByRole('spinbutton',{name:label});expect(number).toHaveProperty('value','20');fireEvent.change(number,{target:{value:'10'}});
+    expect(screen.getByRole('spinbutton').closest('details')!.open).toBe(false);fireEvent.click(screen.getByText(lang==='en'?'Advanced runtime information':'高级运行信息'));const number=screen.getByRole('spinbutton',{name:label});expect(number).toHaveProperty('value','20');fireEvent.change(number,{target:{value:'10'}});
     fireEvent.change(screen.getByRole('textbox'),{target:{value:'Read, modify and report'}});fireEvent.click(screen.getByRole('button',{name:send}));
     await waitFor(()=>expect(onSent).toHaveBeenCalledOnce());expect(qianjiApi.postQianjiChat).toHaveBeenCalledWith('qj_test','Read, modify and report',expect.any(String),10);
   });

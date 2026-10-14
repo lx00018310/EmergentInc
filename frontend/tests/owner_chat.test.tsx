@@ -4,6 +4,7 @@ import React, { useState } from 'react';
 import { OwnerChat } from '../src/features/owner/OwnerChat';
 import { Modal } from '../src/components/Modal';
 import * as ownerApi from '../src/api/ownerChat';
+import * as missionApi from '../src/api/owner';
 import { setLanguage } from '../src/i18n';
 
 vi.mock('../src/api/ownerChat', () => ({ askOwner: vi.fn() }));
@@ -72,5 +73,22 @@ describe('OwnerChat', () => {
     act(()=>setLanguage('en'));
     expect(screen.getAllByRole('heading',{name:'Footnotes'})).toHaveLength(2);
     expect(screen.getAllByRole('link',{name:'Back to reference'})).toHaveLength(2);
+  });
+  it('sends Enter, preserves Shift+Enter and IME composition, and retains Ctrl/Cmd+Enter',async()=>{
+    setLanguage('en');vi.mocked(ownerApi.askOwner).mockResolvedValue({answer:'Recorded',sources:[],as_of:new Date().toISOString(),usage:{tokens:1,cost_cny:0}});
+    render(<OwnerChat/>);const input=screen.getByRole('textbox');
+    fireEvent.change(input,{target:{value:'Keep composing'}});
+    fireEvent.keyDown(input,{key:'Enter',shiftKey:true});fireEvent.keyDown(input,{key:'Enter',isComposing:true});fireEvent.keyDown(input,{key:'Enter',keyCode:229});
+    expect(ownerApi.askOwner).not.toHaveBeenCalled();
+    await act(async()=>fireEvent.keyDown(input,{key:'Enter'}));expect(ownerApi.askOwner).toHaveBeenCalledTimes(1);
+    for(const modifier of ['ctrlKey','metaKey']){fireEvent.change(input,{target:{value:'Next request'}});await act(async()=>fireEvent.keyDown(input,{key:'Enter',[modifier]:true}));}
+    expect(ownerApi.askOwner).toHaveBeenCalledTimes(3);
+  });
+  it('displays actual goal and product receipts, and restores an unsent draft on remount',async()=>{
+    setLanguage('en');vi.spyOn(missionApi,'askMissionOwner').mockResolvedValue({answer:'Saved',sources:[],as_of:new Date().toISOString(),usage:{tokens:1,cost_cny:0},createdGoal:{id:'goal_receipt',title:'Research'} as any,configuredProduct:{productId:'custom-service',enabled:false,price:'19.900000',eventId:7,href:'/#products'} as any});
+    const first=render(<OwnerChat missionControl/>);fireEvent.change(screen.getByRole('textbox'),{target:{value:'Publish a product'}});await act(async()=>fireEvent.keyDown(screen.getByRole('textbox'),{key:'Enter'}));
+    expect(screen.getByRole('link',{name:'View created goal: Research'}).getAttribute('href')).toBe('/OWNER?goal=goal_receipt');expect(screen.getByText('Unpublished product')).toBeTruthy();expect(screen.queryByText('Published product')).toBeNull();
+    fireEvent.change(screen.getByRole('textbox'),{target:{value:'Unsent next instruction'}});first.unmount();render(<OwnerChat missionControl/>);expect(screen.getByRole('textbox')).toHaveProperty('value','Unsent next instruction');
+    act(()=>setLanguage('zh-CN'));expect(screen.getByText('未上架商品')).toBeTruthy();
   });
 });

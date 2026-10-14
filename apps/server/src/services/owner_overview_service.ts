@@ -70,6 +70,17 @@ export class OwnerOverviewService {
     const work=this.work?.view();
     const goals=manager.automation?.goals.list();
     const automation=manager.automation?.view();
+    if(this.work?.products){
+      for(const row of control.db.prepare("SELECT * FROM owner_product_intents WHERE state IN ('BLOCKED','OUTCOME_UNKNOWN')").all())alerts.push({id:`product-intent:${row.goal_id}`,kind:'product',severity:row.state==='OUTCOME_UNKNOWN'?'critical':'normal',title:'Product publication needs attention',summary:manager.automation!.goals.get(String(row.goal_id)).title,reasonKey:String(row.reason??'OWNER_OUTCOME_REVIEW_REQUIRED'),createdAt:Number(row.updated_at),source:'owner_product_intents',href:`/OWNER?goal=${encodeURIComponent(String(row.goal_id))}`});
+      const seen=new Set<string>();
+      for(const row of control.db.prepare("SELECT * FROM control_events WHERE kind='owner_product_configured' ORDER BY id DESC LIMIT 100").all()){
+        const receipt=JSON.parse(String(row.payload));
+        add(`product-event:${row.id}`,'Product updated',`${receipt.nameEn} / ${receipt.nameZh} · ${receipt.price} USDT`,Number(row.created_at),'control_events',receipt.href);
+        if(seen.has(receipt.productId))continue;seen.add(receipt.productId);
+        const current=this.work.products.catalog().find(p=>p.product_id===receipt.productId);
+        if(receipt.reason&&current&&!current.product_enabled)alerts.push({id:`product:${receipt.productId}`,kind:'product',severity:'normal',title:'Product publication needs attention',summary:`${receipt.nameEn} / ${receipt.nameZh}`,reasonKey:receipt.reason,createdAt:Number(row.created_at),source:'control_events',href:'/GENE#public-site'});
+      }
+    }
     if(automation?.observedState==='LIMIT_REACHED')alert('automation:quota','automation','normal','Company token quota needs approval','',automation.updatedAt,'owner_automation_control','/OWNER#owner-goals');
     if(automation?.observedState==='BLOCKED'&&automation.reason!=='EVOLUTION_QUIESCED')alerts.push({id:'automation:review',kind:'automation',severity:'critical',title:'Company automation needs review',summary:'',reasonKey:automation.reason??'OWNER_OUTCOME_REVIEW_REQUIRED',createdAt:automation.updatedAt,source:'owner_automation_control',href:'/OWNER?automationReview=true#owner-goals'});
     if(goals)for(const goal of goals){

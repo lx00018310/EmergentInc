@@ -36,7 +36,7 @@ export async function bootstrapWorlds(projectRoot:string,config:ReturnType<typeo
   const life=new LifeContext(system,{...manifest,generation:Number(active.generation_no)},lineage,current),modelName=process.env.MCL_DECISION_MODEL||process.env.MCL_MODEL||'gpt-4o-mini';
   const modelConfigured=!candidate&&Boolean(process.env.MCL_API_KEY && process.env.MCL_API_KEY!=='mock-key' && !process.env.MCL_API_KEY.includes('CONFIGURE_ME'));
   const mock=!candidate&&(process.argv.includes('--mock')||process.env.EMERGENT_MOCK_MODE==='1');
-  const provider:ModelProvider=modelConfigured?new OpenAICompatibleProvider({baseUrl:process.env.MCL_BASE_URL||'https://api.openai.com/v1',apiKey:process.env.MCL_API_KEY!}):{
+  const provider:ModelProvider=modelConfigured?new OpenAICompatibleProvider({baseUrl:process.env.MCL_BASE_URL||'https://api.openai.com/v1',apiKey:process.env.MCL_API_KEY!,maxRetries:0}):{
     async call(){if(!mock)throw new Error('MODEL_NOT_CONFIGURED');return {rawText:JSON.stringify({message_md:'[MOCK_SANDBOX] World runtime ready',send_to:'STOP'}),usage:{promptTokens:50,completionTokens:20}};}};
   const usageMeter=new UsageMeter(JSON.parse(fs.readFileSync(path.join(projectRoot,'resources/config/model_pricing.json'),'utf8')));
   const pricingFile=path.join(workspace,'private/business_model_pricing.json'),prices=!candidate&&fs.existsSync(pricingFile)?JSON.parse(fs.readFileSync(pricingFile,'utf8')):{models:{}};

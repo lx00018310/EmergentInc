@@ -126,10 +126,11 @@ describe('Owner role dispatch and actual execution',()=>{
     expect(response.energy).toMatchObject({energy:100000,pixelId:'0_0_0',infiniteEnergy:true});expect(runtime.store.pixels.getPixelAccount('1_0_0')!.energy).toBe(7);
     await f.work.ask('energy1','给一苇补充能量并设置无限能量',[],'zh-CN',f.data(),f.chat);
     expect(runtime.store.ledger.listEntriesByPixel('0_0_0').filter(e=>e.entry_type==='external_reward')).toHaveLength(1);
-    expect(f.control.gatewayInfiniteEnergy(f.b.world_id)).toBe(false);
+    expect(f.control.gatewayInfiniteEnergy(f.b.world_id)).toBe(true);
   });
   it('keeps energy-blocked work visible and obtains the real reply after an explicit refill',async()=>{
     const f=fixture(),runtime=await f.manager.open(f.a.world_id);runtime.store.db.prepare('UPDATE pixel_accounts SET energy=322').run();
+    f.control.setGatewayInfiniteEnergy(f.a.world_id,false);
     await f.work.dispatch([{personId:f.a.qianji_id,instruction:'Do the work'}],'waiting');await f.finish();expect(f.work.view().tasks[0]).toMatchObject({state:'BLOCKED',reason:'WAITING_PIXEL_BUDGET'});
     await f.work.energy(f.a.qianji_id,true,true,'refill');await f.finish();expect(f.work.view().tasks[0]).toMatchObject({state:'REPLIED',reply:'Actual work result'});
   });
@@ -143,6 +144,7 @@ describe('Owner role dispatch and actual execution',()=>{
   });
   it('does not grant a fresh Run token budget when retrying energy-blocked work',async()=>{
     const f=fixture(),runtime=await f.manager.open(f.a.world_id);runtime.store.db.prepare('UPDATE pixel_accounts SET energy=322').run();
+    f.control.setGatewayInfiniteEnergy(f.a.world_id,false);
     await f.work.dispatch([{personId:f.a.qianji_id,instruction:'Do the work'}],'limited');await f.finish();
     const old=runtime.store.runs.getLatestRun()!;runtime.store.db.prepare('UPDATE runs SET run_spent=90000 WHERE run_id=?').run(old.run_id);
     await f.work.energy(f.a.qianji_id,true,true,'refill-limited');await f.finish();expect(runtime.store.runs.getLatestRun()!.run_limit).toBe(10000);
@@ -185,7 +187,7 @@ describe('Owner role dispatch and actual execution',()=>{
   });
 });
 describe('8765 source candidate permission boundary',()=>{
-  it.each(['scripts/upgrade-web.mjs','scripts/prepare-app-code.mjs','supervisor/protocol.ts','apps/server/src/owner_auth.ts','apps/server/src/routes/public_routes.ts','apps/server/src/services/public_store.ts','apps/server/src/services/payment_assets.ts','apps/server/src/services/app_code_policy.ts','apps/server/src/services/release_maintenance_client.ts','packages/persistence/src/core_store.ts','packages/protocol/src/types/owner.ts','package.json','pnpm-lock.yaml','genome/manifest.json','frontend/src/../../scripts/upgrade-web.mjs','Frontend/src/app.ts','frontend/src/file.ts:secret','frontend/src/CON.ts'])('denies protected/shared/alias path %s',p=>expect(()=>appCodePath(p)).toThrow('APP_CODE_PATH_DENIED'));
+  it.each(['scripts/upgrade-web.mjs','scripts/prepare-app-code.mjs','supervisor/protocol.ts','apps/server/src/owner_auth.ts','apps/server/src/routes/public_routes.ts','apps/server/src/services/public_store.ts','apps/server/src/services/owner_product_service.ts','apps/server/src/services/payment_assets.ts','apps/server/src/services/app_code_policy.ts','apps/server/src/services/release_maintenance_client.ts','packages/persistence/src/core_store.ts','packages/protocol/src/types/owner.ts','package.json','pnpm-lock.yaml','genome/manifest.json','frontend/src/../../scripts/upgrade-web.mjs','Frontend/src/app.ts','frontend/src/file.ts:secret','frontend/src/CON.ts'])('denies protected/shared/alias path %s',p=>expect(()=>appCodePath(p)).toThrow('APP_CODE_PATH_DENIED'));
   it('writes real candidate source and a separate immutable report without changing the active source',async()=>{
     const f=fixture(),before=f.work.code!.read('frontend/src/sample.ts'),input={title:'Change value',summary:'Change application value to 2',files:[{path:before.path,content:'export const value = 2;',baseHash:before.baseHash}]};
     const result=await f.work.code!.submit(f.a.world_id,'0_0_0',input,'source1');const report=f.work.code!.get(result.id);

@@ -6,7 +6,7 @@ English | [中文](README_CN.md)
 
 **Beyond chatbots. Autonomous AI that executes operations, self-upgrades, and delivers real business value.**
 
-You set business goals, allocate token budgets, and make final decisions. EmergentInc provides autonomous AI characters and Pixels that explore opportunities, build products, run marketing, serve customers, accept crypto payments, and continuously evolve through real business activity.
+You describe business goals, run or pause the company, and handle exceptions. EmergentInc provides autonomous AI characters and Pixels that explore opportunities, build products, run marketing, serve customers, accept crypto payments, and continuously evolve through real business activity.
 
 100% open source. Clone, configure, and run.
 
@@ -68,8 +68,10 @@ The launcher starts the server and automatically opens `http://127.0.0.1:8765/`.
 
 1. Visit **`http://127.0.0.1:8765/OWNER`** in your browser.
 2. Enter your `EMERGENTINC_OWNER_SECRET` to unlock the Owner Console.
-3. Define your first business goal (e.g., "Research market demand and draft a digital tool").
-4. Set token allowance and round limit, then toggle **Automation ON**.
+3. Speak in the default Boss chat: "Create a business goal: research AI customization services." The first executable Owner command starts automation; ON also starts it directly. No token or round form is required.
+4. Tokens are authorized cumulatively in **10,000,000-token batches**, with automatic renewal below 200,000 available tokens or when a model reservation needs more. **Model API calls incur real costs**; this is neither free usage nor a monetary spending cap. Click **OFF** to pause new calls. Only an explicit resume command or ON releases a manual pause.
+5. New Worlds replenish only their current gateway Pixel automatically. Existing World settings are preserved. Person chat defaults to 20 rounds; Advanced retains the 1–20 setting.
+6. With a configured USDT payment rail, ask "Update custom service to 19.9 USDT, write both languages and publish it." The store is updated directly, without a second confirmation. Without a rail, the product remains an unpublished draft with a specific to-do. Research-first publication waits for scoped source receipts and product data; unverified market conditions require review.
 
 ---
 
@@ -84,10 +86,10 @@ EmergentInc operates as a closed-loop business cycle:
 [Gene Evolution & Upgrades] <── [Human Approval / Receipts] <──────┘
 ```
 
-1. **Set Goals**: The Owner defines goals in `/OWNER`, setting evidence rules (draft delivery, confirmed payment, or human review) and token limits.
+1. **Set Goals**: Describe a goal in `/OWNER` chat. The existing scheduler assigns real people, using available Skills and Gene/World knowledge. Default acceptance requires source evidence and human verification; advanced acceptance rules remain available.
 2. **Autonomous Execution**: Characters and Pixels break goals into bounded Runs, writing code, generating tools, or preparing products inside a secure `pure-ast-json` sandbox.
 3. **Run Business**: Products are published to the integrated public storefront (`/`), supporting on-chain USDT payments across Solana, BSC, Polygon, and TRON.
-4. **Human in the Loop**: Key sensitive actions—code releases, large budget adjustments, or wallet rail toggles—require one-click Owner approval in the Inbox.
+4. **Human in the Loop**: Recruitment, code releases, wallet rail changes and uncertain outcomes retain their existing approval and review boundaries. Owner-authorized store product actions execute directly.
 5. **Self-Evolution**: High-performing executable skills are promoted into system "Genes", inherited across Worlds and preserved through software upgrades.
 
 ---
@@ -149,7 +151,7 @@ workspace/
 - **No Private Keys**: EmergentInc does not store wallet private keys, sign transactions, or hold custody of funds. Payment rails only listen to public blockchain transactions.
 - **Owner Authentication**: The `EMERGENTINC_OWNER_SECRET` is verified strictly server-side and never injected into the client-side JavaScript bundle.
 - **Sandbox Bounds**: Pure AST interpreter restricts tool execution to verified AST trees with strict byte and execution step caps.
-- **Reality Principle**: Automation defaults to **OFF**. Unknown model billing or unverified external states pause execution until audited by the Owner.
+- **Reality Principle**: A new instance starts **OFF/0** and the first executable Owner command can activate it with automatic quota. Manual OFF persists across restarts. Unknown billing, maintenance and unverified external outcomes block new work until reviewed.
 
 ---
 

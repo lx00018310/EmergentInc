@@ -106,6 +106,8 @@ export const QianjiProfilePanel: React.FC<{
                 {item.profile.careerStatus === 'active' ? (tr("● 活跃服役中")) : item.profile.careerStatus === 'trial' ? (tr("◇ 试炼考核中")) : item.profile.careerStatus === 'candidate' ? (tr("○ 候选整备")) : (tr("已退役"))}
               </p>
               <h2>{item.profile.narrative.displayName}</h2>
+              {item.profile.narrative.roleLabel&&<p>{item.profile.narrative.roleLabel}</p>}
+              {item.profile.narrative.shortBio&&<p>{item.profile.narrative.shortBio}</p>}
               {item.profile.birthIdentity ? (
                 <div className="qj-hexagram-tag hero-tag">
                   <span className="qj-hex-symbol">☯</span>
@@ -129,7 +131,7 @@ export const QianjiProfilePanel: React.FC<{
             </div>
           </div>
 
-          <div className="qj-ortho-specs">
+          <details className="qj-ortho-specs"><summary>{tr('Advanced runtime information')}</summary>
             <div className="qj-ortho-header">
               <span>{tr("正交机能规格 // SCHEMATIC SPECS")}</span>
               <span className="qj-ortho-code">{item.world?item.world.world_id:item.currentBinding ? tr("{0} · 第 {1} 代", [item.currentBinding.pixelId, item.currentBinding.incarnation]) : (tr("未绑定 PIXEL"))}</span>
@@ -148,7 +150,7 @@ export const QianjiProfilePanel: React.FC<{
                 <strong>{item.physical?.refundDeficitTokens == null ? tr("未知") : item.physical.refundDeficitTokens === 0 ? (tr("NOMINAL · 正常")) : `DEFICIT · ${item.physical.refundDeficitTokens}`}</strong>
               </div>
             </div>
-          </div>
+          </details>
         </div>
       </div>
 

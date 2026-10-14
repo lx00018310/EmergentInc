@@ -6,10 +6,10 @@ import { OwnerInbox } from './OwnerInbox';
 import { OwnerActivity } from './OwnerActivity';
 import { OwnerWork } from './OwnerWork';
 import { OwnerGoals } from './OwnerGoals';
-import { OwnerCompany } from './OwnerCompany';
+import { OwnerCompany, OwnerTokenQuota } from './OwnerCompany';
 import './owner.css';
 type OwnerTab='owner-goals'|'owner-mission'|'owner-chat'|'owner-inbox'|'owner-activity';
-const parseHash=():OwnerTab=>window.location.hash==='#owner-chat'?'owner-chat':window.location.hash==='#owner-goals'||!window.location.hash&&new URLSearchParams(window.location.search).has('goal')?'owner-goals':window.location.hash==='#owner-activity'?'owner-activity':window.location.hash==='#owner-inbox'?'owner-inbox':!window.location.hash&&new URLSearchParams(window.location.search).has('report')?'owner-activity':'owner-mission';
+const parseHash=():OwnerTab=>window.location.hash==='#owner-mission'?'owner-mission':window.location.hash==='#owner-goals'||!window.location.hash&&new URLSearchParams(window.location.search).has('goal')?'owner-goals':window.location.hash==='#owner-activity'?'owner-activity':window.location.hash==='#owner-inbox'?'owner-inbox':!window.location.hash&&new URLSearchParams(window.location.search).has('report')?'owner-activity':'owner-chat';
 function OwnerStatusOverview({data,error}:{data?:OwnerOverview;error:string}) {
   const summary=data?.summary, unavailable=t('Unavailable');
   const number=(value:number|null|undefined)=>value==null?unavailable:value.toLocaleString(language());
@@ -66,8 +66,16 @@ export function OwnerConsole(){
       </nav>
     </aside>
     <div className="owner-workspace">
+      <section className="owner-quick-status" aria-label={t('Company control and progress')}>
+        <OwnerCompany compact automation={data?.automation} onDone={refresh}/>
+        {data?.automation&&<small>{t('Tokens used: {0}; known cost: ¥{1}',[data.automation.spentTokens.toLocaleString(language()),data.automation.knownCostCny.toFixed(4)])}</small>}
+        <div className="owner-quick-row"><strong>{t('Current goals')}</strong>{data?.goals?.filter(g=>!['STOPPED','ARCHIVED'].includes(g.status)).slice(0,2).map(g=><a key={g.id} href={`/OWNER?goal=${encodeURIComponent(g.id)}`}>{g.title} · {t(`Goal status: ${g.status}`)}</a>)}<button onClick={()=>select('owner-goals')}>{t('View all goals')} ({data?.goals?.length??0})</button></div>
+        <div className="owner-quick-row"><strong>{t('Needs your attention')}</strong>{[...(data?.inbox??[]),...(data?.alerts??[])].slice(0,2).map(item=><a key={item.id} href={item.href==='/OWNER'?'/OWNER#owner-inbox':item.href}>{t(item.title)}{item.summary?` · ${item.summary}`:''}</a>)}<button onClick={()=>select('owner-inbox')}>{t('View to-dos')} ({data?ownerTodoCount(data):0})</button></div>
+        {error&&tab==='owner-chat'&&<p role="alert">{t('Overview unavailable. Previously displayed data may be stale.')} {error}</p>}
+      </section>
       <section className="owner-mission" id="owner-mission" aria-label={t('My AI company')} hidden={tab!=='owner-mission'}>
-        <OwnerCompany automation={data?.automation} onDone={refresh}/>
+        <h1>{t('My AI company')}</h1>
+        {data?.automation&&<OwnerTokenQuota automation={data.automation} onDone={refresh}/>}
         {error&&<p role="alert">{error}</p>}
       </section>
       <section className="owner-goal-page" id="owner-goals" aria-label={t('Business information')} hidden={tab!=='owner-goals'}>

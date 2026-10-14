@@ -3,7 +3,7 @@ import { goalFixture } from './fixtures/owner_goals.js';
 import { TRANSFER_TOPIC } from '../src/services/payment_assets.js';
 const cleanups:(()=>Promise<void>)[]=[];afterEach(async()=>{for(const fn of cleanups.splice(0).reverse())await fn();});
 describe('V29 real World goal scheduler',()=>{
-  it('resumes quota-blocked goals after a total increase without per-goal, Run or pixel budgets',async()=>{
+  it('renews quota during unattended scheduling while preserving paid usage',async()=>{
     const f=goalFixture();cleanups.push(f.close);const goal=f.goal();expect(goal.maxTokens).toBe(0);
     for(const world of f.manager.list()){
       const runtime=await f.manager.open(world.world_id),start=runtime.run.start.bind(runtime.run);
@@ -12,10 +12,9 @@ describe('V29 real World goal scheduler',()=>{
     }
     let count=0;f.respond(async()=>({rawText:JSON.stringify(++count===1?{operations:[{tool:'save_artifact',args:{filename:'result.md',content:'Actual retained draft after Owner quota increase.'}}],send_to:'STOP'}:{owner_reply:'Draft retained for inspection',send_to:'STOP'}),usage:{promptTokens:20,completionTokens:10,cachedTokens:0}}));
     f.on(null,1);await f.scheduler.tick();
-    await vi.waitFor(async()=>{await f.work.tick();await f.scheduler.tick();expect(f.manager.list().some(w=>w.running)).toBe(false);expect(f.gate.view().observedState).toBe('LIMIT_REACHED');});
-    expect(f.calls).toHaveLength(0);expect(f.gate.view().desiredMode).toBe('ON');expect(f.gate.goals.get(goal.id).status).not.toBe('BLOCKED');
-    f.gate.control({maxTokens:100000,expectedRevision:f.gate.view().revision,idempotencyKey:crypto.randomUUID()});
     await f.finish();expect(f.gate.goals.get(goal.id).status).toBe('COMPLETED');expect(f.gate.view().spentTokens).toBe(60);expect(f.calls).toHaveLength(2);
+    expect(f.gate.view()).toMatchObject({desiredMode:'ON',maxTokens:10_000_001});
+    expect(f.control.db.prepare("SELECT COUNT(*) n FROM control_events WHERE kind='owner_auto_quota_granted'").get()!.n).toBe(1);
   });
   it('binds an agent recruitment request to its goal budget, preserves pause on approval and routes resumed work to the approved specialist',async()=>{
     const f=goalFixture();cleanups.push(f.close);const goal=f.goal('Research draft');let worldCalls=0;

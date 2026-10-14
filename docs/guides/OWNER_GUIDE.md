@@ -1,10 +1,10 @@
-# Owner Guide / Owner 使用指南 — V30
+# Owner Guide / Owner 使用指南 — V31
 
 ## Main path / 主路径
 
-Deploy an approved release, sign in at `/OWNER`, add a goal, confirm its acceptance rule and token limit, authorize the global budget, select continuous or bounded operation, and start. Review actual evidence in Details and exceptions in Inbox. Technical chat is auxiliary.
+Deploy an approved release and sign in at `/OWNER`. Boss chat is the daily entry: describe a task or goal, or explicitly request a store product change. The first executable command can start the company with automatic cumulative 10M-token batches. Model APIs incur real costs. OFF pauses new calls and persists across restarts; explicit resume or ON is required. Advanced retains evidence rules, usage and recovery. Recruitment and software release approvals are unchanged.
 
-部署已批准版本，在 `/OWNER` 登录，新增目标，确认验收规则与目标 Token 上限，再授权全局预算，选择持续或指定轮数并开启。在详情查看实际证据，在待办处理例外；技术聊天为辅助入口。
+部署已批准版本并在 `/OWNER` 登录，默认以 Boss 对话处理日常任务、目标和明确的站内商品动作。首次可执行指令可启动公司，并按 1000 万 Token 累计自动授信续批；模型 API 产生真实费用。OFF 暂停新增调用并跨重启保留，须明确恢复或 ON 才继续。高级设置保留证据规则、用量和恢复；招聘及软件发布审批不变。
 
 - A draft goal requires a named text file, minimum UTF-8 bytes and an immutable tool receipt. Completion verifies file delivery, not commercial quality.
 - A payment goal counts only finalized receipts and revenue records for the exact invoice IDs selected by Owner. It does not verify customer identity or consultations.
@@ -14,9 +14,9 @@ Deploy an approved release, sign in at `/OWNER`, add a goal, confirm its accepta
 - 收款目标只统计 Owner 指定准确发票 ID 的最终确认回执与收入记录；不据此推断客户身份或咨询数量。
 - 其他经营结果须人工核实；人物回复和承诺不能自动证明目标完成。
 
-If there is no active person, the scheduler proposes a recruitment request in Inbox. Approval creates one person; the goal's subsequent work uses the same one-round scheduler. The switch itself never authorizes recruitment, publication, credentials or software maintenance.
+If there is no active person, the scheduler proposes a recruitment request in Inbox. Approval creates one person; the goal's subsequent work uses the same one-round scheduler. The switch itself never authorizes recruitment, external posts, credentials or software maintenance. Current Owner store product instructions execute directly with a payment rail; otherwise they save an unpublished draft. Research-first publication is bound to one goal, product, price permission and verifiable delivery. New World gateways default to automatic energy replenishment; old settings are preserved.
 
-没有活跃人物时，调度器在待办提出招聘申请；批准后创建一位人物，后续目标仍按单轮调度执行。打开开关本身不授予招聘、外部发布、凭据或软件维护权限。
+没有活跃人物时，调度器在待办提出招聘申请；批准后创建一位人物，后续目标仍按单轮调度执行。打开开关本身不授予招聘、外部发帖、凭据或软件维护权限。当前 Owner 的站内商品指令在有收款通道时直接执行，否则保存未上架草稿。先研究再发布只绑定一个目标、商品、价格权限及可核验交付物。新 World 入口默认自动补能，老设置保留。
 
 ## Stopping and limits / 停止与额度
 

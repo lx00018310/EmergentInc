@@ -4,6 +4,7 @@
 
 # 运行时工作区与私有数据 (Runtime Workspace & Private Data)
 workspace/
+workspace*/
 /live/
 owner_private/
 owner_*_profile.json

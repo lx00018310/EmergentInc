@@ -5,6 +5,9 @@ import type { OwnerAutomation, OwnerRunReport } from '@emergentinc/protocol';
 import { OwnerGoalService, exactKeys, ownerConflict, ownerInput } from './owner_goal_service.js';
 
 export interface GoalRunBinding { goalId: string; specificationRevision: number; dispatchId: string; resourceApprovalId?:string }
+const AUTO_QUOTA_BATCH = 10_000_000;
+const AUTO_QUOTA_LOW_WATER = 200_000;
+const QUOTA_LIMIT = 1_000_000_000;
 export class OwnerAutomationGate {
   readonly goals: OwnerGoalService;
   private maintenance = () => false;
@@ -42,6 +45,29 @@ export class OwnerAutomationGate {
   private usage(){return this.store.db.prepare("SELECT COALESCE(SUM(actual_tokens),0) spent,COALESCE(SUM(CASE WHEN state IN ('SENT','UNKNOWN') THEN MAX(0,reserved_tokens-COALESCE(actual_tokens,0)) ELSE 0 END),0) reserved,COALESCE(SUM(cost_cny),0) cost,SUM(state!='NOT_SENT' AND cost_cny IS NULL) unknown_cost FROM owner_model_permits").get()!;}
   isOn() { const r=this.row(),v=this.usage();return r.desired_mode==='ON'&&!this.maintenance()&&!this.hasUnknown()&&r.reason!=='OWNER_TOKEN_LIMIT'&&Number(v.spent)<Number(r.max_tokens); }
   private hasUnknown() { return Boolean(this.store.db.prepare("SELECT 1 FROM owner_model_permits WHERE state='UNKNOWN'").get()) || this.unresolved() || this.unknownChecks.some(check=>check()); }
+  /** Write paths only. BEGIN IMMEDIATE serializes quota checks across connections/processes. */
+  ensureAutoQuota(source: string, required = 0, start: 'never' | 'initial' | 'resume' = 'never'): OwnerAutomation {
+    ownerInput(Number.isSafeInteger(required) && required >= 0 && required <= QUOTA_LIMIT);
+    return this.store.transaction(() => {
+      const old = this.row();
+      const initial = old.desired_mode === 'OFF' && old.revision === 0 && old.reason === null;
+      if (old.desired_mode === 'OFF' && !(start === 'resume' || start === 'initial' && initial)) return this.view();
+      if (this.maintenance()) ownerConflict('EVOLUTION_QUIESCED');
+      if (this.hasUnknown()) ownerConflict('OWNER_OUTCOME_REVIEW_REQUIRED');
+      if (old.reason && old.reason !== 'OWNER_TOKEN_LIMIT' && !(start==='resume' && old.reason==='OWNER_OUTCOME_REVIEW_REQUIRED')) ownerConflict(String(old.reason));
+      if (old.desired_mode === 'OFF' && (this.live.size || this.calls.size || this.external.size || this.serviceFlights())) ownerConflict('OWNER_AUTOMATION_STOPPING');
+      const usage = this.usage(), total = Number(old.max_tokens), available = total - Number(usage.spent) - Number(usage.reserved);
+      const batches = available < AUTO_QUOTA_LOW_WATER || available < required ? Math.max(1, Math.ceil((required - available) / AUTO_QUOTA_BATCH)) : 0;
+      const next = total + batches * AUTO_QUOTA_BATCH;
+      if (next > QUOTA_LIMIT) ownerConflict('OWNER_TOKEN_LIMIT');
+      if (batches || old.desired_mode !== 'ON') {
+        const now = Date.now();
+        this.store.db.prepare("UPDATE owner_automation_control SET desired_mode='ON',run_mode='CONTINUOUS',requested_rounds=NULL,max_tokens=?,revision=revision+1,updated_at=?,reason=NULL WHERE id=1").run(next, now);
+        this.store.db.prepare('INSERT INTO control_events(kind,world_id,payload,created_at) VALUES(?,NULL,?,?)').run(batches ? 'owner_auto_quota_granted' : 'owner_automation_changed', JSON.stringify({oldMaxTokens:total,maxTokens:next,source,batches,batchId:old.batch_id,revision:Number(old.revision)+1,at:now}), now);
+      }
+      return this.view();
+    });
+  }
   assertOn() {
     if (!this.isOn()) throw Object.assign(new InfrastructureFailureError(this.maintenance() ? 'EVOLUTION_QUIESCED' : this.hasUnknown() ? 'OWNER_OUTCOME_REVIEW_REQUIRED' : this.row().desired_mode==='ON'?'OWNER_TOKEN_LIMIT':'OWNER_AUTOMATION_OFF'), { statusCode: 409 });
   }
@@ -68,7 +94,7 @@ export class OwnerAutomationGate {
       const reason=old.reason==='OWNER_TOKEN_LIMIT'&&total===Number(old.max_tokens)?old.reason:null;
       this.store.db.prepare("UPDATE owner_automation_control SET desired_mode=?,run_mode='CONTINUOUS',requested_rounds=NULL,max_tokens=?,revision=revision+1,updated_at=?,reason=? WHERE id=1").run(desired,total,Date.now(),reason);
       this.store.db.prepare('INSERT INTO control_events(kind,world_id,payload,created_at) VALUES(?,NULL,?,?)').run(input.maxTokens!==undefined?'owner_token_quota_approved':'owner_automation_changed',JSON.stringify({desiredMode:desired,batchId:old.batch_id,revision:Number(old.revision)+1,maxTokens:total}),Date.now());
-      return this.view();
+      return desired === 'ON' && input.maxTokens === undefined ? this.ensureAutoQuota('owner_on') : this.view();
     });
     if(this.row().desired_mode==='OFF')this.suspend();
     return {...result,observedState:this.view().observedState,inFlight:this.view().inFlight};
@@ -92,6 +118,7 @@ export class OwnerAutomationGate {
     return { desiredMode: r.desired_mode as 'ON' | 'OFF', runMode:'CONTINUOUS',requestedRounds:null, maxTokens: Number(r.max_tokens), revision: Number(r.revision), batchId: String(r.batch_id), updatedAt: Number(r.updated_at), reason: this.maintenance()?'EVOLUTION_QUIESCED':r.reason as string | null ?? (unknown?'OWNER_OUTCOME_REVIEW_REQUIRED':observedState==='LIMIT_REACHED'?'OWNER_TOKEN_LIMIT':null), observedState, inFlight, startedRounds: Number(rounds.started ?? 0), completedRounds: Number(rounds.completed ?? 0), reservedRounds: Number(rounds.reserved ?? 0), spentTokens: Number(usage.spent), reservedTokens: Number(usage.reserved), knownCostCny: Number(usage.cost), unknownCostCalls: Number(usage.unknown_cost ?? 0) };
   }
   reserveRun(worldId: string, runId: string, startRound: number, rounds: number, binding?: GoalRunBinding) {
+    this.ensureAutoQuota('reserve_run');
     this.assertOn(); this.assertGoal(binding);
     let control=this.row();
     this.store.transaction(() => {
@@ -136,7 +163,11 @@ export class OwnerAutomationGate {
   enforceLimits() {
     const r=this.row();if(r.desired_mode!=='ON'||this.live.size)return;
     if(this.calls.size||this.external.size||this.serviceFlights())return;
-    const usage=this.view();if(usage.spentTokens+usage.reservedTokens>=Number(r.max_tokens))this.quotaReached();
+    try { this.ensureAutoQuota('scheduler'); } catch (error) {
+      if ((error as Error).message === 'OWNER_TOKEN_LIMIT') this.quotaReached();
+      // Maintenance and unresolved outcomes remain blockers, without changing their state.
+      else if (!this.maintenance() && !this.hasUnknown()) throw error;
+    }
   }
   async externalAction<T>(key: string, action: () => Promise<T>): Promise<T> {
     this.assertOn(); this.external.add(key); try { return await action(); } finally { this.external.delete(key); }
@@ -182,19 +213,17 @@ export class OwnerAutomationGate {
   }
   provider(provider: ModelProvider, meter: UsageMeter, worldId?: string,sourceKind=worldId?'world':'owner_chat',capacity:()=>number=()=>Infinity,resourceBinding?:GoalRunBinding): ModelProvider {
     return { call: async (request, signal) => {
-      this.assertOn();
       const run = worldId ? this.store.db.prepare("SELECT * FROM owner_run_permits WHERE world_id=? AND state='ACTIVE'").get(worldId) : undefined;
       const binding = run ? this.binding(String(run.run_id)) : resourceBinding; this.assertGoal(binding);
       const price = meter.getPricingForModel(request.model);
       if (!price || price.currency&&price.currency.toUpperCase()!=='CNY' || ![price.input_cost_per_million, price.output_cost_per_million].every(v => Number.isFinite(v) && v >= 0)) throw new InfrastructureFailureError('MODEL_PRICE_REQUIRED');
-      const v = this.view(), overhead = Buffer.byteLength(JSON.stringify(request.messages), 'utf8') + 1024;
-      const available = v.maxTokens-v.spentTokens-v.reservedTokens;
-      const output = Math.min(request.maxTokens ?? 0, binding ? 4096 : Infinity, available-overhead);
-      if(available<=overhead){if(v.reservedTokens===0)this.quotaReached();throw new InfrastructureFailureError('OWNER_TOKEN_LIMIT');}
+      const overhead = Buffer.byteLength(JSON.stringify(request.messages), 'utf8') + 1024;
+      const output = Math.min(request.maxTokens ?? 0, binding ? 4096 : Infinity);
       if (!Number.isSafeInteger(output) || output! <= 0) throw new InfrastructureFailureError('OWNER_MODEL_OUTPUT_LIMIT_REQUIRED');
       const reserve = overhead + output;
       const id = `model_${randomUUID()}`;
       this.store.transaction(() => {
+        this.ensureAutoQuota('model_reservation', reserve);
         this.assertOn(); this.assertGoal(binding);
         const v = this.view(); if (v.spentTokens + v.reservedTokens + reserve > v.maxTokens) throw new InfrastructureFailureError('OWNER_TOKEN_LIMIT');
         this.store.db.prepare("INSERT INTO owner_model_permits VALUES(?,?,?,?,?,'SENT',?,NULL,NULL,?)").run(id, v.batchId, worldId ?? null, binding?.goalId ?? null, binding?.specificationRevision ?? null, reserve, Date.now());

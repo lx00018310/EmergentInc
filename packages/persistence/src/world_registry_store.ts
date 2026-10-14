@@ -26,8 +26,11 @@ export class WorldRegistryStore extends CoreStore {
   insertWorld(input: WorldRecord) {
     lifeId(input.world_id); lifeId(input.qianji_id);
     if (input.workspace_relpath !== `worlds/${input.world_id}`) throw new Error('INVALID_WORLD_WORKSPACE');
-    this.db.prepare('INSERT INTO qianji_worlds VALUES(?,?,?,?,?,?,?)').run(input.world_id,input.qianji_id,input.status,input.workspace_relpath,input.gateway_pixel_id,input.created_at,input.archived_at);
-    this.db.prepare('INSERT INTO world_gateway_state VALUES(?,0,?)').run(input.world_id,Date.now());
+    this.transaction(() => {
+      this.db.prepare('INSERT INTO qianji_worlds VALUES(?,?,?,?,?,?,?)').run(input.world_id,input.qianji_id,input.status,input.workspace_relpath,input.gateway_pixel_id,input.created_at,input.archived_at);
+      this.db.prepare('INSERT INTO world_gateway_state VALUES(?,0,?)').run(input.world_id,Date.now());
+      this.db.prepare('INSERT INTO world_gateway_energy VALUES(?,1,?)').run(input.world_id,Date.now());
+    });
   }
   setGateway(id: string, pixel: string, expectedRevision: number) {
     this.world(id);

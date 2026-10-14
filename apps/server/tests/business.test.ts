@@ -43,7 +43,7 @@ describe("business authorization, costs and durable execution", () => {
     await f.service.tick();expect(f.store.getPlan(p.id).state).toBe('COMPLETED');
     expect(f.store.totals()).toEqual({spentMicros:400,reservedMicros:0});expect(gate.view().spentTokens).toBe(400);
   });
-  it('runs due schedules independently and resumes an unsent review after Owner increases the quota',async()=>{
+  it('renews quota for due schedules and resumes a provably unsent review without manual quota approval',async()=>{
     const f=fixture();f.budget();f.store.addDataset('inquiries','Actual fixture data',[]);
     const review=seed(f.store,plan({actions:[{capability:'review_feedback',version:'1',purpose:'Review feedback'}],schedule:{kind:'interval',everyMinutes:5,maxOccurrences:1}}),'review-seed');
     const waiting=seed(f.store,plan({schedule:{kind:'interval',everyMinutes:5,maxOccurrences:1}}),'unapproved-seed');
@@ -52,19 +52,19 @@ describe("business authorization, costs and durable execution", () => {
     f.store.recordFeedback(review.id,'feedback-quota','Actual feedback','Owner observation');
     const control=new WorldRegistryStore();resources.push(()=>control.close());const gate=new OwnerAutomationGate(control);f.service.attachAutomation(gate);
     gate.control({desiredMode:'ON',maxTokens:1,expectedRevision:0,idempotencyKey:crypto.randomUUID()});
+    f.call.mockRejectedValueOnce(new InfrastructureFailureError('OWNER_TOKEN_LIMIT'));
     const due=Number(f.store.db.prepare('SELECT MIN(next_run_at) n FROM business_schedules').get()!.n);vi.useFakeTimers();
     vi.setSystemTime(due-1);await f.service.tick();expect(f.store.overview().tasks).toHaveLength(0);
     vi.setSystemTime(due);await f.service.tick();
     const task=f.store.overview().tasks.find(t=>t.plan_id===review.id)!;
     expect(task.state).toBe('READY');expect(f.store.operation(`task:${task.id}`)?.state).toBe('NOT_SENT');
-    expect(f.store.getPlan(review.id).state).toBe('ACTIVE');expect(gate.view()).toMatchObject({desiredMode:'ON',observedState:'LIMIT_REACHED'});expect(f.call).not.toHaveBeenCalled();
+    expect(f.store.getPlan(review.id).state).toBe('ACTIVE');expect(gate.view()).toMatchObject({desiredMode:'ON',maxTokens:10_000_001,observedState:'IDLE'});expect(f.call).toHaveBeenCalledTimes(1);
     vi.setSystemTime(Number(f.store.db.prepare('SELECT next_run_at FROM business_schedules WHERE plan_id=?').get(data.id)!.next_run_at));
-    gate.control({maxTokens:100000,expectedRevision:gate.view().revision,idempotencyKey:crypto.randomUUID()});
     f.call.mockResolvedValueOnce({rawText:JSON.stringify({decision:'no_change',reason:'Retain this evidence'}),usage:{promptTokens:100,completionTokens:100,cachedTokens:0}});
     await f.service.tick();await f.service.tick();
     expect(f.store.task(String(task.id))?.state).toBe('SUCCEEDED');expect(f.store.getPlan(data.id).state).toBe('COMPLETED');
-    expect(f.store.getPlan(waiting.id).state).toBe('AWAITING_APPROVAL');expect(f.call).toHaveBeenCalledTimes(1);expect(gate.view().spentTokens).toBe(200);
-    await f.service.tick();expect(f.call).toHaveBeenCalledTimes(1);
+    expect(f.store.getPlan(waiting.id).state).toBe('AWAITING_APPROVAL');expect(f.call).toHaveBeenCalledTimes(2);expect(gate.view().spentTokens).toBe(200);
+    await f.service.tick();expect(f.call).toHaveBeenCalledTimes(2);
   });
   it('obeys the company gate even for an earlier approved scheduled task and rejects paid drafting while OFF',async()=>{
     const f=fixture();f.budget();f.store.addDataset('inquiries','Actual fixture data',[]);const p=seed(f.store);f.store.approve(p.id,p.revision,p.hash);

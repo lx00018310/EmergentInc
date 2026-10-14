@@ -118,11 +118,11 @@ describe('Owner Mission Control',()=>{
   it('uses the global endpoint even when a World was selected',async()=>{
     enableWorlds(true);selectWorld('world-a');const fetch=vi.spyOn(globalThis,'fetch').mockResolvedValue(response({}));await fetchOwnerOverview();expect(fetch.mock.calls[0]![0]).toBe('/api/owner/overview');
   });
-  it('defaults to the company switch and keeps business, Boss chat, Inbox and History separate in both languages',async()=>{
+  it('defaults to Boss chat with a persistent company switch and retains business, Inbox and History in both languages',async()=>{
     window.history.replaceState(null,'','/OWNER');
     window.location.hash='';
     vi.spyOn(globalThis,'fetch').mockResolvedValue(response({asOf:Date.now(),summary:{qianjiCount:2,activeWorlds:2,runningWorlds:1,inboxCount:0,currentGeneration:'G0001'},inbox:[],activity:[{id:'tip',type:'Tips',summary:'Actual customer reminder',source:'tips.md',createdAt:Date.now(),href:'/YUAN?world=a'}],availability:{business:true,upgrade:'unavailable'},work:{tasks:[{id:'task1',personName:'A',state:'RUNNING',instruction:'Separate work summary',updatedAt:1}],codeReports:[]}}));
-    const {container}=render(<OwnerConsole/>);await screen.findByRole('link',{name:/To-dos\s*0/});expect(screen.getByRole('link',{name:t('My AI company')}).getAttribute('aria-current')).toBe('page');expect(screen.queryByRole('textbox')).toBeNull();fireEvent.click(screen.getByRole('link',{name:t('Business goals')}));
+    const {container}=render(<OwnerConsole/>);await screen.findByRole('link',{name:/To-dos\s*0/});expect(screen.getByRole('link',{name:t('Boss chat')}).getAttribute('aria-current')).toBe('page');expect(screen.getByRole('textbox')).toBeTruthy();fireEvent.click(screen.getByRole('link',{name:t('Business goals')}));
     expect(screen.queryByRole('textbox')).toBeNull();expect(screen.getByRole('table',{name:t('Status overview')})).toBeTruthy();
     fireEvent.click(screen.getByRole('link',{name:t('Boss chat')}));
     expect(screen.getByRole('textbox',{name:'Ask the Owner assistant'})).toBeTruthy();
@@ -170,7 +170,7 @@ describe('Owner Mission Control',()=>{
     expect(screen.queryByText('Business plan approval')).toBeNull();
     expect(screen.getByRole('link',{name:t('My AI company')}).getAttribute('aria-current')).toBe('page');
     window.location.hash='#owner-chat';act(()=>{window.dispatchEvent(new HashChangeEvent('hashchange'));});
-    expect(screen.getByRole('textbox')).toBeTruthy();expect(screen.queryByRole('switch')).toBeNull();expect(screen.queryByRole('table')).toBeNull();
+    expect(screen.getByRole('textbox')).toBeTruthy();expect(screen.getByRole('switch')).toBeTruthy();expect(screen.queryByRole('table')).toBeNull();
     expect(screen.getByRole('link',{name:t('Boss chat')}).getAttribute('aria-current')).toBe('page');
   });
   it('executes the approve decision with one click and shows both effects, per item',async()=>{

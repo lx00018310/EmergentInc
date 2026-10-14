@@ -99,6 +99,11 @@ export class PublicStore {
     this.control.db.prepare("INSERT INTO public_products VALUES(?,0,'','','','',NULL,'USDT')").run(id);
     return this.product(false,id);
   }
+  /** Stable IDs for the authenticated Owner writer; public addProduct keeps its existing contract. */
+  ensureOwnerProduct(id:string){
+    if(!/^product_owner_[a-f0-9]{40}$/.test(id))throw new PublicError('INVALID_PRODUCT_SETTINGS');
+    this.control.db.prepare("INSERT OR IGNORE INTO public_products VALUES(?,0,'','','','',NULL,'USDT')").run(id);
+  }
   createOrder(value: unknown) {
     const input = fields(value, ['product_id', 'customer_name', 'customer_contact', 'customer_requirement', 'rail_id', 'idempotency_key', 'language']);
     if (typeof input.product_id!=='string'||!/^[a-zA-Z0-9_-]{1,100}$/.test(input.product_id) || !['en', 'zh-CN'].includes(String(input.language))) throw new PublicError('INVALID_CHECKOUT_INPUT');

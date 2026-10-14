@@ -76,7 +76,7 @@ export const QianjiChatPanel: React.FC<{
     <section className="qj-chat-panel" aria-label={tr("人物对话")}>
       <div className="qj-panel-heading"><h3>{tr("对话")}</h3><span>{tr("发送即启动 Run")}</span></div>
       {error && <p className="qj-inline-error" role="alert">{error}</p>}
-      {item.world&&<p>{tr("发送后按指定轮数运行本 World，额度上限 100,000 Tokens；任务完成或阻塞时可提前停止。")}</p>}
+      {item.world&&<p>{tr('Send a task to start working. Actual replies and blockers appear here.')}</p>}
       <div className="qj-chat-history" aria-live="polite">
         {turns.length === 0 && <p className="qj-empty">{tr("还没有对话记录。")}</p>}
         {turns.slice().reverse().map(turn => (
@@ -90,7 +90,7 @@ export const QianjiChatPanel: React.FC<{
         ))}
       </div>
       <form onSubmit={submit} className="qj-chat-form">
-        {item.world&&<label>{tr("运行轮数（1–20）")} <input type="number" min={1} max={20} value={rounds} onChange={event=>setRounds(Number(event.target.value))} disabled={!canChat||submitting}/></label>}
+        {item.world&&<details><summary>{tr('Advanced runtime information')}</summary><p>{tr("发送后按指定轮数运行本 World，额度上限 100,000 Tokens；任务完成或阻塞时可提前停止。")}</p><label>{tr("运行轮数（1–20）")} <input type="number" min={1} max={20} value={rounds} onChange={event=>setRounds(Number(event.target.value))} disabled={!canChat||submitting}/></label></details>}
         <label htmlFor={`qj-chat-${item.profile.qianjiId}`}>{tr("发送给") + " "}{item.profile.narrative.displayName}</label>
         <textarea id={`qj-chat-${item.profile.qianjiId}`} value={content} onChange={event => setContent(event.target.value)} rows={3} maxLength={4000}
           placeholder={sendBlocked ?? (canChat ? (tr("输入问题或指令…")) : item.world?(tr("当前 World 没有活跃入口，请更换入口")):(tr("当前人物未绑定可运行的 Pixel")))} disabled={!canChat || submitting} />
