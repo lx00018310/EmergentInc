@@ -13,9 +13,12 @@ import { rollbackPlan, canDeleteRelease } from '../supervisor/dist/release_histo
 import { pixelReleaseToken } from '../apps/server/dist/services/release_maintenance_client.js';
 import { createHash, timingSafeEqual } from 'node:crypto';
 import { checkPaymentRollback } from '../supervisor/dist/payment_compatibility.js';
+import {git,inspectSwitch,buildSwitch,checkSwitch,syncSwitch,deletableBranches,deleteBranch,isAncestor} from './upgrade-git.mjs';
 
 const require = createRequire(new URL('../apps/server/package.json', import.meta.url));
 const fastify = require('fastify');
+// Keep this maintenance UI paired with the running maintenance code when main is checked out.
+const maintenancePage = fs.readFileSync(new URL('../resources/upgrade-web.html',import.meta.url),'utf8');
 export const projectRoot = path.resolve(import.meta.dirname, '..');
 export const upgradeWebUrl = config => `http://127.0.0.1:${Number(new URL(config.appUrl).port) + 1}`;
 function logTail(file) {
@@ -96,7 +99,14 @@ export function readGitGraph(root, limit=200) {
     return {sha,parents:parents?parents.split(' ').filter(Boolean):[],subject:String(subject??''),author:String(author??''),time:Number(time??0)};
   }):[];
   let mainHead=null;try{mainHead=execFileSync('git',['rev-parse','main'],{cwd:root,encoding:'utf8',windowsHide:true,timeout:10000}).trim();}catch{mainHead=null;}
-  return {available:true,refs,commits,mainHead,limit:bound};
+  const firstParent=mainHead?git(root,['rev-list','--first-parent','--max-count='+bound,mainHead]).split(/\r?\n/):[];
+  const branches=refs.filter(r=>r.ref!=='refs/heads/main'&&!r.ref.startsWith('refs/tags/')&&!r.ref.endsWith('/HEAD')).map(r=>{
+    let base=null;
+    if(mainHead){try{base=git(root,['merge-base',mainHead,r.sha]);}catch(error){if(error.status!==1)throw error;}}
+    const history=mainHead?git(root,['rev-list','--max-count='+bound,r.sha,'--not',mainHead]).split(/\r?\n/).filter(Boolean):[r.sha];
+    return {...r,base,commits:history,merged:Boolean(mainHead&&isAncestor(root,r.sha,mainHead))};
+  });
+  return {available:true,refs,commits,mainHead,firstParent,branches,limit:bound};
 }
 /** Read-only details for one commit: parents, files versus its parent, and fast-forward feasibility. */
 export function readGitCommit(root, shaInput) {
@@ -116,7 +126,7 @@ export function readGitCommit(root, shaInput) {
   const included=fastForwardable?gitText(root,['log','--pretty=format:%H',`${mainHead}..${shaInput}`]):null;
   const files=raw!==null?raw.trim()?raw.trim().split(/\r?\n/).map(line=>{const status=line.slice(0,1);const name=line.slice(1).trim();return {status,name};}):[]:null;
   return {commit:{sha,parents:parents?parents.split(' ').filter(Boolean):[],subject:String(subject??''),body:body.join('\x1f').trim(),author:String(author??''),time:Number(time??0)},
-    mainHead,fastForwardable,ahead,behind,files,includedCommits:included!==null?included.trim()?included.trim().split(/\r?\n/):[]:[]};
+    mainHead,includedInMain:Boolean(mainHead&&isAncestor(root,sha,mainHead)),fastForwardable,ahead,behind,files,includedCommits:included!==null?included.trim()?included.trim().split(/\r?\n/):[]:[]};
 }
 
 export function runUpgradeCommand(root, args, onOutput) {
@@ -160,8 +170,8 @@ export async function createUpgradeWeb({ root, config, secret, runCommand = runU
     reply.header('Cache-Control', 'no-store').header('X-Content-Type-Options', 'nosniff')
       .header('Content-Security-Policy', "frame-ancestors 'none'; object-src 'none'; base-uri 'self'");
   });
-  app.get('/', async (_req, reply) => reply.type('text/html').send(fs.readFileSync(path.join(root, 'resources/upgrade-web.html'), 'utf8')));
-  app.get('/health/live', async () => ({ alive: true, service: 'owner-upgrade', projectRoot: root,processId:process.pid,capabilities:['rollback','delete','pixel-release-maintenance-v1'] }));
+  app.get('/', async (_req, reply) => reply.type('text/html').send(maintenancePage));
+  app.get('/health/live', async () => ({ alive: true, service: 'owner-upgrade', projectRoot: root,processId:process.pid,capabilities:['rollback','delete','pixel-release-maintenance-v1','git-main-switch-v1'] }));
   // Loopback read-only projection. Never expose private paths, logs, credentials or approval capabilities.
   app.get('/status', async () => {
     const current = status(root, config);
@@ -176,7 +186,11 @@ export async function createUpgradeWeb({ root, config, secret, runCommand = runU
     try{const graph=readGitGraph(root,Number(req.query?.limit??200)||200);reply.send(graph);}catch(error){return reply.status(500).send({detail:error.message});}
   });
   app.get('/api/git-commit/:sha', async (req,reply) => {
-    try{return await readGitCommit(root,String(req.params.sha));}catch(error){return reply.status(error.statusCode??500).send({detail:error.message});}
+    try{const detail=readGitCommit(root,String(req.params.sha)),current=status(root,config);
+      const source=current.candidates.find(c=>c.id===current.active?.release_id)?.request.owner_release?.source_commit;
+      return {...detail,mode:detail.mainHead&&detail.commit.sha!==detail.mainHead&&isAncestor(root,detail.commit.sha,detail.mainHead)?'restore':'merge',
+        deleteBranches:deletableBranches(root,detail.commit.sha,source)};
+    }catch(error){return reply.status(error.statusCode??500).send({detail:error.message});}
   });
   app.get('/api/code-reports/:id',async(req,reply)=>{
     try{return await readAppCodeReport(config,req.params.id,secret,fetch,appReportSession);}catch(error){return reply.status(409).send({detail:error.message});}
@@ -188,9 +202,24 @@ export async function createUpgradeWeb({ root, config, secret, runCommand = runU
       return reply.status(202).send({accepted:true,operationKey:actor.operationKey,state:job.state});
     }
     if (busy || operatorBusy(config)) return reply.status(409).send({ detail: 'UPGRADE_ALREADY_RUNNING' });
+    if(job?.state==='needs_git_sync'&&!['sync-git','recover'].includes(body.action))return reply.status(409).send({detail:'GIT_SYNC_REQUIRED'});
+    if(job?.state==='interrupted'&&!['sync-git','recover'].includes(body.action))return reply.status(409).send({detail:'UPGRADE_INTERRUPTED_CHECK_RECOVERY'});
     const current = status(root, config);
-    let commands,version;
-    if (body.action === 'prepare') {
+    let commands,version,switchPlan,branchDeletion,syncPlan;
+    const activeSource=state=>state.candidates.find(c=>c.id===state.active?.release_id)?.request.owner_release?.source_commit;
+    if(body.action==='switch'){
+      if(body.expectedActive!==current.active?.id)return reply.status(409).send({detail:'UPGRADE_CANDIDATE_CONFLICT'});
+      try{switchPlan=inspectSwitch(root,body.sourceCommit,body.expectedMain,body.mode);}catch(error){return reply.status(409).send({detail:error.message});}
+      if(switchPlan.mode==='merge'&&activeSource(current)===switchPlan.main&&isAncestor(root,switchPlan.sourceCommit,switchPlan.main))return reply.status(409).send({detail:'GIT_ALREADY_INCLUDED'});
+    }else if(body.action==='delete-branch'){
+      if(body.expectedActive!==current.active?.id||body.expectedMain!==git(root,['rev-parse','refs/heads/main']))return reply.status(409).send({detail:'UPGRADE_CANDIDATE_CONFLICT'});
+      if(typeof body.branch!=='string'||typeof body.sourceCommit!=='string'||!GIT_SHA_PATTERN.test(body.sourceCommit)||!deletableBranches(root,body.sourceCommit,activeSource(current)).includes(body.branch))
+        return reply.status(409).send({detail:'GIT_BRANCH_DELETE_DENIED'});
+      branchDeletion={branch:body.branch,sha:body.sourceCommit};
+    }else if(body.action==='sync-git'){
+      if(!job?.git?.commit||activeSource(current)!==job.git.commit||!['needs_git_sync','interrupted'].includes(job.state))return reply.status(409).send({detail:'UPGRADE_CANDIDATE_CONFLICT'});
+      syncPlan=job.git;
+    }else if (body.action === 'prepare') {
       let input;
       try{input=ownerReleaseInput(body.version,body.reason);}catch(error){return reply.status(400).send({detail:error.message});}
       let commitFlag='';
@@ -228,17 +257,44 @@ export async function createUpgradeWeb({ root, config, secret, runCommand = runU
       commands=[['delete-release',body.releaseId,body.expectedActive,body.identity,actor?`Pixel ${actor.worldId}/${actor.pixelId}: ${body.reason}`:body.reason]];
     } else if (body.action === 'recover') commands = [['recover']];
     else return reply.status(400).send({ detail: 'VERSION_UPGRADE_ACTION_INVALID' });
+    const recoveryGit=body.action==='recover'?job?.git:null;
     busy = true;
     job = { action: body.action, id: body.id ?? body.releaseId??null, targetGeneration:body.targetGeneration??null,
-      ...(actor?{requester:actor,operationKey:actor.operationKey,requestHash}:{}),...(version?{version}:{}), state: 'running', startedAt: Date.now(), log: '', error: null };
+      ...(actor?{requester:actor,operationKey:actor.operationKey,requestHash}:{}),...(version?{version}:{}),...(syncPlan||recoveryGit?{git:syncPlan??recoveryGit}:{}), state: 'running', startedAt: Date.now(), log: '', error: null };
     const save = () => fs.writeFileSync(jobFile, JSON.stringify(job, null, 2));
     try { save(); } catch (error) { busy = false; throw error; }
     const execute = async () => {
+      const output=chunk=>{job.log=(job.log+chunk).slice(-8000);};
+      const phase=value=>{job.phase=value;save();};
       try {
-        if (['publish','rollback'].includes(body.action)) await checkRunning(current.active.id);
-        for (const args of commands) await runCommand(root, args, chunk => { job.log = (job.log + chunk).slice(-8000); });
+        if(switchPlan){
+          await checkRunning(current.active.id);
+          phase('merge');job.git=buildSwitch(root,switchPlan);save();
+          const detail=readGitCommit(root,job.git.commit);
+          const previousIds=new Set(current.candidates.map(c=>c.id));
+          phase('validate');
+          await runCommand(root,['prepare',detail.commit.subject.slice(0,200),`Owner ${switchPlan.mode}: ${switchPlan.sourceCommit}`,'--commit',job.git.commit],output);
+          const validated=status(root,config),candidate=validated.candidates.find(c=>!previousIds.has(c.id)&&c.state==='VALIDATED'&&c.request.owner_release?.source_commit===job.git.commit&&c.request.base_generation===current.active.id);
+          if(validated.active?.id!==current.active.id||!candidate||candidate.candidate?.base_generation!==current.active.id||!/^[a-f0-9]{64}$/.test(candidate.candidate?.candidate_hash??''))throw new Error('UPGRADE_CANDIDATE_CONFLICT');
+          job.id=candidate.id;job.hash=candidate.candidate.candidate_hash;save();
+          checkSwitch(root,job.git);await checkRunning(current.active.id);
+          phase('approve');await runCommand(root,['approve',job.id,job.hash],output);
+          checkSwitch(root,job.git);
+          phase('publish');await runCommand(root,['apply',job.id],output);
+          if(activeSource(status(root,config))!==job.git.commit)throw new Error('UPGRADE_CANDIDATE_CONFLICT');
+          phase('sync');syncSwitch(root,job.git);
+        }else if(syncPlan){phase('sync');syncSwitch(root,syncPlan);}
+        else if(branchDeletion){phase('delete');job.deleted=deleteBranch(root,branchDeletion.branch,branchDeletion.sha,activeSource(status(root,config)));}
+        else{
+          if (['publish','rollback'].includes(body.action)) await checkRunning(current.active.id);
+          for (const args of commands) await runCommand(root, args, output);
+          if(recoveryGit&&activeSource(status(root,config))===recoveryGit.commit){phase('sync');syncSwitch(root,recoveryGit);}
+        }
         job.state = 'succeeded';
-      } catch (error) { job.state = 'failed'; job.error = error.message; }
+      } catch (error) {
+        const published=job.phase==='publish'&&job.git?.commit&&activeSource(status(root,config))===job.git.commit;
+        job.state = job.phase==='sync'||published?'needs_git_sync':'failed';job.error=error.message;if(error.conflicts)job.conflicts=error.conflicts;
+      }
       finally { job.finishedAt = Date.now(); busy = false; save(); }
     };
     void execute();

@@ -11,18 +11,20 @@ import { pixelReleaseToken } from '../src/services/release_maintenance_client.js
 import { createUpgradeWeb, readUpgradeStatus, runUpgradeCommand, readGitGraph, readGitCommit } from '../../../scripts/upgrade-web.mjs';
 // @ts-ignore Standalone maintenance script.
 import { ownerReleaseInput, ensureFastForwardable, fastForwardMain } from '../../../scripts/version-upgrade.mjs';
+// @ts-ignore Standalone maintenance script.
+import {inspectSwitch,buildSwitch,syncSwitch,deletableBranches,deleteBranch} from '../../../scripts/upgrade-git.mjs';
 const {JSDOM}=createRequire(path.resolve('frontend/package.json'))('jsdom');
 
 const cleanups: (() => Promise<void>)[] = [];
 afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup(); });
-async function fixture() {
+async function fixture(root=path.resolve('.')) {
   const directory = fs.mkdtempSync(path.join(tmpdir(), 'upgrade-web-'));
   const secret = 'test-upgrade-owner-secret'.repeat(3);
   const run = vi.fn(async (_root: string, _args: string[], output: (text: string) => void) => { output('checked'); });
   const checkRunning = vi.fn(async (_generation: string) => {});
   const data:any = { active: { id: 'G0008' }, versions:[{id:'G0007',generation_no:7,release_id:'old',label:'Previous version',available:true,canRollback:true}],afterRollback:false,dirty: false, appUrl: 'http://127.0.0.1:8765', candidates: [{ id: 'local-v24-test', state: 'VALIDATED',identity:'a'.repeat(64),canDelete:false,
     candidate: { candidate_hash: 'a'.repeat(64), base_generation: 'G0008' }, request: { base_generation:'G0008', owner_release: { reason: 'Fix run state' } } }] };
-  const app = await createUpgradeWeb({ root: path.resolve('.'), config: { stateDirectory: directory }, secret, runCommand: run, status: () => data, checkRunning });
+  const app = await createUpgradeWeb({ root, config: { stateDirectory: directory }, secret, runCommand: run, status: () => data, checkRunning });
   cleanups.push(async () => { await app.close(); fs.rmSync(directory, { recursive: true, force: true }); });
   const login = await app.inject({ method: 'POST', url: '/api/login', payload: { secret } });
   const cookie = String(login.headers['set-cookie']).split(';')[0];
@@ -31,7 +33,7 @@ async function fixture() {
 }
 
 async function page(f:Awaited<ReturnType<typeof fixture>>,lang='zh-CN',query='',responses:Record<string,any>={}) {
-  const dom=new JSDOM((await f.app.inject('/')).body,{url:'http://127.0.0.1:8766/'+query,runScripts:'outside-only'});
+  const dom=new JSDOM(fs.readFileSync(path.resolve('resources/upgrade-web.html'),'utf8'),{url:'http://127.0.0.1:8766/'+query,runScripts:'outside-only'});
   cleanups.push(async()=>{await vi.waitFor(()=>expect(dom.window.upgradeTestIdle?.()).toBe(true));dom.window.close();});let poll!:()=>Promise<void>,browserCookie=f.cookie;
   dom.window.localStorage.setItem('emergentinc.language',lang);
   dom.window.setInterval=(callback:()=>Promise<void>)=>{poll=callback;return 0;};
@@ -43,25 +45,30 @@ async function page(f:Awaited<ReturnType<typeof fixture>>,lang='zh-CN',query='',
 }
 
 describe('V32 single version switch flow',()=>{
-  it.each(['zh-CN','en'])('automatically prepares a selected commit, binds exact approval, and draws both real Git DAGs (%s)',async lang=>{
-    const repo=gitRepo(),f=await fixture(),graph=readGitGraph(repo.directory),data={...f.data,busy:false};
-    data.candidates[0].request.owner_release.source_commit=repo.tip;
-    const {doc,poll}=await page(f,lang,'',{'/api/upgrades':data,'/api/git-graph':graph,['/api/git-commit/'+repo.first]:readGitCommit(repo.directory,repo.first),['/api/git-commit/'+repo.tip]:readGitCommit(repo.directory,repo.tip)});
-    expect(doc.querySelectorAll('.graph-edge').length).toBeGreaterThanOrEqual(4);expect(doc.querySelectorAll('[data-sha="'+repo.tip+'"]').length).toBeGreaterThanOrEqual(2);
-    for(const id of ['prepare','prepare-commit','rollback','delete','version','reason','recover','commit-form'])expect(doc.getElementById(id)).toBeNull();
-    doc.querySelector('li[data-sha="'+repo.first+'"]').click();await vi.waitFor(()=>expect(f.run).toHaveBeenCalledOnce());
-    expect(f.run.mock.calls[0][1]).toEqual(['prepare','add SKILL.md','add SKILL.md','--commit',repo.first]);
-    data.candidates[0].request.owner_release.source_commit=repo.first;await vi.waitFor(async()=>{await poll();expect(doc.getElementById('switch').disabled).toBe(false);});
-    doc.getElementById('switch').click();await vi.waitFor(()=>expect(f.run).toHaveBeenCalledTimes(3));await vi.waitFor(async()=>{await poll();expect(doc.getElementById('switch').disabled).toBe(false);});
-    expect(f.run.mock.calls.slice(1).map(c=>c[1][0])).toEqual(['approve','apply']);expect(f.run.mock.calls[1][1]).toContain('a'.repeat(64));
+  it.each(['zh-CN','en'])('only selects until one click merges, validates, approves and publishes from a branch card (%s)',async lang=>{
+    const repo=gitRepo(),f=await switchFixture(repo),{doc,poll}=await page(f,lang);
+    expect(doc.querySelectorAll('.main-step').length).toBe(2);expect(doc.querySelectorAll('.branch-card')).toHaveLength(1);
+    expect(doc.querySelector('.branch-card').dataset.branch).toBe('refs/heads/feature/skills');
+    doc.querySelector('.branch-card details').open=true;await poll();expect(doc.querySelector('.branch-card details').open).toBe(true);
+    doc.querySelector('button[data-sha="'+repo.tip+'"]').click();await vi.waitFor(()=>expect(doc.getElementById('switch').disabled).toBe(false));
+    await poll();await poll();expect(f.run).not.toHaveBeenCalled();expect(repo.run('rev-parse','main')).toBe(repo.base);
+    expect(doc.getElementById('switch').textContent).toContain(lang==='en'?'Prepare + validate':'准备 + 校验');
+    doc.getElementById('switch').click();await f.done();await poll();
+    expect(f.run.mock.calls.map(c=>c[1][0])).toEqual(['prepare','approve','apply']);
+    const result=repo.run('rev-parse','main');expect(result).not.toBe(repo.tip);expect(repo.run('rev-list','--parents','-n','1',result).split(' ').slice(1)).toEqual([repo.base,repo.tip]);
+    expect(f.run.mock.calls[0][1].at(-1)).toBe(result);expect(f.run.mock.calls[1][1]).toContain('a'.repeat(64));
+    expect(repo.run('branch','--show-current')).toBe('main');expect(f.data.candidates.at(-1).request.owner_release.source_commit).toBe(result);
+    expect(doc.querySelector('.merged-history').textContent).toContain('polish SKILL.md');
+    doc.querySelector('button[data-sha="'+repo.base+'"]').click();await vi.waitFor(()=>expect(doc.getElementById('selected-sha').textContent).toContain(repo.base.slice(0,12)));await poll();
+    expect(doc.getElementById('selected-sha').textContent).toContain(repo.base.slice(0,12));
     expect(doc.getElementById('secret').value).toBe('');
   },30000);
-  it('keeps stale candidates unapprovable, preserves errors, and requires no second preparation click',async()=>{
-    const repo=gitRepo(),f=await fixture(),data={...f.data,busy:false};data.candidates[0].request.owner_release.source_commit=repo.tip;data.candidates[0].request.base_generation='G0007';
-    const {dom,doc,poll}=await page(f,'en','',{'/api/upgrades':data,'/api/git-graph':readGitGraph(repo.directory),['/api/git-commit/'+repo.tip]:readGitCommit(repo.directory,repo.tip)});
-    doc.querySelector('li[data-sha="'+repo.tip+'"]').click();await vi.waitFor(()=>expect(f.run).toHaveBeenCalledOnce());expect(doc.getElementById('switch').disabled).toBe(true);
-    doc.getElementById('error').textContent='Actual failure';await poll();expect(doc.getElementById('error').textContent).toBe('Actual failure');expect(f.run).toHaveBeenCalledOnce();
-    expect(dom.window.document.querySelectorAll('svg')).toHaveLength(2);
+  it('does not approve stale or failed validation and never retries from page polling',async()=>{
+    const repo=gitRepo(),f=await switchFixture(repo),{doc,poll}=await page(f,'en');f.run.mockRejectedValueOnce(new Error('UPGRADE_VALIDATION_FAILED'));
+    doc.querySelector('button[data-sha="'+repo.tip+'"]').click();await vi.waitFor(()=>expect(doc.getElementById('switch').disabled).toBe(false));
+    doc.getElementById('switch').click();await f.done('failed');await poll();await poll();
+    expect(f.run).toHaveBeenCalledOnce();expect(repo.run('rev-parse','main')).toBe(repo.base);expect(doc.getElementById('job-state').textContent).toContain('Candidate validation failed');
+    doc.getElementById('error').textContent='Actual failure';await poll();expect(doc.getElementById('error').textContent).toBe('Actual failure');
   },30000);
   it('denies delegated release mutation and retains only read-only release metadata',async()=>{
     const f=await fixture(),headers={authorization:`Bearer ${pixelReleaseToken(f.secret)}`};
@@ -231,6 +238,7 @@ function gitRepo(){
   const run=(...args:string[])=>{const {execFileSync}=require('node:child_process') as typeof import('node:child_process');return execFileSync('git',args,{cwd:directory,encoding:'utf8',windowsHide:true}).trim();};
   const commit=(message:string,file='file.txt')=>{fs.writeFileSync(path.join(directory,file),message);run('add',file);run('-c','user.name=Tester','-c','user.email=t@example.com','commit','-m',message);return run('rev-parse','HEAD');};
   run('init','-b','main');run('-c','user.name=Tester','-c','user.email=t@example.com','commit','--allow-empty','-m','root');
+  run('config','user.name','Tester');run('config','user.email','t@example.com');
   const base=commit('base');
   run('checkout','-b','feature/skills');
   const first=commit('add SKILL.md');
@@ -239,6 +247,104 @@ function gitRepo(){
   cleanups.push(()=>fs.rmSync(directory,{recursive:true,force:true}));
   return {directory,run,commit,base,first,tip};
 }
+
+async function switchFixture(repo:ReturnType<typeof gitRepo>){
+  const f=await fixture(repo.directory);f.data.active.release_id='base-release';
+  f.data.candidates=[{id:'base-release',state:'BORN',request:{owner_release:{source_commit:repo.base}}}];
+  f.run.mockImplementation(async(_root,args,output)=>{
+    output(args[0]+'\n');
+    if(args[0]==='prepare')f.data.candidates.push({id:'prepared-'+f.data.candidates.length,state:'VALIDATED',candidate:{candidate_hash:'a'.repeat(64),base_generation:f.data.active.id},request:{base_generation:f.data.active.id,owner_release:{source_commit:args.at(-1)}}});
+    if(args[0]==='apply'){const candidate=f.data.candidates.find((c:any)=>c.id===args[1]);candidate.state='BORN';f.data.active={id:'G'+(Number(f.data.active.id.slice(1))+1).toString().padStart(4,'0'),release_id:candidate.id};}
+  });
+  const done=async(state='succeeded')=>vi.waitFor(()=>{const record=JSON.parse(fs.readFileSync(path.join(f.directory,'upgrade-web-job.json'),'utf8'));expect(record,record.error).toMatchObject({state});});
+  const select=(sha=repo.tip,mode?:string)=>f.request({action:'switch',sourceCommit:sha,mode,expectedMain:repo.run('rev-parse','main'),expectedActive:f.data.active.id});
+  return {...f,done,select};
+}
+
+describe('main integration, restore and local branch deletion',()=>{
+  it('merges sibling branches without losing main changes, then appends an exact-tree restore commit',async()=>{
+    const repo=gitRepo();repo.commit('first independent feature','one.txt');const firstMain=repo.run('rev-parse','main');
+    repo.run('checkout','feature/skills');const f=await switchFixture(repo);
+    expect((await f.select()).statusCode).toBe(202);await f.done();const merged=repo.run('rev-parse','main');
+    expect(repo.run('show','main:one.txt')).toBe('first independent feature');expect(repo.run('show','main:file.txt')).toBe('polish SKILL.md');
+    expect(repo.run('rev-list','--parents','-n','1',merged).split(' ').slice(1)).toEqual([firstMain,repo.tip]);
+    expect((await f.select(repo.base,'restore')).statusCode).toBe(202);await f.done();const restored=repo.run('rev-parse','main');
+    expect(repo.run('rev-list','--parents','-n','1',restored).split(' ').slice(1)).toEqual([merged]);
+    expect(repo.run('rev-parse',restored+'^{tree}')).toBe(repo.run('rev-parse',repo.base+'^{tree}'));expect(repo.run('merge-base','--is-ancestor',merged,restored)).toBe('');
+    expect((await f.select(repo.tip,'merge')).json().detail).toBe('GIT_ALREADY_INCLUDED');expect(repo.run('rev-parse','main')).toBe(restored);
+    expect(f.run.mock.calls.map(c=>c[1][0])).toEqual(['prepare','approve','apply','prepare','approve','apply']);
+  },30000);
+  it('reports actual conflicts without modifying main, checkout or publishing',async()=>{
+    const repo=gitRepo();repo.commit('conflicting main edit');const original=repo.run('rev-parse','main'),f=await switchFixture(repo);
+    expect((await f.select()).statusCode).toBe(202);await f.done('failed');
+    expect(JSON.parse(fs.readFileSync(path.join(f.directory,'upgrade-web-job.json'),'utf8'))).toMatchObject({error:'GIT_MERGE_CONFLICT',conflicts:['file.txt']});
+    expect(f.run).not.toHaveBeenCalled();expect(repo.run('rev-parse','main')).toBe(original);expect(repo.run('status','--porcelain')).toBe('');
+  },30000);
+  it('refuses dirty, concurrently moved or separately checked-out main before publication',async()=>{
+    const repo=gitRepo(),f=await switchFixture(repo);
+    fs.writeFileSync(path.join(repo.directory,'draft.txt'),'retain me');expect((await f.select()).json().detail).toBe('GIT_SYNC_DIRTY_WORKTREE');fs.unlinkSync(path.join(repo.directory,'draft.txt'));
+    expect((await f.request({action:'switch',sourceCommit:repo.tip,expectedMain:repo.tip,expectedActive:f.data.active.id})).json().detail).toBe('GIT_SYNC_MAIN_MOVED');
+    repo.run('checkout','feature/skills');const other=fs.mkdtempSync(path.join(tmpdir(),'switch-main-'));repo.run('worktree','add',other,'main');cleanups.push(async()=>repo.run('worktree','remove','--force',other));
+    expect((await f.select()).json().detail).toBe('GIT_MAIN_OTHER_WORKTREE');expect(f.run).not.toHaveBeenCalled();
+  },30000);
+  it('rechecks main and candidate binding after validation and stops before approval',async()=>{
+    const repo=gitRepo(),f=await switchFixture(repo),run=f.run.getMockImplementation()!;
+    f.run.mockImplementation(async(...args)=>{await run(...args);if(args[1][0]==='prepare')repo.commit('main changed during validation','concurrent.txt');});
+    await f.select();await f.done('failed');expect(f.run).toHaveBeenCalledOnce();expect(repo.run('show','main:concurrent.txt')).toBe('main changed during validation');
+  },30000);
+  it('refuses an old candidate instead of approving it after a new preparation',async()=>{
+    const repo=gitRepo(),f=await switchFixture(repo);
+    f.run.mockImplementation(async(_root,args)=>{if(args[0]==='prepare')f.data.candidates.push({id:'stale',state:'VALIDATED',candidate:{candidate_hash:'a'.repeat(64),base_generation:'G0007'},request:{base_generation:'G0007',owner_release:{source_commit:args.at(-1)}}});});
+    await f.select();await f.done('failed');expect(f.run).toHaveBeenCalledOnce();expect(repo.run('rev-parse','main')).toBe(repo.base);
+  },30000);
+  it('retains a post-publication sync failure and retries sync without preparing or republishing',async()=>{
+    const repo=gitRepo(),f=await switchFixture(repo),run=f.run.getMockImplementation()!;
+    f.run.mockImplementation(async(...args)=>{await run(...args);if(args[1][0]==='apply')fs.writeFileSync(path.join(repo.directory,'draft.txt'),'Owner new work');});
+    await f.select();await f.done('needs_git_sync');expect(repo.run('rev-parse','main')).toBe(repo.base);
+    expect((await f.select()).json().detail).toBe('GIT_SYNC_REQUIRED');
+    fs.unlinkSync(path.join(repo.directory,'draft.txt'));expect((await f.request({action:'sync-git'})).statusCode).toBe(202);await f.done();
+    expect(f.run).toHaveBeenCalledTimes(3);expect(repo.run('rev-parse','main')).toBe(f.data.candidates.at(-1).request.owner_release.source_commit);
+  },30000);
+  it.each([false,true])('completes an interrupted post-publication sync after restarting the service (main already advanced: %s)',async advanced=>{
+    const repo=gitRepo(),f=await switchFixture(repo),plan=buildSwitch(repo.directory,inspectSwitch(repo.directory,repo.tip,repo.base));
+    f.data.candidates.push({id:'published',state:'BORN',request:{owner_release:{source_commit:plan.commit}}});f.data.active={id:'G0009',release_id:'published'};
+    if(advanced)repo.run('merge','--ff-only',plan.commit);
+    fs.writeFileSync(path.join(f.directory,'upgrade-web-job.json'),JSON.stringify({action:'switch',state:'running',phase:'publish',git:plan,startedAt:1}));
+    const app=await createUpgradeWeb({root:repo.directory,config:{stateDirectory:f.directory},secret:f.secret,runCommand:f.run,status:()=>f.data,checkRunning:f.checkRunning});cleanups.push(()=>app.close());
+    const login=await app.inject({method:'POST',url:'/api/login',payload:{secret:f.secret}}),cookie=String(login.headers['set-cookie']).split(';')[0];
+    expect((await app.inject({url:'/api/upgrades',headers:{cookie}})).json().job.state).toBe('interrupted');
+    expect((await app.inject({method:'POST',url:'/api/upgrades',headers:{cookie},payload:{action:'sync-git'}})).statusCode).toBe(202);await f.done();
+    expect(repo.run('rev-parse','main')).toBe(plan.commit);expect(repo.run('branch','--show-current')).toBe('main');expect(f.run).not.toHaveBeenCalled();
+  },30000);
+  it('deletes only an eligible exact local branch and keeps remotes, tags and recovery objects',async()=>{
+    const repo=gitRepo(),f=await switchFixture(repo);repo.run('update-ref','refs/remotes/origin/feature/skills',repo.tip);repo.run('tag','retained-tag',repo.tip);
+    expect((await f.request({action:'delete-branch',branch:'main',sourceCommit:repo.base,expectedMain:repo.base,expectedActive:f.data.active.id})).statusCode).toBe(409);
+    expect(deletableBranches(repo.directory,repo.base,repo.base)).toEqual([]);
+    expect(deletableBranches(repo.directory,repo.tip,repo.tip)).toEqual([]);
+    repo.run('checkout','feature/skills');expect(deletableBranches(repo.directory,repo.tip,repo.base)).toEqual([]);repo.run('checkout','main');
+    expect((await f.request({action:'delete-branch',branch:'feature/skills',sourceCommit:repo.first,expectedMain:repo.base,expectedActive:f.data.active.id})).statusCode).toBe(409);
+    expect((await f.request({action:'delete-branch',branch:'feature/skills',sourceCommit:repo.tip,expectedMain:repo.base,expectedActive:f.data.active.id})).statusCode).toBe(202);await f.done();
+    expect(repo.run('for-each-ref','--format=%(refname)','refs/heads')).toBe('refs/heads/main');
+    expect(repo.run('rev-parse','refs/remotes/origin/feature/skills')).toBe(repo.tip);expect(repo.run('rev-parse','retained-tag')).toBe(repo.tip);
+    const archived=repo.run('for-each-ref','--format=%(objectname)','refs/emergentinc/discarded');expect(archived).toBe(repo.tip);
+    expect(f.run).not.toHaveBeenCalled();
+  },30000);
+  it('hides discarded-only commits from the graph and migrates develop only when all its changes are retained',()=>{
+    const repo=gitRepo();const result=deleteBranch(repo.directory,'feature/skills',repo.tip,repo.base);
+    expect(readGitGraph(repo.directory).commits.map((c:any)=>c.sha)).not.toContain(repo.tip);expect(repo.run('rev-parse',result.recoveryRef)).toBe(repo.tip);
+    repo.run('branch','develop',repo.tip);repo.run('checkout','develop');const plan=buildSwitch(repo.directory,inspectSwitch(repo.directory,repo.tip,repo.base));
+    expect(repo.run('branch','--show-current')).toBe('develop');syncSwitch(repo.directory,plan);
+    expect(repo.run('branch','--show-current')).toBe('main');expect(repo.run('for-each-ref','refs/heads/develop')).toBe('');
+  },30000);
+  it.each(['zh-CN','en'])('renders deletion and history restore controls in both languages (%s)',async lang=>{
+    const repo=gitRepo(),f=await switchFixture(repo),{dom,doc,poll}=await page(f,lang);dom.window.confirm=vi.fn(()=>true);
+    doc.querySelector('button[data-sha="'+repo.tip+'"]').click();await vi.waitFor(()=>expect(doc.getElementById('delete-commit').disabled).toBe(false));
+    expect(doc.getElementById('delete-commit').textContent).toBe(lang==='en'?'Delete branch and commits':'删除分支及提交');
+    doc.getElementById('delete-commit').click();await f.done();await poll();expect(dom.window.confirm).toHaveBeenCalledOnce();
+    const old=repo.run('rev-list','--max-parents=0','main');doc.querySelector('button[data-sha="'+old+'"]').click();await vi.waitFor(()=>expect(doc.getElementById('switch').disabled).toBe(false));
+    expect(doc.getElementById('switch').textContent).toContain(lang==='en'?'Create restore commit':'新增回退提交');expect(doc.getElementById('delete-commit').disabled).toBe(true);
+  },30000);
+});
 
 describe('V27 dual-tree git upgrade', () => {
   it('shows real branches and tags without counting internal tool checkpoint refs as development',()=>{
