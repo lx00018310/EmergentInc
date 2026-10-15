@@ -66,7 +66,7 @@ Object.assign(words['zh-CN'],{mergedHistory:'本次合入的提交',GIT_ALREADY_
 Object.assign(words.en,{mergedHistory:'Commits introduced by this merge',GIT_ALREADY_INCLUDED:'This commit is already in main history. Merging it will not replay changes. Select a historical main version to restore its source.',
  deleteBranch:'Delete branch and commits',temporaryBranch:'Local temporary branch',remoteBranch:'Remote branch',merged:'Included in main',unmerged:'Not merged',forkSource:'Fork base',branchHistory:'Branch commits',otherBranches:'Other branches (base outside the visible main first-parent history)',restoreSwitch:'Create restore commit + validate + approve and publish',mergeHint:'Merge the selected changes into main, then validate and publish the result.',restoreHint:'Create a commit restoring this source tree; retain main history and business data.',deleteHint:'Delete only the selected local branch; retain recovery, remote and release records.',deleteConfirm:'Delete local branch {branch}? Git recovery records will retain the commits.',deleted:'Local branch deleted',syncGit:'Complete main sync',recover:'Recover interrupted operation',needs_git_sync:'Software published; main sync is incomplete. Resolve the cause and complete main sync.',merge:'Create merge or restore commit',validate:'Prepare and validate',approve:'Approve exact candidate',publish:'Publish and check health',sync:'Sync main and working directory',delete:'Delete local branch',GIT_SYNC_DIRTY_WORKTREE:'The working directory has uncommitted changes. Commit or save them first.',GIT_OPERATION_IN_PROGRESS:'Finish the current Git merge or rebase first.',GIT_MAIN_OTHER_WORKTREE:'main is checked out in another worktree. Release it there first.',GIT_CHECKOUT_CHANGED:'The checkout changed during the operation. Review and retry.',GIT_MERGE_CONFLICT:'Merge conflict; nothing was validated or published. Resolve these files on a temporary branch and retry.',GIT_BRANCH_DELETE_DENIED:'The branch is protected, checked out, or its tip changed. Deletion was denied.',GIT_SYNC_REQUIRED:'Software was published but main is not synced. Complete main sync first.',GIT_SYNC_MAIN_MOVED:'main changed. Select the commit again.',GIT_SYNC_INCOMPLETE:'main sync is incomplete. Review the working directory and retry.'
 });
-let lang=localStorage.getItem('emergentinc.language')==='en'?'en':'zh-CN',snapshot=null,gitGraph=null,graphPage=0,selectedSha='',selectedDetail=null,authenticated=false,sending=false,refreshing=false,selectedMode='merge',selectedRequest=0,seenSwitch=0,treeSignature='';
+let lang=localStorage.getItem('emergentinc.language')==='en'?'en':'zh-CN',snapshot=null,gitGraph=null,graphPage=0,requestedPage=null,selectedSha='',selectedDetail=null,authenticated=false,sending=false,refreshing=false,selectedMode='merge',selectedRequest=0,seenSwitch=0,treeSignature='';
 const $=id=>document.getElementById(id),t=key=>words[lang][key]??key;
 words['zh-CN'].otherCommits='其他引用保留的提交';words.en.otherCommits='Commits retained by other references';
 function text(tag,value,parent){const node=document.createElement(tag);node.textContent=value;parent.append(node);return node;}
@@ -75,7 +75,7 @@ function translate(){document.documentElement.lang=lang;document.title=t('title'
 async function api(url,body){const response=await fetch(url,{credentials:'same-origin',...(body?{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)}:{})});const value=await response.json();if(!response.ok){if(response.status===401){authenticated=false;$('content').hidden=true;$('login').hidden=false;}throw new Error(value.detail??String(response.status));}return value;}
 function currentSource(){return snapshot?.candidates.find(c=>c.id===snapshot.active?.release_id)?.request?.owner_release?.source_commit??null;}
 function showError(message){$(authenticated?'error':'login-error').textContent=t(message);if(authenticated)$('selected-commit').hidden=false;}
-function renderPagination(){const disabled=refreshing||sending||snapshot?.busy||!gitGraph?.available;$('previous-page').disabled=disabled||graphPage===0;$('next-page').disabled=disabled||!gitGraph?.hasMore;}
+function renderPagination(){const disabled=requestedPage!==null||sending||snapshot?.busy||!gitGraph?.available;$('previous-page').disabled=disabled||graphPage===0;$('next-page').disabled=disabled||!gitGraph?.hasMore;}
 async function action(body){if(sending||snapshot?.busy)return false;sending=true;render(snapshot);$('error').textContent='';try{await api('/api/upgrades',body);return true;}catch(e){showError(e.message);return false;}finally{sending=false;}}
 function render(data){
  snapshot=data;$('active').textContent=data.active?`${data.active.id} · ${currentSource()?.slice(0,12)??t('geneOnly')}`:'—';$('back').href=data.appUrl+'/OWNER';renderTrees(data);
@@ -104,13 +104,20 @@ function render(data){
  $('sync-git').disabled=$('recover').disabled=sending||data.busy;
  renderPagination();
 }
-async function refresh(page=graphPage){if(!authenticated||refreshing)return;refreshing=true;renderPagination();try{
+async function refresh(page=graphPage){
+ if(!authenticated)return;
+ if(page!==graphPage)requestedPage=page;
+ renderPagination();if(refreshing)return;refreshing=true;
+ try{
  const [data,graph]=await Promise.all([api('/api/upgrades'),api('/api/git-graph?limit=20&page='+page)]);gitGraph=graph;graphPage=graph.page??page;render(data);
  if(data.job?.action==='switch'&&data.job.state==='succeeded'&&data.job.git?.commit===currentSource()&&seenSwitch!==data.job.startedAt){
   seenSwitch=data.job.startedAt;
   selectedSha=data.job.git.commit;selectedMode='merge';selectedDetail={commit:graph.commits.find(c=>c.sha===selectedSha)??{sha:selectedSha,subject:selectedSha},mainHead:graph.mainHead,deleteBranches:[]};render(data);
  }
-}catch(e){showError(e.message);}finally{refreshing=false;renderPagination();}}
+}catch(e){showError(e.message);}finally{
+ refreshing=false;const next=requestedPage;requestedPage=null;
+ if(next!==null&&next!==page)await refresh(next);else renderPagination();
+}}
 async function selectCommit(sha,mode='merge'){
  if(snapshot?.busy||sending)return;const serial=++selectedRequest;selectedSha=sha;selectedMode=mode;selectedDetail=null;render(snapshot);
  try{const detail=await api('/api/git-commit/'+sha);if(serial!==selectedRequest)return;selectedDetail=detail;selectedMode=detail.mode;render(snapshot);}catch(e){showError(e.message);}
@@ -125,5 +132,5 @@ $('recover').onclick=async()=>{await action({action:'recover'});await refresh();
 $('previous-page').onclick=()=>void refresh(graphPage-1);$('next-page').onclick=()=>void refresh(graphPage+1);
 $('login-form').onsubmit=async event=>{event.preventDefault();try{await api('/api/login',{secret:$('secret').value});$('secret').value='';$('login-error').textContent='';authenticated=true;$('login').hidden=true;$('content').hidden=false;await refresh();}catch(e){showError(e.message);}};
 $('language').onclick=()=>{lang=lang==='en'?'zh-CN':'en';localStorage.setItem('emergentinc.language',lang);translate();};
-translate();try{await api('/api/session');authenticated=true;$('login').hidden=true;$('content').hidden=false;await refresh();}catch{}setInterval(()=>void refresh(),1500);
+translate();try{await api('/api/session');authenticated=true;$('login').hidden=true;$('content').hidden=false;await refresh();}catch{}setInterval(()=>void refresh(),10000);
 </script></body></html>

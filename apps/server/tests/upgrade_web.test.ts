@@ -36,7 +36,7 @@ async function page(f:Awaited<ReturnType<typeof fixture>>,lang='zh-CN',query='',
   const dom=new JSDOM(fs.readFileSync(path.resolve('resources/upgrade-web.html'),'utf8'),{url:'http://127.0.0.1:8766/'+query,runScripts:'outside-only'});
   cleanups.push(async()=>{await vi.waitFor(()=>expect(dom.window.upgradeTestIdle?.()).toBe(true));dom.window.close();});let poll!:()=>Promise<void>,browserCookie=f.cookie;
   dom.window.localStorage.setItem('emergentinc.language',lang);
-  dom.window.setInterval=(callback:()=>Promise<void>)=>{poll=callback;return 0;};
+  dom.window.setInterval=vi.fn((callback:()=>Promise<void>)=>{poll=callback;return 0;});
   dom.window.HTMLDialogElement.prototype.showModal=function(){this.open=true;};
   dom.window.HTMLDialogElement.prototype.close=function(){this.open=false;};
   dom.window.fetch=vi.fn(async(url:string,init:any={})=>{if(!init.method&&url in responses)return {ok:true,status:200,json:async()=>responses[url]};const response=await f.app.inject({method:init.method??'GET',url,headers:{cookie:browserCookie},...(init.body?{payload:JSON.parse(init.body)}:{})});if(response.headers['set-cookie'])browserCookie=String(response.headers['set-cookie']).split(';')[0];return {ok:response.statusCode<400,status:response.statusCode,json:async()=>response.json()};});
@@ -45,6 +45,34 @@ async function page(f:Awaited<ReturnType<typeof fixture>>,lang='zh-CN',query='',
 }
 
 describe('V32 single version switch flow',()=>{
+  it.each(['zh-CN','en'])('keeps pagination clickable during polling and retains a click until the poll finishes (%s)',async lang=>{
+    const graph=(page:number)=>{const commits=Array.from({length:20},(_,i)=>({sha:(page*20+i+1).toString(16).padStart(40,'0'),parents:[],subject:'Commit '+(page*20+i+1),author:'Tester',time:1}));return {available:true,page,hasMore:page===0,mainHead:'1'.padStart(40,'0'),refs:[],branches:[],commits,firstParent:commits.map(c=>c.sha)};};
+    const f=await fixture(),{dom,doc,poll}=await page(f,lang,'',{'/api/git-graph?limit=20&page=0':graph(0),'/api/git-graph?limit=20&page=1':graph(1)});
+    expect(dom.window.setInterval).toHaveBeenCalledWith(expect.any(Function),10000);
+    const fetcher=dom.window.fetch;let releasePoll:(()=>void)|undefined,releasePage:(()=>void)|undefined,hold=true;
+    dom.window.fetch=vi.fn(async(url:string,init:any)=>{const response=await fetcher(url,init);if(hold&&url==='/api/git-graph?limit=20&page=0')await new Promise<void>(resolve=>{releasePoll=resolve;});if(hold&&url==='/api/git-graph?limit=20&page=1')await new Promise<void>(resolve=>{releasePage=resolve;});return response;});
+    const background=poll();
+    try{
+      await vi.waitFor(()=>expect(releasePoll).toBeTypeOf('function'));
+      expect(doc.getElementById('next-page').disabled).toBe(false);
+      expect(doc.getElementById('previous-page').disabled).toBe(true);
+      doc.getElementById('next-page').click();expect(doc.getElementById('next-page').disabled).toBe(true);
+      releasePoll!();await vi.waitFor(()=>expect(releasePage).toBeTypeOf('function'));
+      expect(doc.getElementById('next-page').disabled).toBe(true);
+      const duringNavigation=poll();hold=false;releasePage!();await Promise.all([background,duringNavigation]);
+      expect(doc.getElementById('graph-window').textContent).toContain(lang==='en'?'Page 2':'第 2 页');
+      expect(doc.getElementById('previous-page').disabled).toBe(false);expect(doc.getElementById('next-page').disabled).toBe(true);
+      await poll();expect(doc.getElementById('previous-page').disabled).toBe(false);
+      doc.getElementById('previous-page').click();await poll();
+      expect(doc.getElementById('graph-window').textContent).toContain(lang==='en'?'Page 1':'第 1 页');
+      expect(doc.getElementById('next-page').disabled).toBe(false);expect(f.run).not.toHaveBeenCalled();
+      dom.window.fetch=vi.fn(async(url:string,init:any)=>url==='/api/git-graph?limit=20&page=1'?{ok:false,status:500,json:async()=>({detail:'UPGRADE_DATABASE_UNAVAILABLE'})}:fetcher(url,init));
+      doc.getElementById('next-page').click();await poll();
+      expect(doc.getElementById('next-page').disabled).toBe(false);
+      expect(doc.getElementById('error').textContent).toContain(lang==='en'?'The version database is unavailable':'版本数据库不可用');
+      await poll();expect(dom.window.fetch.mock.calls.filter(([url]:[string])=>url==='/api/git-graph?limit=20&page=1')).toHaveLength(1);
+    }finally{hold=false;releasePoll?.();releasePage?.();await background;}
+  });
   it.each(['zh-CN','en'])('pages through distinct commits without repeated local or remote main history (%s)',async lang=>{
     const repo=gitRepo();
     repo.run('merge','--ff-only','feature/skills');
