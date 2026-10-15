@@ -7,7 +7,7 @@ import { lifeId, lifeText } from '@emergentinc/protocol';
 export class QianjiWorldGateway {
   constructor(readonly manager:WorldRuntimeManager){}
   async enqueue(qianjiId:string,content:string,key:string){
-    lifeText(content,8000);lifeText(key,128);if(/[\x00-\x1f]/.test(key))throw new Error('INVALID_CHAT_KEY');const control=this.manager.registry.control;
+    lifeText(content,16384);lifeText(key,128);if(/[\x00-\x1f]/.test(key))throw new Error('INVALID_CHAT_KEY');const control=this.manager.registry.control;
     const world=control.worldForQianji(qianjiId),runtime=await this.manager.open(world.world_id);
     const pixel=world.gateway_pixel_id;if(!pixel||!runtime.store.pixels.getPixelAccount(pixel)?.active)throw new Error('WORLD_GATEWAY_NOT_AVAILABLE');
     const requestKey=`${qianjiId}:${key}`,old=control.db.prepare('SELECT * FROM world_chat_turns WHERE request_key=?').get(requestKey);

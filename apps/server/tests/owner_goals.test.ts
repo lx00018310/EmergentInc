@@ -21,17 +21,17 @@ describe('V29 durable Owner goal management',()=>{
   });
   it('uses only company quota, rejects extra command fields and preserves original goal content',async()=>{
     const f=goalFixture();cleanups.push(f.close);
-    f.on(7,0);expect(f.gate.view()).toMatchObject({desiredMode:'ON',observedState:'LIMIT_REACHED'});expect(f.gate.isOn()).toBe(false);expect(()=>f.gate.goals.create({title:'Injected',objective:'x',acceptance:{kind:'manual',description:'x'},maxTokens:2,idempotencyKey:crypto.randomUUID(),handler:'shell'})).toThrow();
+    f.on(7,0);expect(f.gate.view()).toMatchObject({desiredMode:'ON',maxTokens:0,observedState:'IDLE'});expect(f.gate.isOn()).toBe(true);expect(()=>f.gate.goals.create({title:'Injected',objective:'x',acceptance:{kind:'manual',description:'x'},maxTokens:2,idempotencyKey:crypto.randomUUID(),handler:'shell'})).toThrow();
     const goal=f.goal();expect(()=>f.gate.goals.action(goal.id,{action:'completed',expectedRevision:1,idempotencyKey:crypto.randomUUID()})).toThrow();expect(f.gate.goals.get(goal.id).objective).toBe(goal.objective);expect(f.calls).toHaveLength(0);
   });
   it('protects goal/control APIs with Owner auth and enforces 409 CAS plus idempotent retries',async()=>{
     const f=goalFixture();cleanups.push(f.close);const app=await createServer({workspaceRoot:f.root,worlds:f.worlds,ownerAuth:{secret:'x'.repeat(40),secureCookies:false}});cleanups.push(()=>app.close());
     expect((await app.inject({url:'/api/owner/goals'})).statusCode).toBe(401);
-    const approval={maxTokens:1000,expectedRevision:0,idempotencyKey:crypto.randomUUID()};
+    const approval={desiredMode:'OFF',expectedRevision:0,idempotencyKey:crypto.randomUUID()};
     expect((await app.inject({method:'POST',url:'/api/owner/automation',payload:approval})).statusCode).toBe(401);
     const login=await app.inject({method:'POST',url:'/api/login',payload:{secret:'x'.repeat(40)}}),cookie=String(login.headers['set-cookie']).split(';')[0]!;
     const quota=await app.inject({method:'POST',url:'/api/owner/automation',headers:{cookie},payload:approval});
-    expect(quota.statusCode).toBe(200);expect(quota.json()).toMatchObject({maxTokens:1000,desiredMode:'OFF',spentTokens:0});
+    expect(quota.statusCode).toBe(200);expect(quota.json()).toMatchObject({maxTokens:0,desiredMode:'OFF',spentTokens:0});
     expect((await app.inject({method:'POST',url:'/api/owner/automation',headers:{cookie},payload:approval})).json()).toEqual(quota.json());
     const input={title:'HTTP draft',objective:'Inspect the current market',maxTokens:100000,acceptance:{kind:'artifact',filename:'result.md',minBytes:10},idempotencyKey:crypto.randomUUID()};
     const first=await app.inject({method:'POST',url:'/api/owner/goals',headers:{cookie},payload:input});expect(first.statusCode).toBe(200);

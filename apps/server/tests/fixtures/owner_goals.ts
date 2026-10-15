@@ -31,11 +31,11 @@ export function goalFixture() {
   work=new OwnerWorkService(manager,()=>maintenance);
   const payments=new PaymentService(join(root,'system/payment/payment.sqlite3'),control,lineage),scheduler=new OwnerGoalScheduler(manager,work,gate,payments);
   const worlds={manager,promotion:new GenePromotionService(manager,root,lineage),payments,monitor:new PaymentMonitor(payments),provider,meter,modelName:'test',ownerWork:work};
-  const on=(rounds:number|null=7,maxTokens=10_000_000,key=crypto.randomUUID())=>gate.control({desiredMode:'ON',runMode:rounds===null?'CONTINUOUS':'BOUNDED',requestedRounds:rounds,maxTokens,expectedRevision:gate.view().revision,idempotencyKey:key});
+  const on=(rounds:number|null=7,_legacyTokens=10_000_000,key=crypto.randomUUID())=>{if(gate.budget.view().activatedAt===null)gate.budget.authorize(100_000_000);return gate.control({desiredMode:'ON',expectedRevision:gate.view().revision,idempotencyKey:key});};
   const off=()=>gate.control({desiredMode:'OFF',expectedRevision:gate.view().revision,idempotencyKey:crypto.randomUUID()});
   const goal=(title='Research draft',kind:'artifact'|'manual'='artifact')=>gate.goals.create({title,objective:title,maxTokens:1_000_000,acceptance:kind==='artifact'?{kind,filename:'result.md',minBytes:10}:{kind,description:'Three real customers with independently verified payment evidence'},idempotencyKey:crypto.randomUUID()});
   const finish=async()=>{await vi.waitFor(async()=>{await work.tick();await scheduler.tick();expectIdle();},{timeout:8000,interval:10});};
   function expectIdle(){if(manager.list().some(w=>w.running)||control.db.prepare("SELECT 1 FROM owner_goal_dispatches d JOIN owner_goals g ON g.id=d.goal_id WHERE d.state IN ('QUEUED','RUNNING') AND g.status IN ('RUNNING','READY')").get())throw new Error('Still advancing');}
-  const close=async()=>{off();await scheduler.close();await work.close();await manager.closeAll();payments.close();control.close();lineage.close();fs.rmSync(root,{recursive:true,force:true});};
+  const close=async(preserve=false)=>{off();await scheduler.close();await work.close();await manager.closeAll();payments.close();control.close();lineage.close();if(!preserve)fs.rmSync(root,{recursive:true,force:true});};
   return {root,registry,lineage,control,manager,gate,work,scheduler,worlds,payments,a,b,calls,meter,provider,on,off,goal,finish,close,respond:(fn:typeof respond)=>respond=fn,maintenance:(v:boolean)=>maintenance=v};
 }

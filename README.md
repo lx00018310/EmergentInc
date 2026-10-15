@@ -68,10 +68,10 @@ The launcher starts the server and automatically opens `http://127.0.0.1:8765/`.
 
 1. Visit **`http://127.0.0.1:8765/OWNER`** in your browser.
 2. Enter your `EMERGENTINC_OWNER_SECRET` to unlock the Owner Console.
-3. Speak in the default Boss chat: "Create a business goal: research AI customization services." The first executable Owner command starts automation; ON also starts it directly. No token or round form is required.
-4. Tokens are authorized cumulatively in **10,000,000-token batches**, with automatic renewal below 200,000 available tokens or when a model reservation needs more. **Model API calls incur real costs**; this is neither free usage nor a monetary spending cap. Click **OFF** to pause new calls. Only an explicit resume command or ON releases a manual pause.
-5. New Worlds replenish only their current gateway Pixel automatically. Existing World settings are preserved. Person chat defaults to 20 rounds; Advanced retains the 1–20 setting.
-6. With a configured USDT payment rail, ask "Update custom service to 19.9 USDT, write both languages and publish it." The store is updated directly, without a second confirmation. Without a rail, the product remains an unpublished draft with a specific to-do. Research-first publication waits for scoped source receipts and product data; unverified market conditions require review.
+3. In **Boss chat**, give an explicit money budget, such as "company budget CNY 100", and approve its proposal. Paid planning requires this authorization. Tokens are usage measurements; there are no company, goal or Run token allowances.
+4. Describe a task. AI proposes finite steps and any recurring schedule. **Approve and execute** starts the approved workflow; **Reject** leaves it unexecuted. Real step deliverables feed subsequent steps, and the Owner decides when to close the task. A secretary is optional.
+5. The only other navigation entry is the **AI company dashboard**: approvals, tasks, deliverables, people, settled costs, reservations, verified revenue and history. Say "pause company", "resume", or name a task to pause or stop it. Pauses persist across restarts and releases. Unknown bills retain their reservations.
+6. Software upgrades at port 8766 retain two Git trees: select a commit, wait for automatic validation, then **Approve and switch**. Compatible older commits use the same flow with a new runtime generation; business data and Git branch pointers are retained. [Owner guide](docs/guides/OWNER_GUIDE.md).
 
 ---
 

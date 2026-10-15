@@ -2,11 +2,12 @@ import type { OwnerOverview, OwnerInboxItem, OwnerActivityItem, OwnerActionPropo
 import type { WorldRouteServices } from '../routes/world_routes.js';
 import type { BusinessService } from './business_service.js';
 import type { OwnerWorkService } from './owner_work_service.js';
+import type { PublicStore } from './public_store.js';
 
 /** Owner projections use existing records; they never start, settle or recover a Run. Times are milliseconds. */
 export class OwnerOverviewService {
   constructor(private worlds: WorldRouteServices, private business?: BusinessService, private upgradeOrigin?: string, private work?:OwnerWorkService,
-    private serviceStatus?: () => NonNullable<OwnerOverview['summary']['serviceStatus']>) {}
+    private serviceStatus?: () => NonNullable<OwnerOverview['summary']['serviceStatus']>,private publicStore?:PublicStore) {}
   async overview(): Promise<OwnerOverview> {
     const { manager, payments } = this.worlds, { control, lineage } = manager.registry;
     const records = manager.list(), inbox: OwnerInboxItem[] = [], alerts: OwnerAlert[] = [], activity: OwnerActivityItem[] = [];
@@ -81,7 +82,7 @@ export class OwnerOverviewService {
         if(receipt.reason&&current&&!current.product_enabled)alerts.push({id:`product:${receipt.productId}`,kind:'product',severity:'normal',title:'Product publication needs attention',summary:`${receipt.nameEn} / ${receipt.nameZh}`,reasonKey:receipt.reason,createdAt:Number(row.created_at),source:'control_events',href:'/GENE#public-site'});
       }
     }
-    if(automation?.observedState==='LIMIT_REACHED')alert('automation:quota','automation','normal','Company token quota needs approval','',automation.updatedAt,'owner_automation_control','/OWNER#owner-goals');
+    if(automation?.observedState==='LIMIT_REACHED')alert('automation:quota','automation','normal','Company budget needs approval','',automation.updatedAt,'owner_automation_control','/OWNER#owner-goals');
     if(automation?.observedState==='BLOCKED'&&automation.reason!=='EVOLUTION_QUIESCED')alerts.push({id:'automation:review',kind:'automation',severity:'critical',title:'Company automation needs review',summary:'',reasonKey:automation.reason??'OWNER_OUTCOME_REVIEW_REQUIRED',createdAt:automation.updatedAt,source:'owner_automation_control',href:'/OWNER?automationReview=true#owner-goals'});
     if(goals)for(const goal of goals){
       if(['WAITING_APPROVAL','WAITING_RESOURCE','BLOCKED','FAILED'].includes(goal.status)&&goal.reason!=='OWNER_WAITING_PAYMENT')alerts.push({id:`goal:${goal.id}`,kind:'goal',severity:goal.status==='BLOCKED'?'critical':'normal',title:'Goal needs attention',summary:goal.title,reasonKey:goal.reason??`Goal status: ${goal.status}`,createdAt:goal.updatedAt,source:'owner_goals',href:`/OWNER?goal=${encodeURIComponent(goal.id)}`});
@@ -141,7 +142,11 @@ export class OwnerOverviewService {
     } catch { /* A disconnected independent service is explicitly reported, never projected as idle. */ }
     inbox.sort((a,b)=>Number(b.priority==='critical')-Number(a.priority==='critical')||(b.createdAt??0)-(a.createdAt??0)||a.id.localeCompare(b.id));
     activity.sort((a,b)=>b.createdAt-a.createdAt||a.id.localeCompare(b.id));
-    return {...(goals?{goals,automation:manager.automation!.view()}:{}),asOf:Date.now(),summary:{qianjiCount:people.length,activeWorlds:records.filter(r=>r.status==='ACTIVE').length,runningWorlds:records.filter(r=>r.running).length,inboxCount:inbox.length,currentGeneration:generation,
+    const costs=manager.automation?control.db.prepare("SELECT date(p.created_at/1000,'unixepoch','+8 hours') day,SUM(r.settled_micros) micros FROM owner_money_reservations r JOIN owner_model_permits p ON p.id=r.permit_id WHERE p.state='SETTLED' GROUP BY day ORDER BY day").all().map(r=>({day:String(r.day),micros:Number(r.micros)})):[];
+    const legacyBusiness=this.business?.store.overview().plans.map(p=>({id:p.id,title:p.plan.title,state:p.state,nextAt:(this.business!.store.db.prepare('SELECT next_run_at FROM business_schedules WHERE plan_id=?').get(p.id)?.next_run_at as number|null)??null}))??[];
+    const storefront=this.publicStore?{products:this.publicStore.products().items.map(p=>({id:String(p.product_id),nameEn:String(p.product_name_en),nameZh:String(p.product_name_zh),enabled:Boolean(p.product_enabled),price:p.product_price as string|null,currency:String(p.product_currency)})),orders:control.db.prepare('SELECT order_id,product_name_snapshot,amount,currency,status,created_at FROM orders ORDER BY created_at DESC LIMIT 200').all().map(o=>({id:String(o.order_id),product:String(o.product_name_snapshot),amount:String(o.amount),currency:String(o.currency),status:String(o.status),at:Number(o.created_at)}))}:undefined;
+    const amount=(atomic:unknown,decimals:unknown)=>{const digits=String(atomic).padStart(Number(decimals)+1,'0'),places=Number(decimals);return places?digits.slice(0,-places)+'.'+digits.slice(-places):digits;};
+    return {costs,legacyBusiness,...(storefront?{storefront}:{}),...(goals?{goals,automation:manager.automation!.view(),budget:manager.automation!.budget.view(),proposals:manager.automation!.proposals.list(),taskPlans:goals.map(g=>manager.automation!.proposals.plans.get(g.id)).filter((p):p is NonNullable<typeof p>=>p!==null),revenue:payments.db.prepare('SELECT asset,amount_atomic,decimals,created_at FROM world_revenue_events ORDER BY created_at').all().map(r=>({asset:String(r.asset),amount:amount(r.amount_atomic,r.decimals),at:Number(r.created_at)}))}:{}),asOf:Date.now(),summary:{qianjiCount:people.length,activeWorlds:records.filter(r=>r.status==='ACTIVE').length,runningWorlds:records.filter(r=>r.running).length,inboxCount:inbox.length,currentGeneration:generation,
       pixelCount:metricsComplete?pixelCount:null,availableEnergy:metricsComplete?availableEnergy:null,
       pendingApprovals:inbox.filter(item=>item.actions?.some(action=>action.requiresApproval)).length,...(this.serviceStatus?{serviceStatus:this.serviceStatus()}:{} )},inbox,activity:activity.slice(0,50),people,alerts,availability,...(upgrade?{upgrade}:{}),...(work?{work}:{})};
   }

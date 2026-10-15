@@ -29,7 +29,7 @@ async function fixture(owner=false){const root=fs.mkdtempSync(join(tmpdir(),'v23
   const login=await app.inject({method:'POST',url:'/api/login',payload:{secret:'test-owner-secret'.repeat(4)}});const cookie=String(login.headers['set-cookie']).split(';')[0];
   cleanups.push(async()=>{await app.close();await manager.closeAll();payments.close();control.close();lineage.close();fs.rmSync(root,{recursive:true,force:true});});
   const request=(method:any,url:string,payload?:any)=>app.inject({method,url,payload,headers:{cookie}});
-  manager.automation!.control({desiredMode:'ON',runMode:'CONTINUOUS',maxTokens:100000000,expectedRevision:0,idempotencyKey:crypto.randomUUID()});
+  manager.automation!.budget.authorize(100000000);manager.automation!.control({desiredMode:'ON',runMode:'CONTINUOUS',expectedRevision:0,idempotencyKey:crypto.randomUUID()});
   return {root,lineage,control,registry,manager,a,b,genome,payments,promotion,app,request,narrative,generation};
 }
 describe('authenticated V23 product and life integration',()=>{

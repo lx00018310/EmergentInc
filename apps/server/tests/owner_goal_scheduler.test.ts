@@ -3,7 +3,7 @@ import { goalFixture } from './fixtures/owner_goals.js';
 import { TRANSFER_TOPIC } from '../src/services/payment_assets.js';
 const cleanups:(()=>Promise<void>)[]=[];afterEach(async()=>{for(const fn of cleanups.splice(0).reverse())await fn();});
 describe('V29 real World goal scheduler',()=>{
-  it('renews quota during unattended scheduling while preserving paid usage',async()=>{
+  it('uses approved money during unattended scheduling while preserving paid usage',async()=>{
     const f=goalFixture();cleanups.push(f.close);const goal=f.goal();expect(goal.maxTokens).toBe(0);
     for(const world of f.manager.list()){
       const runtime=await f.manager.open(world.world_id),start=runtime.run.start.bind(runtime.run);
@@ -12,9 +12,9 @@ describe('V29 real World goal scheduler',()=>{
     }
     let count=0;f.respond(async()=>({rawText:JSON.stringify(++count===1?{operations:[{tool:'save_artifact',args:{filename:'result.md',content:'Actual retained draft after Owner quota increase.'}}],send_to:'STOP'}:{owner_reply:'Draft retained for inspection',send_to:'STOP'}),usage:{promptTokens:20,completionTokens:10,cachedTokens:0}}));
     f.on(null,1);await f.scheduler.tick();
-    await f.finish();expect(f.gate.goals.get(goal.id).status).toBe('COMPLETED');expect(f.gate.view().spentTokens).toBe(60);expect(f.calls).toHaveLength(2);
-    expect(f.gate.view()).toMatchObject({desiredMode:'ON',maxTokens:10_000_001});
-    expect(f.control.db.prepare("SELECT COUNT(*) n FROM control_events WHERE kind='owner_auto_quota_granted'").get()!.n).toBe(1);
+    await f.finish();expect(f.gate.goals.get(goal.id).status).toBe('WAITING_APPROVAL');expect(f.gate.view().spentTokens).toBe(60);expect(f.calls).toHaveLength(2);
+    expect(f.gate.view()).toMatchObject({desiredMode:'ON',maxTokens:0});
+    expect(f.control.db.prepare("SELECT COUNT(*) n FROM control_events WHERE kind='owner_auto_quota_granted'").get()!.n).toBe(0);
   });
   it('binds an agent recruitment request to its goal budget, preserves pause on approval and routes resumed work to the approved specialist',async()=>{
     const f=goalFixture();cleanups.push(f.close);const goal=f.goal('Research draft');let worldCalls=0;
@@ -22,7 +22,7 @@ describe('V29 real World goal scheduler',()=>{
     f.on(10);await f.scheduler.tick();await f.finish();expect(f.gate.goals.get(goal.id).reason).toBe('OWNER_RECRUITMENT_REQUIRED');const request=f.work.view().requests[0];
     f.gate.goals.action(goal.id,{action:'pause',expectedRevision:1,idempotencyKey:crypto.randomUUID()});await f.work.decide(request.id,request.hash,'approve');expect(f.gate.goals.get(goal.id)).toMatchObject({status:'PAUSED',spentTokens:90});
     const person=f.work.view().requests[0].personId!,world=f.control.worldForQianji(person);f.gate.goals.action(goal.id,{action:'resume',expectedRevision:2,idempotencyKey:crypto.randomUUID()});await f.scheduler.tick();await f.finish();
-    expect(f.gate.goals.get(goal.id)).toMatchObject({status:'COMPLETED',spentTokens:150});expect(f.gate.goals.detail(goal.id).dispatches[0].worldId).toBe(world.world_id);expect(f.gate.view().startedRounds).toBe(2);
+    expect(f.gate.goals.get(goal.id)).toMatchObject({status:'WAITING_APPROVAL',spentTokens:150});expect(f.gate.goals.detail(goal.id).dispatches[0].worldId).toBe(world.world_id);expect(f.gate.view().startedRounds).toBe(2);
   });
   it.each(['pause','stop','archive'] as const)('safely applies %s to an in-flight goal while another goal continues',async action=>{
     const f=goalFixture();cleanups.push(f.close);const a=f.goal('Research draft');await new Promise(r=>setTimeout(r,2));const b=f.goal('Marketing review','manual');let release!:(value:any)=>void;
@@ -34,7 +34,7 @@ describe('V29 real World goal scheduler',()=>{
     if(action==='pause'){
       const d=f.gate.goals.detail(a.id).dispatches[0],runtime=f.manager.peek(d.worldId)!,runId=runtime.run.getStatus().run_id;
       await expect(runtime.run.start({rounds:1,runBudgetTokens:100000})).rejects.toThrow('OWNER_AUTOMATION_BUSY');expect(runtime.store.runs.getCheckpoint(runId)?.resume_pending).toBe(1);
-      const paused=f.gate.goals.get(a.id);f.gate.goals.action(a.id,{action:'resume',expectedRevision:paused.revision,idempotencyKey:crypto.randomUUID()});await f.scheduler.tick();await f.finish();expect(f.gate.goals.get(a.id).status).toBe('COMPLETED');expect(f.gate.view().startedRounds).toBe(2);
+      const paused=f.gate.goals.get(a.id);f.gate.goals.action(a.id,{action:'resume',expectedRevision:paused.revision,idempotencyKey:crypto.randomUUID()});await f.scheduler.tick();await f.finish();expect(f.gate.goals.get(a.id).status).toBe('WAITING_APPROVAL');expect(f.gate.view().startedRounds).toBe(2);
     }
   });
   it('requires explicit Owner verification of real current-revision source evidence and never writes revenue from that decision',async()=>{
@@ -55,7 +55,7 @@ describe('V29 real World goal scheduler',()=>{
     const wire={chainId:56,receipt:{status:'0x1',transactionHash:signature,blockHash,blockNumber:'0x64',logs:[{address:invoice.mint,topics:[TRANSFER_TOPIC,'0x'+'0'.repeat(24)+'34'.repeat(20),'0x'+'0'.repeat(24)+invoice.recipient_address.slice(2)],data:'0x'+BigInt(invoice.amount_atomic).toString(16).padStart(64,'0'),logIndex:'0x0',transactionHash:signature,blockHash,blockNumber:'0x64',removed:false}]},block:{number:'0x64',hash:blockHash,timestamp:'0x'+Math.floor(Date.now()/1000).toString(16)},finalizedHead:{number:'0x64'}};
     expect(f.payments.observe(invoice.invoice_id,signature,'confirmed',wire).status).toBe('OBSERVED');await f.scheduler.tick();expect(f.gate.goals.get(goal.id).verifiedCount).toBe(0);
     expect(f.payments.observe(invoice.invoice_id,signature,'finalized',wire).status).toBe('FINALIZED');await f.scheduler.tick();await f.scheduler.tick();
-    expect(f.gate.goals.get(goal.id)).toMatchObject({status:'COMPLETED',verifiedCount:1});expect(f.gate.goals.detail(goal.id).evidence).toHaveLength(1);expect(f.calls).toHaveLength(0);expect(f.gate.view().desiredMode).toBe('OFF');
+    expect(f.gate.goals.get(goal.id)).toMatchObject({status:'WAITING_APPROVAL',verifiedCount:1});expect(f.gate.goals.detail(goal.id).evidence).toHaveLength(1);expect(f.calls).toHaveLength(0);expect(f.gate.view().desiredMode).toBe('OFF');
   });
   it('requests a person in Inbox without creating one, then schedules the approved person through the goal budget',async()=>{
     const f=goalFixture();cleanups.push(f.close);f.control.db.prepare("UPDATE qianji_worlds SET status='ARCHIVED'").run();const goal=f.goal();f.on();await f.scheduler.tick();await f.scheduler.tick();
@@ -80,7 +80,7 @@ describe('V29 real World goal scheduler',()=>{
     const f=goalFixture();cleanups.push(f.close);const a=f.goal('Research draft');await new Promise(r=>setTimeout(r,2));const b=f.goal('Marketing real customers','manual');let count=0;
     f.respond(async r=>({rawText:JSON.stringify(++count===1?{operations:[{tool:'save_artifact',args:{filename:'result.md',content:'A real test research draft with verifiable bytes.'}}],send_to:'STOP'}:{owner_reply:'We have three customers (unverified model claim).',send_to:'STOP'}),usage:{promptTokens:20,completionTokens:10,cachedTokens:0}}));
     f.on(7);await f.scheduler.tick();await f.finish();
-    expect(f.gate.goals.get(a.id).status).toBe('COMPLETED');expect(f.gate.goals.get(b.id).status).toBe('WAITING_APPROVAL');
+    expect(f.gate.goals.get(a.id).status).toBe('WAITING_APPROVAL');expect(f.gate.goals.get(b.id).status).toBe('WAITING_APPROVAL');
     expect(f.gate.goals.detail(a.id).evidence.some(e=>e.kind==='artifact'&&e.sha256.length===64)).toBe(true);
     expect(new Set(f.control.db.prepare('SELECT world_id FROM owner_goal_dispatches').all().map(r=>r.world_id)).size).toBe(2);
     expect(f.gate.view().startedRounds).toBeLessThanOrEqual(7);expect(f.manager.list()).toHaveLength(2);

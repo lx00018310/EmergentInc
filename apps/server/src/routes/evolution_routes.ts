@@ -12,7 +12,7 @@ export interface EvolutionServices {
   worldOverview?:()=>unknown[];
   beforeProposalDecision?:(id:string,decision:string)=>void;
   onProposalApproved?: (id:string)=>Promise<unknown>|unknown;
-  quiesced?: () => boolean; quiesce?: () => Promise<void>; resume?: () => Promise<void>;
+  quiesced?: () => boolean; switching?:()=>boolean; quiesce?: () => Promise<void>; resume?: () => Promise<void>;
 }
 export async function registerEvolutionRoutes(app: FastifyInstance, services: EvolutionServices) {
   const { life, dream, memoryGate, body } = services;

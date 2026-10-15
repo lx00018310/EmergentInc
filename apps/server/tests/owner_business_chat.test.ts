@@ -31,7 +31,7 @@ describe('V31 current Owner business authority',()=>{
     const f=fixture();f.on();f.intent({kind:'create_goal',title:'AI service research',objective:'Research actual needs and retain traceable sources'});
     const first=await f.ask('goal-request','给我建立一个持续经营目标：调研 AI 定制服务');
     expect(f.control.db.prepare('PRAGMA table_info(owner_dispatch_calls)').all()).toHaveLength(6);
-    expect(first.createdGoal).toMatchObject({status:'READY',acceptance:{kind:'manual'}});expect(f.work.view().tasks).toHaveLength(0);
+    expect(first.createdGoal).toMatchObject({status:'DRAFT',acceptance:{kind:'manual'}});expect(first.companyProposal).toMatchObject({kind:'task_plan',state:'PENDING'});expect(f.work.view().tasks).toHaveLength(0);
     f.control.db.prepare("UPDATE owner_dispatch_calls SET response_json=NULL,state='IN_FLIGHT' WHERE request_key='goal-request'").run();
     const recovered=new OwnerWorkService(f.manager);recovered.products=f.work.products;
     expect(recovered.cached('goal-request','给我建立一个持续经营目标：调研 AI 定制服务',[],'zh-CN')).toBeNull();
@@ -80,14 +80,14 @@ describe('V31 current Owner business authority',()=>{
     f.intent({kind:'configure_product',...product,enabled:false});
     expect((await f.ask('unpublish-product','Unpublish custom service')).configuredProduct.enabled).toBe(false);
   });
-  it('requires authenticated HTTP, bootstraps the first command to exactly 10M, and preserves explicit pause',async()=>{
+  it('requires authenticated HTTP and an explicit money authorization before the first command, and preserves explicit pause',async()=>{
     const f=fixture();f.manager.options.projectRoot=resolve('.');f.intent({kind:'create_goal',title:'Research',objective:'Research a service with actual sources'});
     const app=await createServer({workspaceRoot:f.root,worlds:f.worlds,ownerAuth:{secret:'x'.repeat(40),secureCookies:false}});cleanups.push(()=>app.close());
     const payload={question:'给我建立一个经营目标：调研 AI 定制服务',history:[],language:'zh-CN',requestKey:'http-goal'};
     expect((await app.inject({method:'POST',url:'/api/owner/chat',payload})).statusCode).toBe(401);expect(f.gate.view().maxTokens).toBe(0);
     const cookie=String((await app.inject({method:'POST',url:'/api/login',payload:{secret:'x'.repeat(40)}})).headers['set-cookie']).split(';')[0]!;
     const send=(body:any)=>app.inject({method:'POST',url:'/api/owner/chat',headers:{cookie},payload:body});
-    const result=await send(payload);expect(result.statusCode,result.body).toBe(200);expect(result.json().createdGoal.status).toBe('READY');expect(f.gate.view()).toMatchObject({maxTokens:10_000_000,desiredMode:'ON'});
+    expect((await send(payload)).json().answer).toContain('预算');expect(f.calls).toHaveLength(0);await send({...payload,question:'批准公司预算 100 元',requestKey:'budget-http'});const result=await send({...payload,requestKey:'http-funded-goal'});expect(result.statusCode,result.body).toBe(200);expect(result.json().createdGoal.status).toBe('DRAFT');expect(f.gate.view()).toMatchObject({maxTokens:0,desiredMode:'ON'});
     await send({...payload,question:'先暂停。',requestKey:'http-pause'});expect(f.gate.view().desiredMode).toBe('OFF');
     expect((await send({...payload,requestKey:'http-after-off'})).statusCode).not.toBe(200);expect(f.gate.view().desiredMode).toBe('OFF');
     await send({...payload,question:'继续运行',requestKey:'http-resume'});expect(f.gate.view().desiredMode).toBe('ON');
@@ -103,6 +103,7 @@ describe('V31 narrowly bound research-to-product continuation',()=>{
     const question=options.human?'先调查并验证真实客户需求，满足条件后把定制服务 19.9 USDT 上架':'先调研并准备商品资料，再把定制服务 19.9 USDT 上架';
     f.intent({kind:'create_goal',title:'Research then list',objective:'Read sources and prepare honest bilingual product data',filename:'product.json',publication:{productId:'custom-service'}});
     const response=await f.ask('compound-request',question);const goal=response.createdGoal;
+    const approval=response.companyProposal as any;f.gate.proposals.decide(approval.id,{decision:'approve',hash:approval.hash,idempotencyKey:'compound-plan-approval'});
     expect(f.store.product(false).product_enabled).toBe(0);
     const previous=f.manager.options.configureTools;
     f.manager.options.configureTools=(id,tools)=>{previous?.(id,tools);tools.register({name:'READ_GENE_ASSET',description:'Read approved test knowledge',enabled:true,effect:'read',timeout_seconds:10,input_schema:{type:'object',properties:{},required:[]}},async(_args,ctx)=>({operation_id:ctx.operationId,tool:'READ_GENE_ASSET',status:'SUCCESS',output:{content:'An actual approved scoped reference for the service.'},duration_ms:0,truncated:false}));};
@@ -134,13 +135,13 @@ describe('V31 narrowly bound research-to-product continuation',()=>{
     const manager=new WorldRuntimeManager(registry,f.manager.genome,{...f.manager.options,configureTools:undefined});manager.attachAutomation(gate);
     const work=new OwnerWorkService(manager),store=new PublicStore(control,f.payments),scheduler=new OwnerGoalScheduler(manager,work,gate,f.payments);work.products=new OwnerProductService(store,gate,manager);
     try{
-      expect(gate.view()).toMatchObject({desiredMode:'OFF',maxTokens:10_000_000,spentTokens:f.gate.view().spentTokens});
+      expect(gate.view()).toMatchObject({desiredMode:'OFF',maxTokens:0,spentTokens:f.gate.view().spentTokens});
       const world=f.gate.goals.detail(f.goal.id).evidence.find(e=>e.kind==='artifact')!.worldId!;await manager.open(world);
       await scheduler.tick();expect(store.product(false).product_enabled).toBe(0);
-      gate.ensureAutoQuota('explicit_resume',0,'resume');await scheduler.tick();expect(store.product().product_price).toBe('19.900000');expect(control.db.prepare('SELECT state FROM owner_product_intents').get()!.state).toBe('PUBLISHED');
+      gate.ensureRunning('explicit_resume',0,'resume');await scheduler.tick();expect(store.product().product_price).toBe('19.900000');expect(control.db.prepare('SELECT state FROM owner_product_intents').get()!.state).toBe('PUBLISHED');
     }finally{gate.control({desiredMode:'OFF',expectedRevision:gate.view().revision,idempotencyKey:crypto.randomUUID()});await scheduler.close();await work.close();await manager.closeAll();store.close();control.close();}
   });
   it.each([{rail:false,reason:'PRICE_AND_PAYMENT_RAIL_REQUIRED'},{human:true,reason:'OWNER_PRODUCT_EVIDENCE_REVIEW_REQUIRED'},{changed:true,reason:'OWNER_PRODUCT_CHANGED'},{stopAfterReply:true,reason:'OWNER_GOAL_PERMISSION_CHANGED'},{forgedSource:true,reason:'OWNER_PRODUCT_SOURCE_REQUIRED'}])('blocks continuation when $reason',async options=>{
     const f=await compound(options);expect(f.control.db.prepare('SELECT * FROM owner_product_intents').get()).toMatchObject({state:'BLOCKED',reason:options.reason});expect(f.store.product(false).product_enabled).toBe(0);
-  });
+  },15000); // Includes a WAL-consistent backup and actual World execution on Windows.
 });

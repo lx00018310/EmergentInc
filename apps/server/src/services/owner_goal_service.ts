@@ -55,7 +55,7 @@ export class OwnerGoalService {
   }
   detail(id: string): OwnerGoalDetail {
     return { goal: this.get(id), events: this.store.db.prepare('SELECT * FROM owner_goal_events WHERE goal_id=? ORDER BY id DESC LIMIT 200').all(id).map(r => ({ id: Number(r.id), goalId: String(r.goal_id), revision: Number(r.revision), kind: String(r.kind), payload: JSON.parse(String(r.payload)), createdAt: Number(r.created_at) })),
-      evidence: this.store.db.prepare('SELECT * FROM owner_goal_evidence WHERE goal_id=? ORDER BY created_at DESC').all(id).map(r => ({ id: String(r.id), goalId: id, specificationRevision: Number(r.specification_revision), runId: r.run_id?String(r.run_id):null, worldId: r.world_id?String(r.world_id):null, kind: r.kind as 'artifact' | 'report' | 'payment', reference: String(r.reference), sha256: String(r.sha256), bytes: Number(r.bytes), createdAt: Number(r.created_at) })),
+      evidence: this.store.db.prepare('SELECT * FROM owner_goal_evidence WHERE goal_id=? ORDER BY created_at DESC,rowid DESC').all(id).map(r => ({ id: String(r.id), goalId: id, specificationRevision: Number(r.specification_revision), runId: r.run_id?String(r.run_id):null, worldId: r.world_id?String(r.world_id):null, kind: r.kind as 'artifact' | 'report' | 'payment', reference: String(r.reference), sha256: String(r.sha256), bytes: Number(r.bytes), createdAt: Number(r.created_at) })),
       dispatches: this.store.db.prepare('SELECT * FROM owner_goal_dispatches WHERE goal_id=? ORDER BY rowid DESC').all(id).map(r => ({ id: String(r.id), taskId: r.task_id as string | null, runId: r.run_id as string | null, worldId: String(r.world_id), state: String(r.state), reason: r.reason as string | null })) };
   }
   private validate(input: any) {
@@ -91,6 +91,7 @@ export class OwnerGoalService {
     exactKeys(input, ['action', 'expectedRevision', 'idempotencyKey','verification']);
     if(input.action==='verify')return this.request(input.idempotencyKey,{verify:id,input},()=>{
       const goal=this.get(id);if(goal.revision!==input.expectedRevision)ownerConflict();
+      if(this.store.db.prepare("SELECT 1 FROM sqlite_master WHERE name='owner_task_plans'").get()&&this.store.db.prepare('SELECT 1 FROM owner_task_plans WHERE goal_id=? AND goal_revision=?').get(id,goal.specificationRevision))ownerConflict('OWNER_USE_PROPOSALS');
       if(goal.acceptance.kind!=='manual'||goal.status!=='WAITING_APPROVAL')ownerConflict('OWNER_GOAL_TRANSITION_INVALID');
       exactKeys(input.verification,['evidenceIds','reason']);
       ownerInput(Array.isArray(input.verification.evidenceIds)&&input.verification.evidenceIds.length>0&&input.verification.evidenceIds.length<=100&&typeof input.verification.reason==='string'&&input.verification.reason.trim().length>=8&&input.verification.reason.length<=1000);

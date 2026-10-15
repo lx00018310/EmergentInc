@@ -29,6 +29,7 @@ export class OwnerWorkService {
     manager.registry.control.db.exec(`
       CREATE TABLE IF NOT EXISTS owner_work_tasks(id TEXT PRIMARY KEY, request_key TEXT NOT NULL, person_id TEXT NOT NULL, person_name TEXT NOT NULL, instruction TEXT NOT NULL, state TEXT NOT NULL, turn_id TEXT, run_id TEXT, reply TEXT, reason TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, UNIQUE(request_key,person_id));
       CREATE TABLE IF NOT EXISTS owner_recruit_requests(id TEXT PRIMARY KEY, operation_key TEXT UNIQUE NOT NULL, request_json TEXT NOT NULL, state TEXT NOT NULL, person_id TEXT, created_at INTEGER NOT NULL);
+      CREATE TABLE IF NOT EXISTS owner_recruit_decisions(request_id TEXT PRIMARY KEY,hash TEXT NOT NULL,decision TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS owner_dispatch_calls(request_key TEXT PRIMARY KEY, payload_hash TEXT NOT NULL, state TEXT NOT NULL, response_json TEXT, error TEXT, created_at INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS owner_work_run_limits(task_id TEXT PRIMARY KEY REFERENCES owner_work_tasks(id), rounds INTEGER NOT NULL CHECK(rounds BETWEEN 1 AND 20));
     `);
@@ -40,7 +41,7 @@ export class OwnerWorkService {
   view(): OwnerWork {
     const db=this.manager.registry.control.db;
     return {tasks:db.prepare('SELECT * FROM owner_work_tasks ORDER BY created_at DESC LIMIT 50').all().map(r=>({id:String(r.id),personId:String(r.person_id),personName:String(r.person_name),instruction:String(r.instruction),state:r.state as OwnerWorkTask['state'],turnId:r.turn_id as string|null,runId:r.run_id as string|null,reply:r.reply as string|null,reason:r.reason as string|null,createdAt:Number(r.created_at),updatedAt:Number(r.updated_at)})),
-      requests:db.prepare('SELECT * FROM owner_recruit_requests ORDER BY created_at DESC LIMIT 30').all().map(r=>({...JSON.parse(String(r.request_json)),state:r.state,personId:r.person_id})),codeReports:(this.code?.reports()??[]).map(({files,...report})=>({...report,paths:files.map(f=>f.path)})),upgradeOrigin:this.upgradeOrigin,schedulerError:this.schedulerError};
+      requests:db.prepare('SELECT * FROM owner_recruit_requests ORDER BY created_at DESC LIMIT 30').all().map(r=>({...JSON.parse(String(r.request_json)),state:r.state==='PENDING'&&db.prepare('SELECT 1 FROM owner_recruit_decisions WHERE request_id=?').get(r.id)?'APPROVED_QUEUED':r.state,personId:r.person_id})),codeReports:(this.code?.reports()??[]).map(({files,...report})=>({...report,paths:files.map(f=>f.path)})),upgradeOrigin:this.upgradeOrigin,schedulerError:this.schedulerError};
   }
   requestRecruit(input: {role:string;reason:string;instruction:string}, requester: string, key: string) {
     if (!only(input,['role','reason','instruction']) || !text(input.role,80)||!text(input.reason,1000)||!text(input.instruction,2000)) throw new Error('OWNER_RECRUIT_INVALID');
@@ -59,7 +60,16 @@ export class OwnerWorkService {
       const name=this.manager.registry.control.qianji.getProfile(this.manager.registry.control.world(worldId).qianji_id)!.narrative.displayName;
       const request=this.requestRecruit(a,name,`${worldId}:${k}`),binding=this.manager.automation?.binding(runId??'');
       if(binding)this.manager.registry.control.db.prepare('INSERT OR IGNORE INTO owner_goal_recruits VALUES(?,?,?)').run(request.id,binding.goalId,binding.specificationRevision);
+      if(binding){const node=this.manager.registry.control.db.prepare('SELECT node_key FROM owner_task_occurrences WHERE dispatch_id=?').get(binding.dispatchId);if(node)this.manager.registry.control.db.prepare('INSERT OR IGNORE INTO owner_task_resource_waits VALUES(?,?,?,?)').run(request.id,binding.goalId,binding.specificationRevision,node.node_key);}
       return request;
+    });
+    register('REPLAN_TASK','根据真实结果调整当前任务中尚未执行的内部步骤。不得改变已完成或执行中的步骤、定时授权、预算和外部权限。',{plan:{type:'object'}},['plan'],'write',(a,_p,_k,runId)=>{
+      const gate=this.manager.automation,binding=gate?.binding(runId??'');if(!gate||!binding)throw new Error('OWNER_GOAL_PERMISSION_CHANGED');
+      return gate.proposals.plans.reviseInternal(binding.goalId,a.plan,binding.dispatchId);
+    });
+    register('REQUEST_TASK_CLOSE','达到交付条件时向老板提出结案。说明实际成果；服务端核验本次产物后生成待批准提案，不能自行结案或制造付款证据。',{reason:{type:'string',minLength:8,maxLength:1200}},['reason'],'write',(a,_p,_k,runId)=>{
+      const gate=this.manager.automation,binding=gate?.binding(runId??'');if(!gate||!binding||!gate.proposals.plans.get(binding.goalId)?.approved||!text(a.reason,1200)||a.reason.trim().length<8)throw new Error('OWNER_GOAL_PERMISSION_CHANGED');
+      gate.store.db.prepare("INSERT OR IGNORE INTO owner_task_close_intents VALUES(?,?,?,?,'PENDING')").run(binding.dispatchId,binding.goalId,binding.specificationRevision,a.reason);gate.goals.event(binding.goalId,'task_close_requested',{dispatchId:binding.dispatchId,reason:a.reason});return {queued:true,requiresOwnerApproval:true};
     });
     if(this.code){
       register('LIST_APP_SOURCE','列出可修改的 8765 应用源码。8766、共享鉴权/持久化/协议、依赖与配置禁止访问和修改。',{},[],'read',()=>this.code!.listFiles());
@@ -82,7 +92,7 @@ export class OwnerWorkService {
     if(this.schedulerError)throw new Error('OWNER_WORKER_FAILED');
     if (!Number.isSafeInteger(rounds)||rounds<1||rounds>20||!Array.isArray(tasks)||!tasks.length||tasks.length>5||new Set(tasks.map(t=>t?.personId)).size!==tasks.length)throw new Error('OWNER_DISPATCH_INVALID');
     // Validate the entire batch before creating any work.
-    const profiles=tasks.map(t=>{if(!record(t)||!only(t,['personId','instruction'])||!text(t.personId,100)||!text(t.instruction,binding?4000:2000))throw new Error('OWNER_DISPATCH_INVALID');const p=this.manager.registry.control.qianji.getProfile(t.personId);if(!p||p.careerStatus==='retired'||this.manager.registry.control.worldForQianji(t.personId).status!=='ACTIVE')throw new Error('OWNER_PERSON_UNAVAILABLE');return p;});
+    const profiles=tasks.map(t=>{if(!record(t)||!only(t,['personId','instruction'])||!text(t.personId,100)||!text(t.instruction,binding?16384:2000))throw new Error('OWNER_DISPATCH_INVALID');const p=this.manager.registry.control.qianji.getProfile(t.personId);if(!p||p.careerStatus==='retired'||this.manager.registry.control.worldForQianji(t.personId).status!=='ACTIVE')throw new Error('OWNER_PERSON_UNAVAILABLE');return p;});
     const db=this.manager.registry.control.db;
     this.manager.registry.control.transaction(()=>tasks.forEach((t,i)=>{
       const old=db.prepare('SELECT t.instruction,COALESCE(l.rounds,20) requested_rounds FROM owner_work_tasks t LEFT JOIN owner_work_run_limits l ON l.task_id=t.id WHERE t.request_key=? AND t.person_id=?').get(key,t.personId);
@@ -92,7 +102,7 @@ export class OwnerWorkService {
       db.prepare('INSERT INTO owner_work_run_limits VALUES(?,?)').run(id,rounds);
       if(binding)db.prepare('UPDATE owner_goal_dispatches SET task_id=? WHERE id=? AND goal_id=? AND goal_revision=?').run(id,binding.dispatchId,binding.goalId,binding.specificationRevision);
     }));
-    await this.tick(binding?.dispatchId); return this.view().tasks.filter(t=>tasks.some(a=>a.personId===t.personId)&&db.prepare('SELECT request_key FROM owner_work_tasks WHERE id=?').get(t.id)?.request_key===key);
+    if(!this.ticking)await this.tick(binding?.dispatchId); return this.view().tasks.filter(t=>tasks.some(a=>a.personId===t.personId)&&db.prepare('SELECT request_key FROM owner_work_tasks WHERE id=?').get(t.id)?.request_key===key);
   }
   async energy(personId:string,refill:boolean,infinite:boolean|undefined,key:string) {
     const profile=this.manager.registry.control.qianji.getProfile(personId),world=this.manager.registry.control.worldForQianji(personId);
@@ -111,26 +121,35 @@ export class OwnerWorkService {
       await runtime.run.start({rounds,runBudgetTokens:remaining});
     return {personId,name:profile.narrative.displayName,pixelId,energy:runtime.store.pixels.getPixelAccount(pixelId)!.energy,infiniteEnergy:this.manager.registry.control.gatewayInfiniteEnergy(world.world_id),running:runtime.run.getStatus().running};
   }
-  async decide(id:string,hash:string,decision:'approve'|'reject') {
+  async decide(id:string,hash:string,decision:'approve'|'reject',defer=false) {
+    if(defer)return this.decideOnce(id,hash,decision,true);
     const active=this.decisions.get(id);if(active){if(active.hash!==hash||active.decision!==decision)throw new Error('OWNER_REQUEST_CHANGED');return active.promise;}
     const promise=this.decideOnce(id,hash,decision);this.decisions.set(id,{hash,decision,promise});try{return await promise;}finally{this.decisions.delete(id);}
   }
-  private async decideOnce(id:string,hash:string,decision:'approve'|'reject') {
-    if(decision==='approve')this.manager.automation?.assertOn();
+  private async decideOnce(id:string,hash:string,decision:'approve'|'reject',defer=false) {
     const db=this.manager.registry.control.db,row=db.prepare('SELECT * FROM owner_recruit_requests WHERE id=?').get(id);
     const linked=this.manager.automation?db.prepare('SELECT * FROM owner_goal_recruits WHERE request_id=?').get(id):undefined;
     if(!row)throw new Error('OWNER_REQUEST_NOT_FOUND');const request=JSON.parse(String(row.request_json)) as OwnerRecruitRequest;
     if(hash!==request.hash)throw new Error('OWNER_REQUEST_CHANGED');
+    const queued=db.prepare('SELECT * FROM owner_recruit_decisions WHERE request_id=?').get(id);
+    if(queued&&(queued.hash!==hash||queued.decision!==decision))throw new Error('OWNER_REQUEST_CHANGED');
     const expected=decision==='approve'?'APPROVED':'REJECTED';
-    if(row.state!=='PENDING'){if(row.state!==expected)throw new Error('OWNER_REQUEST_CHANGED');if(row.person_id&&!linked)await this.dispatch([{personId:String(row.person_id),instruction:request.instruction}],`recruit:${id}`);return this.view();}
+    if(row.state!=='PENDING'){if(row.state!==expected)throw new Error('OWNER_REQUEST_CHANGED');if(row.person_id&&!defer)return this.finishRecruitment(id,request,String(row.person_id),linked);return this.view();}
     if(linked){const goal=this.manager.automation!.goals.get(String(linked.goal_id));if(goal.specificationRevision!==linked.goal_revision||['STOPPED','ARCHIVED','COMPLETED'].includes(goal.status))throw new Error('OWNER_GOAL_PERMISSION_CHANGED');}
-    if(decision==='reject'){db.prepare("UPDATE owner_recruit_requests SET state='REJECTED' WHERE id=? AND state='PENDING'").run(id);if(linked){const goal=this.manager.automation!.goals.get(String(linked.goal_id));this.manager.automation!.goals.state(goal.id,goal.status==='PAUSED'?'PAUSED':'BLOCKED','OWNER_RESOURCE_REJECTED');}return this.view();}
-    const m=this.manager,service=new GachaService({store:m.registry.control,workspaceRoot:m.registry.workspace,provider:m.options.isModelConfigured?(m.automation?m.automation.provider(m.options.provider,m.options.usageMeter,undefined,'gacha',undefined,linked?{goalId:String(linked.goal_id),specificationRevision:Number(linked.goal_revision),dispatchId:`recruit_${id}`,resourceApprovalId:id}:undefined):m.options.provider):undefined,usageMeter:m.options.usageMeter,modelName:m.options.modelName,
+    if(row.state==='PENDING'&&decision==='approve'&&this.manager.automation){db.prepare("INSERT OR IGNORE INTO owner_recruit_decisions VALUES(?,?,'approve')").run(id,hash);if(defer||!this.manager.automation.isOn())return {...this.view(),queuedDecision:{requestId:id,decision}};}
+    if(decision==='reject'){db.prepare("UPDATE owner_recruit_requests SET state='REJECTED' WHERE id=? AND state='PENDING'").run(id);if(linked){const goal=this.manager.automation!.goals.get(String(linked.goal_id)),wait=db.prepare('SELECT * FROM owner_task_resource_waits WHERE request_id=?').get(id);if(wait)db.prepare("UPDATE owner_task_nodes SET state='BLOCKED',next_at=NULL WHERE goal_id=? AND goal_revision=? AND node_key=?").run(goal.id,goal.specificationRevision,wait.node_key);const plan=this.manager.automation!.proposals.plans.get(goal.id),other=wait&&plan?.nodes.some(n=>n.key!==wait.node_key&&n.state!=='BLOCKED'&&n.state!=='WAITING_RESOURCE'&&n.state!=='COMPLETED');this.manager.automation!.goals.state(goal.id,goal.status==='PAUSED'?'PAUSED':other?'READY':'BLOCKED','OWNER_RESOURCE_REJECTED');}return this.view();}
+    const m=this.manager,service=new GachaService({store:m.registry.control,workspaceRoot:m.registry.workspace,provider:m.options.isModelConfigured?(m.automation?m.automation.provider(m.options.provider,m.options.usageMeter,undefined,'gacha',linked?{goalId:String(linked.goal_id),specificationRevision:Number(linked.goal_revision),dispatchId:`recruit_${id}`,resourceApprovalId:id}:undefined):m.options.provider):undefined,usageMeter:m.options.usageMeter,modelName:m.options.modelName,
       createWorld:(narrative,birth)=>m.registry.create({...narrative,roleLabel:request.role,behaviorProfile:[`职责：${request.role}`,`Owner 批准的初始任务：${request.instruction}`]}, {birthIdentity:birth}).qianji_id});
     const profile=await service.recruit(`owner-recruit:${id}`);
     db.prepare("UPDATE owner_recruit_requests SET state='APPROVED',person_id=? WHERE id=? AND state='PENDING'").run(profile.qianjiId,id);
-    if(linked){const goal=this.manager.automation!.goals.get(String(linked.goal_id));if(goal.specificationRevision===linked.goal_revision&&!['PAUSED','ARCHIVED','STOPPED','COMPLETED'].includes(goal.status))this.manager.automation!.goals.state(goal.id,'READY');return this.view();}
-    await this.dispatch([{personId:profile.qianjiId,instruction:request.instruction}],`recruit:${id}`);return this.view();
+    return this.finishRecruitment(id,request,profile.qianjiId,linked);
+  }
+  private async finishRecruitment(id:string,request:OwnerRecruitRequest,personId:string,linked?:any){
+    const db=this.manager.registry.control.db;
+    if(linked){const goal=this.manager.automation!.goals.get(String(linked.goal_id)),wait=db.prepare('SELECT * FROM owner_task_resource_waits WHERE request_id=?').get(id);if(goal.specificationRevision===linked.goal_revision&&!['ARCHIVED','STOPPED','COMPLETED'].includes(goal.status)){if(wait){db.prepare("UPDATE owner_task_nodes SET state='WAITING',next_at=? WHERE goal_id=? AND goal_revision=? AND node_key=? AND state='WAITING_RESOURCE'").run(Date.now(),goal.id,goal.specificationRevision,wait.node_key);db.prepare("UPDATE owner_task_occurrences SET state='RESOURCE_APPROVED' WHERE goal_id=? AND goal_revision=? AND node_key=? AND state='WAITING_RESOURCE'").run(goal.id,goal.specificationRevision,wait.node_key);}if(goal.status!=='PAUSED')this.manager.automation!.goals.state(goal.id,'READY');}}
+    else await this.dispatch([{personId,instruction:request.instruction}],`recruit:${id}`);
+    db.prepare('DELETE FROM owner_recruit_decisions WHERE request_id=?').run(id);
+    return this.view();
   }
   private routed(key:string) {
     if(!this.manager.automation)return undefined;
@@ -141,27 +160,46 @@ export class OwnerWorkService {
     const old=this.manager.registry.control.db.prepare('SELECT * FROM owner_dispatch_calls WHERE request_key=?').get(key);
     if(!old)return null;if(old.payload_hash!==digest({question,history,language}))throw new Error('IDEMPOTENCY_CONFLICT');
     if(old.response_json)return Promise.resolve(JSON.parse(String(old.response_json)));if(this.requestFlights.has(key))return this.requestFlights.get(key)!;
-    if(['create_goal','configure_product'].includes(this.routed(key)?.intent?.kind))return null;
+    if(['create_task','revise_task','create_goal','configure_product','dispatch'].includes(this.routed(key)?.intent?.kind))return null;
     throw new Error(String(old.error??'OWNER_REQUEST_IN_PROGRESS'));
   }
   async ask(key:string,question:string,history:{role:'user'|'assistant';content:string}[],language:'en'|'zh-CN',data:OwnerOverview,chat:OwnerChatService,forced?:{personId:string;instruction:string}[],hire?:{id:string;hash:string;decision:'approve'|'reject'}) {
     const payloadHash=digest({question,history,language}),db=this.manager.registry.control.db,old=db.prepare('SELECT * FROM owner_dispatch_calls WHERE request_key=?').get(key);
     const checkpoint=old?this.routed(key):undefined;
-    if(old){if(old.payload_hash!==payloadHash)throw new Error('IDEMPOTENCY_CONFLICT');if(old.response_json)return JSON.parse(String(old.response_json));if(this.requestFlights.has(key))return this.requestFlights.get(key)!;if(!['create_goal','configure_product'].includes(checkpoint?.intent?.kind))throw new Error(String(old.error??'OWNER_REQUEST_IN_PROGRESS'));}
+    if(old){if(old.payload_hash!==payloadHash)throw new Error('IDEMPOTENCY_CONFLICT');if(old.response_json)return JSON.parse(String(old.response_json));if(this.requestFlights.has(key))return this.requestFlights.get(key)!;if(!['create_task','revise_task','create_goal','configure_product','dispatch'].includes(checkpoint?.intent?.kind))throw new Error(String(old.error??'OWNER_REQUEST_IN_PROGRESS'));}
     else db.prepare("INSERT INTO owner_dispatch_calls(request_key,payload_hash,state,created_at) VALUES(?,?,'IN_FLIGHT',?)").run(key,payloadHash,Date.now());
     const run=async()=>{
       try {
         const routed=checkpoint??(hire?{intent:{kind:'recruit_decision',...hire},usage:{tokens:0,cost_cny:0}}:forced?{intent:{kind:'dispatch',tasks:forced},usage:{tokens:0,cost_cny:0}}:await chat.route(question,history,data,language,this.products?.catalog()));
         const i=routed.intent, say=(zh:string,en:string)=>language==='en'?en:zh;
         if(!record(i)||typeof i.kind!=='string')throw new Error('OWNER_DISPATCH_INVALID');
-        if(['create_goal','configure_product'].includes(i.kind)&&!checkpoint)this.manager.automation!.goals.request(`chat_route_${digest(key)}`,{payloadHash},()=>routed);
+        const reviseRevision=checkpoint?.reviseRevision??(i.kind==='revise_task'?data.goals?.find(g=>g.id===i.goalId)?.revision:undefined);
+        if(i.kind==='create_goal'&&!checkpoint&&this.manager.automation){i.kind='create_task';i.plan={summary:i.objective,nodes:[{key:'deliver',title:i.title,instruction:i.objective,dependsOn:[],trigger:{kind:'once'},filename:i.filename??'result.md'}]};}
+        if(this.manager.automation&&['create_task','revise_task','create_goal','configure_product','dispatch'].includes(i.kind)&&!checkpoint)this.manager.automation.goals.request(`chat_route_${digest(key)}`,{payloadHash},()=>({...routed,...(i.kind==='revise_task'?{reviseRevision}:{} )}));
         let answer:string,extra:Record<string,unknown>={};
         if(i.kind==='answer'&&only(i,['kind'])){
           const response=await chat.ask(question,history,language);response.usage.tokens=response.usage.tokens!==null&&routed.usage.tokens!==null?response.usage.tokens+routed.usage.tokens:null;response.usage.cost_cny=response.usage.cost_cny!==null&&routed.usage.cost_cny!==null?response.usage.cost_cny+routed.usage.cost_cny:null;
           db.prepare("UPDATE owner_dispatch_calls SET state='DONE',response_json=? WHERE request_key=?").run(JSON.stringify(response),key);return response;
         } else if(hire&&i.kind==='recruit_decision'){
-          await this.decide(hire.id,hire.hash,hire.decision);answer=hire.decision==='approve'?say('招聘已批准。新人物及其实际任务会显示在下方。','Recruitment was approved. The new person and their actual work appear below.'):say('招聘申请已拒绝，未创建人物。','Recruitment was rejected. No person was created.');
+          await this.decide(hire.id,hire.hash,hire.decision,true);answer=hire.decision==='approve'?say('招聘已批准并排队，实际创建和工作结果会随后汇报。','Recruitment is approved and queued. Actual creation and work will be reported after execution.'):say('招聘申请已拒绝，未创建人物。','Recruitment was rejected. No person was created.');
         } else if(i.kind==='clarify'&&only(i,['kind','answer'])&&text(i.answer,2000))answer=i.answer;
+        else if(['create_task','revise_task'].includes(i.kind)&&only(i,['kind','goalId','title','objective','plan','publication','filename'])&&text(i.title,160)&&text(i.objective,1200)){
+          if(!this.manager.automation)throw new Error('OWNER_GOALS_UNAVAILABLE');
+          if(/^(?:是否|有没有|为什么|如何|查询|查看|解释|翻译|总结|what|why|how|show|translate|summari[sz]e)/i.test(question.trim()))throw new Error('OWNER_GOAL_AUTH_REQUIRED');
+          const gate=this.manager.automation;
+          const result=gate.goals.request(`chat_task_${digest(key)}`,{payloadHash},()=>{
+            const plan=gate.proposals.plans.validate(i.plan);
+            const acceptance={kind:'manual',description:'Owner reviews the actual task deliverables / 老板核对真实任务成果后结案'};
+            if(i.kind==='revise_task'&&!Number.isSafeInteger(reviseRevision))throw new Error('OWNER_GOAL_PERMISSION_CHANGED');
+            const goal=i.kind==='revise_task'?gate.goals.edit(i.goalId,{title:i.title,objective:i.objective,acceptance,expectedRevision:reviseRevision,idempotencyKey:`chat_goal_${digest(key)}`}):gate.goals.create({title:i.title,objective:i.objective,acceptance,idempotencyKey:`chat_goal_${digest(key)}`});
+            if(i.publication!==undefined){if(!this.products)throw new Error('OWNER_PRODUCTS_UNAVAILABLE');this.products.bind(goal,key,question,i.publication,i.filename??'product.json');}
+            const view=gate.proposals.plans.install(goal.id,plan,false);
+            const proposal=gate.proposals.propose('task_plan',{title:goal.title,planHash:digest(view),plan},`task-plan:${goal.id}:${goal.specificationRevision}`,goal.id);
+            return {goal:gate.goals.get(goal.id),proposal};
+          });
+          extra.createdGoal=result.goal;extra.companyProposal=result.proposal;
+          answer=say('已整理为任务计划。批准后会自动推进各步骤，并附真实成果向你汇报；完成后由你决定结案。','The task plan is ready for approval. Approved steps continue automatically with actual deliverables; you decide when to close the task.');
+        }
         else if(i.kind==='create_goal'&&only(i,['kind','title','objective','filename','publication'])&&text(i.title,160)&&text(i.objective,1200)){
           this.manager.automation?.assertOn();
           if(!this.manager.automation)throw new Error('OWNER_GOALS_UNAVAILABLE');
@@ -176,11 +214,25 @@ export class OwnerWorkService {
         }
         else if(i.kind==='configure_product'&&this.products){
           const {kind,...input}=i;const product=this.products.configure(key,question,input);extra.configuredProduct=product;
-          answer=product.enabled?say(`已在公开商城上架「${product.nameZh}」，价格 ${product.price} USDT。`,`Published “${product.nameEn}” in the public store at ${product.price} USDT.`):product.reason?say(`已保存商品草稿，价格 ${product.price} USDT；未上架：缺少收款通道。请在高级商城设置配置收款通道后明确要求上架。`,`Product draft saved at ${product.price} USDT; it is not published because a payment rail is missing. Configure a payment rail in Advanced store settings, then request publication.`):say('商品已更新并保持未上架。','The product was updated and is unpublished.');
+          answer=product.enabled?say(`已在公开商城上架「${product.nameZh}」，价格 ${product.price} USDT。`,`Published “${product.nameEn}” in the public store at ${product.price} USDT.`):product.reason?say(`已保存商品草稿，价格 ${product.price} USDT；未上架：缺少收款通道。请通过既有安全授权入口补齐收款资料后继续。`,`Product draft saved at ${product.price} USDT; it is not published because a payment rail is missing. Complete payment details through the existing secure authorization entry to continue.`):say('商品已更新并保持未上架。','The product was updated and is unpublished.');
         }
-        else if(i.kind==='dispatch'&&only(i,['kind','tasks','rounds'])){const rounds=i.rounds===undefined?20:i.rounds;extra.tasks=await this.dispatch(i.tasks,key,rounds);answer=say(`已按分工派发任务并进入运行队列。下方会显示实际运行、阻塞和人物回复；每个执行片段最多 ${rounds} 轮，所有模型调用使用公司 Token 总额度。`,`Tasks were assigned and queued for execution. Actual runs, blockers and person replies appear below. Each execution segment uses up to ${rounds} rounds; all model calls use the company token quota.`);}
+        else if(i.kind==='dispatch'&&only(i,['kind','tasks','rounds'])){
+          if(i.rounds!==undefined&&(!Number.isSafeInteger(i.rounds)||i.rounds<1||i.rounds>20))throw new Error('OWNER_DISPATCH_INVALID');
+          if(!this.manager.automation){
+            const rounds=i.rounds??20;extra.tasks=await this.dispatch(i.tasks,key,rounds);answer=say(`已按分工派发任务，最多运行 ${rounds} 轮。`,`Tasks assigned by role for up to ${rounds} rounds.`);
+          }else{
+          if(!Array.isArray(i.tasks)||!i.tasks.length||i.tasks.length>5)throw new Error('OWNER_DISPATCH_INVALID');
+          const gate=this.manager.automation;
+          const result=gate.goals.request(`chat_task_${digest(key)}`,{payloadHash},()=>{
+            const plan={summary:question.slice(0,1200),nodes:i.tasks.map((t:any,index:number)=>({key:`work_${index}`,title:`${index+1}`,instruction:t.instruction,dependsOn:[],trigger:{kind:'once'},filename:`work_${index}.md`,personId:t.personId}))};
+            gate.proposals.plans.validate(plan);
+            const goal=gate.goals.create({title:question.slice(0,160),objective:question.slice(0,1200),acceptance:{kind:'manual',description:'Review actual deliverables / 核对真实交付成果'},idempotencyKey:`chat_goal_${digest(key)}`});
+            const view=gate.proposals.plans.install(goal.id,plan,false),proposal=gate.proposals.propose('task_plan',{title:goal.title,planHash:digest(view),plan},`task-plan:${goal.id}:${goal.specificationRevision}`,goal.id);return {goal:gate.goals.get(goal.id),proposal};
+          });extra.createdGoal=result.goal;extra.companyProposal=result.proposal;answer=say('任务计划已生成，批准后自动执行并汇报。','The task plan is ready; approval starts execution and reporting.');
+          }
+        }
         else if(i.kind==='energy'&&only(i,['kind','personId','refill','infinite'])&&typeof i.personId==='string'&&(i.refill===undefined||typeof i.refill==='boolean')&&(i.infinite===undefined||typeof i.infinite==='boolean')&&(i.refill===true||typeof i.infinite==='boolean')){
-          const result=await this.energy(i.personId,i.refill===true,i.infinite,key);extra.energy=result;answer=say(`${result.name}：当前入口元胞 ${result.pixelId} 的能量为 ${result.energy}，无限能量${result.infiniteEnergy?'已开启':'已关闭'}。其他元胞是否获能仍由入口自主决定，Run 预算和实际计费继续有效。`,`${result.name}: gateway ${result.pixelId} has ${result.energy} energy; automatic replenishment is ${result.infiniteEnergy?'enabled':'disabled'}. The gateway decides whether to supply other cells. Run budgets and actual billing remain in effect.`);
+          const result=await this.energy(i.personId,i.refill===true,i.infinite,key);extra.energy=result;answer=say(`${result.name}：当前入口元胞 ${result.pixelId} 的能量为 ${result.energy}，无限能量${result.infiniteEnergy?'已开启':'已关闭'}。其他元胞是否获能仍由入口自主决定，执行授权和实际计费继续有效。`,`${result.name}: gateway ${result.pixelId} has ${result.energy} energy; automatic replenishment is ${result.infiniteEnergy?'enabled':'disabled'}. The gateway decides whether to supply other cells. Execution authorization and actual billing remain in effect.`);
         } else if(i.kind==='recruit'&&only(i,['kind','role','reason','instruction'])){extra.request=this.requestRecruit({role:i.role,reason:i.reason,instruction:i.instruction},say('老板窗口助手','Owner assistant'),`dispatch:${key}`);answer=say('已提出招聘申请。请在待办中查看职责、理由和初始任务；批准后才创建人物并派发任务。','A recruitment request was created. Review the role, reason and initial task in Inbox. Approval creates the person and dispatches the task.');}
         else throw new Error('OWNER_DISPATCH_INVALID');
         const response={answer,...extra,sources:['Owner dispatch / actual World runs / owner_work_tasks'],as_of:new Date().toISOString(),usage:routed.usage};db.prepare("UPDATE owner_dispatch_calls SET state='DONE',response_json=? WHERE request_key=?").run(JSON.stringify(response),key);return response;
@@ -195,6 +247,12 @@ export class OwnerWorkService {
   private async runTick(goalDispatchId?:string) {
     if(this.closed||this.quiesced())return;
     const db=this.manager.registry.control.db;
+    if(this.manager.automation?.isOn())for(const row of db.prepare("SELECT * FROM owner_recruit_decisions WHERE decision='approve'").all()){
+      if(this.decisions.has(String(row.request_id)))continue;
+      const linked=db.prepare('SELECT * FROM owner_goal_recruits WHERE request_id=?').get(row.request_id),goal=linked?this.manager.automation.goals.get(String(linked.goal_id)):null;
+      if(goal&&(goal.specificationRevision!==linked!.goal_revision||['STOPPED','ARCHIVED','COMPLETED'].includes(goal.status))){db.prepare("UPDATE owner_recruit_requests SET state='CANCELLED' WHERE id=? AND state='PENDING'").run(row.request_id);db.prepare('DELETE FROM owner_recruit_decisions WHERE request_id=?').run(row.request_id);continue;}
+      await this.decide(String(row.request_id),String(row.hash),'approve');
+    }
     for(const row of db.prepare("SELECT t.*,COALESCE(l.rounds,20) requested_rounds FROM owner_work_tasks t LEFT JOIN owner_work_run_limits l ON l.task_id=t.id WHERE t.state IN ('QUEUED','RUNNING') ORDER BY t.created_at").all()) {
       if(this.closed||this.quiesced())return;
       try {

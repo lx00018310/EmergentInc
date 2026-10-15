@@ -60,14 +60,13 @@ function preparePinnedCommit(shaInput){
   let type;try{type=gitOutput(['cat-file','-t',sha]);}catch{throw new Error('GIT_COMMIT_NOT_FOUND');}
   if(type!=='commit')throw new Error('GIT_COMMIT_NOT_FOUND');
   const {config}=upgradeConfig(root);
-  try{ensureFastForwardable(sha);}catch{throw new Error('GIT_COMMIT_NOT_FAST_FORWARDABLE');}
-  const mainHead=gitOutput(['rev-parse','main']);
+
   const worktree=path.join(config.stateDirectory,'git-worktrees',`prepare-${randomUUID()}`);
   if(fs.existsSync(worktree))throw new Error('GIT_WORKTREE_PATH_EXISTS');
   fs.mkdirSync(path.dirname(worktree),{recursive:true});
   try{gitOutput(['worktree','add','--detach',worktree,sha],{timeout:120000});}
   catch(error){fs.rmSync(worktree,{recursive:true,force:true});throw error;}
-  return {sourceDirectory:worktree,sourceCommit:sha,mainHeadAtPrepare:mainHead};
+  return {sourceDirectory:worktree,sourceCommit:sha};
 }
 export async function versionUpgrade(args){
   const [action,...values]=args;
@@ -86,8 +85,7 @@ export async function versionUpgrade(args){
   recover
 Preparation freezes this clean checkout (or the pinned --commit via a detached
 git worktree) and validates it. Approval binds the exact hash; apply switches
-all Worlds and fast-forwards git main when the candidate was prepared from a
-pinned commit.`);return;
+all Worlds without moving main or develop.`);return;
   }
   const {configFile,config}=upgradeConfig(root);
   if(action==='prepare-code'){
@@ -103,9 +101,9 @@ pinned commit.`);return;
   if(action==='prepare'){
     const commitIndex=values.indexOf('--commit'),commitFlag=commitIndex>=0?values.splice(commitIndex,2)[1]:undefined;
     const {label:version,reason}=ownerReleaseInput(values[0],values[1]);
-    let sourceDirectory=root,sourceCommit,mainHeadAtPrepare;
+    let sourceDirectory=root,sourceCommit;
     if(commitFlag){
-      ({sourceDirectory,sourceCommit,mainHeadAtPrepare}=preparePinnedCommit(commitFlag));
+      ({sourceDirectory,sourceCommit}=preparePinnedCommit(commitFlag));
     }else{
       if(execFileSync('git',['status','--porcelain'],{cwd:root,encoding:'utf8'}).trim())throw new Error('OWNER_RELEASE_REQUIRES_CLEAN_COMMITTED_CHECKOUT');
       sourceCommit=execFileSync('git',['rev-parse','HEAD'],{cwd:root,encoding:'utf8'}).trim();
@@ -125,8 +123,7 @@ pinned commit.`);return;
       checkInheritedGene(active.directory,config.workspace,directory,config.stateDirectory);
       const proposal=lineage.proposeGene(base.id,'owner',{point:`Owner software upgrade ${version}`,reason,effect:'All Worlds share the approved release; raw facts retained for later Dream'},`owner-version:${id}`);
       lineage.decideProposal(proposal.id,'APPROVED');
-      const request={id,base_generation:base.id,base_release:base.release_id,proposal_id:proposal.id,patch:[],owner_release:{label:version,reason,source_commit:sourceCommit,release_hash:frozenReleaseHash(directory),inherited_gene_count:inherited.inherited.length,
-        ...(mainHeadAtPrepare?{main_head_at_prepare:mainHeadAtPrepare,git_sync_target:sourceCommit}:{})}};
+      const request={id,base_generation:base.id,base_release:base.release_id,proposal_id:proposal.id,patch:[],owner_release:{label:version,reason,source_commit:sourceCommit,release_hash:frozenReleaseHash(directory),inherited_gene_count:inherited.inherited.length}};
       const requestFile=path.join(config.stateDirectory,id+'.request.json');fs.writeFileSync(requestFile,JSON.stringify(request,null,2),{flag:'wx'});
       await generation(configFile,'submit-owner-release',requestFile);
       await generation(configFile,'validate',id);

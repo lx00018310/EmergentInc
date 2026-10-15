@@ -26,5 +26,5 @@ if(mode==='unknown'){
   const original=manager.options.provider.call;
   manager.options.provider.call=async(...args)=>{worldId=String(control.db.prepare('SELECT world_id FROM owner_run_permits LIMIT 1').get()!.world_id);return original(...args);};
 }
-gate.control({desiredMode:'ON',runMode:'BOUNDED',requestedRounds:7,maxTokens:1000000,expectedRevision:gate.view().revision,idempotencyKey:crypto.randomUUID()});
+gate.budget.authorize(100000000);gate.control({desiredMode:'ON',runMode:'BOUNDED',requestedRounds:7,expectedRevision:gate.view().revision,idempotencyKey:crypto.randomUUID()});
 await new OwnerGoalScheduler(manager,work,gate).tick();

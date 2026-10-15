@@ -50,13 +50,22 @@ export class LocalWorldRuntime implements EvolutionRuntime {
     if(!Number.isSafeInteger(live.processId)||live.processId<1||live.processId!==lock?.pid||ready.generation!==generation)
       throw new Error('LOCAL_CONTROL_PROCESS_IDENTITY_CONFLICT');
   }
-  private async owner(action:string,body:unknown={}){
+  private async login(){
     if(!this.cookie){const response=await fetch(this.config.appUrl+'/api/login',{method:'POST',headers:{'Content-Type':'application/json',Connection:'close'},body:JSON.stringify({secret:this.config.ownerEnvironment.EMERGENTINC_OWNER_SECRET}),redirect:'error',signal:AbortSignal.timeout(8000)});
       this.cookie=response.headers.get('set-cookie')?.split(';')[0];if(response.status!==200||!this.cookie)throw new Error('EVOLUTION_OWNER_AUTH_FAILED');}
-    const response=await fetch(this.config.appUrl+'/api/evolution/'+action,{method:'POST',headers:{cookie:this.cookie,'Content-Type':'application/json',Connection:'close'},body:JSON.stringify(body),redirect:'error',signal:AbortSignal.timeout(180000)});
+  }
+  private async owner(action:string,body:unknown={}){
+    await this.login();
+    const response=await fetch(this.config.appUrl+'/api/evolution/'+action,{method:'POST',headers:{cookie:this.cookie!,'Content-Type':'application/json',Connection:'close'},body:JSON.stringify(body),redirect:'error',signal:AbortSignal.timeout(180000)});
     await response.arrayBuffer();if(!response.ok)throw new Error('EVOLUTION_OWNER_ACTION_FAILED: '+action);
   }
-  async quiesce(){await this.owner('quiesce');}async finalDream(){await this.owner('final-dream');}async resume(){await this.owner('resume');}
+  async quiesce(){
+    await this.login();const response=await fetch(this.config.appUrl+'/api/owner/automation',{headers:{cookie:this.cookie!,Connection:'close'},signal:AbortSignal.timeout(8000)});
+    const control=await response.json() as any;if(!response.ok||!['ON','OFF'].includes(control.desiredMode))throw new Error('LOCAL_CONTROL_PROCESS_IDENTITY_CONFLICT');
+    fs.writeFileSync(path.join(this.config.stateDirectory,'resume-intent.json'),JSON.stringify({paused:control.reason==='EVOLUTION_QUIESCED'}));await this.owner('quiesce');
+  }
+  async finalDream(){await this.owner('final-dream');}
+  async resume(){const file=path.join(this.config.stateDirectory,'resume-intent.json');const paused=fs.existsSync(file)?JSON.parse(fs.readFileSync(file,'utf8')).paused:this.config.ownerEnvironment.EMERGENTINC_START_PAUSED==='1';if(!paused)await this.owner('resume');}
   async postRollbackDream(input:unknown){await this.owner('post-rollback-dream',input);}
   async smoke(directory:string,workspace:string,generation:string){await this.execute(process.execPath,[path.join(directory,'supervisor/candidate_harness.mjs'),'smoke',directory,workspace,generation],directory,this.cleanEnv(),30000);}
   async stop(){

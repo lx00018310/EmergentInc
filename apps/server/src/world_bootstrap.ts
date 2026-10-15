@@ -45,6 +45,7 @@ export async function bootstrapWorlds(projectRoot:string,config:ReturnType<typeo
   const payments=new PaymentService(path.join(system,'payment/payment.sqlite3'),control,lineage),monitor=new PaymentMonitor(payments);
   let promotion:GenePromotionService,ownerWork:OwnerWorkService;
   let paused=candidate||process.env.EMERGENTINC_START_PAUSED==='1'||active.state!=='ACTIVE';
+  let switching=false;
   let starting=true;
   const ownerUpgradeOrigin=!candidate&&config.host==='127.0.0.1'&&process.env.EMERGENTINC_LOCAL_EVOLUTION_CONFIG?`http://127.0.0.1:${Number(process.env.PORT||8765)+1}`:undefined;
   const manager=new WorldRuntimeManager(registry,{...manifest,generation:Number(active.generation_no)},{provider,usageMeter,modelName,isModelConfigured:modelConfigured,isMockMode:mock,
@@ -69,9 +70,9 @@ export async function bootstrapWorlds(projectRoot:string,config:ReturnType<typeo
   const evolution={life,body,dream,memoryGate,onProposalApproved:preparePromotion,beforeProposalDecision:(id:string,decision:string)=>{
     const candidate=lineage.db.prepare('SELECT state FROM gene_promotion_candidates WHERE proposal_id=?').get(id);if(decision==='APPROVED'&&candidate&&candidate.state!=='GENE_CANDIDATE')throw new Error('PROMOTION_POLICY_REVIEW_REQUIRED');
   },worldOverview:()=>manager.list().map(row=>{const current=manager.currents().find(w=>w.id===row.world_id)?.current;return {...row,...(current?{current:current.meta(),skills:current.skills()}: {})};}),
-    quiesced:()=>paused,recoveryOrigin:process.env.EMERGENTINC_RECOVERY_ORIGIN,
-    quiesce:async()=>{paused=true;await manager.quiesceAll();await monitor.stop();await dream.stop();await business.stop();},
-    resume:async()=>{if(candidate||lineage.activeGeneration()?.id!==current.meta().generation_id)throw new Error('GENERATION_NOT_ACTIVE');if(!paused)return;paused=false;await manager.resumeInterrupted();promotion.reconcileInherited();monitor.start();dream.start();business.start({exclusiveWorkspaceLockHeld:true});}};
+    quiesced:()=>paused,switching:()=>switching,recoveryOrigin:process.env.EMERGENTINC_RECOVERY_ORIGIN,
+    quiesce:async()=>{switching=true;paused=true;await manager.quiesceAll();await monitor.stop();await dream.stop();await business.stop();},
+    resume:async()=>{if(candidate||lineage.activeGeneration()?.id!==current.meta().generation_id)throw new Error('GENERATION_NOT_ACTIVE');if(!paused)return;paused=false;switching=false;await manager.resumeInterrupted();promotion.reconcileInherited();monitor.start();dream.start();business.start({exclusiveWorkspaceLockHeld:true});}};
   const legacyFile=path.join(system,'legacy/v22/snapshots/ledger/v9_core.sqlite3'),legacy=fs.existsSync(legacyFile)?new CoreStore(legacyFile,{readOnly:true}):undefined;
   const app=await createServer({workspaceRoot:workspace,runtimeMode:'business',ownerAuth:config.ownerAuth,trustLoopbackProxy:config.trustLoopbackProxy,development:process.env.EMERGENT_DEV==='1',allowedOrigins:(process.env.EMERGENT_ALLOWED_ORIGINS||'').split(',').map(v=>v.trim()).filter(Boolean),businessService:business,evolution,
     worlds:{manager,promotion,payments,monitor,legacy,provider:modelConfigured?provider:undefined,meter:usageMeter,modelName,ownerWork},frontendDistDir:path.join(projectRoot,'frontend/dist'),ownerUpgradeOrigin});
@@ -81,6 +82,6 @@ export async function bootstrapWorlds(projectRoot:string,config:ReturnType<typeo
   if(!paused)await manager.resumeInterrupted();
   starting=false;
   if(!paused){promotion.reconcileInherited();payments.deliverMemories();monitor.start();dream.start();business.start({exclusiveWorkspaceLockHeld:true});await ownerWork.tick();}
-  console.log(`[EmergentInc V30] ${active.id}, ${registry.list().length} Worlds, http://${config.host}:${process.env.PORT||8765}`);
+  console.log(`[EmergentInc V32] ${active.id}, ${registry.list().length} Worlds, http://${config.host}:${process.env.PORT||8765}`);
   return app;
 }

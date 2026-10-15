@@ -11,8 +11,8 @@ export interface BusinessTask {
   capability_version: string; input: string; generation: number; state: string;
 }
 export class BusinessStore {
-  private companyTokenQuota?:()=>void;
-  useCompanyTokenQuota(assertAllowed:()=>void){this.companyTokenQuota=assertAllowed;}
+  private companyMoneyBudget?:()=>void;
+  useCompanyMoneyBudget(assertAllowed:()=>void){this.companyMoneyBudget=assertAllowed;}
   readonly db: SqliteDatabase;
   readonly evidence: BusinessEvidence;
   constructor(filename = ":memory:", initializeSchema: (db: SqliteDatabase) => void = migrateBusiness) {
@@ -57,7 +57,7 @@ export class BusinessStore {
       }
       if (!Number.isSafeInteger(amount) || amount < 0) throw new Error("INVALID_RESERVATION");
       if(planId)this.getPlan(planId);
-      if(this.companyTokenQuota)this.companyTokenQuota();
+      if(this.companyMoneyBudget)this.companyMoneyBudget();
       else {
         const settings = this.settings();
         if (!settings || settings.draft_expires_at <= Date.now()) throw new Error("DRAFT_ALLOWANCE_REQUIRED");
@@ -80,7 +80,7 @@ export class BusinessStore {
   }
   dispatch(id: string) {
     this.db.transaction(() => {
-      if(this.companyTokenQuota)this.companyTokenQuota();
+      if(this.companyMoneyBudget)this.companyMoneyBudget();
       else {
         const s = this.settings();
         if (!s || s.draft_expires_at <= Date.now()) throw new Error("DRAFT_ALLOWANCE_EXPIRED");
@@ -156,7 +156,7 @@ export class BusinessStore {
       const source = this.db.prepare("SELECT hash,body FROM business_plan_revisions WHERE plan_id=? AND revision=?").get(id, input.revision) as Row | undefined;
       if (!source || source.hash !== input.hash || input.revision >= current.revision) throw new Error("RESTORE_VERSION_CONFLICT");
       const plan = validateBusinessPlan({ ...JSON.parse(source.body), expiresAt: input.expiresAt, budgetMicros: input.budgetMicros });
-      if (!this.companyTokenQuota && plan.budgetMicros < current.spentMicros + current.reservedMicros) throw new Error("PLAN_BUDGET_EXHAUSTED");
+      if (!this.companyMoneyBudget && plan.budgetMicros < current.spentMicros + current.reservedMicros) throw new Error("PLAN_BUDGET_EXHAUSTED");
       const revision = this.insertRevision(id, current.direction, plan, current.revision);
       this.event(id, "strategy_restore_proposed", { revision, sourceRevision: input.revision, sourceHash: input.hash, source: "owner_confirmed" });
       return this.getPlan(id);
@@ -183,7 +183,7 @@ export class BusinessStore {
         return view;
       }
       if (view.state !== "AWAITING_APPROVAL" || view.plan.expiresAt <= Date.now()) throw new Error("PLAN_NOT_APPROVABLE");
-      if (!this.companyTokenQuota && view.spentMicros + view.reservedMicros > view.plan.budgetMicros) throw new Error("PLAN_BUDGET_EXHAUSTED");
+      if (!this.companyMoneyBudget && view.spentMicros + view.reservedMicros > view.plan.budgetMicros) throw new Error("PLAN_BUDGET_EXHAUSTED");
       const grant = randomUUID();
       this.db.prepare("INSERT INTO business_grants VALUES(?,?,?,?,?,'owner',?,NULL)")
         .run(grant, id, revision, hash, JSON.stringify(view.plan), Date.now());
@@ -307,7 +307,7 @@ export class BusinessStore {
       const existing = this.operation(id);
       if (existing) throw new Error("TASK_OPERATION_ALREADY_EXISTS");
       const settings = this.settings(), totals = this.totals(), view = this.getPlan(task.plan_id);
-      if (!this.companyTokenQuota && (!settings || totals.spentMicros + totals.reservedMicros > settings.limit_micros ||
+      if (!this.companyMoneyBudget && (!settings || totals.spentMicros + totals.reservedMicros > settings.limit_micros ||
         view.spentMicros + view.reservedMicros > view.plan.budgetMicros)) throw new Error("BUDGET_EXHAUSTED");
       this.db.prepare("INSERT INTO business_operations VALUES(?,'task',?,'github_issue_create',?,'{}',0,'RESERVED',NULL,?,?)")
         .run(id, task.plan_id, requestHash, Date.now(), task.input);
@@ -319,10 +319,10 @@ export class BusinessStore {
       this.assertTaskAuthorized(task);
       if (task.capability !== "review_feedback" || !Number.isSafeInteger(reserved) || reserved < 0) throw new Error("INVALID_REVIEW_RESERVATION");
       const settings = this.settings(), totals = this.totals(), view = this.getPlan(task.plan_id);
-      if (!this.companyTokenQuota && (!settings || totals.spentMicros + totals.reservedMicros + reserved > settings.limit_micros ||
+      if (!this.companyMoneyBudget && (!settings || totals.spentMicros + totals.reservedMicros + reserved > settings.limit_micros ||
         view.spentMicros + view.reservedMicros + reserved > view.plan.budgetMicros)) throw new Error("BUDGET_EXHAUSTED");
       const id = `task:${task.id}`;
-      if(this.companyTokenQuota&&this.operation(id)?.state==='NOT_SENT'){
+      if(this.companyMoneyBudget&&this.operation(id)?.state==='NOT_SENT'){
         this.db.prepare("UPDATE business_operations SET request_hash=?,pricing=?,reserved_micros=?,state='RESERVED',request=? WHERE id=? AND state='NOT_SENT'").run(businessHash(request),JSON.stringify(pricing),reserved,JSON.stringify(request),id);
         return id;
       }
@@ -339,7 +339,7 @@ export class BusinessStore {
   }
   deferReviewForTokenQuota(task:BusinessTask){
     this.db.transaction(()=>{
-      if(!this.companyTokenQuota||task.capability!=='review_feedback'||this.operation(`task:${task.id}`)?.state!=='NOT_SENT')throw new Error('TASK_NOT_RETRYABLE');
+      if(!this.companyMoneyBudget||task.capability!=='review_feedback'||this.operation(`task:${task.id}`)?.state!=='NOT_SENT')throw new Error('TASK_NOT_RETRYABLE');
       if(!this.db.prepare("UPDATE business_tasks SET state='READY',error='OWNER_TOKEN_LIMIT',lease_until=NULL WHERE id=? AND generation=? AND state='RUNNING'").run(task.id,task.generation).changes)throw new Error('STALE_WORKER_RESULT');
       this.event(task.plan_id,'task_waiting_token_quota',{taskId:task.id});
     });

@@ -1,115 +1,57 @@
-# Owner Guide / Owner 使用指南 — V31
+# Owner Guide / Owner 使用指南 — V32
 
-## Main path / 主路径
+## Chat and approvals / 对话与审批
 
-Deploy an approved release and sign in at `/OWNER`. Boss chat is the daily entry: describe a task or goal, or explicitly request a store product change. The first executable command can start the company with automatic cumulative 10M-token batches. Model APIs incur real costs. OFF pauses new calls and persists across restarts; explicit resume or ON is required. Advanced retains evidence rules, usage and recovery. Recruitment and software release approvals are unchanged.
+Sign in at `/OWNER`. The sidebar contains only **Boss chat** and **AI company dashboard**. Start with `company budget CNY 100`; this creates a proposal. `approve company budget CNY 100` is an explicit authorization itself. Without a money authorization, the budget prompt, pause, proposal decisions and recorded status do not call a paid model.
 
-部署已批准版本并在 `/OWNER` 登录，默认以 Boss 对话处理日常任务、目标和明确的站内商品动作。首次可执行指令可启动公司，并按 1000 万 Token 累计自动授信续批；模型 API 产生真实费用。OFF 暂停新增调用并跨重启保留，须明确恢复或 ON 才继续。高级设置保留证据规则、用量和恢复；招聘及软件发布审批不变。
+登录 `/OWNER`，左侧只有 **Boss 对话** 和 **AI 公司看板**。先说“公司预算 100 元”生成预算提案；“批准公司预算 100 元”本身就是明确金额授权。未授权金额时，引导、暂停、提案决定及读取记录都不调用收费模型。
 
-- A draft goal requires a named text file, minimum UTF-8 bytes and an immutable tool receipt. Completion verifies file delivery, not commercial quality.
-- A payment goal counts only finalized receipts and revenue records for the exact invoice IDs selected by Owner. It does not verify customer identity or consultations.
-- Other business outcomes use human verification. Reports and promises cannot complete those goals automatically.
+Describe the task and its expected deliverable. AI proposes one plan containing once, ongoing, interval, daily or weekly nodes, including their dependencies and timezone. Approve once to start the workflow. The company coordinates existing executors; a secretary is optional. Missing personnel produces a recruitment proposal. A recruitment approval can be queued while the company is paused; it does not claim a person has already been created.
 
-- 草稿目标要求准确文本文件名、最低 UTF-8 字节数与不可变工具回执；完成只证明文件交付，不证明经营质量。
-- 收款目标只统计 Owner 指定准确发票 ID 的最终确认回执与收入记录；不据此推断客户身份或咨询数量。
-- 其他经营结果须人工核实；人物回复和承诺不能自动证明目标完成。
+交代任务及预期成果，AI 提出一份计划，组合一次性、长程、间隔、每日或每周节点，说明依赖和时区。批准一次后自动推进；公司协调现有执行者，无须先设置秘书。缺人时提出招聘申请；公司暂停期间可记录招聘批准并排队，不把批准冒充已经创建人员。
 
-If there is no active person, the scheduler proposes a recruitment request in Inbox. Approval creates one person; the goal's subsequent work uses the same one-round scheduler. The switch itself never authorizes recruitment, external posts, credentials or software maintenance. Current Owner store product instructions execute directly with a payment rail; otherwise they save an unpublished draft. Research-first publication is bound to one goal, product, price permission and verifiable delivery. New World gateways default to automatic energy replenishment; old settings are preserved.
+Each step saves an immutable deliverable and actual tool receipts. Subsequent dependent steps receive verified evidence. Reports, orders and drafts do not prove payments. Once steps finish, the company submits a close proposal. Only Owner acceptance closes the task and stops future triggers. Rejecting a close proposal leaves it open for follow-up.
 
-没有活跃人物时，调度器在待办提出招聘申请；批准后创建一位人物，后续目标仍按单轮调度执行。打开开关本身不授予招聘、外部发帖、凭据或软件维护权限。当前 Owner 的站内商品指令在有收款通道时直接执行，否则保存未上架草稿。先研究再发布只绑定一个目标、商品、价格权限及可核验交付物。新 World 入口默认自动补能，老设置保留。
+每步保留不可变成果与实际工具回执，后续依赖步骤读取核验后的证据。汇报、订单、草稿不能证明收款。步骤完成后提交结案提案，老板认可后才结案并停止未来触发；拒绝结案则保留任务等待跟进。
 
-## Stopping and limits / 停止与额度
+Use `pause company` / `resume` for company operation, or `pause task <name>`, `stop task <name>`, `resume task <name>`, `close task <name>`. With multiple possible targets, specify one. A unique pending proposal can be decided with `approve` or `reject`; otherwise name the proposal or use its two dashboard buttons. Retrying the same request key returns the previous decision.
 
-Automation defaults OFF. One round is an actually started World scheduling round; interrupted rounds count once. Multiple goals share the session allowance. Completed rounds are separate. Continuous operation still requires a global token allowance; goal and Run limits also apply. Known CNY usage and unknown reservations are separate, not a payment guarantee.
+用“暂停公司”“继续运行”控制公司，或“暂停任务 名称”“停止任务 名称”“继续任务 名称”“结案任务 名称”。存在多个对象时须指明一个。只有一份待审提案时可以直接说“批准”“拒绝”；否则指定提案或在看板点击对应两个审批按钮。相同请求键重试返回原决定。
 
-自主运行默认 OFF。一轮指实际开始的一次 World 调度轮次；中断轮次唯一计数。多个目标共享当次额度，完整结束轮数独立显示。持续模式也必须授权全局 Token 额度，同时受目标和 Run 上限约束。已知人民币费用与未知预留分开显示，不构成支付承诺。
+## Money and waiting / 金额与等待
 
-OFF prevents new work immediately, preserves already received responses and receipts, and requests safe suspension. Stopping remains visible while a third-party request drains. It cannot undo effects already accepted externally. Public checkout, payment confirmation, audit, login and independent 8766 maintenance remain available. Repeated OFF requests never cancel a later authorization.
+One cumulative CNY authorization governs paid calls. `available = authorized − settled − reserved`, calculated with integer millionths of CNY. AI may allocate work but cannot enlarge this total. Old settled expenses remain separately visible; old token grants never become money. Unknown pre-V32 obligations must be resolved before activating the new budget.
 
-OFF 立即禁止新工作，保存已收到的响应与回执，并请求安全挂起。第三方请求未收尾时显示“停止中”，已被外部受理的效果不会撤销。公开下单、付款确认、审计、登录和独立 8766 维护继续可用。重复旧 OFF 请求不会撤销后来的授权。
+收费调用共用一笔累计人民币授权，`可用 = 总授权 − 已结算 − 有效预留`，使用整数微元。AI 可安排工作，不能增加总额。旧结算费用单独展示，旧 Token 授信不转换成钱；V32 前的未知责任必须先核实，才能启用新预算。
 
-Pause preserves a goal's checkpoint. Stop or archive revokes continuation and retains its evidence. Restore returns an archived goal to Paused. Edit creates a new specification snapshot; old dispatches retain the previous specification. Tokens are cumulative for the goal, including earlier revisions.
+Calls reserve a conservative bound before dispatch. Provably unsent calls release it; unknown calls retain it and block further spending. Insufficient funds generate an exact budget proposal for the next reservation. Approval can resume a provably unsent budget-blocked task. It cannot clear unknown outcomes or release a manual pause. Provider usage beyond its reservation stops operation for review.
 
-暂停保留目标检查点；停止或归档撤销继续执行资格并保留证据；恢复归档后回到暂停状态。编辑创建新的目标快照，旧派工仍归旧修订；目标 Token 累计包含旧修订。
+调用发出前保守预留，确定未发送才释放；未知调用保留预留并阻止新支出。余额不足时提出覆盖下一次预留的准确金额提案，批准可接续确定未发送的预算阻塞任务，不能清除未知结果或解除人工暂停。服务商实际用量超过预留时停止并等待核实。
 
-## Advanced operations / 高级运维附录
+Waiting for a timer, evidence, approval or budget does not poll the model. Recurring nodes do not overlap; overdue periods coalesce into one batch, retaining the scheduled and actual timestamps. There is no 366-occurrence default business limit. Repeated empty or unchanged ongoing results stop after the existing no-progress guard.
 
-`/QIAN`, `/YUAN?world=<id>`, `/GENE` and `http://127.0.0.1:8766/` remain available. Manual Run starts and recovery also obey the global gate. Pre-V29 Runs without global permits require review and a newly authorized bounded Run, not silent adoption.
+等待时间、证据、审批或预算时不轮询模型。同一定时节点不重叠，逾期合并为一批，保留计划与实际时间；不设默认 366 次业务上限。空回复或长程节点重复相同成果由无进展保护停止。
 
-原 `/QIAN`、`/YUAN?world=<id>`、`/GENE` 与 `http://127.0.0.1:8766/` 继续可用。人工 Run 启动和恢复同样受全局许可约束；V29 前缺少全局许可的 Run 须核实并重新授权受限 Run，不静默接管。
+## Dashboard and retained data / 看板与旧数据
 
-Maintenance quiesce takes priority over ON. Final Dream under a closed gate retains source facts and writes a maintenance receipt without model calls. Ordinary Dream cannot bypass OFF. Candidate validation cannot resume work. Release rollback and deletion require independent Owner confirmation.
+The dashboard shows pending proposals, task stages, deliverables, actual people, daily settled costs, reservations, verified revenue by original asset, and decision history. It contains no operating settings. Old deep links open this dashboard. Source reports and private extensions are available as read-only details; credentials keep their existing secure delivery channel.
 
-维护排空优先于 ON。Gate 关闭时，Final Dream 保留源事实并写维护回执，不调用模型；普通 Dream 不能绕过 OFF。候选验证不续跑。版本回退和删除须独立 Owner 确认。
+看板显示待审提案、阶段、成果、真实人员、每日结算费用、预留、原币种核验收入和审批历史，没有经营设置。旧深链接映射到看板，源码报告和私有扩展提供只读详情，凭据保留既有安全交付通道。
 
-All `/api/owner/*` endpoints require the existing Owner session. Mutations require `idempotencyKey` and existing-object changes require `expectedRevision`; stale revisions return 409. Retrying a lost response must reuse the same complete request body and key. Do not reuse a key with a new revision.
+`owner_goals` is the authoritative new company task record. Logical nodes, occurrences, dispatch attempts and model permits retain separate IDs. Existing BusinessPlans are references to their original executor, never duplicated into a second scheduler. Orders, payments, old goals, evidence and unknown calls are retained. The first V32 schema initialization creates a `control.sqlite3.pre-v32.bak` snapshot including committed WAL.
 
-所有 `/api/owner/*` 接口使用现有 Owner 会话。写请求须有 `idempotencyKey`，修改既有对象须有 `expectedRevision`；旧版本返回 409。丢失响应后重试须复用完整请求体与同一键，不得修改 revision 后仍沿用旧键。
+新公司任务以 `owner_goals` 为主记录，逻辑节点、触发批次、派工尝试、模型许可分别保留 ID。已有 BusinessPlan 引用原执行器，不复制到第二个调度器。订单、付款、旧目标、证据、未知调用保留；首次 V32 schema 初始化创建包含已提交 WAL 的 `control.sqlite3.pre-v32.bak`。
 
-```text
-GET/POST  /api/owner/goals
-GET/PATCH /api/owner/goals/:id
-POST      /api/owner/goals/:id/actions
-GET       /api/owner/goals/:id/evidence/:evidenceId
-GET/POST  /api/owner/automation
-GET       /api/owner/automation/calls
-POST      /api/owner/automation/calls/:id/reconcile
-GET       /api/owner/automation/report
-```
+## Version switching / 版本切换
 
-Actions: `pause`, `resume`, `stop`, `reopen`, `archive`, `restore`, `verify`. A create/edit body contains `title`, `objective`, `maxTokens`, `acceptance` and its key; edit also pins the current `revision`. Acceptance is one of:
+At port 8766, select a real Git commit, wait for automatic isolated preparation and validation, then click **Approve and switch**. The exact candidate hash and current generation are bound internally. Compatible old commits follow this same process and produce a new increasing generation. Neither main/develop nor the development checkout is moved. Business data are not restored to an old snapshot to enable a switch.
 
-动作如上。新增/编辑体包含标题、目标、Token 上限、验收规则和幂等键；编辑另须绑定当前版本。验收规则形状如下：
+在 8766 选择真实 Git 提交，等待自动隔离准备、校验，再点 **批准并切换**。后台绑定准确候选 Hash 和当前运行代。兼容旧提交使用同一流程并生成递增新运行代，不移动 main/develop 或开发工作区，不通过恢复旧业务库来切换。
 
-```json
-{"kind":"artifact","filename":"result.md","minBytes":100}
-{"kind":"confirmed_payments","invoiceIds":["invoice_exact_id"],"targetCount":1}
-{"kind":"manual","description":"Verify three real consultations using source evidence"}
-```
+Incompatible money, workflow, payment, Gene or extension protocols block the switch with a specific reason. The original manual/maintenance pause survives release changes. Durable approved runtime, config and approval records remain in `owner_private/approved-runtime`; ordinary cache cleanup must not remove them. Interrupted operations retain technical logs; controlled recovery remains available to the independent administrator CLI.
 
-Manual acceptance can be confirmed in goal Details after Owner reviews current-revision source artifacts and supplies a verification reason. Reports alone cannot be approved. This records Owner verification against frozen evidence hashes; it never creates customer or payment ledger facts. The run report shows per-goal evidence and usage for the current session without another model call.
+金额、任务、收款、Gene 或扩展协议不兼容会显示原因并阻止切换。发布保留人工及维护暂停意图。正式批准程序、配置及审批记录位于 `owner_private/approved-runtime`，普通缓存清理不得删除。中断操作保留技术日志，必要的受控恢复仍由独立管理员 CLI 提供。
 
-人工验收目标可在详情审阅当前修订的源产物后，填写核实理由并确认。仅有人物报告时不能确认。该决议绑定冻结证据哈希，记录 Owner 核实，不创建客户或付款账本事实。运行报告按目标显示当次证据与用量，不额外调用模型。
+All Owner APIs retain session, Origin, exact-content and idempotency checks. Unknown provider bills or external actions require original receipt verification through the existing audited recovery APIs. A budget approval, restart, human acceptance or software release cannot manufacture a receipt or authorize external payments.
 
-### Unknown outcomes / 结果未知
-
-Review original provider bills and external receipts first. World recovery uses `/api/worlds/<id>/api/run/recovery/resolve` and its existing audited decisions. The control call list exposes the original source call IDs. Known settled World receipts reconcile the control ledger automatically. Other unknown usage needs an explicit measured `actualTokens`, `costCny`, evidence-based `reason`, current control `expectedRevision` and idempotency key at the control reconciliation API. This only settles control accounting; it cannot clear unresolved World/Business outcomes or prove a sale. A new ON authorization is still required after a safety stop.
-
-先核实原始服务商账单及外部回执。World 恢复使用 `/api/worlds/<id>/api/run/recovery/resolve` 的既有审计决议。控制调用列表保留原始调用 ID；已明确结算的 World 回执会自动对齐控制账。其他未知用量须在控制对账接口提供真实 `actualTokens`、`costCny`、有证据的 `reason`、当前控制版本与幂等键。该操作只结算控制账，不能清除 World/Business 未知结果，也不证明成交；安全停止后仍需重新授权 ON。
-
-Never edit SQLite, credentials, frozen releases or Pixel minds to bypass review. Keep workspace data and secrets out of Git. Deployment, real customer outcomes and real payment acceptance require separate evidence.
-
-不得通过手工修改 SQLite、凭据、冻结版本或元胞心智绕过核实。工作区数据与秘密不得提交 Git。部署、真实客户结果和真实收款验收必须另留证据。
-
-
-## Core and private extensions / Core 与私有扩展
-
-Use private extensions for pure business computation. Supply a manifest with `schema=1`, a lowercase safe ID, a semantic version label, `engine=pure-ast-json@1`, `requiredContracts` including `pure_skill@1`, `dataSchemaVersion`, source and at least two JSON tests. `SUBMIT_EXTENSION` validates and activates using the exact pointer revision/hash from `LIST_EXTENSIONS` (initially `0`/`null`). The operation receipt is the retry key. `RUN_EXTENSION` uses explicit JSON only. `SET_EXTENSION_STATE` activates, disables or restores the previous immutable version without deleting data or creating a Generation.
-
-私有纯业务计算优先使用扩展。声明包含 `schema=1`、安全小写 ID、语义版本标签、`engine=pure-ast-json@1`、含 `pure_skill@1` 的 `requiredContracts`、`dataSchemaVersion`、源码和至少两个 JSON 测试。`SUBMIT_EXTENSION` 按 `LIST_EXTENSIONS` 的准确指针版本/哈希验证并激活（首次为 `0`/`null`），操作回执 ID 用于重试。`RUN_EXTENSION` 只接收显式 JSON；`SET_EXTENSION_STATE` 激活、停用或恢复上一个不可变版本，不删除数据、不创建 Generation。
-
-The interpreter has no host imports, network, filesystem, database, payment or credential access. `extension-data/` is retained storage owned by the user; it is never implicitly available to the pure program. Unsupported host programs can be archived as manifest candidates and cannot be enabled. Full Node/React applications and stateful plugins require a separate design. Markdown Skills keep their existing format and scope.
-
-解释器没有宿主模块、网络、文件、数据库、支付或凭据权限。`extension-data/` 是用户拥有的保留存储，不会自动开放给程序。不支持的宿主程序可作为声明候选存档，不能启用。完整 Node/React 应用和有状态插件需要另外设计；Markdown Skill 保留既有格式和作用域。
-
-Open a goal's Details → Private World extensions to inspect its Worlds, creators, versions, SHA-256, required contracts, effective state and blocking reasons. Enable/disable/rollback uses exact CAS and retry keys. No physical cleanup is offered. Owner HTTP routes use the existing session and Origin protection:
-
-打开目标详情中的“World 私有扩展”，可查看对应 World、创建元胞、版本、SHA-256、契约、实际状态及阻断原因。启停/回退使用准确 CAS 与重试键，不提供物理删除。以下 Owner HTTP 接口沿用现有会话和 Origin 防护：
-
-```text
-GET/POST /api/worlds/:id/extensions
-POST     /api/worlds/:id/extensions/:extension/actions
-POST     /api/worlds/:id/extensions/:extension/run
-```
-
-POST submission archives a validated manifest with a trusted active `pixelId`; activation is a separate action with `action`, `hash`, `expectedRevision`, `expectedHash`, `idempotencyKey`. Execution obeys global automation. Inspection and explicit pointer maintenance do not call models. Private extensions cannot be listed or executed from another World's tool context; public sharing still needs existing Gene review and exact release approval.
-
-POST 提交使用已激活的 `pixelId` 保存声明；激活另提交 `action`、`hash`、`expectedRevision`、`expectedHash`、`idempotencyKey`。执行受全局运行许可约束，查看及显式指针维护不调用模型。另一 World 的工具上下文不能列出或执行私有扩展，公共共享仍需既有 Gene 审查与准确 Release 批准。
-
-Official Core preparation inherits only approved public Gene assets into the candidate, before final hashes. Historical public versions and provenance stay available. Conflicts or unidentifiable non-asset Gene changes stop preparation. Compatibility summaries appear in 8766 before approval and are checked again before switching. A changed execution-asset set requires a newly prepared candidate. Incompatible private extensions retain their files/data but cannot execute; manual disable persists. No arbitrary application code is imported into the trusted Supervisor.
-
-官方 Core 准备只在最终哈希前将已批准公共 Gene 继承到候选；历史公共版本和来源继续可查。冲突或无法识别的非资产 Gene 定制停止准备。8766 在批准前显示兼容摘要，切换前再次检查；运行资产集合变化后须重新准备候选。不兼容私有扩展保留文件和数据但不能执行，人工停用状态保持。不把任意应用代码导入可信 Supervisor。
-
-`SUBMIT_APP_CODE` remains the channel for genuine Core changes. Old reports and approved releases are retained; V30 shows `CORE_PATCH_REBASE_REQUIRED` when private source candidates need review against new Core. It never silently ports old Core patches or discards payment, ledger or Goal facts to force a rollback. Back up the entire Workspace and trusted maintenance records separately from Git Core.
-
-真正的 Core 修改继续使用 `SUBMIT_APP_CODE`；旧报告和已批准 Release 保留。私有源码候选需要针对新 Core 重检时显示 `CORE_PATCH_REBASE_REQUIRED`，不静默移植旧 Core 补丁，也不为强制回退丢弃收款、账本或目标事实。完整 Workspace 与可信维护记录应独立于 Git Core 备份。
+Owner API 保留会话、Origin、准确内容及幂等校验。未知账单和外部动作须通过原回执与既有审计恢复 API 核实；预算审批、重启、人工验收或软件发布都不能制造回执或授予对外付款权限。

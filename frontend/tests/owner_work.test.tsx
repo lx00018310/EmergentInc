@@ -22,7 +22,7 @@ describe('Owner execution evidence UI',()=>{
   });
   it('requires recruitment approval and shows the role, rationale and initial task in both languages',()=>{
     const fetch=vi.spyOn(globalThis,'fetch');render(<OwnerActionCard proposal={{id:'r1',requiresApproval:true,action:{type:'recruit_approve',requestId:'hire1',hash:'a'.repeat(64),role:'Designer',reason:'Needs expertise',instruction:'Produce artwork'}}}/>);
-    expect((screen.getByRole('button',{name:'Confirm action'}) as HTMLButtonElement).disabled).toBe(true);expect(screen.getByText('Role: Designer')).toBeTruthy();expect(fetch).not.toHaveBeenCalled();
+    expect((screen.getByRole('button',{name:'Approve and execute'}) as HTMLButtonElement).disabled).toBe(false);expect(screen.getByText('Role: Designer')).toBeTruthy();expect(fetch).not.toHaveBeenCalled();
     act(()=>setLanguage('zh-CN'));expect(screen.getByText('职责: Designer')).toBeTruthy();expect(screen.getByText('批准招聘')).toBeTruthy();
   });
   it('retains the exact request and language for retries and after a browser reload',async()=>{

@@ -26,11 +26,11 @@ describe('V29 actual process crash recovery',()=>{
     const f=await crash('on'),before=f.runtime.store.db.prepare("SELECT result FROM tool_executions WHERE tool='save_artifact'").get()!.result;
     await f.manager.resumeInterrupted();await vi.waitFor(()=>expect(f.runtime.run.getStatus().running).toBe(false));await f.work.tick();await f.scheduler.tick();
     expect(f.gate.view()).toMatchObject({startedRounds:1,completedRounds:1,spentTokens:60});expect(f.calls).toHaveLength(1);
-    expect(f.runtime.store.db.prepare("SELECT result FROM tool_executions WHERE tool='save_artifact'").all()).toEqual([{result:before}]);expect(f.gate.goals.get(f.goal.id).status).toBe('COMPLETED');
+    expect(f.runtime.store.db.prepare("SELECT result FROM tool_executions WHERE tool='save_artifact'").all()).toEqual([{result:before}]);expect(f.gate.goals.get(f.goal.id).status).toBe('WAITING_APPROVAL');
   },15000);
   it('does not resend a request killed after dispatch or release its unknown token reservation',async()=>{
     const f=await crash('unknown'),reserved=f.gate.view().reservedTokens;expect(reserved).toBeGreaterThan(0);
     await f.manager.resumeInterrupted();await f.scheduler.tick();expect(f.calls).toHaveLength(0);expect(f.gate.view()).toMatchObject({observedState:'BLOCKED',reservedTokens:reserved});
-    expect(()=>f.gate.control({desiredMode:'ON',runMode:'BOUNDED',requestedRounds:7,maxTokens:1000000,expectedRevision:f.gate.view().revision,idempotencyKey:crypto.randomUUID()})).toThrow('OWNER_OUTCOME_REVIEW_REQUIRED');
+    expect(()=>f.gate.control({desiredMode:'ON',runMode:'BOUNDED',requestedRounds:7,expectedRevision:f.gate.view().revision,idempotencyKey:crypto.randomUUID()})).toThrow('OWNER_OUTCOME_REVIEW_REQUIRED');
   },15000);
 });

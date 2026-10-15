@@ -41,6 +41,8 @@ export interface TokenCapacity {
 }
 
 export class BudgetRepository {
+  private companyRun:(runId:string)=>boolean=()=>false;
+  public useCompanyMoneyBudget(policy:(runId:string)=>boolean){this.companyRun=policy;}
   constructor(private db: SqliteDatabase, private ensureEnergy?: (pixelId: string, required: number, key: string) => void) {}
 
   /** Current token capacity across every limit that will be enforced by reserve(). */
@@ -52,7 +54,7 @@ export class BudgetRepository {
     const run = this.db.prepare("SELECT run_limit, run_spent, run_reserved, execution_id FROM runs WHERE run_id=?").get(params.runId) as any;
     if (run) {
       if ((run.execution_id ?? null) !== (params.executionId ?? null)) throw new Error("EXECUTION_SCOPE_RUN_CONFLICT");
-      capacities.push({ availableTokens: Math.max(0, Number(run.run_limit) - Number(run.run_spent) - Number(run.run_reserved)), limitingKind: "RUN" });
+      if(!this.companyRun(params.runId)||params.executionId)capacities.push({ availableTokens: Math.max(0, Number(run.run_limit) - Number(run.run_spent) - Number(run.run_reserved)), limitingKind: "RUN" });
     } else if (params.executionId) {
       throw new Error("EXECUTION_RUN_NOT_FOUND");
     }
@@ -169,7 +171,7 @@ export class BudgetRepository {
       const run = runStmt.get(runId) as any;
       if (run) {
         if ((run.execution_id ?? null) !== (params.executionId ?? null)) throw new Error("EXECUTION_SCOPE_RUN_CONFLICT");
-        if (run.run_spent + run.run_reserved + estimatedTokens > run.run_limit) {
+        if ((!this.companyRun(runId)||params.executionId) && run.run_spent + run.run_reserved + estimatedTokens > run.run_limit) {
           throw new BudgetExceededError(
             `Run ${runId} budget exceeded: limit=${run.run_limit}, current=${run.run_spent + run.run_reserved}, request=${estimatedTokens}`,
             "RUN"

@@ -10,6 +10,7 @@ const states:Record<string,string>={QUEUED:'Queued for execution',RUNNING:'Runni
 export function OwnerWork({work}:{work?:Work}) {
   useLanguage();const [reports,setReports]=useState<Record<string,AppCodeReport>>({}),[error,setError]=useState('');if(!work)return null;
   return <div className="owner-work">
+    {work.requests.filter(r=>r.state==='APPROVED_QUEUED').map(r=><p key={r.id}>{r.role} · {t('Proposal state: APPROVED')}</p>)}
     {work.schedulerError&&<p role="alert">{t('Task dispatch stopped because of a service error.')} {work.schedulerError}</p>}
     {work.tasks.length>0&&<section><h3>{t('Assigned work and replies')}</h3><p>{t('A reply is a reported result. Source changes take effect only after software upgrade approval.')}</p>
       {work.tasks.map(task=><article key={task.id}><strong>{task.personName} · {t(states[task.state]??task.state)}</strong><p>{task.instruction}</p><small>{new Date(task.updatedAt).toLocaleString()} · {task.runId??task.id}</small>

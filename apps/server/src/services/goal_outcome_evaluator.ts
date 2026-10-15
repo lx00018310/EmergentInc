@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import type { OwnerGoal } from '@emergentinc/protocol';
+import type { OwnerGoal,OwnerGoalEvidence } from '@emergentinc/protocol';
 import type { WorldRuntimeManager } from './world_runtime_manager.js';
 import type { OwnerGoalService } from './owner_goal_service.js';
 import type { PaymentService } from './payment_service.js';
@@ -9,6 +9,17 @@ import type { PaymentService } from './payment_service.js';
 /** Verifies immutable tool receipts and actual file bytes. An LLM report has no completion authority. */
 export class GoalOutcomeEvaluator {
   constructor(private manager: WorldRuntimeManager, private goals: OwnerGoalService,private payments?:PaymentService) {}
+  verify(e:OwnerGoalEvidence){
+    if(e.kind==='report')return;
+    if(e.kind==='payment'){
+      const r=this.payments?.db.prepare("SELECT * FROM payment_receipts WHERE id=? AND invoice_id=? AND source='chain_finalized'").get(e.id.split(':').at(-1)!,e.reference);
+      if(!r||createHash('sha256').update(JSON.stringify(r)).digest('hex')!==e.sha256)throw new Error('OWNER_EVIDENCE_CHANGED');return;
+    }
+    if(!e.worldId)throw new Error('OWNER_EVIDENCE_CHANGED');const parts=e.reference.split('/');
+    if(parts[0]!=='evidence'||parts.some(p=>!p||p==='.'||p==='..'||/[\\:]/.test(p)))throw new Error('OWNER_EVIDENCE_CHANGED');
+    let file=this.manager.registry.directory(e.worldId);for(const part of parts){file=path.join(file,part);if(!fs.existsSync(file)||fs.lstatSync(file).isSymbolicLink())throw new Error('OWNER_EVIDENCE_CHANGED');}
+    if(!fs.statSync(file).isFile()||fs.statSync(file).size!==e.bytes||e.bytes>2000000||createHash('sha256').update(fs.readFileSync(file)).digest('hex')!==e.sha256)throw new Error('OWNER_EVIDENCE_CHANGED');
+  }
   observePayments(goal:OwnerGoal) {
     const acceptance=goal.acceptance;
     if(acceptance.kind!=='confirmed_payments'||!this.payments||['ARCHIVED','STOPPED','COMPLETED'].includes(goal.status))return;
@@ -16,7 +27,7 @@ export class GoalOutcomeEvaluator {
     this.goals.store.transaction(()=>{
       for(const receipt of receipts){const content=JSON.stringify(receipt),sha=createHash('sha256').update(content).digest('hex');this.goals.store.db.prepare("INSERT OR IGNORE INTO owner_goal_evidence VALUES(?,?,?,'',?,'payment',?,?,?,?)").run(`payment:${goal.id}:${goal.specificationRevision}:${receipt.id}`,goal.id,goal.specificationRevision,String(receipt.world_id??''),String(receipt.invoice_id),sha,Buffer.byteLength(content),Date.now());}
       this.goals.store.db.prepare('UPDATE owner_goals SET verified_count=?,evidence_count=? WHERE id=?').run(receipts.length,receipts.length,goal.id);
-      if(receipts.length>=acceptance.targetCount&&['READY','RUNNING','WAITING_RESOURCE','WAITING_APPROVAL'].includes(goal.status))this.goals.state(goal.id,'COMPLETED','OWNER_PAYMENTS_VERIFIED');
+      if(receipts.length>=acceptance.targetCount&&['READY','RUNNING','WAITING_RESOURCE','WAITING_APPROVAL'].includes(goal.status))this.goals.state(goal.id,'WAITING_APPROVAL','OWNER_PAYMENTS_VERIFIED');
       else if(goal.status==='READY')this.goals.state(goal.id,'WAITING_RESOURCE','OWNER_WAITING_PAYMENT');
     });
   }
@@ -36,7 +47,7 @@ export class GoalOutcomeEvaluator {
         const bytes = fs.readFileSync(file), sha = createHash('sha256').update(bytes).digest('hex');
         if (sha !== receipt.sha256 || bytes.length !== receipt.size_bytes) continue;
         const id = `artifact:${tool.operation_id}`;
-        if(this.goals.store.db.prepare("SELECT 1 FROM owner_goal_evidence WHERE goal_id=? AND specification_revision=? AND kind='artifact' AND sha256=?").get(goal.id,goal.specificationRevision,sha))continue;
+        if(this.goals.store.db.prepare("SELECT 1 FROM owner_goal_evidence WHERE goal_id=? AND specification_revision=? AND run_id=? AND kind='artifact' AND sha256=?").get(goal.id,goal.specificationRevision,run,sha))continue;
         added += Number(this.goals.store.db.prepare("INSERT OR IGNORE INTO owner_goal_evidence VALUES(?,?,?,?,?,'artifact',?,?,?,?)").run(id, goal.id, goal.specificationRevision, run, worldId, receipt.snapshot_relative_path, sha, bytes.length, Date.now()).changes);
       }
     }
@@ -46,7 +57,7 @@ export class GoalOutcomeEvaluator {
     const verified = acceptance.kind === 'artifact' && evidence.some(e => e.reference.endsWith('/' + acceptance.filename) && e.bytes >= acceptance.minBytes);
     this.goals.store.db.prepare('UPDATE owner_goals SET evidence_count=?,verified_count=?,updated_at=? WHERE id=?').run(evidence.length, verified ? 1 : 0, Date.now(), goal.id);
     if (added) this.goals.event(goal.id, 'evidence_collected', { count: added, dispatchId });
-    if (verified && !runs.some(id=>runtime.store.runs.getCheckpoint(id)?.resume_pending) && ['READY', 'RUNNING'].includes(this.goals.get(goal.id).status)) this.goals.state(goal.id, 'COMPLETED', 'OWNER_ARTIFACT_VERIFIED');
+    if (verified && !runs.some(id=>runtime.store.runs.getCheckpoint(id)?.resume_pending) && ['READY', 'RUNNING'].includes(this.goals.get(goal.id).status)) this.goals.state(goal.id, 'WAITING_APPROVAL', 'OWNER_ARTIFACT_VERIFIED');
     return added;
   }
 }

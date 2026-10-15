@@ -65,8 +65,12 @@ export async function createServer(options: CreateServerOptions): Promise<Fastif
     registerPublicRoutes(app, store);
     app.addHook('onClose', async () => store.close());
   }
-  app.addHook("onRequest", async (req, reply) => {
-    if(req.url.split('?')[0]==='/api/owner/automation')return;
+  app.addHook("preHandler", async (req, reply) => {
+    const route=req.url.split('?')[0]!;
+    if(route==='/api/owner/automation')return;
+    if(!options.evolution?.switching?.()&&(route==='/api/owner/chat'||/^\/api\/owner\/(proposals|requests)\/[^/]+\/decision$/.test(route)))return;
+    const command=String((req.body as any)?.question??'').trim().replace(/[。.!！]+$/,'');
+    if(route==='/api/owner/chat'&&(/^(?:先|请)?(?:暂停|暂停公司|停止运行|暂停自动经营)$|^(?:please )?(?:pause|pause company|stop running)$|^(?:暂停|停止|pause|stop)\s*(?:任务|task)\s*.+$/i.test(command)||/^(?:公司状态|任务进度|查看任务|查看预算|company status|task status|show budget)$/i.test(command)))return;
     if (options.evolution?.quiesced?.() && req.method !== "GET" && req.url.startsWith("/api/") &&
         !["/api/login", "/api/logout", "/api/evolution/final-dream", "/api/evolution/quiesce", "/api/evolution/resume"].includes(req.url.split("?")[0]!))
       return reply.status(409).send({ detail: "EVOLUTION_QUIESCED" });
@@ -75,7 +79,7 @@ export async function createServer(options: CreateServerOptions): Promise<Fastif
   const serviceReady = () => !options.businessService?.status().schedulerFailure && !options.worlds?.manager.list().some(w=>w.runtimeFailure) && !ownerWork?.hasFailure();
   app.get("/health/ready", async (_req, reply) => {
     const ready = serviceReady();
-    return reply.status(ready ? 200 : 503).send({ ready, mode, version: options.worlds ? "v30-assets-1" : options.evolution ? "v22-life-1" : "v21-business-1",
+    return reply.status(ready ? 200 : 503).send({ ready, mode, version: options.worlds ? "v32-company-1" : options.evolution ? "v22-life-1" : "v21-business-1",
       ...(options.evolution ? { generation: options.evolution.life.current.meta().generation_id,
         geneHash: options.evolution.life.current.meta().gene_hash, bodyRevision: options.evolution.life.current.meta().body_revision } : {}) });
   });
@@ -111,7 +115,7 @@ export async function createServer(options: CreateServerOptions): Promise<Fastif
         app.addHook('onReady',async()=>scheduler.start());app.addHook('onClose',async()=>scheduler.close());
         await registerWorldRoutes(api,options.worlds);
         const overview = new OwnerOverviewService(options.worlds, options.businessService, options.ownerUpgradeOrigin,work,
-          () => !serviceReady() || manager.list().some(w=>w.blockedReason) ? 'attention' : options.evolution?.quiesced?.() ? 'paused' : 'ready');
+          () => !serviceReady() || manager.list().some(w=>w.blockedReason) ? 'attention' : options.evolution?.quiesced?.() ? 'paused' : 'ready',publicStore);
         const chat = manager.options.projectRoot && manager.options.isModelConfigured ? new OwnerChatService({projectRoot:manager.options.projectRoot,workspaceRoot:options.workspaceRoot,
           store:manager.registry.control,provider:gate.provider(manager.options.provider,manager.options.usageMeter),usageMeter:manager.options.usageMeter,modelName:manager.options.modelName,isModelConfigured:Boolean(manager.options.isModelConfigured),
           snapshot:async()=>{
@@ -122,7 +126,7 @@ export async function createServer(options: CreateServerOptions): Promise<Fastif
               sources:['Owner overview / control (qianji_worlds / qianji_profiles)','control_events','runs / pixel_accounts / world_outbox / tips.md','life_events / current_events','world_revenue_events',
                 ...(data.availability.business?['business_plans / business_requests / business_events']:[]),...(data.availability.upgrade==='available'?['Upgrade Service /status']:[])]};
           }}) : undefined;
-        registerOwnerRoutes(api,overview,chat,work,gate,scheduler);
+        registerOwnerRoutes(api,overview,chat,work,gate,scheduler,options.evolution);
       }
       else if (mode === "legacy" || options.coreStore) {
         if (!options.coreStore || !options.worldService || !options.runService || !options.promptService || !options.toolRegistry) throw new Error("LEGACY_SERVICES_REQUIRED");

@@ -32,29 +32,55 @@ async function fixture() {
 
 async function page(f:Awaited<ReturnType<typeof fixture>>,lang='zh-CN',query='',responses:Record<string,any>={}) {
   const dom=new JSDOM((await f.app.inject('/')).body,{url:'http://127.0.0.1:8766/'+query,runScripts:'outside-only'});
-  cleanups.push(async()=>dom.window.close());let poll!:()=>Promise<void>,browserCookie=f.cookie;
+  cleanups.push(async()=>{await vi.waitFor(()=>expect(dom.window.upgradeTestIdle?.()).toBe(true));dom.window.close();});let poll!:()=>Promise<void>,browserCookie=f.cookie;
   dom.window.localStorage.setItem('emergentinc.language',lang);
   dom.window.setInterval=(callback:()=>Promise<void>)=>{poll=callback;return 0;};
   dom.window.HTMLDialogElement.prototype.showModal=function(){this.open=true;};
   dom.window.HTMLDialogElement.prototype.close=function(){this.open=false;};
-  dom.window.fetch=vi.fn(async(url:string,init:any={})=>{if(url in responses)return {ok:true,status:200,json:async()=>responses[url]};const response=await f.app.inject({method:init.method??'GET',url,headers:{cookie:browserCookie},...(init.body?{payload:JSON.parse(init.body)}:{})});if(response.headers['set-cookie'])browserCookie=String(response.headers['set-cookie']).split(';')[0];return {ok:response.statusCode<400,status:response.statusCode,json:async()=>response.json()};});
-  await dom.window.eval(`(async()=>{${dom.window.document.querySelector('script').textContent}})()`);
+  dom.window.fetch=vi.fn(async(url:string,init:any={})=>{if(!init.method&&url in responses)return {ok:true,status:200,json:async()=>responses[url]};const response=await f.app.inject({method:init.method??'GET',url,headers:{cookie:browserCookie},...(init.body?{payload:JSON.parse(init.body)}:{})});if(response.headers['set-cookie'])browserCookie=String(response.headers['set-cookie']).split(';')[0];return {ok:response.statusCode<400,status:response.statusCode,json:async()=>response.json()};});
+  await dom.window.eval(`(async()=>{${dom.window.document.querySelector('script').textContent};let selections=0;const select=selectCommit;selectCommit=async(...args)=>{selections++;try{return await select(...args);}finally{selections--;}};window.upgradeTestIdle=()=>!refreshing&&!sending&&!selections;})()`);
   return {dom,doc:dom.window.document,poll:()=>poll()};
 }
 
-describe('Owner web upgrade', () => {
-  it.each(['zh-CN','en'])('labels failed and interrupted upgrades consistently, retaining reasons and truthful progress (%s)',async lang=>{
-    const f=await fixture(),data={...f.data,busy:false,job:{action:'prepare',state:'running',error:null as string|null,log:'Diagnostic log'}};
-    const {doc,poll}=await page(f,lang,'',{'/api/upgrades':data,'/api/git-graph':{available:false}}),failure=lang==='en'?'Upgrade failed':'升级失败';
-    expect(doc.getElementById('job-state').textContent).toBe(lang==='en'?'In progress…':'处理中…');
-    data.job.state='succeeded';await poll();expect(doc.getElementById('job-state').textContent).toBe(lang==='en'?'Operation completed.':'操作完成。');
-    for(const [state,error] of [['failed','CUSTOM_GENE_PATCH_NEEDS_REBASE'],['failed','UNEXPECTED_ERROR'],['failed',null],['interrupted','UPGRADE_INTERRUPTED_CHECK_RECOVERY'],['interrupted',null]]){
-      Object.assign(data.job,{state,error});await poll();const message=doc.getElementById('job-state').textContent;
-      expect(message.startsWith(failure)).toBe(true);expect(doc.getElementById('recover').hidden).toBe(false);
-      expect(doc.getElementById('log').textContent).toContain('Diagnostic log');if(error)expect(doc.getElementById('log').textContent).toContain(error);
-      if(error==='CUSTOM_GENE_PATCH_NEEDS_REBASE')expect(message).toContain(lang==='en'?'Custom non-asset Gene':'非资产 Gene');
-    }
+describe('V32 single version switch flow',()=>{
+  it.each(['zh-CN','en'])('automatically prepares a selected commit, binds exact approval, and draws both real Git DAGs (%s)',async lang=>{
+    const repo=gitRepo(),f=await fixture(),graph=readGitGraph(repo.directory),data={...f.data,busy:false};
+    data.candidates[0].request.owner_release.source_commit=repo.tip;
+    const {doc,poll}=await page(f,lang,'',{'/api/upgrades':data,'/api/git-graph':graph,['/api/git-commit/'+repo.first]:readGitCommit(repo.directory,repo.first),['/api/git-commit/'+repo.tip]:readGitCommit(repo.directory,repo.tip)});
+    expect(doc.querySelectorAll('.graph-edge').length).toBeGreaterThanOrEqual(4);expect(doc.querySelectorAll('[data-sha="'+repo.tip+'"]').length).toBeGreaterThanOrEqual(2);
+    for(const id of ['prepare','prepare-commit','rollback','delete','version','reason','recover','commit-form'])expect(doc.getElementById(id)).toBeNull();
+    doc.querySelector('li[data-sha="'+repo.first+'"]').click();await vi.waitFor(()=>expect(f.run).toHaveBeenCalledOnce());
+    expect(f.run.mock.calls[0][1]).toEqual(['prepare','add SKILL.md','add SKILL.md','--commit',repo.first]);
+    data.candidates[0].request.owner_release.source_commit=repo.first;await vi.waitFor(async()=>{await poll();expect(doc.getElementById('switch').disabled).toBe(false);});
+    doc.getElementById('switch').click();await vi.waitFor(()=>expect(f.run).toHaveBeenCalledTimes(3));await vi.waitFor(async()=>{await poll();expect(doc.getElementById('switch').disabled).toBe(false);});
+    expect(f.run.mock.calls.slice(1).map(c=>c[1][0])).toEqual(['approve','apply']);expect(f.run.mock.calls[1][1]).toContain('a'.repeat(64));
+    expect(doc.getElementById('secret').value).toBe('');
+  },30000);
+  it('keeps stale candidates unapprovable, preserves errors, and requires no second preparation click',async()=>{
+    const repo=gitRepo(),f=await fixture(),data={...f.data,busy:false};data.candidates[0].request.owner_release.source_commit=repo.tip;data.candidates[0].request.base_generation='G0007';
+    const {dom,doc,poll}=await page(f,'en','',{'/api/upgrades':data,'/api/git-graph':readGitGraph(repo.directory),['/api/git-commit/'+repo.tip]:readGitCommit(repo.directory,repo.tip)});
+    doc.querySelector('li[data-sha="'+repo.tip+'"]').click();await vi.waitFor(()=>expect(f.run).toHaveBeenCalledOnce());expect(doc.getElementById('switch').disabled).toBe(true);
+    doc.getElementById('error').textContent='Actual failure';await poll();expect(doc.getElementById('error').textContent).toBe('Actual failure');expect(f.run).toHaveBeenCalledOnce();
+    expect(dom.window.document.querySelectorAll('svg')).toHaveLength(2);
+  },30000);
+  it('denies delegated release mutation and retains only read-only release metadata',async()=>{
+    const f=await fixture(),headers={authorization:`Bearer ${pixelReleaseToken(f.secret)}`};
+    expect((await f.app.inject({url:'/pixel/releases',headers})).statusCode).toBe(200);
+    for(const action of ['rollback','delete'])expect((await f.app.inject({method:'POST',url:'/pixel/releases/'+action,headers,payload:{}})).statusCode).toBe(403);
+    expect(f.run).not.toHaveBeenCalled();
   });
+  it('publishes an exact candidate without moving Git branches or requiring fast-forward history',async()=>{
+    const repo=gitRepo();repo.commit('main moved','main.txt');const before=repo.run('show-ref','--heads'),f=await fixture();
+    f.data.candidates[0].request.owner_release={source_commit:repo.tip,reason:'Switch to compatible earlier code',main_head_at_prepare:repo.base,git_sync_target:repo.tip};
+    const app=await createUpgradeWeb({root:repo.directory,config:{stateDirectory:f.directory},secret:f.secret,runCommand:f.run,status:()=>f.data,checkRunning:f.checkRunning});cleanups.push(()=>app.close());
+    const login=await app.inject({method:'POST',url:'/api/login',payload:{secret:f.secret}}),cookie=String(login.headers['set-cookie']).split(';')[0];
+    expect((await app.inject({method:'POST',url:'/api/upgrades',headers:{cookie},payload:{action:'publish',id:'local-v24-test',hash:'b'.repeat(64)}})).statusCode).toBe(409);
+    expect((await app.inject({method:'POST',url:'/api/upgrades',headers:{cookie},payload:{action:'publish',id:'local-v24-test',hash:'a'.repeat(64)}})).statusCode).toBe(202);
+    await vi.waitFor(()=>expect(f.run).toHaveBeenCalledTimes(2));expect(repo.run('show-ref','--heads')).toBe(before);
+  },30000);
+});
+
+describe('Owner web upgrade', () => {
   it('rolls back to the selected history without publication approval and denies stale targets',async()=>{
     const f=await fixture();expect((await f.request({action:'rollback',targetGeneration:'G0007',expectedActive:'G0006',reason:'Undo regression'})).statusCode).toBe(409);
     expect((await f.request({action:'rollback',targetGeneration:'G0007',expectedActive:'G0008',reason:'Undo regression'})).statusCode).toBe(202);
@@ -65,33 +91,6 @@ describe('Owner web upgrade', () => {
     expect((await f.request(body)).statusCode).toBe(409);f.data.candidates[0].canDelete=true;
     expect((await f.request({...body,identity:'b'.repeat(64)})).statusCode).toBe(409);expect((await f.request(body)).statusCode).toBe(202);
     await vi.waitFor(()=>expect(f.run).toHaveBeenCalledOnce());expect(f.run.mock.calls[0][1]).toEqual(['delete-release','local-v24-test','G0008','a'.repeat(64),'Remove later code']);expect(f.checkRunning).not.toHaveBeenCalled();
-  });
-  it('delegates only rollback and deletion to Pixel credentials, preserves request identity and hides private status',async()=>{
-    const f=await fixture(),authorization=`Bearer ${pixelReleaseToken(f.secret)}`,headers={authorization};
-    expect((await f.app.inject('/pixel/releases')).statusCode).toBe(401);expect((await f.app.inject({url:'/pixel/releases',headers:{authorization:'Bearer '+'b'.repeat(64)}})).statusCode).toBe(401);
-    const listing=await f.app.inject({url:'/pixel/releases',headers});expect(listing.statusCode).toBe(200);expect(listing.body).not.toMatch(/secret|validationLog|directory|owner_release|request_hash/);
-    expect((await f.app.inject({method:'POST',url:'/api/upgrades',headers,payload:{action:'publish'}})).statusCode).toBe(401);
-    expect((await f.app.inject({method:'POST',url:'/pixel/releases/publish',headers,payload:{action:'publish'}})).statusCode).toBe(404);
-    const payload={targetGeneration:'G0007',expectedActive:'G0008',reason:'Return to stable code',deleteNewer:true,worldId:'world_a',pixelId:'0_0_0',operationKey:'world_a:op1'};
-    const post=(body:any)=>f.app.inject({method:'POST',url:'/pixel/releases/rollback',headers,payload:body});
-    expect((await post({...payload,command:'whoami'})).statusCode).toBe(400);expect((await post(payload)).statusCode).toBe(202);await vi.waitFor(()=>expect(f.run).toHaveBeenCalledTimes(2));
-    expect(f.run.mock.calls.map(c=>c[1])).toEqual([['rollback-to','G0007','G0008','Pixel world_a/0_0_0: Return to stable code'],['delete-newer','G0007','Pixel world_a/0_0_0: Return to stable code']]);
-    expect((await post(payload)).statusCode).toBe(202);expect(f.run).toHaveBeenCalledTimes(2);expect((await post({...payload,reason:'Changed request'})).statusCode).toBe(409);
-    expect((await f.app.inject({url:'/pixel/releases',headers})).body).not.toMatch(/checked|validationLog|requestHash/);
-  });
-  it.each(['zh-CN','en'])('renders the Owner link, rollback and deletion controls and sends their exact targets in %s',async lang=>{
-    const f=await fixture();f.data.afterRollback=true;f.data.candidates[0].canDelete=true;
-    const dom=new JSDOM((await f.app.inject('/')).body,{url:'http://127.0.0.1:8766/',runScripts:'outside-only'});cleanups.push(async()=>dom.window.close());
-    dom.window.localStorage.setItem('emergentinc.language',lang);dom.window.setInterval=()=>0;dom.window.HTMLDialogElement.prototype.showModal=function(){this.open=true;};dom.window.HTMLDialogElement.prototype.close=function(){this.open=false;};dom.window.fetch=async(url:string,init:any={})=>{const response=await f.app.inject({method:init.method??'GET',url,headers:{cookie:f.cookie},...(init.body?{payload:JSON.parse(init.body)}:{})});return {ok:response.statusCode<400,status:response.statusCode,json:async()=>response.json()};};
-    await dom.window.eval(`(async()=>{${dom.window.document.querySelector('script').textContent}})()`);const doc=dom.window.document;
-    expect(doc.getElementById('back').textContent).toBe(lang==='en'?'Back to Owner':'返回 Owner');expect(doc.getElementById('back').href).toBe('http://127.0.0.1:8765/OWNER');
-    expect(doc.querySelector('#history button').disabled).toBe(false);
-    expect(doc.querySelector('#history button').textContent).toBe(lang==='en'?'Roll back to this version':'回退到此版本');doc.querySelector('#history button').click();expect(doc.getElementById('maintenance-dialog').open).toBe(true);doc.getElementById('maintenance-reason').value='Undo regression';doc.getElementById('maintenance-form').requestSubmit();await vi.waitFor(()=>expect(f.run).toHaveBeenCalledOnce());
-    expect(f.run.mock.calls[0][1]).toEqual(['rollback-to','G0007','G0008','Undo regression']);
-    await vi.waitFor(()=>expect(JSON.parse(fs.readFileSync(path.join(f.directory,'upgrade-web-job.json'),'utf8')).state).toBe('succeeded'));
-    await vi.waitFor(()=>expect([...doc.querySelectorAll('#candidates button')].find((b:any)=>b.textContent===(lang==='en'?'Delete this code version':'删除此代码版本')).disabled).toBe(false));
-    [...doc.querySelectorAll('#candidates button')].find((b:any)=>b.textContent===(lang==='en'?'Delete this code version':'删除此代码版本')).click();doc.getElementById('maintenance-reason').value='Undo regression';doc.getElementById('maintenance-form').requestSubmit();await vi.waitFor(()=>expect(f.run).toHaveBeenCalledTimes(2));
-    expect(f.run.mock.calls[1][1]).toEqual(['delete-release','local-v24-test','G0008','a'.repeat(64),'Undo regression']);
   });
   it('blocks approval when the main service is offline and allows an explicit retry after startup',async()=>{
     const f=await fixture();f.checkRunning.mockRejectedValueOnce(new Error('MAIN_SERVICE_UNAVAILABLE'));
@@ -203,20 +202,6 @@ describe('Owner web upgrade', () => {
     expect(result.versions.find(v=>v.id==='G0002').canDelete).toBe(false);expect(result.versions.find(v=>v.id==='G0001').canDelete).toBe(false);expect(result.candidates.find(c=>c.id==='r4').canDelete).toBe(true);
     lineage.close();evolution.close();
   });
-  it.each(['zh-CN','en'])('accepts the reported label and renders labels safely in the actual page (%s)',async lang=>{
-    const f=await fixture(),html=(await f.app.inject('/')).body;
-    (f.data.candidates[0].request.owner_release as any).label='<img src=x onerror=alert(1)> 中文标签';
-    const dom=new JSDOM(html,{url:'http://127.0.0.1:8766/',runScripts:'outside-only'});
-    cleanups.push(async()=>dom.window.close());dom.window.localStorage.setItem('emergentinc.language',lang);dom.window.setInterval=()=>0;dom.window.HTMLDialogElement.prototype.showModal=function(){this.open=true;};dom.window.HTMLDialogElement.prototype.close=function(){this.open=false;};
-    dom.window.fetch=async(url:string,init:any={})=>{const response=await f.app.inject({method:init.method??'GET',url,headers:{cookie:f.cookie},...(init.body?{payload:JSON.parse(init.body)}:{})});return {ok:response.statusCode<400,status:response.statusCode,json:async()=>response.json()};};
-    await dom.window.eval(`(async()=>{${dom.window.document.querySelector('script').textContent}})()`);
-    const input=dom.window.document.getElementById('version'),reason=dom.window.document.getElementById('reason');
-    expect(input.hasAttribute('required')).toBe(false);expect(input.hasAttribute('pattern')).toBe(false);expect(input.placeholder).toBe(lang==='en'?'Leave blank to generate a label':'留空自动生成');
-    expect(dom.window.document.querySelector('#candidates h3').textContent).toBe('<img src=x onerror=alert(1)> 中文标签');expect(dom.window.document.querySelector('#candidates img')).toBeNull();
-    input.value='v25-owner-work-统一浅灰背景';reason.value='统一浅灰背景';expect(input.checkValidity()).toBe(true);
-    dom.window.document.getElementById('prepare-form').requestSubmit();
-    await vi.waitFor(()=>expect(f.run).toHaveBeenCalledTimes(1));expect(f.run.mock.calls[0][1]).toEqual(['prepare','v25-owner-work-统一浅灰背景','统一浅灰背景']);
-  });
   it('preserves command failures for review and does not retry publication', async () => {
     const f = await fixture();
     f.run.mockRejectedValueOnce(new Error('validation failed'));
@@ -227,90 +212,12 @@ describe('Owner web upgrade', () => {
     expect(status.job.error).toBe('validation failed');
     expect(status.busy).toBe(false);
   });
-  it.each(['zh-CN','en'])('keeps publication at the top and preserves controls and errors across actual polling (%s)',async lang=>{
-    const f=await fixture(),{dom,doc,poll}=await page(f,lang);
-    expect(doc.getElementById('publish-section').compareDocumentPosition(doc.getElementById('history-section'))&4).toBe(4);
-    const card=doc.querySelector('#candidates article'),check=card.querySelector('input'),button=card.querySelector('button'),details=card.querySelector('details');
-    expect(button.disabled).toBe(true);check.click();details.open=true;details.dispatchEvent(new dom.window.Event('toggle'));check.focus();
-    await poll();expect(doc.querySelector('#candidates input')).toBe(check);expect(doc.activeElement).toBe(check);expect(details.open).toBe(true);expect(button.disabled).toBe(false);
-    f.data.candidates[0].candidate.candidate_hash='b'.repeat(64);button.click();
-    await vi.waitFor(()=>expect(doc.getElementById('error').textContent).toContain(lang==='en'?'identifier changed':'标识已变化'));
-    await poll();expect(doc.getElementById('error').textContent).toContain(lang==='en'?'identifier changed':'标识已变化');
-    expect(doc.querySelector('#candidates input').checked).toBe(false);expect(f.run).not.toHaveBeenCalled();
-    doc.querySelector('#history button').click();doc.getElementById('maintenance-reason').value='Kept during polling';
-    await poll();expect(doc.getElementById('maintenance-dialog').open).toBe(true);expect(doc.getElementById('maintenance-reason').value).toBe('Kept during polling');
-    doc.getElementById('maintenance-cancel').click();expect(doc.getElementById('maintenance-dialog').open).toBe(false);expect(f.run).not.toHaveBeenCalled();
-  });
-  it.each(['zh-CN','en'])('requires a reason inside the target dialog and supports rollback with cleanup (%s)',async lang=>{
-    const f=await fixture(),{doc,poll}=await page(f,lang);doc.querySelector('#history button').click();
-    expect(doc.getElementById('maintenance-target').textContent).toContain('G0007');expect(doc.getElementById('maintenance-form').checkValidity()).toBe(false);
-    doc.getElementById('maintenance-form').requestSubmit();expect(f.run).not.toHaveBeenCalled();
-    doc.getElementById('maintenance-reason').value='Rollback and clean';doc.getElementById('delete-newer').checked=true;doc.getElementById('maintenance-form').requestSubmit();
-    await vi.waitFor(()=>expect(f.run).toHaveBeenCalledTimes(2));expect(f.run.mock.calls.map(c=>c[1][0])).toEqual(['rollback-to','delete-newer']);
-    await poll();expect(doc.getElementById('job-title').textContent).toContain(lang==='en'?'Most recent operation':'最近一次操作');
-    expect(doc.getElementById('job-time').textContent).toContain('G0007');
-  });
-  it('offers validation retry only for the unchanged submitted candidate on the active base',async()=>{
-    const f=await fixture(),row=f.data.candidates[0];row.state='SUBMITTED';row.candidate=null;
-    expect((await f.request({action:'validate',id:row.id,expectedActive:'G0008',identity:'b'.repeat(64)})).statusCode).toBe(409);
-    const {doc}=await page(f);expect(doc.querySelector('#candidates button').textContent).toBe('重新校验此版本');doc.querySelector('#candidates button').click();
-    await vi.waitFor(()=>expect(f.run).toHaveBeenCalledOnce());expect(f.run.mock.calls[0][1]).toEqual(['validate',row.id]);
-    row.request.base_generation='G0007';expect((await f.request({action:'validate',id:row.id,expectedActive:'G0008',identity:row.identity})).statusCode).toBe(409);
-  });
-  it('shows an external maintenance lock as busy and rejects conflicting actions',async()=>{
-    const f=await fixture(),lock=path.join(f.directory,'operator.lock');fs.writeFileSync(lock,JSON.stringify({pid:process.pid}));
-    expect((await f.app.inject({url:'/api/upgrades',headers:{cookie:f.cookie}})).json().busy).toBe(true);
-    expect((await f.request({action:'recover'})).statusCode).toBe(409);const {doc,poll}=await page(f);
-    expect(doc.querySelector('#history button').disabled).toBe(true);fs.unlinkSync(lock);await poll();expect(doc.querySelector('#history button').disabled).toBe(false);expect(f.run).not.toHaveBeenCalled();
-  });
-  it.each(['zh-CN','en'])('separates stale candidates and logs out and restores the login form (%s)',async lang=>{
-    const f=await fixture();f.data.candidates.push({...f.data.candidates[0],id:'old-candidate',request:{...f.data.candidates[0].request,base_generation:'G0007'}});
-    const {doc,poll}=await page(f,lang);expect(doc.querySelectorAll('#candidates article')).toHaveLength(1);expect(doc.querySelector('#archived-candidates').textContent).toContain(lang==='en'?'based on an old version':'基于旧版本');
-    expect(doc.querySelectorAll('#archived-candidates button')).toHaveLength(0);doc.getElementById('logout').click();
-    await vi.waitFor(()=>expect(doc.getElementById('login').hidden).toBe(false));await poll();expect(doc.getElementById('content').hidden).toBe(true);
-    doc.getElementById('secret').value='bad';doc.getElementById('login-form').requestSubmit();await vi.waitFor(()=>expect(doc.getElementById('error').textContent).toBe(lang==='en'?'Invalid Owner secret.':'Owner 口令错误。'));
-    doc.getElementById('secret').value=f.secret;doc.getElementById('login-form').requestSubmit();await vi.waitFor(()=>expect(doc.getElementById('content').hidden).toBe(false));expect(doc.getElementById('error').textContent).toBe('');
-  });
-  it('prevents overlapping polling and distinguishes network failures from login rejection',async()=>{
-    const f=await fixture(),{dom,doc,poll}=await page(f);let finish!:(r:any)=>void;
-    dom.window.fetch.mockImplementationOnce(()=>new Promise(resolve=>{finish=resolve;}));const running=poll();await poll();
-    expect(dom.window.fetch.mock.calls.filter(([url]:[string])=>url==='/api/upgrades')).toHaveLength(2);
-    finish({ok:true,status:200,json:async()=>({...f.data,job:null,busy:false})});await running;
-    dom.window.fetch.mockRejectedValueOnce(new Error('Failed to fetch'));await poll();expect(doc.getElementById('error').textContent).toBe('无法连接升级服务。');await poll();expect(doc.getElementById('error').textContent).toBe('');
-  });
   it('reads an interrupted job after restart and offers explicit recovery',async()=>{
     const f=await fixture();fs.writeFileSync(path.join(f.directory,'upgrade-web-job.json'),JSON.stringify({action:'rollback',targetGeneration:'G0007',state:'running',startedAt:Date.now(),log:'Before restart'}));
     const app=await createUpgradeWeb({root:path.resolve('.'),config:{stateDirectory:f.directory},secret:f.secret,runCommand:f.run,status:()=>f.data,checkRunning:f.checkRunning});cleanups.push(()=>app.close());
     const login=await app.inject({method:'POST',url:'/api/login',payload:{secret:f.secret}}),cookie=String(login.headers['set-cookie']).split(';')[0];
     expect((await app.inject({url:'/api/upgrades',headers:{cookie}})).json().job).toMatchObject({state:'interrupted',error:'UPGRADE_INTERRUPTED_CHECK_RECOVERY'});
     expect((await app.inject({method:'POST',url:'/api/upgrades',headers:{cookie},payload:{action:'recover'}})).statusCode).toBe(202);await vi.waitFor(()=>expect(f.run).toHaveBeenCalledWith(path.resolve('.'),['recover'],expect.any(Function)));
-  });
-
-  it.each(['zh-CN','en'])('reviews source reports, binds their hash and clears approval on logout (%s)',async lang=>{
-    const f=await fixture(),id='code_'+ 'a'.repeat(32),hash='b'.repeat(64),report={id,hash,title:'Source report',personName:'Pixel',baseGeneration:'G0008',summary:'Change source',files:[{path:'apps/server/example.ts',content:'export const example=1;'},{path:'apps/server/obsolete.ts',content:null}]};
-    const {doc,poll}=await page(f,lang,`?report=${id}&reportHash=${hash}`,{['/api/code-reports/'+id]:report});
-    const section=doc.getElementById('code-report');expect(section.hidden).toBe(false);expect(section.textContent).toContain(lang==='en'?'Delete file':'删除文件');
-    expect(section.querySelector('button').disabled).toBe(true);section.querySelector('input').click();section.querySelector('button').click();
-    await vi.waitFor(()=>expect(f.run).toHaveBeenCalledOnce());expect(f.run.mock.calls[0][1]).toEqual(['prepare-code',id,hash]);
-    await vi.waitFor(()=>expect(section.querySelector('button').disabled).toBe(false));doc.getElementById('logout').click();await vi.waitFor(()=>expect(doc.getElementById('login').hidden).toBe(false));expect(section.hidden).toBe(true);
-    doc.getElementById('secret').value=f.secret;doc.getElementById('login-form').requestSubmit();await vi.waitFor(()=>expect(doc.getElementById('content').hidden).toBe(false));await poll();expect(section.querySelector('input').checked).toBe(false);expect(section.querySelector('button').disabled).toBe(true);
-  });
-  it.each(['zh-CN','en'])('rejects a changed source report and keeps its error across polling (%s)',async lang=>{
-    const f=await fixture(),id='code_'+ 'a'.repeat(32),{doc,poll}=await page(f,lang,`?report=${id}&reportHash=${'b'.repeat(64)}`,{['/api/code-reports/'+id]:{id,hash:'c'.repeat(64)}});
-    const section=doc.getElementById('code-report');expect(section.hidden).toBe(false);expect(section.textContent).toContain(lang==='en'?'verification ID changed':'校验标识已变化');expect(section.querySelector('button')).toBeNull();await poll();expect(section.hidden).toBe(false);expect(f.run).not.toHaveBeenCalled();
-  });
-  it.each(['zh-CN','en'])('executes recovery from the failed-operation button and reports an expired session (%s)',async lang=>{
-    const f=await fixture();f.run.mockRejectedValueOnce(new Error('GENE_HASH_MUST_CHANGE'));await f.request({action:'prepare',version:'No change',reason:'Test'});
-    await vi.waitFor(()=>expect(JSON.parse(fs.readFileSync(path.join(f.directory,'upgrade-web-job.json'),'utf8')).state).toBe('failed'));
-    const {doc,poll}=await page(f,lang);expect(doc.getElementById('job-state').textContent).toContain(lang==='en'?'no code changes':'没有可发布的代码改动');expect(doc.getElementById('recover').hidden).toBe(false);doc.getElementById('recover').click();await vi.waitFor(()=>expect(f.run).toHaveBeenCalledTimes(2));expect(f.run.mock.calls[1][1]).toEqual(['recover']);
-    await f.app.inject({method:'POST',url:'/api/logout',headers:{cookie:f.cookie}});await poll();expect(doc.getElementById('login').hidden).toBe(false);expect(doc.getElementById('error').textContent).toBe(lang==='en'?'Your session expired. Log in again.':'登录已过期，请重新登录。');
-  });
-
-  it.each(['zh-CN','en'])('maps an actual validator command failure to a readable message and retains the candidate (%s)',async lang=>{
-    const f=await fixture();fs.mkdirSync(path.join(f.directory,'scripts'));fs.writeFileSync(path.join(f.directory,'scripts/version-upgrade.mjs'),"process.stderr.write('LOCAL_VALIDATOR_COMMAND_FAILED: test\\n');process.exitCode=1;");
-    const row=f.data.candidates[0];row.state='SUBMITTED';row.candidate=null;f.run.mockImplementation((_root,args,output)=>runUpgradeCommand(f.directory,args,output));
-    expect((await f.request({action:'validate',id:row.id,identity:row.identity,expectedActive:'G0008'})).statusCode).toBe(202);await vi.waitFor(()=>expect(JSON.parse(fs.readFileSync(path.join(f.directory,'upgrade-web-job.json'),'utf8')).state).toBe('failed'));
-    const {doc}=await page(f,lang);expect(doc.getElementById('job-state').textContent).toContain(lang==='en'?'has not been published':'尚未发布');expect(doc.querySelector('#candidates button').disabled).toBe(false);expect(f.run).toHaveBeenCalledOnce();
   });
 
   it('does not create a missing database during status inspection',async()=>{
@@ -340,73 +247,6 @@ describe('V27 dual-tree git upgrade', () => {
     repo.run('branch','feature/restored',checkpoint);graph=readGitGraph(repo.directory);expect(graph.commits.map((c:any)=>c.sha)).toContain(checkpoint);expect(repo.run('rev-parse','refs/cline/checkpoints/test/1')).toBe(checkpoint);
   },30000);
 
-  it.each(['zh-CN','en'])('opens a pinned-commit preparation form, requires a reason, cancels safely and submits the selected SHA (%s)',async lang=>{
-    const repo=gitRepo(),f=await fixture(),app=await createUpgradeWeb({root:repo.directory,config:{stateDirectory:f.directory},secret:f.secret,runCommand:f.run,status:()=>f.data,checkRunning:f.checkRunning});cleanups.push(()=>app.close());
-    fs.mkdirSync(path.join(repo.directory,'resources'));fs.copyFileSync(path.resolve('resources/upgrade-web.html'),path.join(repo.directory,'resources/upgrade-web.html'));
-    const login=await app.inject({method:'POST',url:'/api/login',payload:{secret:f.secret}}),cookie=String(login.headers['set-cookie']).split(';')[0];
-    const {doc,poll}=await page({...f,app,cookie},lang);
-    doc.querySelector(`#commit-list [data-sha="${repo.first}"]`).click();await vi.waitFor(()=>expect(doc.getElementById('prepare-commit').disabled).toBe(false));
-    const meta=doc.getElementById('selected-meta').firstChild,files=doc.querySelector('#selected-files .file-list');files.scrollTop=30;await poll();expect(doc.getElementById('selected-meta').firstChild).toBe(meta);expect(files.scrollTop).toBe(30);
-    expect(doc.getElementById('selected-meta').textContent).toContain(lang==='en'?'commits not yet on main (1)':'未进入 main 的提交 (1)');
-    doc.getElementById('version').value='Other release';doc.getElementById('reason').value='Unrelated description';
-    doc.getElementById('prepare-commit').click();expect(doc.getElementById('commit-dialog').open).toBe(true);expect(doc.getElementById('commit-target').textContent).toBe(repo.first);
-    expect(doc.getElementById('commit-version').value).toBe('add SKILL.md');expect(doc.getElementById('commit-reason').value).toBe('add SKILL.md');
-    doc.getElementById('commit-reason').value='';
-    doc.getElementById('commit-form').requestSubmit();expect(f.run).not.toHaveBeenCalled();expect(doc.getElementById('commit-dialog').open).toBe(true);
-    doc.getElementById('commit-cancel').click();expect(doc.getElementById('commit-dialog').open).toBe(false);expect(f.run).not.toHaveBeenCalled();
-    doc.getElementById('prepare-commit').click();doc.getElementById('commit-version').value='Pinned UI test';doc.getElementById('commit-reason').value='Review this exact commit';doc.getElementById('commit-form').requestSubmit();
-    await vi.waitFor(()=>expect(f.run).toHaveBeenCalledOnce());expect(f.run.mock.calls[0][1]).toEqual(['prepare','Pinned UI test','Review this exact commit','--commit',repo.first]);
-    await vi.waitFor(()=>expect(doc.getElementById('prepare-commit').disabled).toBe(false));
-    fs.writeFileSync(path.join(f.directory,'operator.lock'),JSON.stringify({pid:process.pid}));await poll();expect(doc.getElementById('prepare-commit').disabled).toBe(true);expect(doc.getElementById('commit-confirm').disabled).toBe(true);
-    fs.unlinkSync(path.join(f.directory,'operator.lock'));await poll();expect(doc.getElementById('prepare-commit').disabled).toBe(false);
-    doc.getElementById('prepare-commit').click();doc.getElementById('logout').click();await vi.waitFor(()=>expect(doc.getElementById('login').hidden).toBe(false));expect(doc.getElementById('commit-dialog').open).toBe(false);
-    doc.getElementById('secret').value=f.secret;doc.getElementById('login-form').requestSubmit();await vi.waitFor(()=>expect(doc.getElementById('content').hidden).toBe(false));await poll();expect(doc.getElementById('selected-commit').hidden).toBe(true);
-  },30000);
-
-  it.each(['zh-CN','en'])('uses the selected Git title and multiline body as editable defaults and submits without edits (%s)',async lang=>{
-    const repo=gitRepo(),subject='fix(owner): 恢复报告审查入口',body='- 恢复源码报告入口\n- Preserve the exact selected SHA\n\n验证：接口测试通过。';
-    repo.run('checkout','feature/skills');const sha=repo.commit(subject+'\n\n'+body);repo.run('checkout','main');
-    const f=await fixture(),app=await createUpgradeWeb({root:repo.directory,config:{stateDirectory:f.directory},secret:f.secret,runCommand:f.run,status:()=>f.data,checkRunning:f.checkRunning});cleanups.push(()=>app.close());
-    fs.mkdirSync(path.join(repo.directory,'resources'));fs.copyFileSync(path.resolve('resources/upgrade-web.html'),path.join(repo.directory,'resources/upgrade-web.html'));
-    const login=await app.inject({method:'POST',url:'/api/login',payload:{secret:f.secret}}),cookie=String(login.headers['set-cookie']).split(';')[0];
-    const {doc}=await page({...f,app,cookie},lang);
-    expect(readGitCommit(repo.directory,sha).commit).toMatchObject({subject,body,author:'Tester'});
-    doc.querySelector(`#commit-list [data-sha="${sha}"]`).click();await vi.waitFor(()=>expect(doc.getElementById('prepare-commit').disabled).toBe(false));
-    doc.getElementById('prepare-commit').click();
-    expect(doc.getElementById('commit-version').value).toBe(subject);expect(doc.getElementById('commit-reason').value).toBe(body);
-    expect(doc.querySelector('[data-text="prepareCommitHint"]').textContent).toContain(lang==='en'?'Edit either field or submit directly':'两项均可编辑或直接提交');
-    doc.getElementById('commit-form').requestSubmit();
-    await vi.waitFor(()=>expect(f.run).toHaveBeenCalledOnce());
-    expect(f.run.mock.calls[0][1]).toEqual(['prepare',subject,body,'--commit',sha]);
-  },30000);
-
-  it('keeps long Git defaults within the existing form limits so direct submission succeeds',async()=>{
-    const repo=gitRepo(),subject='s'.repeat(220),body='detail\n'.repeat(180);
-    repo.run('checkout','feature/skills');const sha=repo.commit(subject+'\n\n'+body);repo.run('checkout','main');
-    const f=await fixture(),app=await createUpgradeWeb({root:repo.directory,config:{stateDirectory:f.directory},secret:f.secret,runCommand:f.run,status:()=>f.data,checkRunning:f.checkRunning});cleanups.push(()=>app.close());
-    fs.mkdirSync(path.join(repo.directory,'resources'));fs.copyFileSync(path.resolve('resources/upgrade-web.html'),path.join(repo.directory,'resources/upgrade-web.html'));
-    const login=await app.inject({method:'POST',url:'/api/login',payload:{secret:f.secret}}),cookie=String(login.headers['set-cookie']).split(';')[0];
-    const {doc}=await page({...f,app,cookie},'en');
-    doc.querySelector(`#commit-list [data-sha="${sha}"]`).click();await vi.waitFor(()=>expect(doc.getElementById('prepare-commit').disabled).toBe(false));
-    doc.getElementById('prepare-commit').click();doc.getElementById('commit-form').requestSubmit();
-    await vi.waitFor(()=>expect(f.run).toHaveBeenCalledOnce());
-    expect(f.run.mock.calls[0][1]).toEqual(['prepare',subject.slice(0,200),body.slice(0,1000).trim(),'--commit',sha]);
-  },30000);
-
-  it('ignores an older commit response and disables stale details after graph refresh fails',async()=>{
-    const repo=gitRepo(),f=await fixture(),app=await createUpgradeWeb({root:repo.directory,config:{stateDirectory:f.directory},secret:f.secret,runCommand:f.run,status:()=>f.data,checkRunning:f.checkRunning});cleanups.push(()=>app.close());
-    fs.mkdirSync(path.join(repo.directory,'resources'));fs.copyFileSync(path.resolve('resources/upgrade-web.html'),path.join(repo.directory,'resources/upgrade-web.html'));
-    const login=await app.inject({method:'POST',url:'/api/login',payload:{secret:f.secret}}),cookie=String(login.headers['set-cookie']).split(';')[0],{dom,doc}=await page({...f,app,cookie},'en');
-    const original=dom.window.fetch;let release!:(value:any)=>void;
-    dom.window.fetch=async(url:string,init:any={})=>url==='/api/git-commit/'+repo.first?new Promise(resolve=>{release=resolve;}):original(url,init);
-    doc.querySelector(`#commit-list [data-sha="${repo.first}"]`).click();doc.querySelector(`#commit-list [data-sha="${repo.tip}"]`).click();await vi.waitFor(()=>expect(doc.getElementById('prepare-commit').disabled).toBe(false));
-    const late=readGitCommit(repo.directory,repo.first);late.commit.author='Late response';release({ok:true,status:200,json:async()=>late});await new Promise(resolve=>setTimeout(resolve,0));
-    expect(doc.getElementById('selected-sha').textContent).toContain(repo.tip.slice(0,12));expect(doc.getElementById('selected-meta').textContent).not.toContain('Late response');
-    let fail=true;dom.window.fetch=async(url:string,init:any={})=>{if(url==='/api/git-graph'&&fail){fail=false;throw new Error('Network lost');}return original(url,init);};
-    doc.getElementById('refresh-graph').click();await vi.waitFor(()=>expect(doc.getElementById('git-unavailable').hidden).toBe(false));expect(doc.getElementById('prepare-commit').disabled).toBe(true);
-    doc.getElementById('refresh-graph').click();await vi.waitFor(()=>expect(doc.getElementById('prepare-commit').disabled).toBe(false));expect(doc.getElementById('git-unavailable').hidden).toBe(true);
-  },30000);
-
   it('fast-forwards main from a development checkout without changing the checked-out branch',()=>{
     const repo=gitRepo();repo.run('checkout','feature/skills');const current=repo.run('rev-parse','HEAD');
     fastForwardMain(repo.tip,repo.base,repo.directory);expect(repo.run('rev-parse','main')).toBe(repo.tip);expect(repo.run('branch','--show-current')).toBe('feature/skills');expect(repo.run('rev-parse','HEAD')).toBe(current);expect(repo.run('status','--porcelain')).toBe('');
@@ -425,17 +265,6 @@ describe('V27 dual-tree git upgrade', () => {
     if(mainDirectory)expect(fs.readFileSync(path.join(mainDirectory,'file.txt'),'utf8')).toBe('polish SKILL.md');
   },30000);
 
-  it.each(['zh-CN','en'])('clears the stale sync warning after main reaches the published commit (%s)',async lang=>{
-    const f=await fixture(),target='b'.repeat(40);f.data.candidates[0].request.owner_release.git_sync_target=target;
-    const data={...f.data,busy:false,job:{action:'publish',id:'local-v24-test',state:'succeeded',gitSyncState:'needs_git_sync'}};
-    const graph={available:true,refs:[],commits:[],mainHead:'c'.repeat(40)},responses={'/api/upgrades':data,'/api/git-graph':graph};
-    const {doc,poll}=await page(f,lang,'',responses);expect(doc.getElementById('git-sync-note').textContent).toContain('NEEDS_GIT_SYNC');
-    graph.mainHead=target;doc.getElementById('refresh-graph').click();
-    await vi.waitFor(()=>expect(doc.getElementById('git-sync-note').textContent).toBe(lang==='en'?'Published successfully; git main synced to this commit.':'发布成功，Git main 已同步到此提交。'));
-    expect(data.job.gitSyncState).toBe('needs_git_sync');expect(f.run).not.toHaveBeenCalled();
-    data.job.id='another-release';await poll();expect(doc.getElementById('git-sync-note').textContent).toContain('NEEDS_GIT_SYNC');
-  });
-
   it('updates a separately checked-out main worktree and refuses its uncommitted changes',()=>{
     const repo=gitRepo();repo.run('checkout','feature/skills');const mainDirectory=fs.mkdtempSync(path.join(tmpdir(),'upgrade-main-checkout-'));
     repo.run('worktree','add',mainDirectory,'main');cleanups.push(async()=>{repo.run('worktree','remove','--force',mainDirectory);});
@@ -447,47 +276,6 @@ describe('V27 dual-tree git upgrade', () => {
     const repo=gitRepo();repo.commit('main advances','main.txt');const detail=readGitCommit(repo.directory,repo.tip);expect(detail.fastForwardable).toBe(false);expect(detail.ahead).toBe(2);expect(detail.behind).toBe(1);
     repo.run('-c','user.name=Tester','-c','user.email=t@example.com','merge','--no-ff','feature/skills','-m','merge for details');const merged=readGitCommit(repo.directory,repo.run('rev-parse','HEAD'));expect(merged.files).toEqual([{status:'M',name:'file.txt'}]);expect(readGitCommit(repo.directory,repo.run('rev-list','--max-parents=0','main')).files).toEqual([]);
   },30000);
-
-  it.each(['zh-CN','en'])('draws the same forks and merges with opposite main membership and retains real release identity (%s)',async lang=>{
-    const repo=gitRepo();repo.run('checkout','-b','feature/unmerged');const side=repo.commit('unmerged development','side.txt');
-    repo.run('checkout','main');repo.commit('main work','main.txt');repo.run('-c','user.name=Tester','-c','user.email=t@example.com','merge','--no-ff','feature/skills','-m','merge skills');
-    const graph=readGitGraph(repo.directory),mainMembers=new Set(repo.run('rev-list','main').split(/\r?\n/)),merge=graph.commits.find((c:any)=>c.parents.length===2);
-    const f=await fixture();f.data.versions.push({id:'G0008',generation_no:8,parent_id:'G0007',release_id:'local-v24-test',label:'Running old source',state:'ACTIVE'});f.data.candidates[0].request.owner_release.source_commit=repo.base;
-    const responses:any={'/api/git-graph':graph,['/api/git-commit/'+side]:readGitCommit(repo.directory,side)};
-    const {dom,doc}=await page(f,lang,'',responses);
-    for(const commit of graph.commits){
-      const left=doc.querySelector(`#release-list [data-sha="${commit.sha}"]`),right=doc.querySelector(`#commit-list [data-sha="${commit.sha}"]`);
-      expect(left.classList.contains('focused')).toBe(mainMembers.has(commit.sha));expect(right.classList.contains('focused')).toBe(!mainMembers.has(commit.sha));
-      expect(left.classList.contains('muted')).toBe(!mainMembers.has(commit.sha));expect(right.classList.contains('muted')).toBe(mainMembers.has(commit.sha));
-      const a=doc.querySelector(`#release-tree circle[data-sha="${commit.sha}"]`),b=doc.querySelector(`#git-tree circle[data-sha="${commit.sha}"]`);
-      expect([a.getAttribute('cx'),a.getAttribute('cy')]).toEqual([b.getAttribute('cx'),b.getAttribute('cy')]);
-      for(const parent of commit.parents){expect(doc.querySelector(`#release-tree path[data-child="${commit.sha}"][data-parent="${parent}"]`)).not.toBeNull();expect(doc.querySelector(`#git-tree path[data-child="${commit.sha}"][data-parent="${parent}"]`)).not.toBeNull();}
-    }
-    expect(doc.querySelectorAll(`#release-tree path[data-child="${merge.sha}"]`)).toHaveLength(2);
-    const parentX=merge.parents.map((sha:string)=>doc.querySelector(`#release-tree circle[data-sha="${sha}"]`).getAttribute('cx'));expect(new Set(parentX).size).toBe(2);
-    expect(doc.querySelector(`#release-list [data-sha="${repo.base}"]`).textContent).toContain(lang==='en'?'G0008 · Running':'G0008 · 当前运行');
-    expect(doc.querySelector(`#release-list [data-sha="${graph.mainHead}"]`).textContent).not.toContain('G0008');expect(doc.querySelector('.release-lineage path[data-child="G0008"][data-parent="G0007"]')).not.toBeNull();
-    doc.querySelector(`#commit-list [data-sha="${side}"]`).dispatchEvent(new dom.window.KeyboardEvent('keydown',{key:'Enter',bubbles:true}));
-    await vi.waitFor(()=>expect(doc.getElementById('selected-meta').textContent).toContain('Tester'));expect(doc.querySelectorAll('.commit.selected')).toHaveLength(2);expect(f.run).not.toHaveBeenCalled();
-    const scroll=doc.querySelector('#git-tree .graph-scroll');scroll.scrollTop=156;scroll.scrollLeft=20;scroll.dispatchEvent(new dom.window.Event('scroll'));expect(doc.querySelector('#release-tree .graph-scroll').scrollTop).toBe(156);doc.getElementById(lang==='en'?'zh':'en').click();
-    expect(scroll.scrollTop).toBe(156);expect(scroll.scrollLeft).toBe(20);expect(doc.getElementById('refresh-graph').textContent).toBe(lang==='en'?'刷新提交图':'Refresh commits');
-    expect(doc.getElementById('selected-meta').textContent).toContain(lang==='en'?'作者: Tester':'Author: Tester');
-    repo.run('-c','user.name=Tester','-c','user.email=t@example.com','merge','--no-ff','feature/unmerged','-m','merge remaining development');responses['/api/git-graph']=readGitGraph(repo.directory);doc.getElementById('refresh-graph').click();
-    await vi.waitFor(()=>expect(doc.querySelector(`#commit-list [data-sha="${side}"]`).classList.contains('muted')).toBe(true));expect(doc.querySelector(`#release-list [data-sha="${side}"]`).classList.contains('focused')).toBe(true);
-  },30000);
-
-  it('keeps a truncated development window accurate when main is outside the visible commits and marks continuation edges',async()=>{
-    const repo=gitRepo(),graph=readGitGraph(repo.directory,2),f=await fixture();expect(graph.commits.map((c:any)=>c.sha)).not.toContain(graph.mainHead);
-    const {doc}=await page(f,'en','',{'/api/git-graph':graph});
-    expect(doc.querySelectorAll('#release-list .focused')).toHaveLength(0);expect(doc.querySelectorAll('#commit-list .focused')).toHaveLength(2);expect(doc.querySelector('#git-tree path.continuation')).not.toBeNull();expect(doc.getElementById('graph-window').textContent).toContain('latest 2 commits');
-  });
-
-  it.each(['zh-CN','en'])('retains release lineage without git and avoids claiming membership without main (%s)',async lang=>{
-    const f=await fixture(),responses={'/api/git-graph':{available:false}};const {doc}=await page(f,lang,'',responses);
-    expect(doc.getElementById('git-unavailable').hidden).toBe(false);expect(doc.querySelectorAll('#lineage-list li')).toHaveLength(1);expect(doc.getElementById('main-unavailable').hidden).toBe(true);
-    responses['/api/git-graph']={available:true,mainHead:null,refs:[],commits:[{sha:'a'.repeat(40),parents:[],subject:'No main',author:'Tester',time:0}]} as any;
-    doc.getElementById('refresh-graph').click();await vi.waitFor(()=>expect(doc.getElementById('main-unavailable').hidden).toBe(false));expect(doc.querySelectorAll('.commit.focused')).toHaveLength(0);expect(doc.querySelector('#commit-list li').dataset.membership).toBe('unknown');
-  });
 
   it('exposes a bounded read-only graph and commit details with FF feasibility, but only after login',async()=>{
     const repo=gitRepo(),f=await fixture();
@@ -528,8 +316,12 @@ describe('V27 dual-tree git upgrade', () => {
     const login=await app.inject({method:'POST',url:'/api/login',payload:{secret:f.secret}}),cookie=String(login.headers['set-cookie']).split(';')[0];
     const post=(payload:unknown)=>app.inject({method:'POST',url:'/api/upgrades',headers:{cookie},payload});
     expect((await post({action:'prepare',version:'Skills',reason:'V27 flow',sourceCommit:'not-a-sha'})).statusCode).toBe(400);
-    expect((await post({action:'prepare',version:'Stale side',reason:'x',sourceCommit:side})).statusCode).toBe(409);
-    expect((await post({action:'prepare',version:'Stale tip',reason:'x',sourceCommit:repo.tip})).statusCode).toBe(409);
+    const before=repo.run('show-ref','--heads');
+    expect((await post({action:'prepare',version:'Earlier side',reason:'x',sourceCommit:side})).statusCode).toBe(202);
+    await vi.waitFor(()=>expect(commands).toHaveLength(1));
+    await vi.waitFor(async()=>expect((await app.inject({url:'/api/upgrades',headers:{cookie}})).json().busy).toBe(false));
+    expect((await post({action:'prepare',version:'Earlier tip',reason:'x',sourceCommit:repo.tip})).statusCode).toBe(202);
+    await vi.waitFor(()=>expect(commands).toHaveLength(2));expect(repo.run('show-ref','--heads')).toBe(before);
     // A fresh repo where main has not advanced accepts the pinned FF tip.
     const fresh=gitRepo(),freshCommands:any[]=[];
     const app2=await createUpgradeWeb({root:fresh.directory,config:{stateDirectory:f.directory},secret:f.secret,
@@ -565,49 +357,4 @@ describe('V27 dual-tree git upgrade', () => {
     expect(()=>fastForwardMain(side,divergedRepo.base,divergedRepo.directory)).toThrow();
     expect(divergedRepo.run('rev-parse','main')).not.toBe(side);
   },30000);
-
-  it('marks publish as needs_git_sync when the git target cannot be applied, and blocks when main moved before publication',async()=>{
-    const f=await fixture();
-    const launch=async(repo:ReturnType<typeof gitRepo>,run:(_root:string,_args:string[],output:(t:string)=>void)=>Promise<void>)=>{
-      const instance=await createUpgradeWeb({root:repo.directory,config:{stateDirectory:f.directory},secret:f.secret,runCommand:run,status:()=>f.data,checkRunning:f.checkRunning});
-      cleanups.push(async()=>{await instance.close();});
-      const login=await instance.inject({method:'POST',url:'/api/login',payload:{secret:f.secret}});
-      return {instance,cookie:String(login.headers['set-cookie']).split(';')[0]};
-    };
-    const publishOf=async(instance:any,cookie:string,release:any)=>{f.data.candidates[0].request.owner_release=release;
-      return instance.inject({method:'POST',url:'/api/upgrades',headers:{cookie},payload:{action:'publish',id:'local-v24-test',hash:'a'.repeat(64)}});};
-    const jobOf=()=>JSON.parse(fs.readFileSync(path.join(f.directory,'upgrade-web-job.json'),'utf8'));
-    const noop=async()=>{};
-    // main advanced after prepare -> preflight blocks publication entirely.
-    const repo=gitRepo();repo.run('checkout','main');repo.commit('someone advanced main');
-    const blockedApp=await launch(repo,noop);
-    const blocked=await publishOf(blockedApp.instance,blockedApp.cookie,{reason:'V27',source_commit:repo.tip,main_head_at_prepare:repo.base,git_sync_target:repo.tip});
-    expect(blocked.statusCode).toBe(202);
-    await vi.waitFor(()=>{expect(jobOf().state).toBe('failed');expect(String(jobOf().error)).toContain('GIT_SYNC_MAIN_MOVED');});
-    expect(repo.run('rev-parse','main')).not.toBe(repo.base);
-    // With expectations intact, publish succeeds and main fast-forwards to the pinned commit.
-    const fresh=gitRepo();fresh.run('checkout','feature/skills');fs.writeFileSync(path.join(fresh.directory,'README.md'),'Owner pending documentation');
-    const pendingStatus=fresh.run('status','--porcelain');
-    const freshApp=await launch(fresh,noop);
-    const ok=await publishOf(freshApp.instance,freshApp.cookie,{reason:'V27',source_commit:fresh.tip,main_head_at_prepare:fresh.base,git_sync_target:fresh.tip});
-    expect(ok.statusCode).toBe(202);
-    await vi.waitFor(()=>{expect(jobOf().state).toBe('succeeded');expect(jobOf().gitSyncState).toBe('synced');});
-    expect(fresh.run('rev-parse','main')).toBe(fresh.tip);
-    expect(fresh.run('status','--porcelain')).toBe(pendingStatus);expect(fs.readFileSync(path.join(fresh.directory,'README.md'),'utf8')).toBe('Owner pending documentation');
-    // Main moves between preflight and post-apply sync: release published, job reports needs_git_sync.
-    const racing=gitRepo();
-    let raceRuns=0;
-    const raceApp=await launch(racing,async()=>{racing.run('checkout','main');racing.commit(`concurrent advance ${++raceRuns}`,'race.txt');});
-    const raced=await publishOf(raceApp.instance,raceApp.cookie,{reason:'V27',source_commit:racing.tip,main_head_at_prepare:racing.base,git_sync_target:racing.tip});
-    expect(raced.statusCode).toBe(202);
-    await vi.waitFor(()=>{expect(jobOf().state).toBe('succeeded');expect(jobOf().gitSyncState).toBe('needs_git_sync');});
-    expect(racing.run('rev-parse','main')).not.toBe(racing.tip);
-    // A genuinely diverged target: preflight refuses before any approval command runs.
-    const forked=gitRepo();forked.run('checkout','-b','other');const otherTip=forked.commit('other work','other.txt');forked.run('checkout','main');forked.commit('main moved on');
-    const forkedApp=await launch(forked,noop);
-    const refused=await publishOf(forkedApp.instance,forkedApp.cookie,{reason:'V27',source_commit:otherTip,main_head_at_prepare:forked.base,git_sync_target:otherTip});
-    expect(refused.statusCode).toBe(202);
-    await vi.waitFor(()=>{expect(jobOf().state).toBe('failed');expect(String(jobOf().error)).toContain('GIT_SYNC_BLOCKED');});
-    expect(forked.run('rev-parse','main')).not.toBe(otherTip);
-  },60000);
 });

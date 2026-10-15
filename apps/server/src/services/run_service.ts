@@ -237,7 +237,7 @@ export class RunService {
         execution_id: executionId,
         start_round: startRound,
         end_round: endRound,
-        run_limit: this.automation?1_000_000_000:options.runBudgetTokens,
+        run_limit: options.runBudgetTokens,
         run_spent: 0,
         run_reserved: 0,
         genesis_revision: genesisRevision,
@@ -330,7 +330,7 @@ export class RunService {
         unfinalized.pendingRuns.every(id => id === run.run_id);
     });
     if (!ready) return false;
-    if (this.automation) { try { this.automation.gate.resume(run.run_id); } catch { return false; } if(!run.execution_id)this.store.db.prepare('UPDATE runs SET run_limit=1000000000 WHERE run_id=?').run(run.run_id); }
+    if (this.automation) { try { this.automation.gate.resume(run.run_id); } catch { return false; } }
     this.store.db.prepare("UPDATE runs SET status='RUNNING',stop_reason=NULL,error_code=NULL,error_summary=NULL,finished_at=NULL WHERE run_id=?").run(run.run_id);
     this.currentRunId = run.run_id;
     this.currentExecutionId = run.execution_id ?? null;

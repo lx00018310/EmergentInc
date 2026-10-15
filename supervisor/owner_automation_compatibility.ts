@@ -11,6 +11,9 @@ export function checkOwnerAutomationRollback(controlFile:string,directory:string
     const facts=table('owner_goals')&&Boolean(db.prepare('SELECT 1 FROM owner_goals LIMIT 1').get()) ||
       table('owner_run_permits')&&Boolean(db.prepare('SELECT 1 FROM owner_run_permits LIMIT 1').get()) ||
       table('control_events')&&Boolean(db.prepare("SELECT 1 FROM control_events WHERE kind='owner_automation_changed' LIMIT 1").get());
+    const file=path.join(directory,'resources/config/company_protocol.json');let contract:any=null;if(fs.existsSync(file)){try{contract=JSON.parse(fs.readFileSync(file,'utf8'));}catch{contract=null;}}
+    if(table('owner_company_budget')&&db.prepare('SELECT 1 FROM owner_company_budget WHERE activated_at IS NOT NULL').get()&&(!fs.existsSync(path.join(directory,'apps/server/dist/services/owner_company_budget.js'))||db.prepare('SELECT schema_version FROM owner_company_budget WHERE id=1').get()!.schema_version!==1||contract?.company_money!==1||contract.currency!=='CNY'||contract.money_unit!=='micros'))throw new Error('V32_ROLLBACK_DENIED_COMPANY_BUDGET');
+    if(table('owner_task_plans')&&db.prepare('SELECT 1 FROM owner_task_plans LIMIT 1').get()&&(!fs.existsSync(path.join(directory,'apps/server/dist/services/owner_task_plan_service.js'))||!table('owner_task_schema')||db.prepare('SELECT version FROM owner_task_schema WHERE id=1').get()!.version!==1||contract?.task_workflow!==1))throw new Error('V32_ROLLBACK_DENIED_TASK_WORKFLOW');
     if(facts&&!fs.existsSync(path.join(directory,'apps/server/dist/services/owner_automation_gate.js')))throw new Error('V29_ROLLBACK_DENIED_AUTOMATION_CONTROL');
   }finally{db.close();}
 }

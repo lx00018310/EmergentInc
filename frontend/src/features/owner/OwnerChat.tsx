@@ -1,3 +1,5 @@
+import {CompanyProposalCard} from './CompanyProposalCard';
+import type {CompanyProposal} from '../../../../packages/protocol/src/types/owner';
 import { t as tr, useLanguage, language, type Language } from '../../i18n';
 import React, { useEffect, useRef, useState } from 'react';
 import { askOwner, type OwnerChatTurn } from '../../api/ownerChat';
@@ -12,7 +14,7 @@ const PENDING_KEY = 'emergentinc.ownerChat.pending';
 const DRAFT_KEY = 'emergentinc.ownerChat.draft';
 type Pending={question:string;history:OwnerChatTurn[];key:string;language:Language};
 function loadPending():Pending|null {try{const p=JSON.parse(localStorage.getItem(PENDING_KEY)||'null');return p&&typeof p.question==='string'&&p.question.length<=2000&&typeof p.key==='string'&&/^[a-zA-Z0-9_-]{1,128}$/.test(p.key)&&['en','zh-CN'].includes(p.language)&&Array.isArray(p.history)&&p.history.length<=12&&p.history.every((t:any)=>t&&['user','assistant'].includes(t.role)&&typeof t.content==='string'&&t.content.length<=4000)?p:null;}catch{return null;}}
-type Message = OwnerChatTurn & { createdGoal?:OwnerGoal;configuredProduct?:ConfiguredProduct;proposals?: OwnerActionProposal[]; sources?: string[]; as_of?: string; usage?: { tokens: number | null; cost_cny: number | null } };
+type Message = OwnerChatTurn & { companyProposal?:CompanyProposal; createdGoal?:OwnerGoal;configuredProduct?:ConfiguredProduct;proposals?: OwnerActionProposal[]; sources?: string[]; as_of?: string; usage?: { tokens: number | null; cost_cny: number | null } };
 
 function loadHistory(): Message[] {
   try {
@@ -65,6 +67,7 @@ export const OwnerChat: React.FC<{missionControl?:boolean;onDone?:()=>void;work?
       setMessages(previous => [...previous, {
         role: 'assistant' as const, content: response.answer, sources: response.sources,
         as_of: response.as_of, usage: response.usage, proposals: 'proposals' in response ? response.proposals as OwnerActionProposal[] : undefined,
+        companyProposal:'companyProposal' in response?response.companyProposal as CompanyProposal:undefined,
         createdGoal:'createdGoal' in response?response.createdGoal as OwnerGoal:undefined,configuredProduct:'configuredProduct' in response?response.configuredProduct as ConfiguredProduct:undefined,
       }].slice(-40));
       pending.current=null;if(missionControl)try{localStorage.removeItem(PENDING_KEY);}catch{/* The response is already recorded by the server. */}onDone?.();
@@ -84,11 +87,12 @@ export const OwnerChat: React.FC<{missionControl?:boolean;onDone?:()=>void;work?
   return (
     <div className="owner-chat">
       <div className="owner-chat-history" ref={historyRef} aria-label={tr("老板窗口对话记录")}>
-        {messages.length === 0 && <p className="form-hint">{tr(missionControl ? 'Describe your business goal or product change. AI chooses people and methods. Tokens renew automatically; you can pause anytime. Recruitment and software releases still need approval.' : "可询问项目进度、运行状态和 Pixel 工作。回答会读取提问时的最新数据，并列出依据。")}</p>}
+        {messages.length === 0 && <p className="form-hint">{tr(missionControl ? 'Describe a task or company budget. AI proposes steps, executes approved work and reports real results. You decide when to close each task.' : "可询问项目进度、运行状态和 Pixel 工作。回答会读取提问时的最新数据，并列出依据。")}</p>}
         {messages.map((message, index) => (
           <div className={`owner-chat-message ${message.role}`} key={index} ref={message.role === 'assistant' && index === messages.length - 1 ? answerRef : undefined}>
             <strong>{message.role === 'user' ? (tr("老板")) : (tr("助手"))}</strong>
             {message.role === 'assistant' ? <OwnerMarkdown content={message.content} /> : <div className="owner-chat-content">{message.content}</div>}
+            {message.companyProposal&&<CompanyProposalCard proposal={message.companyProposal} onDone={onDone}/>}
             {message.createdGoal&&<p><a href={`/OWNER?goal=${encodeURIComponent(message.createdGoal.id)}`}>{tr('View created goal')}: {message.createdGoal.title}</a></p>}
             {message.configuredProduct&&<p className="owner-product-receipt"><strong>{tr(message.configuredProduct.enabled?'Published product':'Unpublished product')}</strong> · {message.configuredProduct.price} USDT · <a href="/#products">{tr('View product')}</a> · <span>{tr('Saved event {0}',[message.configuredProduct.eventId])}</span></p>}
             {message.role === 'assistant' && (

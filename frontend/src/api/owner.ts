@@ -10,7 +10,7 @@ export type { OwnerGoal, OwnerGoalDetail, OwnerAutomation, OwnerRunReport } from
 export const ownerGoalRequest=<T,>(path:string,method='GET',body?:unknown)=>apiRequest<T>(`owner/${path}`,{worldScoped:false,method, ...(body?{body:JSON.stringify(body)}:{})});
 export const ownerTodoCount=(data:Pick<OwnerOverview,'inbox'|'alerts'>)=>data.inbox.length+(data.alerts?.length??0);
 export interface ConfiguredProduct {productId:string;enabled:boolean;price:string;nameEn:string;nameZh:string;href:string;updatedAt:number;eventId:number;reason:string|null}
-export const askMissionOwner=(question:string,history:OwnerChatTurn[],requestKey:string=crypto.randomUUID(),requestLanguage=language())=>apiRequest<OwnerChatAnswer&{proposals?:OwnerActionProposal[];createdGoal?:import('../../../packages/protocol/src/types/owner').OwnerGoal;configuredProduct?:ConfiguredProduct}>('owner/chat',{
+export const askMissionOwner=(question:string,history:OwnerChatTurn[],requestKey:string=crypto.randomUUID(),requestLanguage=language())=>apiRequest<OwnerChatAnswer&{proposals?:OwnerActionProposal[];createdGoal?:import('../../../packages/protocol/src/types/owner').OwnerGoal;configuredProduct?:ConfiguredProduct;companyProposal?:import('../../../packages/protocol/src/types/owner').CompanyProposal}>('owner/chat',{
   worldScoped:false,method:'POST',body:JSON.stringify({question,history,language:requestLanguage,requestKey}),timeoutMs:2*60*60*1000});
 export function ownerError(error:unknown):string {
   if(error instanceof ApiError){

@@ -25,7 +25,7 @@ export interface OwnerWorkTask {
 }
 export interface OwnerRecruitRequest {
   id: string; hash: string; requester: string; role: string; reason: string; instruction: string;
-  state: 'PENDING' | 'APPROVED' | 'REJECTED'; personId: string | null; createdAt: number;
+  state: 'PENDING' | 'APPROVED_QUEUED' | 'APPROVED' | 'REJECTED' | 'CANCELLED'; personId: string | null; createdAt: number;
 }
 export interface AppCodeFile { path: string; content: string | null; baseHash: string | null }
 export interface AppCodeReport {
@@ -36,6 +36,13 @@ export interface OwnerWork { tasks: OwnerWorkTask[]; requests: OwnerRecruitReque
 export interface OwnerOverview {
   goals?: OwnerGoal[];
   automation?: OwnerAutomation;
+  budget?:CompanyBudget;
+  proposals?:CompanyProposal[];
+  taskPlans?:CompanyTaskPlanView[];
+  revenue?:{asset:string;amount:string;at:number}[];
+  costs?:{day:string;micros:number}[];
+  legacyBusiness?:{id:string;title:string;state:string;nextAt:number|null}[];
+  storefront?:{products:{id:string;nameEn:string;nameZh:string;enabled:boolean;price:string|null;currency:string}[];orders:{id:string;product:string;amount:string;currency:string;status:string;at:number}[]};
   asOf: number;
   summary: { qianjiCount: number; activeWorlds: number; runningWorlds: number; inboxCount: number; currentGeneration: string | null;
     pixelCount?: number | null; availableEnergy?: number | null; pendingApprovals?: number; serviceStatus?: 'ready' | 'paused' | 'attention' };
@@ -62,8 +69,17 @@ export interface OwnerAutomation {
   desiredMode: 'OFF' | 'ON'; runMode: 'CONTINUOUS' | 'BOUNDED'; requestedRounds: number | null;
   startedRounds: number; completedRounds: number; reservedRounds: number;
   maxTokens: number; spentTokens: number; reservedTokens: number; knownCostCny: number; unknownCostCalls: number;
+  budget?:CompanyBudget;
   revision: number; batchId: string; updatedAt: number; reason: string | null;
   observedState: 'STOPPED' | 'STARTING' | 'RUNNING' | 'IDLE' | 'STOPPING' | 'BLOCKED' | 'LIMIT_REACHED' | 'ERROR';
   inFlight: number;
 }
 export interface OwnerRunReport { asOf:number; automation:OwnerAutomation; goals:{goalId:string;title:string;status:OwnerGoalStatus;spentTokens:number;reservedTokens:number;knownCostCny:number;evidence:OwnerGoalEvidence[];reason:string|null}[] }
+
+export interface CompanyBudget { currency:'CNY'; totalMicros:number; spentMicros:number; reservedMicros:number; availableMicros:number; revision:number; activatedAt:number|null; unknownCalls:number; historicalCostMicros?:number }
+export interface CompanyProposal { id:string; kind:'budget'|'task_plan'|'close_task'; goalId:string|null; goalRevision:number|null; hash:string; payload:any; state:'PENDING'|'APPROVED'|'REJECTED'|'EXECUTED'; createdAt:number; result:any }
+export type TaskTrigger = {kind:'once'} | {kind:'continuous'} | {kind:'interval';everyMinutes:number} | {kind:'daily'|'weekly';time:string;timezone:string;weekdays?:number[]};
+export interface CompanyTaskNode { key:string; title:string; instruction:string; dependsOn:string[]; trigger:TaskTrigger; filename:string; personId?:string }
+export interface CompanyTaskPlan { summary:string; nodes:CompanyTaskNode[] }
+export interface CompanyTaskNodeView extends CompanyTaskNode { state:string; nextAt:number|null; latestEvidence:string[]; occurrences:number }
+export interface CompanyTaskPlanView { goalId:string; goalRevision:number; planRevision:number; approved:boolean; summary:string; nodes:CompanyTaskNodeView[] }

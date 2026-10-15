@@ -6,7 +6,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { pathToFileURL } from 'node:url';
 import { registerOwnerAuth } from '../apps/server/dist/owner_auth.js';
 import { ownerEnvironment } from './local-release.mjs';
-import { upgradeConfig, ownerReleaseInput, ensureFastForwardable, fastForwardMain } from './version-upgrade.mjs';
+import { upgradeConfig, ownerReleaseInput } from './version-upgrade.mjs';
 import { readAppCodeReport } from './prepare-app-code.mjs';
 import { LocalWorldRuntime } from '../supervisor/dist/local_world_runtime.js';
 import { rollbackPlan, canDeleteRelease } from '../supervisor/dist/release_history.js';
@@ -106,7 +106,7 @@ export function readGitCommit(root, shaInput) {
   const [sha,parents,subject,author,time,...body]=show.trim().split('\x1f');
   let ahead=0,behind=0,fastForwardable=false,mainHead=null;
   try{mainHead=execFileSync('git',['rev-parse','main'],{cwd:root,encoding:'utf8',windowsHide:true,timeout:10000}).trim();
-    ensureFastForwardable(shaInput,root);fastForwardable=true;}catch{fastForwardable=false;}
+    execFileSync('git',['merge-base','--is-ancestor',mainHead,shaInput],{cwd:root,windowsHide:true,timeout:10000});fastForwardable=true;}catch{fastForwardable=false;}
   if(mainHead){
     const counts=gitText(root,['rev-list','--left-right','--count',`${mainHead}...${shaInput}`]);
     if(counts!==null){const parts=counts.trim().split(/\s+/);behind=Number(parts[0]);ahead=Number(parts[1]);}
@@ -197,7 +197,6 @@ export async function createUpgradeWeb({ root, config, secret, runCommand = runU
       if(body.sourceCommit!==undefined&&body.sourceCommit!==null&&body.sourceCommit!==''){
         if(typeof body.sourceCommit!=='string'||!GIT_SHA_PATTERN.test(body.sourceCommit))return reply.status(400).send({detail:'GIT_COMMIT_INVALID'});
         commitFlag=['--commit',body.sourceCommit];
-        try{ensureFastForwardable(body.sourceCommit,root);}catch{return reply.status(409).send({detail:'GIT_COMMIT_NOT_FAST_FORWARDABLE'});}
       } else if (current.dirty) return reply.status(409).send({ detail: 'OWNER_RELEASE_REQUIRES_CLEAN_COMMITTED_CHECKOUT' });
       version=input.label;commands = [['prepare', version, input.reason, ...commitFlag]];
     } else if (body.action === 'prepare-code') {
@@ -235,33 +234,10 @@ export async function createUpgradeWeb({ root, config, secret, runCommand = runU
     const save = () => fs.writeFileSync(jobFile, JSON.stringify(job, null, 2));
     try { save(); } catch (error) { busy = false; throw error; }
     const execute = async () => {
-      let gitSyncState = null;
       try {
         if (['publish','rollback'].includes(body.action)) await checkRunning(current.active.id);
-        if (body.action === 'publish') {
-          const candidate=current.candidates.find(item=>item.id===body.id);
-          const gitTarget=candidate?.request?.owner_release?.git_sync_target;
-          const expectedMainHead=candidate?.request?.owner_release?.main_head_at_prepare;
-          if(gitTarget){
-            // Pre-preflight: main must not have moved since prepare and must still fast-forward.
-            try{
-              if(expectedMainHead&&execFileSync('git',['rev-parse','main'],{cwd:root,encoding:'utf8',windowsHide:true,timeout:10000}).trim()!==expectedMainHead)throw new Error('GIT_SYNC_MAIN_MOVED');
-              ensureFastForwardable(gitTarget,root);
-            }catch(error){job.error=`GIT_SYNC_BLOCKED:${error.message}`;job.state='failed';return;}
-          }
-        }
         for (const args of commands) await runCommand(root, args, chunk => { job.log = (job.log + chunk).slice(-8000); });
-        if (body.action === 'publish') {
-          const candidate=current.candidates.find(item=>item.id===body.id);
-          const gitTarget=candidate?.request?.owner_release?.git_sync_target;
-          const expectedMainHead=candidate?.request?.owner_release?.main_head_at_prepare;
-          if(gitTarget){
-            try{fastForwardMain(gitTarget,expectedMainHead,root);gitSyncState='synced';}
-            catch(error){gitSyncState='needs_git_sync';job.log=(job.log+`\nGIT_SYNC_PENDING: ${error.message}\n`).slice(-8000);}
-          }
-        }
         job.state = 'succeeded';
-        if (gitSyncState) job.gitSyncState = gitSyncState;
       } catch (error) { job.state = 'failed'; job.error = error.message; }
       finally { job.finishedAt = Date.now(); busy = false; save(); }
     };
@@ -277,11 +253,7 @@ export async function createUpgradeWeb({ root, config, secret, runCommand = runU
       job:job?{operationKey:job.operationKey??null,action:job.action,state:job.state,targetGeneration:job.targetGeneration,error:job.error}:null};
   });
   for(const action of ['rollback','delete'])app.post('/pixel/releases/'+action,(req,reply)=>{
-    const b=req.body,keys=action==='rollback'?['targetGeneration','expectedActive','reason','deleteNewer']:['releaseId','expectedActive','identity','reason'];
-    if(!b||typeof b!=='object'||Array.isArray(b)||Object.keys(b).some(k=>![...keys,'worldId','pixelId','operationKey'].includes(k))||
-      typeof b.worldId!=='string'||!/^[a-zA-Z0-9_-]{1,100}$/.test(b.worldId)||typeof b.pixelId!=='string'||b.pixelId.length>80||!/^[-]?[0-9]+_[-]?[0-9]+_[-]?[0-9]+$/.test(b.pixelId)||typeof b.operationKey!=='string'||!b.operationKey||b.operationKey.length>240||/[\x00-\x1f]/.test(b.operationKey))return reply.status(400).send({detail:'RELEASE_ACTION_INVALID'});
-    const {worldId,pixelId,operationKey,...input}=b;
-    return handleAction({action,...input},reply,{worldId,pixelId,operationKey});
+    return reply.status(403).send({detail:'OWNER_MAINTENANCE_APPROVAL_REQUIRED'});
   });
   app.setErrorHandler((error, _req, reply) => reply.status(500).send({ detail: error.message }));
   await app.ready();
