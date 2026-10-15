@@ -123,8 +123,8 @@ export const OwnerChat: React.FC<{missionControl?:boolean;onDone?:()=>void;work?
         />
         <div className="owner-chat-actions">
           <span className="form-hint">{tr('Enter to send · Shift+Enter for a new line · Ctrl/Cmd+Enter also works')}</span>
-          <button className="btn btn-sm btn-secondary" disabled={busy || messages.length === 0} onClick={() => { setMessages([]); setError(null); }}>{tr("清空对话")}</button>
-          <button className="btn btn-sm btn-primary" disabled={busy || !draft.trim()} onClick={() => void send()}>{tr("发送")}</button>
+          <button className="owner-btn owner-btn--ghost" disabled={busy || messages.length === 0} onClick={() => { setMessages([]); setError(null); }}>{tr("清空对话")}</button>
+          <button className="owner-btn" disabled={busy || !draft.trim()} onClick={() => void send()}>{tr("发送")}</button>
         </div>
       </div>
       {missionControl&&<OwnerWork work={work}/>}

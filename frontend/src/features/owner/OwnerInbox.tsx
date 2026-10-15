@@ -29,9 +29,9 @@ function DecisionButtons({item,onDone}:{item:OwnerInboxItem;onDone:()=>void}){
   };
   return <>
     <div className="owner-decision">
-      <button className="owner-decision-approve" disabled={busy!==null} onClick={()=>void run('approve')}>{t(busy==='approve'?'Submitting…':'Approve')}</button>
-      <button className="owner-decision-reject" disabled={busy!==null} onClick={()=>void run('reject')}>{t(busy==='reject'?'Submitting…':'Reject')}</button>
-      <a className="owner-decision-details" href={item.href}>{t('View details')}</a>
+      <button className="owner-btn owner-btn--approve" disabled={busy!==null} onClick={()=>void run('approve')}>{t(busy==='approve'?'Submitting…':'Approve')}</button>
+      <button className="owner-btn owner-btn--reject" disabled={busy!==null} onClick={()=>void run('reject')}>{t(busy==='reject'?'Submitting…':'Reject')}</button>
+      <a className="owner-btn owner-btn--ghost owner-btn--sm" href={item.href}>{t('View details')}</a>
     </div>
     {error&&<p role="alert">{error}</p>}
   </>;
@@ -45,13 +45,13 @@ export function OwnerInbox({items,alerts=[],onDone}:{items:OwnerInboxItem[];aler
       {i.priority==='critical'&&<strong>{t('Needs verification')}</strong>}<small>{i.source} · {i.createdAt===null?t('Time not recorded.'):new Date(i.createdAt).toLocaleString()}</small>
       {pair&&i.approveEffect&&<p className="owner-effect"><strong>{t('If you approve')}:</strong> {t(i.approveEffect,i.approveEffectValues)}</p>}
       {pair&&i.rejectEffect&&<p className="owner-effect"><strong>{t('If you reject')}:</strong> {t(i.rejectEffect,i.rejectEffectValues)}</p>}
-      {pair?<DecisionButtons item={i} onDone={onDone}/>:<a href={i.href}>{t('View details')}</a>}
+      {pair?<DecisionButtons item={i} onDone={onDone}/>:<a className="owner-btn owner-btn--ghost owner-btn--sm" href={i.href}>{t('View details')}</a>}
       {/* Actions without a symmetric pair (chat dispatch, full-plan review) keep their existing gated card. */}
       {pair&&(i.actions??[]).filter(p=>p.action.type==='qianji_chat'||p.action.type==='open_details').map(p=><details key={p.id}><summary>{t('More actions')}</summary><OwnerActionCard proposal={p} onDone={onDone}/></details>)}
     </article>;})}
     {!!alerts.length&&<section className="owner-alerts" aria-label={t('Needs human verification')}>
       <h2>{t('Needs human verification')} ({alerts.length})</h2>
-      {alerts.map(a=><article key={a.id} className={a.severity==='critical'?'critical':''}><h3>{t(a.title)}</h3><p>{a.summary}{a.reasonKey&&<> · {t(a.reasonKey)}</>}</p><small>{a.source} · {a.createdAt===null?t('Time not recorded.'):new Date(a.createdAt).toLocaleString()}</small><a href={a.href}>{t('View details')}</a></article>)}
+      {alerts.map(a=><article key={a.id} className={a.severity==='critical'?'critical':''}><h3>{t(a.title)}</h3><p>{a.summary}{a.reasonKey&&<> · {t(a.reasonKey)}</>}</p><small>{a.source} · {a.createdAt===null?t('Time not recorded.'):new Date(a.createdAt).toLocaleString()}</small><a className="owner-btn owner-btn--ghost owner-btn--sm" href={a.href}>{t('View details')}</a></article>)}
     </section>}
   </section>;
 }

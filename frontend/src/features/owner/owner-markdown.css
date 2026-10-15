@@ -9,9 +9,9 @@
 .owner-chat-markdown :is(ul,ol) { margin: .65em 0; padding-left: 1.6em; }
 .owner-chat-markdown li { margin: .3em 0; }
 .owner-chat-markdown li > p { margin: .3em 0; }
-.owner-chat-markdown blockquote { border-left: 3px solid var(--owner-accent, #8a9bab); padding-left: 1em; margin: .8em 0; }
-.owner-chat-markdown code { font-family: var(--font-mono, monospace); font-size: .9em; background: var(--owner-muted, rgba(127,127,127,.15)); padding: .15em .35em; border-radius: 4px; }
-.owner-chat-markdown pre { max-width: 100%; overflow-x: auto; white-space: pre; overflow-wrap: normal; padding: 12px; margin: .8em 0; background: var(--owner-muted, rgba(127,127,127,.1)); border: 1px solid var(--owner-border, rgba(127,127,127,.25)); border-radius: 6px; }
+.owner-chat-markdown blockquote { border-left: 3px solid var(--owner-border, #d1d5db); padding-left: 1em; margin: .8em 0; }
+.owner-chat-markdown code { font-family: var(--font-mono, monospace); font-size: .9em; background: var(--owner-sub, rgba(127,127,127,.15)); padding: .15em .35em; border-radius: 4px; }
+.owner-chat-markdown pre { max-width: 100%; overflow-x: auto; white-space: pre; overflow-wrap: normal; padding: 12px; margin: .8em 0; background: var(--owner-sub, rgba(127,127,127,.1)); border: 1px solid var(--owner-border, rgba(127,127,127,.25)); border-radius: 6px; }
 .owner-chat-markdown pre code { background: transparent; padding: 0; }
 .owner-chat-markdown hr { border: 0; border-top: 1px solid var(--owner-border, #8a9bab); margin: 1em 0; }
 .owner-markdown-table { max-width: 100%; overflow-x: auto; margin: .8em 0; }

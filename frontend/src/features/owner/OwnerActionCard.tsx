@@ -19,12 +19,12 @@ export function OwnerActionCard({proposal,onDone}:{proposal:OwnerActionProposal;
         <p>{a.type==='business_plan_approve'?t('Approval authorizes the displayed actions, including external writes. AI calls use the company token quota.'):t('Rejection stops this pending plan.')}</p>
       </> : 'resource' in a ? <><p>{a.resource} · {a.planId} · R{a.revision}</p><p>{a.type==='resource_reject'?t('Rejecting this resource stops its associated plan.'):t('The server verifies that the requested data or connection already exists.')}</p></>
         : <><p>{t('Approves or rejects the direction of this proposal in the current generation; publication stays in the trusted maintenance channel.')}</p></>}
-    <button disabled={busy||done} onClick={async()=>{setBusy(true);setError('');try{
+    <button className="owner-btn owner-btn--approve" disabled={busy||done} onClick={async()=>{setBusy(true);setError('');try{
       const results=await executeOwnerAction(proposal),failures=results.filter(r=>!r.ok);
       if(failures.length)setError(`${t('Accepted')}: ${results.filter(r=>r.ok).map(r=>r.id).join(', ') || '0'}; ${failures.map(r=>`${r.id}: ${r.error}`).join('; ')}`);
       else {setDone(true);onDone?.();}
     }catch(e){setError(ownerError(e));}finally{setBusy(false);}}}>{t(busy?'Submitting…':done?'Accepted':'Approve and execute')}</button>
-    {!done&&<button disabled={busy} onClick={async()=>{const types:Record<string,string>={business_plan_approve:'business_plan_reject',resource_provided:'resource_reject',recruit_approve:'recruit_reject',gene_proposal_approve:'gene_proposal_reject'};setBusy(true);try{if(types[a.type])await executeOwnerAction({...proposal,id:proposal.id+'_reject',action:{...a,type:types[a.type]} as OwnerActionProposal['action']});setDone(true);onDone?.();}catch(e){setError(ownerError(e));}finally{setBusy(false);}}}>{t('Reject')}</button>}
+    {!done&&<button className="owner-btn owner-btn--reject" disabled={busy} onClick={async()=>{const types:Record<string,string>={business_plan_approve:'business_plan_reject',resource_provided:'resource_reject',recruit_approve:'recruit_reject',gene_proposal_approve:'gene_proposal_reject'};setBusy(true);try{if(types[a.type])await executeOwnerAction({...proposal,id:proposal.id+'_reject',action:{...a,type:types[a.type]} as OwnerActionProposal['action']});setDone(true);onDone?.();}catch(e){setError(ownerError(e));}finally{setBusy(false);}}}>{t('Reject')}</button>}
     {done&&a.type==='qianji_chat'&&<p>{t('Messages accepted. Follow replies in Activity or QIAN.')}</p>}
     {error&&<p role="alert">{error}</p>}
   </section>;
