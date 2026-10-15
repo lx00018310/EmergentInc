@@ -64,6 +64,11 @@ export function registerOwnerRoutes(app:FastifyInstance, overview:OwnerOverviewS
     if(gate&&b.requestKey){
       const say=(zh:string,en:string)=>b.language==='en'?en:zh;
       const response=(answer:string,extra:object={})=>({answer,...extra,sources:['owner_company_budget','owner_company_proposals','owner_goals'],as_of:new Date().toISOString(),usage:{tokens:0,cost_cny:0}});
+      if(work&&/^(?:批准招聘(?:申请)?|同意招聘(?:申请)?|拒绝招聘(?:申请)?|批准新建|同意新建|拒绝新建|approve recruitment(?: request)?|reject recruitment(?: request)?)/i.test(command)){
+        const data=await overview.overview(),proposal=proposeOwnerAction(command,data,b.language),hire=proposal?.proposals[0]?.action;
+        if(hire&&(hire.type==='recruit_approve'||hire.type==='recruit_reject'))return work.ask(b.requestKey,b.question,b.history,b.language,data,chat!,undefined,{id:hire.requestId,hash:hire.hash,decision:hire.type==='recruit_approve'?'approve':'reject'});
+        return response(proposal?.answer??say('请指定唯一的招聘申请 ID 或职责名称。','Specify a unique recruitment request ID or role.'));
+      }
       const amount=command.match(/^(?:(批准|同意|approve)\s*)?(?:公司(?:总)?预算(?:设为|为|是)?|company (?:total )?budget(?: is| of)?)\s*(?:¥|￥|CNY\s*)?(\d+(?:\.\d{1,6})?)\s*(?:元|人民币|CNY)?$/i);
       if(amount){const result=gate.goals.request(controlKey,controlPayload,()=>{
         const [whole,fraction='']=amount[2]!.split('.'),micros=Number(BigInt(whole!)*1000000n+BigInt(fraction.padEnd(6,'0')));if(!Number.isSafeInteger(micros)||micros<=0)throw Object.assign(new Error('OWNER_MONEY_INVALID'),{statusCode:400});

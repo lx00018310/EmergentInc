@@ -147,6 +147,14 @@ describe('V32 company money, proposals and task loop',()=>{
     const approved=await chat('批准 '+p.id);expect(approved.statusCode).toBe(200);expect(f.gate.budget.view().totalMicros).toBe(1000000);
     expect((await chat('公司状态')).json().usage.tokens).toBe(0);expect((await chat('暂停')).statusCode).toBe(200);expect(f.calls).toHaveLength(0);
   });
+  it('handles explicit Chinese and English recruitment approval in chat before a money budget exists',async()=>{
+    const f=goalFixture();cleanups.push(f.close);const app=await createServer({workspaceRoot:f.root,worlds:f.worlds});cleanups.push(()=>app.close());
+    for(const language of ['zh-CN','en']){
+      const request=f.work.requestRecruit({role:'Specialist '+language,reason:'Needed for the task',instruction:'Produce a report'},'Owner','free-recruit-chat-'+language),question=(language==='en'?'approve recruitment request ':'批准招聘申请 ')+request.id;
+      const result=await app.inject({method:'POST',url:'/api/owner/chat',payload:{question,history:[],language,requestKey:'free-recruit-chat-'+language}});expect(result.statusCode).toBe(200);expect(result.json().answer).toContain(language==='en'?'queued':'排队');expect(result.json().usage.tokens).toBe(0);expect(f.work.view().requests.find(r=>r.id===request.id)?.state).toBe('APPROVED_QUEUED');
+    }
+    expect(f.gate.budget.view().activatedAt).toBeNull();expect(f.calls).toHaveLength(0);expect(f.registry.list()).toHaveLength(2);
+  });
   it('lets AI request closure of an ongoing task using verified results, while Owner retains the closing decision',async()=>{
     const f=goalFixture();cleanups.push(f.close);f.on();const goal=f.goal('Ongoing delivery','manual');f.gate.proposals.plans.install(goal.id,{...plan,nodes:[plan.nodes[0],{...plan.nodes[1],trigger:{kind:'interval',everyMinutes:5}}]},true);let calls=0;
     f.respond(async()=>({rawText:JSON.stringify(++calls===1||calls===3?{operations:[{tool:'save_artifact',args:{filename:calls===1?'first.md':'second.md',content:'Verified actual delivery '+calls}}],send_to:'STOP'}:calls===4?{operations:[{tool:'REQUEST_TASK_CLOSE',args:{reason:'The retained source and summary meet the scoped internal delivery goal.'}}],send_to:'STOP'}:{owner_reply:'Actual deliverables are ready for Owner review',send_to:'STOP'}),usage:{promptTokens:20,completionTokens:10,cachedTokens:0}}));
