@@ -13,6 +13,7 @@ import { OwnerOverviewService } from '../src/services/owner_overview_service.js'
 import { BusinessService } from '../src/services/business_service.js';
 import { createServer } from '../src/app.js';
 import { OwnerWorkService } from '../src/services/owner_work_service.js';
+import { goalFixture } from './fixtures/owner_goals.js';
 
 const cleanups: (() => Promise<void>)[] = [];
 afterEach(async () => { for (const fn of cleanups.splice(0).reverse()) await fn(); });
@@ -41,6 +42,41 @@ function fixture() {
 }
 
 describe('V28 Owner projection: decisions versus alerts', () => {
+  it('routes company-level events to company history and retains World links only when a World exists', async () => {
+    const f=fixture();
+    f.registry.control.db.prepare('INSERT INTO control_events(kind,world_id,payload,created_at) VALUES(?,?,?,?)')
+      .run('owner_automation_changed',null,'{}',Date.now());
+    f.registry.control.event('world_test',f.a.world_id,{});
+    const overview=await f.service.overview();
+    expect(overview.activity.find(item=>item.type==='owner_automation_changed')!.href).toBe('/OWNER#owner-activity');
+    expect(overview.activity.find(item=>item.type==='world_test')!.href).toBe('/YUAN?world='+encodeURIComponent(f.a.world_id));
+    expect(overview.activity.some(item=>item.href==='/YUAN?world=')).toBe(false);
+  });
+  it('projects failed assignments as actionable alerts with a separately translatable reason',async()=>{
+    const f=fixture(),work=new OwnerWorkService(f.manager);cleanups.push(async()=>work.close());
+    f.registry.control.db.prepare("INSERT INTO owner_work_tasks(id,request_key,person_id,person_name,instruction,state,reason,created_at,updated_at) VALUES('failed','failed-request',?,?,?,'FAILED','CALL_OUTCOME_UNKNOWN',1,2)")
+      .run(f.a.qianji_id,'A','Report');
+    const overview=await new OwnerOverviewService(f.worlds,f.business,undefined,work).overview();
+    expect(overview.alerts.find(item=>item.id==='task:failed')).toMatchObject({
+      severity:'critical',summary:'A',reasonKey:'CALL_OUTCOME_UNKNOWN',
+    });
+    expect(overview.summary.pendingApprovals).toBe(0);
+    expect(work.view().tasks[0].goalId).toBeNull();
+  });
+  it('exposes the persisted goal-to-assignment relation without starting or rewriting work',async()=>{
+    const f=goalFixture();cleanups.push(()=>f.close());
+    const goal=f.goal();
+    f.control.db.prepare("INSERT INTO owner_work_tasks(id,request_key,person_id,person_name,instruction,state,created_at,updated_at) VALUES('linked-task','linked-request',?,?,?,'QUEUED',1,2)")
+      .run(f.a.qianji_id,'Research','Inspect');
+    f.control.db.prepare("INSERT INTO owner_goal_steps VALUES('linked-step',?,1,'step','QUEUED',0,1)").run(goal.id);
+    f.control.db.prepare("INSERT INTO owner_goal_dispatches VALUES('linked-step',?,1,'linked-task',NULL,?,'QUEUED',NULL)")
+      .run(goal.id,f.a.world_id);
+    const overview=await new OwnerOverviewService(f.worlds,undefined,undefined,f.work).overview();
+    expect(overview.work!.tasks[0]).toMatchObject({id:'linked-task',goalId:goal.id,state:'QUEUED'});
+    expect(f.calls).toHaveLength(0);
+    expect(f.control.db.prepare("SELECT state,run_id FROM owner_work_tasks WHERE id='linked-task'").get())
+      .toMatchObject({state:'QUEUED',run_id:null});
+  });
   it('returns every unresolved verification item beyond the old twenty-item display cap',async()=>{
     const f=fixture(),work=new OwnerWorkService(f.manager);cleanups.push(async()=>work.close());
     const insert=f.registry.control.db.prepare("INSERT INTO owner_work_tasks(id,request_key,person_id,person_name,instruction,state,reason,created_at,updated_at) VALUES(?,?,?,?,?,'BLOCKED','WAITING_PIXEL_BUDGET',?,?)");

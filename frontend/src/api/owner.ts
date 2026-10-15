@@ -5,7 +5,7 @@ import { language, t } from '../i18n';
 import { explanations } from '../features/business/business_api';
 import { postQianjiChat } from './qianji';
 export type { OwnerActionProposal, OwnerOverview, OwnerInboxItem, OwnerActivityItem, OwnerAlert, OwnerWork } from '../../../packages/protocol/src/types/owner';
-export const fetchOwnerOverview=()=>apiRequest<OwnerOverview>('owner/overview',{worldScoped:false});
+export const fetchOwnerOverview=(signal?:AbortSignal)=>apiRequest<OwnerOverview>('owner/overview',{worldScoped:false,signal,timeoutMs:15000});
 export type { OwnerGoal, OwnerGoalDetail, OwnerAutomation, OwnerRunReport } from '../../../packages/protocol/src/types/owner';
 export const ownerGoalRequest=<T,>(path:string,method='GET',body?:unknown)=>apiRequest<T>(`owner/${path}`,{worldScoped:false,method, ...(body?{body:JSON.stringify(body)}:{})});
 export const ownerTodoCount=(data:Pick<OwnerOverview,'inbox'|'alerts'>)=>data.inbox.length+(data.alerts?.length??0);
@@ -14,10 +14,12 @@ export const askMissionOwner=(question:string,history:OwnerChatTurn[],requestKey
   worldScoped:false,method:'POST',body:JSON.stringify({question,history,language:requestLanguage,requestKey}),timeoutMs:2*60*60*1000});
 export function ownerError(error:unknown):string {
   if(error instanceof ApiError){
+    if(error.status===401)return t('Your session expired. Sign in again to refresh the dashboard.');
+    if(error.status===0)return t('Connection failed. Check the service and try again.');
     const labels:Record<string,string>={MODEL_NOT_CONFIGURED:'Configure a real model before asking project questions.',INVALID_OWNER_CHAT:'The question or chat history is invalid.',EVOLUTION_QUIESCED:'The instance is paused for upgrade. Try again after it resumes.',OWNER_ACTION_DENIED:'Unsupported action'};
     return labels[error.detail]?t(labels[error.detail]!):explanations[error.detail] ?? t(error.detail);
   }
-  return error instanceof Error?error.message:String(error);
+  return t(error instanceof Error?error.message:String(error));
 }
 
 /** Execute only existing typed APIs. Retry keys survive partial delivery and reloads. */

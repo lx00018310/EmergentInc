@@ -17,8 +17,9 @@ export interface OwnerInboxItem {
 }
 export interface OwnerAlert { id: string; kind: string; severity: 'normal' | 'critical'; title: string; summary: string; reasonKey?:string; createdAt: number | null; source: string; href: string }
 export interface OwnerActivityItem { id: string; type: string; summary: string; summaryKey?: string; summaryValues?: (string | number)[]; createdAt: number; source: string; href: string }
-export interface OwnerPerson { id: string; name: string; worldId: string; status: string; running: boolean; runStatus: string; role?: string | null; behaviorProfile?: string[]; infiniteEnergy?: boolean; gatewayPixelId?: string | null; round?: number; energy?: number; pixels?: unknown[] }
+export interface OwnerPerson { id: string; name: string; worldId: string; status: string; running: boolean; runStatus: string; runId?: string | null; role?: string | null; behaviorProfile?: string[]; infiniteEnergy?: boolean; gatewayPixelId?: string | null; round?: number; energy?: number; pixels?: unknown[] }
 export interface OwnerWorkTask {
+  goalId?: string | null;
   id: string; personId: string; personName: string; instruction: string;
   state: 'QUEUED' | 'RUNNING' | 'REPLIED' | 'BLOCKED' | 'NO_REPLY' | 'FAILED';
   turnId: string | null; runId: string | null; reply: string | null; reason: string | null; createdAt: number; updatedAt: number;

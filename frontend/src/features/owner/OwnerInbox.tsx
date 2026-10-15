@@ -1,20 +1,14 @@
 import { useState } from 'react';
 import { t, useLanguage } from '../../i18n';
 import { executeOwnerAction, ownerError, ownerTodoCount } from '../../api/owner';
-import type { OwnerInboxItem, OwnerActionProposal, OwnerAlert } from '../../api/owner';
+import type { OwnerInboxItem, OwnerAlert } from '../../api/owner';
 import { OwnerActionCard } from './OwnerActionCard';
-const statuses:Record<string,string>={WAITING_PIXEL_BUDGET:'元胞能量不足，等待补充后重试。',WAITING_RUN_BUDGET:'Run budget needs attention.',WAITING_EXECUTION_BUDGET:'Execution budget needs attention.',CALL_OUTCOME_UNKNOWN:'External outcome unknown',AWAITING_SETTLEMENT:'Settlement needs verification.',PAUSED_RECOVERY_REQUIRED:'Needs verification',ABANDONED:'The conversation has no reply and needs review.'};
-/** Inbox items must expose exactly one approve and one reject proposal; anything else is a projection bug. */
-function pairOf(item:OwnerInboxItem):{approve:OwnerActionProposal;reject:OwnerActionProposal}|null{
-  const actions=(item.actions??[]).filter(p=>p.action.type.endsWith('_approve')||p.action.type.endsWith('_provided')||p.action.type.endsWith('_reject')||p.action.type.endsWith('gene_proposal_reject'));
-  const approve=actions.find(p=>['business_plan_approve','resource_provided','recruit_approve','gene_proposal_approve'].includes(p.action.type));
-  const reject=actions.find(p=>['business_plan_reject','resource_reject','recruit_reject','gene_proposal_reject'].includes(p.action.type));
-  return approve&&reject?{approve,reject}:null;
-}
+import { OwnerReason, OwnerTechnical } from './OwnerStatus';
+import { ownerApprovalPair, ownerActivityHref, ownerMetadataText, ownerTime } from './ownerPresentation';
 function DecisionButtons({item,onDone}:{item:OwnerInboxItem;onDone:()=>void}){
   useLanguage();
   const [busy,setBusy]=useState<'approve'|'reject'|null>(null),[error,setError]=useState('');
-  const pair=pairOf(item);
+  const pair=ownerApprovalPair(item);
   if(!pair)return null;
   const run=async(kind:'approve'|'reject')=>{
     if(busy)return;
@@ -36,22 +30,41 @@ function DecisionButtons({item,onDone}:{item:OwnerInboxItem;onDone:()=>void}){
     {error&&<p role="alert">{error}</p>}
   </>;
 }
-export function OwnerInbox({items,alerts=[],onDone}:{items:OwnerInboxItem[];alerts?:OwnerAlert[];onDone:()=>void}){
+export function OwnerInbox({items, alerts = [], onDone, title = 'To-dos', id = 'owner-inbox'}:
+  {items: OwnerInboxItem[]; alerts?: OwnerAlert[]; onDone: () => void; title?: string | null; id?: string}) {
   useLanguage();
-  const total=ownerTodoCount({inbox:items,alerts});
-  return <section className="owner-inbox" id="owner-inbox" tabIndex={-1}><h2>{t('To-dos')} ({total})</h2><p>{t('Only decisions, missing resources and unresolved outcomes appear here.')}</p>
-    {!total&&<p>{t('No to-dos pending.')}</p>}
-    {items.map(i=>{const pair=pairOf(i);return <article key={i.id} className={i.priority==='critical'?'critical':''}><h3>{t(i.title)}</h3><p>{i.type==='run'?i.summary.replace(/\b[A-Z_]+\b/g,code=>statuses[code]?t(statuses[code]!):code):i.summary}</p>
-      {i.priority==='critical'&&<strong>{t('Needs verification')}</strong>}<small>{i.source} · {i.createdAt===null?t('Time not recorded.'):new Date(i.createdAt).toLocaleString()}</small>
-      {pair&&i.approveEffect&&<p className="owner-effect"><strong>{t('If you approve')}:</strong> {t(i.approveEffect,i.approveEffectValues)}</p>}
-      {pair&&i.rejectEffect&&<p className="owner-effect"><strong>{t('If you reject')}:</strong> {t(i.rejectEffect,i.rejectEffectValues)}</p>}
-      {pair?<DecisionButtons item={i} onDone={onDone}/>:<a className="owner-btn owner-btn--ghost owner-btn--sm" href={i.href}>{t('View details')}</a>}
-      {/* Actions without a symmetric pair (chat dispatch, full-plan review) keep their existing gated card. */}
-      {pair&&(i.actions??[]).filter(p=>p.action.type==='qianji_chat'||p.action.type==='open_details').map(p=><details key={p.id}><summary>{t('More actions')}</summary><OwnerActionCard proposal={p} onDone={onDone}/></details>)}
-    </article>;})}
-    {!!alerts.length&&<section className="owner-alerts" aria-label={t('Needs human verification')}>
-      <h2>{t('Needs human verification')} ({alerts.length})</h2>
-      {alerts.map(a=><article key={a.id} className={a.severity==='critical'?'critical':''}><h3>{t(a.title)}</h3><p>{a.summary}{a.reasonKey&&<> · {t(a.reasonKey)}</>}</p><small>{a.source} · {a.createdAt===null?t('Time not recorded.'):new Date(a.createdAt).toLocaleString()}</small><a className="owner-btn owner-btn--ghost owner-btn--sm" href={a.href}>{t('View details')}</a></article>)}
+  const total = ownerTodoCount({inbox: items, alerts});
+  return <section className="owner-inbox" id={id} tabIndex={-1}>
+    {title && <><h2>{t(title)} ({total})</h2><p>{t('Only decisions, missing resources and unresolved outcomes appear here.')}</p></>}
+    {!total && <p>{t('No to-dos pending.')}</p>}
+    {items.map(item => {
+      const pair = ownerApprovalPair(item);
+      return <article key={item.id} className={item.priority === 'critical' ? 'critical' : ''}>
+        <h3>{t(item.title)}</h3><p>{ownerMetadataText(item.summary, item.type === 'run')}</p>
+        {item.priority === 'critical' && <strong>{t('Needs verification')}</strong>}
+        <small>{ownerTime(item.createdAt)}</small>
+        {pair && item.approveEffect && <p className="owner-effect"><strong>{t('If you approve')}:</strong>
+          {' '}{t(item.approveEffect, item.approveEffectValues)}</p>}
+        {pair && item.rejectEffect && <p className="owner-effect"><strong>{t('If you reject')}:</strong>
+          {' '}{t(item.rejectEffect, item.rejectEffectValues)}</p>}
+        {pair ? <DecisionButtons item={item} onDone={onDone} /> :
+          <a className="owner-btn owner-btn--ghost owner-btn--sm" href={ownerActivityHref(item.href)}>{t('View details')}</a>}
+        {pair && (item.actions ?? []).filter(p => p.action.type === 'qianji_chat' || p.action.type === 'open_details')
+          .map(p => <details key={p.id}><summary>{t('More actions')}</summary>
+            <OwnerActionCard proposal={p} onDone={onDone}/></details>)}
+        <OwnerTechnical><small>{item.source} · {ownerTime(item.createdAt)}</small>
+          <p>{item.summary}</p><code>{item.id}</code></OwnerTechnical>
+      </article>;
+    })}
+    {!!alerts.length && <section className="owner-alerts" aria-label={t('Needs human verification')}>
+      <h3>{t('Needs human verification')} ({alerts.length})</h3>
+      {alerts.map(alert => <article key={alert.id} className={alert.severity === 'critical' ? 'critical' : ''}>
+        <h3>{t(alert.title)}</h3><p>{ownerMetadataText(alert.summary)}</p>
+        <OwnerReason reason={alert.reasonKey}/><small>{ownerTime(alert.createdAt)}</small>
+        <a className="owner-btn owner-btn--ghost owner-btn--sm" href={ownerActivityHref(alert.href)}>{t('View details')}</a>
+        <OwnerTechnical><small>{alert.source} · {ownerTime(alert.createdAt)}</small>
+          <p>{alert.summary}</p>{alert.reasonKey && <code>{alert.reasonKey}</code>}</OwnerTechnical>
+      </article>)}
     </section>}
   </section>;
 }

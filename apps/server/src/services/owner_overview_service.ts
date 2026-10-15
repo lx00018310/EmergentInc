@@ -55,12 +55,12 @@ export class OwnerOverviewService {
           add(`current:${row.world_id}:${r.sequence}`, String(r.kind), name, Number(r.created_at), 'current_events', href);
       }
       return { id: row.qianji_id, name, worldId: row.world_id, status: row.status, running: row.running,
-        role:profile?.narrative.roleLabel,behaviorProfile:profile?.narrative.behaviorProfile,infiniteEnergy:control.gatewayInfiniteEnergy(row.world_id),gatewayPixelId:row.gateway_pixel_id,
+        runId:run?.run_id??null,role:profile?.narrative.roleLabel,behaviorProfile:profile?.narrative.behaviorProfile,infiniteEnergy:control.gatewayInfiniteEnergy(row.world_id),gatewayPixelId:row.gateway_pixel_id,
         runStatus: row.blockedReason ?? row.runtimeFailure ?? run?.result_status ?? 'NOT_OPEN', round: world?.round,
         energy: world?.metrics.total_energy, pixels: world?.pixels.slice(0, 30).map((p:any)=>({id:p.id,active:p.active,energy:p.energy,mind:String(p.pixel_md??'').slice(0,1000),tips:String(p.tips_md??'').slice(0,400)})) };
     });
     for (const r of control.db.prepare('SELECT id,kind,world_id,created_at FROM control_events ORDER BY created_at DESC LIMIT 50').all())
-      add(`control:${r.id}`, String(r.kind), String(r.world_id ?? ''), Number(r.created_at), 'control_events', `/YUAN?world=${encodeURIComponent(String(r.world_id ?? ''))}`);
+      add(`control:${r.id}`, String(r.kind), String(r.world_id ?? ''), Number(r.created_at), 'control_events', r.world_id?`/YUAN?world=${encodeURIComponent(String(r.world_id))}`:'/OWNER#owner-activity');
     for (const r of control.db.prepare('SELECT event_id,event_type,subject_id,created_at FROM world_events ORDER BY created_at DESC LIMIT 20').all())
       add(`event:${r.event_id}`, String(r.event_type), String(r.subject_id), Number(r.created_at)*1000, 'world_events', '/QIAN');
     for (const r of lineage.db.prepare('SELECT sequence,kind,generation_id,created_at FROM life_events ORDER BY created_at DESC LIMIT 30').all())
@@ -96,7 +96,7 @@ export class OwnerOverviewService {
         actions:['recruit_approve','recruit_reject'].map(type=>({id:`${type}:${r.id}`,requiresApproval:true,action:{type:type as 'recruit_approve'|'recruit_reject',requestId:r.id,hash:r.hash,role:r.role,reason:r.reason,instruction:r.instruction}}))});
       }
       for(const r of work.codeReports.filter(r=>r.baseGeneration===generation))inbox.push({id:`code:${r.id}`,type:'code',title:'Source change report',summary:`${r.personName}: ${r.title} — ${r.summary}`,priority:'normal',createdAt:r.createdAt,source:'owner_code_reports',href:`/OWNER?report=${encodeURIComponent(r.id)}#owner-activity`});
-      for(const task of work.tasks){if(manager.automation&&control.db.prepare('SELECT 1 FROM owner_goal_dispatches WHERE task_id=?').get(task.id))continue;add(`task:${task.id}`,'Assigned task',`${task.personName}: ${task.state} — ${task.instruction}`,task.updatedAt,'owner_work_tasks','/OWNER');if(task.state==='BLOCKED'||task.state==='NO_REPLY')alert(`task:${task.id}`,'task','normal','Assigned task needs attention',`${task.personName}: ${task.reason}`,task.updatedAt,'owner_work_tasks',`/QIAN?qianji=${encodeURIComponent(task.personId)}`);}
+      for(const task of work.tasks){if(manager.automation&&control.db.prepare('SELECT 1 FROM owner_goal_dispatches WHERE task_id=?').get(task.id))continue;add(`task:${task.id}`,'Assigned task',`${task.personName}: ${task.state} — ${task.instruction}`,task.updatedAt,'owner_work_tasks','/OWNER');if(['BLOCKED','NO_REPLY','FAILED'].includes(task.state))alerts.push({id:`task:${task.id}`,kind:'task',severity:task.state==='FAILED'?'critical':'normal',title:'Assigned task needs attention',summary:task.personName,reasonKey:task.reason??task.state,createdAt:task.updatedAt,source:'owner_work_tasks',href:`/QIAN?qianji=${encodeURIComponent(task.personId)}`});}
     }
     // Current-generation Gene proposals carry a symmetric direction decision: approving only sets
     // the direction; candidate freezing and the exact-hash publication remain separate approvals.

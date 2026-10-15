@@ -1,55 +1,153 @@
-import type {OwnerOverview} from '../../api/owner';
-import {t,useLanguage,language} from '../../i18n';
-import {OwnerInbox} from './OwnerInbox';
-import {OwnerActivity} from './OwnerActivity';
-import {CompanyProposalCard} from './CompanyProposalCard';
-import {OwnerWork} from './OwnerWork';
-import {OwnerExtensions} from './OwnerExtensions';
+import { useEffect, useRef } from 'react';
+import type { OwnerOverview } from '../../api/owner';
+import { t, useLanguage, language } from '../../i18n';
+import { OwnerInbox } from './OwnerInbox';
+import { OwnerActivity } from './OwnerActivity';
+import { CompanyProposalCard } from './CompanyProposalCard';
+import { OwnerWork } from './OwnerWork';
+import { OwnerExtensions } from './OwnerExtensions';
+import { OwnerTaskBoard, ownerBoardItems, ownerBoardColumn } from './OwnerTaskBoard';
+import { ownerApprovalPair, ownerStatusLabel, ownerTime } from './ownerPresentation';
 
-export function OwnerDashboard({data,onDone}:{data:OwnerOverview;onDone:()=>void}){
-  useLanguage();const budget=data.budget,goals=data.goals??[],plans=data.taskPlans??[],people=data.people??[],pending=(data.proposals??[]).filter(p=>p.state==='PENDING');
-  const opened=useRef('');useEffect(()=>{const query=new URLSearchParams(window.location.search),target=query.get('goal')??query.get('report');if(!target||opened.current===target)return;const node=document.getElementById(target);if(node){opened.current=target;const detail=node.querySelector('details');if(detail)detail.open=true;node.scrollIntoView?.({block:'start'});}},[data.asOf]);
-  const money=(n:number)=>`¥${(n/1000000).toLocaleString(language(),{maximumFractionDigits:6})}`;
-  const statuses=['DRAFT','READY','RUNNING','WAITING_APPROVAL','WAITING_RESOURCE','PAUSED','BLOCKED','COMPLETED','STOPPED'];
-  const approvalCount=pending.length+data.inbox.length;
+export function OwnerDashboard({ data, onDone }: { data: OwnerOverview; onDone: () => void }) {
+  useLanguage();
+  const pending = (data.proposals ?? []).filter(p => p.state === 'PENDING');
+  const approvals = data.inbox.filter(item => ownerApprovalPair(item));
+  const followup = data.inbox.filter(item => !ownerApprovalPair(item));
+  const alerts = data.alerts ?? [];
+  const opened = useRef('');
+  useEffect(() => {
+    const query = new URLSearchParams(window.location.search);
+    const resource = query.get('goal') ?? query.get('report');
+    const target = resource ?? window.location.hash.slice(1);
+    if (target === 'owner-dashboard' || target === 'owner-chat') return;
+    if (!target || opened.current === target) return;
+    const node = document.getElementById(target);
+    if (!node) return;
+    opened.current = target;
+    let ancestor: HTMLElement | null = node;
+    while (ancestor) {
+      if (ancestor instanceof HTMLDetailsElement) ancestor.open = true;
+      ancestor = ancestor.parentElement;
+    }
+    const detail = node.querySelector('details');
+    if (resource && detail) detail.open = true;
+    node.scrollIntoView?.({ block: 'start' });
+  }, [data.asOf]);
   return <div className="owner-dashboard">
-    <section className={`owner-card${approvalCount?' owner-approval':''}`} aria-label={t('Needs your approval')}>
-      <h2>{t('Needs your approval')}<span className={`owner-badge${approvalCount?' owner-badge--danger':' owner-badge--ok'}`}>{approvalCount}</span></h2>
-      {pending.map(p=><CompanyProposalCard key={p.id} proposal={p} onDone={onDone}/>)}
-      <OwnerInbox items={data.inbox} alerts={data.alerts} onDone={onDone}/>
-    </section>
-    <section className="owner-card" aria-label={t('Company money budget')}><h2>{t('Company money budget')}</h2>
-      {budget?<><div className="owner-metric-grid">{([[t('Total authorized budget'),budget.totalMicros,''],[t('Settled cost'),budget.spentMicros,''],[t('Reserved cost'),budget.reservedMicros,'warning'],[t('Available budget'),budget.availableMicros,'ok']] as const).map(([label,n,tone])=><div key={label} className={`owner-metric${tone?` owner-metric--${tone}`:''}`}><span>{label}</span><strong>{money(Number(n))}</strong></div>)}</div>
-        <div className="owner-money-bar" role="img" aria-label={`${t('Settled cost')}: ${money(budget.spentMicros)}; ${t('Reserved cost')}: ${money(budget.reservedMicros)}; ${t('Available budget')}: ${money(budget.availableMicros)}`}><span style={{width:`${budget.totalMicros?Math.min(100,budget.spentMicros/budget.totalMicros*100):0}%`}}/><i style={{width:`${budget.totalMicros?Math.min(100,budget.reservedMicros/budget.totalMicros*100):0}%`}}/></div>
-        {budget.activatedAt===null&&<p>{t('Give a company money budget in Boss chat to begin.')}</p>}
-        <p><small>{t('Tokens measure usage. Only the company money budget authorizes spending.')}</small></p></>:<p>{t('Unavailable')}</p>}
-      {Boolean(budget?.historicalCostMicros)&&<p><small>{t('Historical cost before this budget')}: {money(budget!.historicalCostMicros!)}</small></p>}
-      {(data.costs??[]).length>0&&<div className="company-status-chart" role="img" aria-label={t('Daily settled cost (Asia/Shanghai)')}>{data.costs!.map(c=><div key={c.day}><span>{c.day}</span><meter min={0} max={Math.max(1,...data.costs!.map(c=>c.micros))} value={c.micros}/><strong>{money(c.micros)}</strong></div>)}</div>}
-    </section>
-    {(data.legacyBusiness??[]).length>0&&<section className="owner-card"><h2>{t('Retained business tasks')}</h2>{data.legacyBusiness!.map(p=><article key={p.id}><h3>{p.title}</h3><p>{t(p.state)}</p><small>{p.id}{p.nextAt!==null&&` · ${new Date(p.nextAt).toLocaleString(language())}`}</small></article>)}<p><small>{t('These retained tasks continue through their original executor. No duplicate task is created.')}</small></p></section>}
-    {data.storefront&&<section className="owner-card"><h2>{t('Store products and orders')}</h2>{data.storefront.products.map(p=><article key={p.id}><h3>{(language()==='en'?p.nameEn:p.nameZh)||p.id}</h3><p>{t(p.enabled?'Published product':'Unpublished product')} · {p.price??'—'} {p.currency}</p></article>)}<ol>{data.storefront.orders.map(o=><li key={o.id}>{o.product} · {o.amount} {o.currency} · {t(o.status)} · {new Date(o.at).toLocaleString(language())}</li>)}</ol></section>}
-    <section className="owner-card" id="owner-goals" aria-label={t('Tasks and progress')}><h2>{t('Tasks and progress')}</h2>
-      <div className="company-status-chart" role="img" aria-label={t('Task status distribution')}>{statuses.map(status=>{const count=goals.filter(g=>g.status===status).length;return count?<div key={status}><span>{t(`Goal status: ${status}`)}</span><meter min={0} max={Math.max(1,goals.length)} value={count}/><strong>{count}</strong></div>:null;})}</div>
-      {!goals.length&&<p>{t('Describe a task in Boss chat. AI will propose the steps.')}</p>}
-      {goals.map(g=><article className="company-task" id={g.id} key={g.id}><h3>{g.title}</h3><p>{t(`Goal status: ${g.status}`)} · {g.reason?t(g.reason):''}</p><p>{g.objective}</p>
-        <ol className="company-task-timeline">{plans.find(p=>p.goalId===g.id)?.nodes.map(n=><li key={n.key}><strong>{n.title}</strong> · {t(`Task node: ${n.state}`)} · {t(`Task trigger: ${n.trigger.kind}`)}{n.nextAt!==null&&['READY','RUNNING'].includes(g.status)&&<small>{t('Next scheduled run')}: {new Date(n.nextAt).toLocaleString(language())}</small>}</li>)}</ol>
-        <details><summary>{t('Deliverables and execution history')}</summary><TaskEvidence goalId={g.id} updatedAt={g.updatedAt}/></details>
-      </article>)}
-    </section>
-    <section className="owner-card"><h2>{t('People and workload')}</h2>{people.map(p=><div key={p.id} className="company-person"><strong>{p.name}</strong><span>{p.role??t('Company coordinator')}</span><meter min={0} max={1} value={p.running?1:0}/><span>{t(p.running?'Running':'Idle')}</span></div>)}{!people.length&&<p>{t('No active people. AI can propose recruitment when execution needs it.')}</p>}</section>
-    <section className="owner-card"><h2>{t('Verified revenue')}</h2>{(data.revenue??[]).length?<><RevenueChart rows={data.revenue!}/><ol>{data.revenue!.map((r,i)=><li key={i}>{new Date(r.at).toLocaleString(language())} · {r.amount} {r.asset}</li>)}</ol></>:<p>{t('No verified revenue yet.')}</p>}</section>
-    <OwnerWork work={data.work}/>
-    <OwnerExtensions worldIds={people.map(p=>p.worldId).filter((id):id is string=>Boolean(id))}/>
-    <OwnerActivity items={data.activity}/>
-    <details className="owner-card"><summary><strong>{t('Decision history')}</strong></summary>{(data.proposals??[]).filter(p=>p.state!=='PENDING').map(p=><CompanyProposalCard key={p.id} proposal={p}/>)}</details>
+    <OwnerTaskBoard data={data} />
+    <div className="owner-decisions-grid">
+      <section className={'owner-card' + (pending.length + approvals.length ? ' owner-approval' : '')}
+        aria-label={t('Needs your approval')}>
+        <h2>{t('Needs your approval')}<span className={'owner-badge' +
+          (pending.length + approvals.length ? ' owner-badge--warning' : '')}>{pending.length + approvals.length}</span></h2>
+        {!pending.length && !approvals.length && <p className="owner-muted">{t('No approvals pending.')}</p>}
+        {pending.map(proposal => <CompanyProposalCard key={proposal.id} proposal={proposal} onDone={onDone} />)}
+        {!!approvals.length && <OwnerInbox items={approvals} onDone={onDone} title={null} id="owner-approval-items" />}
+      </section>
+      <section className={'owner-card' + (followup.length + alerts.length ? ' owner-followup' : '')}
+        aria-label={t('Needs follow-up')}>
+        <h2>{t('Needs follow-up')}<span className={'owner-badge' +
+          (followup.length + alerts.length ? ' owner-badge--warning' : '')}>{followup.length + alerts.length}</span></h2>
+        {!followup.length && !alerts.length ? <p className="owner-muted">{t('No follow-up pending.')}</p> :
+          <OwnerInbox items={followup} alerts={alerts} onDone={onDone} title={null} id="owner-followup-items" />}
+      </section>
+    </div>
+    <Budget data={data} />
+    <People data={data} />
+    <OwnerWork work={data.work} showTasks={false} />
+    {data.storefront && <details className="owner-card">
+      <summary><strong>{t('Store products and orders')}</strong></summary>
+      {!data.storefront.products.length && <p>{t('No products configured.')}</p>}
+      {data.storefront.products.map(p => <article key={p.id}><h3>{(language() === 'en' ? p.nameEn : p.nameZh) || p.id}</h3>
+        <p>{t(p.enabled ? 'Published product' : 'Unpublished product')} · {p.price ?? '—'} {p.currency}</p></article>)}
+      {!data.storefront.orders.length && <p>{t('No orders recorded.')}</p>}
+      <ol>{data.storefront.orders.map(o => <li key={o.id}>{o.product} · {o.amount} {o.currency} ·
+        {' '}{ownerStatusLabel(o.status)} · {ownerTime(o.at)}</li>)}</ol>
+    </details>}
+    <details className="owner-card"><summary><strong>{t('Verified revenue')}</strong></summary>
+      {(data.revenue ?? []).length ? <><RevenueChart rows={data.revenue!} /><ol>{data.revenue!.map((r, index) =>
+        <li key={index}>{ownerTime(r.at)} · {r.amount} {r.asset}</li>)}</ol></> : <p>{t('No verified revenue yet.')}</p>}
+    </details>
+    <OwnerExtensions worldIds={data.people.map(p => p.worldId).filter(Boolean)} />
+    <details className="owner-card owner-history"><summary><strong>{t('History')}</strong>
+      <span className="owner-count">{data.activity.length}</span></summary><OwnerActivity items={data.activity} /></details>
+    <details className="owner-card"><summary><strong>{t('Decision history')}</strong></summary>
+      {!(data.proposals ?? []).some(p => p.state !== 'PENDING') && <p>{t('No decisions recorded.')}</p>}
+      {(data.proposals ?? []).filter(p => p.state !== 'PENDING').map(p => <CompanyProposalCard key={p.id} proposal={p} />)}
+    </details>
   </div>;
 }
-function RevenueChart({rows}:{rows:{asset:string;amount:string;at:number}[]}){return <>{[...new Set(rows.map(r=>r.asset))].map(asset=>{const list=rows.filter(r=>r.asset===asset),max=Math.max(1,...list.map(r=>Number(r.amount)));return <svg key={asset} viewBox="0 0 400 110" role="img" aria-label={t('Verified revenue')+' · '+asset}><polyline fill="none" stroke="#000000" strokeWidth="2" points={list.map((r,i)=>`${20+i*360/Math.max(1,list.length-1)},${90-Number(r.amount)/max*70}`).join(' ')}/>{list.map((r,i)=><circle key={i} cx={20+i*360/Math.max(1,list.length-1)} cy={90-Number(r.amount)/max*70} r="3" fill="#000000"><title>{`${new Date(r.at).toLocaleString(language())}: ${r.amount} ${asset}`}</title></circle>)}</svg>;})}</>;}
-import {useEffect,useState,useRef} from 'react';
-import {ownerGoalRequest,ownerError} from '../../api/owner';
-import type {OwnerGoalDetail} from '../../api/owner';
-function TaskEvidence({goalId,updatedAt}:{goalId:string;updatedAt:number}){
-  const [detail,setDetail]=useState<OwnerGoalDetail>(),[error,setError]=useState('');
-  useEffect(()=>{let alive=true;void ownerGoalRequest<OwnerGoalDetail>(`goals/${encodeURIComponent(goalId)}`).then(r=>{if(alive)setDetail(r);}).catch(e=>{if(alive)setError(ownerError(e));});return()=>{alive=false;};},[goalId,updatedAt]);
-  return <>{error&&<p role="alert">{error}</p>}{detail?.evidence.map(e=><p key={e.id}>{e.kind==='artifact'?<a href={`/api/owner/goals/${encodeURIComponent(goalId)}/evidence/${encodeURIComponent(e.id)}`} target="_blank" rel="noreferrer">{e.reference.split('/').at(-1)}</a>:<span>{e.reference}</span>} · {e.bytes} {t('bytes')}</p>)}{detail?.events.slice(0,20).map(e=><p key={e.id}>{new Date(e.createdAt).toLocaleString(language())} · {t(`Goal event: ${e.kind}`)}</p>)}</>;
+
+function Budget({ data }: { data: OwnerOverview }) {
+  const budget = data.budget;
+  const valid = budget && budget.currency === 'CNY' && [budget.totalMicros, budget.spentMicros, budget.reservedMicros, budget.availableMicros]
+    .every(Number.isSafeInteger) && [budget.totalMicros, budget.spentMicros, budget.reservedMicros].every(n => n >= 0);
+  const money = (n: number) => Number.isFinite(n) ? '¥' + (n / 1000000).toLocaleString(language(),
+    { maximumFractionDigits: 6 }) : '—';
+  const spent = valid && budget.totalMicros ? Math.min(100, budget.spentMicros / budget.totalMicros * 100) : 0;
+  const reserved = valid && budget.totalMicros ?
+    Math.min(100 - spent, budget.reservedMicros / budget.totalMicros * 100) : 0;
+  return <section className="owner-card" aria-label={t('Company money budget')}><h2>{t('Company money budget')}</h2>
+    {!budget ? <p>{t('Budget data unavailable.')}</p> : !valid ? <p role="alert">{t('Budget data is invalid. Review the ledger before spending.')}</p> : <>
+      <div className="owner-metric-grid">{([
+        ['Total authorized budget', budget.totalMicros, ''],
+        ['Settled cost', budget.spentMicros, ''],
+        ['Reserved cost', budget.reservedMicros, budget.reservedMicros > 0 ? 'warning' : ''],
+        ['Available budget', budget.availableMicros, budget.availableMicros > 0 ? 'ok' : budget.activatedAt === null ? 'warning' : 'danger'],
+      ] as const).map(([label, value, tone]) => <div key={label} className={'owner-metric' + (tone ? ' owner-metric--' + tone : '')}>
+        <span>{t(label)}</span><strong>{money(value)}</strong></div>)}</div>
+      <div className="owner-money-bar" role="img" aria-label={t('Settled cost') + ': ' + money(budget.spentMicros) +
+        '; ' + t('Reserved cost') + ': ' + money(budget.reservedMicros) + '; ' + t('Available budget') + ': ' + money(budget.availableMicros)}>
+        <span style={{ width: spent + '%' }} /><i style={{ width: reserved + '%' }} /></div>
+      {budget.activatedAt === null && <p className="owner-notice">{t('Give a company money budget in Boss chat to begin.')}</p>}
+      {budget.activatedAt !== null && budget.availableMicros <= 0 && <p className="owner-notice">{t('OWNER_COMPANY_BUDGET_EXHAUSTED')}</p>}
+      {budget.unknownCalls > 0 && <p className="owner-notice">{t('Unsettled calls needing review: {0}', [budget.unknownCalls])}</p>}
+      <p className="owner-muted">{t('Tokens measure usage. Only the company money budget authorizes spending.')}</p>
+      {!!budget.historicalCostMicros && <p className="owner-muted">{t('Historical cost before this budget')}: {money(budget.historicalCostMicros)}</p>}
+      {!!data.costs?.length && <details><summary>{t('Daily settled cost (Asia/Shanghai)')}</summary>
+        <div className="company-status-chart" role="img" aria-label={t('Daily settled cost (Asia/Shanghai)')}>
+          {data.costs.map(c => <div key={c.day}><span>{c.day}</span><meter min={0}
+            max={Math.max(1, ...data.costs!.map(row => Number.isFinite(row.micros) ? row.micros : 0))}
+            value={Number.isFinite(c.micros) ? Math.max(0, c.micros) : 0} /><strong>{money(c.micros)}</strong></div>)}
+        </div></details>}
+    </>}
+  </section>;
+}
+
+function People({ data }: { data: OwnerOverview }) {
+  const items = ownerBoardItems(data);
+  return <section className="owner-card"><h2>{t('People and workload')}</h2>
+    <p className="owner-muted">{t('Task counts and live execution are shown separately. A stopped run does not close a task.')}</p>
+    <div className="owner-people-grid">{data.people.map(person => {
+      const tasks = items.filter(item => item.personIds.includes(person.id) && !['COMPLETED', 'ARCHIVED'].includes(item.status));
+      const waiting = tasks.filter(item => ownerBoardColumn(item, data) === 'attention').length;
+      const replies = tasks.filter(item => ['REPLIED', 'WAITING_APPROVAL'].includes(item.status)).length;
+      return <article className="owner-person-card" key={person.id}><div className="owner-section-heading">
+        <h3>{person.name}</h3><span className={'owner-task-state' + (person.running ? ' owner-task-state--running' : '')}>
+          {t(person.running ? 'Executing now' : 'Not executing now')}</span></div>
+        <p className="owner-person-role">{person.role || t('Company coordinator')}</p>
+        <dl><div><dt>{t('Open tasks')}</dt><dd>{tasks.length}</dd></div>
+          <div><dt>{t('Tasks needing follow-up')}</dt><dd>{waiting}</dd></div>
+          <div><dt>{t('Replies awaiting acceptance')}</dt><dd>{replies}</dd></div></dl>
+      </article>;
+    })}</div>
+    {!data.people.length && <p>{t('No active people. AI can propose recruitment when execution needs it.')}</p>}
+  </section>;
+}
+
+function RevenueChart({ rows }: { rows: { asset: string; amount: string; at: number }[] }) {
+  return <>{[...new Set(rows.map(row => row.asset))].map(asset => {
+    const list = rows.filter(row => row.asset === asset && Number.isFinite(Number(row.amount)) && Number(row.amount) >= 0)
+      .sort((a, b) => a.at - b.at);
+    if (!list.length) return <p key={asset}>{t('Revenue chart unavailable for {0}.', [asset])}</p>;
+    const max = Math.max(1, ...list.map(row => Number(row.amount)));
+    return <svg className="owner-revenue-chart" key={asset} viewBox="0 0 400 110" role="img"
+      aria-label={t('Verified revenue') + ' · ' + asset}><polyline fill="none" stroke="currentColor" strokeWidth="2"
+        points={list.map((row, index) => (20 + index * 360 / Math.max(1, list.length - 1)) + ',' +
+          (90 - Number(row.amount) / max * 70)).join(' ')} />
+      {list.map((row, index) => <circle key={index} cx={20 + index * 360 / Math.max(1, list.length - 1)}
+        cy={90 - Number(row.amount) / max * 70} r="3" fill="currentColor">
+        <title>{ownerTime(row.at) + ': ' + row.amount + ' ' + asset}</title></circle>)}</svg>;
+  })}</>;
 }

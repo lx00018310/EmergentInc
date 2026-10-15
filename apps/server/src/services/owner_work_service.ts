@@ -40,7 +40,8 @@ export class OwnerWorkService {
   hasFailure() {return Boolean(this.schedulerError);}
   view(): OwnerWork {
     const db=this.manager.registry.control.db;
-    return {tasks:db.prepare('SELECT * FROM owner_work_tasks ORDER BY created_at DESC LIMIT 50').all().map(r=>({id:String(r.id),personId:String(r.person_id),personName:String(r.person_name),instruction:String(r.instruction),state:r.state as OwnerWorkTask['state'],turnId:r.turn_id as string|null,runId:r.run_id as string|null,reply:r.reply as string|null,reason:r.reason as string|null,createdAt:Number(r.created_at),updatedAt:Number(r.updated_at)})),
+    const goalForTask=this.manager.automation?db.prepare('SELECT goal_id FROM owner_goal_dispatches WHERE task_id=?'):undefined;
+    return {tasks:db.prepare('SELECT * FROM owner_work_tasks ORDER BY created_at DESC LIMIT 50').all().map(r=>({id:String(r.id),goalId:goalForTask?.get(r.id)?.goal_id as string|undefined??null,personId:String(r.person_id),personName:String(r.person_name),instruction:String(r.instruction),state:r.state as OwnerWorkTask['state'],turnId:r.turn_id as string|null,runId:r.run_id as string|null,reply:r.reply as string|null,reason:r.reason as string|null,createdAt:Number(r.created_at),updatedAt:Number(r.updated_at)})),
       requests:db.prepare('SELECT * FROM owner_recruit_requests ORDER BY created_at DESC LIMIT 30').all().map(r=>({...JSON.parse(String(r.request_json)),state:r.state==='PENDING'&&db.prepare('SELECT 1 FROM owner_recruit_decisions WHERE request_id=?').get(r.id)?'APPROVED_QUEUED':r.state,personId:r.person_id})),codeReports:(this.code?.reports()??[]).map(({files,...report})=>({...report,paths:files.map(f=>f.path)})),upgradeOrigin:this.upgradeOrigin,schedulerError:this.schedulerError};
   }
   requestRecruit(input: {role:string;reason:string;instruction:string}, requester: string, key: string) {

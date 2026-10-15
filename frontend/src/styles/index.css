@@ -1255,15 +1255,15 @@ body::after {
 }
 
 /* 6. 输入框与表单 */
-.command-input-group input,
-.text-input,
-.modal-textarea,
-.operation-section input,
-input[type="text"],
-input[type="number"],
-input[type="password"],
-textarea,
-select {
+.command-input-group input:not(.owner-entry *),
+.text-input:not(.owner-entry *),
+.modal-textarea:not(.owner-entry *),
+.operation-section input:not(.owner-entry *),
+input[type="text"]:not(.owner-entry *),
+input[type="number"]:not(.owner-entry *),
+input[type="password"]:not(.owner-entry *),
+textarea:not(.owner-entry *),
+select:not(.owner-entry *) {
   background: #0a1220 !important;
   border: 1px solid var(--border-color) !important;
   color: var(--text-bright) !important;
@@ -1271,14 +1271,14 @@ select {
   transition: all 0.2s ease;
 }
 
-.command-input-group input:focus,
-.text-input:focus,
-.modal-textarea:focus,
-.operation-section input:focus,
-input[type="text"]:focus,
-input[type="number"]:focus,
-textarea:focus,
-select:focus {
+.command-input-group input:focus:not(.owner-entry *),
+.text-input:focus:not(.owner-entry *),
+.modal-textarea:focus:not(.owner-entry *),
+.operation-section input:focus:not(.owner-entry *),
+input[type="text"]:focus:not(.owner-entry *),
+input[type="number"]:focus:not(.owner-entry *),
+textarea:focus:not(.owner-entry *),
+select:focus:not(.owner-entry *) {
   border-color: var(--accent-blue) !important;
   box-shadow: 0 0 8px rgba(56, 225, 255, 0.35) !important;
   outline: none;
@@ -1504,12 +1504,12 @@ select:focus {
   background: rgba(25, 40, 70, 0.4) !important;
 }
 
-.owner-chat-message.user {
+.owner-chat-message.user:not(.owner-entry *) {
   background: rgba(20, 36, 64, 0.7) !important;
   border: 1px solid rgba(56, 225, 255, 0.25) !important;
 }
 
-.owner-chat-message.assistant {
+.owner-chat-message.assistant:not(.owner-entry *) {
   background: rgba(12, 22, 40, 0.8) !important;
   border: 1px solid var(--border-color) !important;
 }

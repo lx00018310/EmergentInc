@@ -8,6 +8,7 @@ import { askMissionOwner, ownerError, type OwnerActionProposal, type OwnerWork a
 import { OwnerActionCard } from './OwnerActionCard';
 import { OwnerMarkdown } from './OwnerMarkdown';
 import { OwnerWork } from './OwnerWork';
+import { ownerTime } from './ownerPresentation';
 
 const STORAGE_KEY = 'emergentinc.ownerChat.history';
 const PENDING_KEY = 'emergentinc.ownerChat.pending';
@@ -97,7 +98,7 @@ export const OwnerChat: React.FC<{missionControl?:boolean;onDone?:()=>void;work?
             {message.configuredProduct&&<p className="owner-product-receipt"><strong>{tr(message.configuredProduct.enabled?'Published product':'Unpublished product')}</strong> · {message.configuredProduct.price} USDT · <a href="/#products">{tr('View product')}</a> · <span>{tr('Saved event {0}',[message.configuredProduct.eventId])}</span></p>}
             {message.role === 'assistant' && (
               <div className="owner-chat-evidence">
-                {message.as_of && <div>{tr("读取时间：")}{new Date(message.as_of).toLocaleString()}</div>}
+                {message.as_of && <div>{tr("读取时间：")}{ownerTime(message.as_of)}</div>}
                 {message.sources && message.sources.length > 0 && <div>{tr("依据：")}{message.sources.join('、')}</div>}
                 {message.usage?.tokens != null && <div>{tr("本次消耗：")}{message.usage.tokens} Tokens</div>}
               </div>
