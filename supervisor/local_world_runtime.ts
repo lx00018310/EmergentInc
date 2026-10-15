@@ -24,8 +24,8 @@ export class LocalWorldRuntime implements EvolutionRuntime {
     const shell=process.env.ComSpec||'cmd.exe';
     const install=process.platform==='win32'?()=>this.execute(shell,['/d','/s','/c','pnpm.cmd install --offline --frozen-lockfile --ignore-scripts'],directory,this.cleanEnv()):()=>this.execute('pnpm',['install','--offline','--frozen-lockfile','--ignore-scripts'],directory,this.cleanEnv());
     await install();
-    for(const command of ['pnpm.cmd typecheck','pnpm.cmd test --maxWorkers=1','pnpm.cmd build','pnpm.cmd --dir frontend build']){
-      const timeout=command==='pnpm.cmd test --maxWorkers=1'?600000:300000;
+    for(const command of ['pnpm.cmd typecheck','pnpm.cmd test --maxWorkers=1 --testTimeout=15000','pnpm.cmd build','pnpm.cmd --dir frontend build']){
+      const timeout=command==='pnpm.cmd test --maxWorkers=1 --testTimeout=15000'?600000:300000;
       if(process.platform==='win32')await this.execute(shell,['/d','/s','/c',command],directory,this.cleanEnv(),timeout);
       else await this.execute('pnpm',command.replace('pnpm.cmd ','').split(' '),directory,this.cleanEnv(),timeout);
     }
