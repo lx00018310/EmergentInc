@@ -85,13 +85,15 @@ function gitText(root, args) {
     return execFileSync('git', args, { cwd: root, encoding: 'utf8', windowsHide: true, timeout: 30000, maxBuffer: 4*1024*1024 });
   } catch (error) { if (error.status === 128) return null; throw error; }
 }
-/** Bounded read-only Git DAG projection: refs plus the first `limit` commits across all branches. */
-export function readGitGraph(root, limit=200) {
-  const bound=Math.min(Math.max(Number(limit)||200,1),500);
+/** Read-only Git DAG page with at most `limit` distinct commits across all branches. */
+export function readGitGraph(root, limit=20, page=0) {
+  const bound=Math.min(Math.max(Math.trunc(Number(limit))||20,1),500);
   const refsRaw=gitText(root,['for-each-ref','--format=%(refname) %(objectname)','refs/heads','refs/remotes','refs/tags']);
   if(refsRaw===null)return {available:false};
   const refs=refsRaw.trim()?refsRaw.trim().split(/\r?\n/).map(line=>{const index=line.lastIndexOf(' ');return {ref:line.slice(0,index),sha:line.slice(index+1)};}):[];
-  const log=gitText(root,['log','--branches','--remotes','--tags','--topo-order','--parents','-n',String(bound),
+  const total=Number(gitText(root,['rev-list','--count','--branches','--remotes','--tags'])??0);
+  const pageIndex=Math.min(Math.max(Math.trunc(Number(page))||0,0),Math.max(0,Math.ceil(total/bound)-1)),offset=pageIndex*bound;
+  const log=gitText(root,['log','--branches','--remotes','--tags','--topo-order','--parents','--skip='+offset,'-n',String(bound),
     '--pretty=format:%H%x1f%P%x1f%s%x1f%an%x1f%ct']);
   if(log===null)return {available:false};
   const commits=log.trim()?log.trim().split(/\r?\n/).map(line=>{
@@ -99,14 +101,15 @@ export function readGitGraph(root, limit=200) {
     return {sha,parents:parents?parents.split(' ').filter(Boolean):[],subject:String(subject??''),author:String(author??''),time:Number(time??0)};
   }):[];
   let mainHead=null;try{mainHead=execFileSync('git',['rev-parse','main'],{cwd:root,encoding:'utf8',windowsHide:true,timeout:10000}).trim();}catch{mainHead=null;}
-  const firstParent=mainHead?git(root,['rev-list','--first-parent','--max-count='+bound,mainHead]).split(/\r?\n/):[];
+  const visible=new Set(commits.map(commit=>commit.sha));
+  const firstParent=mainHead?git(root,['rev-list','--first-parent','--max-count='+(offset+bound),mainHead]).split(/\r?\n/).filter(sha=>visible.has(sha)):[];
   const branches=refs.filter(r=>r.ref!=='refs/heads/main'&&!r.ref.startsWith('refs/tags/')&&!r.ref.endsWith('/HEAD')).map(r=>{
     let base=null;
     if(mainHead){try{base=git(root,['merge-base',mainHead,r.sha]);}catch(error){if(error.status!==1)throw error;}}
-    const history=mainHead?git(root,['rev-list','--max-count='+bound,r.sha,'--not',mainHead]).split(/\r?\n/).filter(Boolean):[r.sha];
-    return {...r,base,commits:history,merged:Boolean(mainHead&&isAncestor(root,r.sha,mainHead))};
-  });
-  return {available:true,refs,commits,mainHead,firstParent,branches,limit:bound};
+    const history=git(root,['rev-list','--topo-order','--max-count='+(offset+bound),r.sha,...(mainHead?['--not',mainHead]:[])]).split(/\r?\n/).filter(sha=>visible.has(sha));
+    return {...r,base,commits:history,merged:false};
+  }).filter(branch=>branch.commits.length);
+  return {available:true,refs,commits,mainHead,firstParent,branches,limit:bound,page:pageIndex,hasMore:offset+bound<total};
 }
 /** Read-only details for one commit: parents, files versus its parent, and fast-forward feasibility. */
 export function readGitCommit(root, shaInput) {
@@ -183,7 +186,7 @@ export async function createUpgradeWeb({ root, config, secret, runCommand = runU
   app.get('/api/upgrades', async () => ({ ...status(root, config), job, busy: busy || operatorBusy(config) }));
   // Read-only Git DAG projections for the dual-tree view. Login required; never accepts paths.
   app.get('/api/git-graph', async (req,reply) => {
-    try{const graph=readGitGraph(root,Number(req.query?.limit??200)||200);reply.send(graph);}catch(error){return reply.status(500).send({detail:error.message});}
+    try{const graph=readGitGraph(root,req.query?.limit,req.query?.page);reply.send(graph);}catch(error){return reply.status(500).send({detail:error.message});}
   });
   app.get('/api/git-commit/:sha', async (req,reply) => {
     try{const detail=readGitCommit(root,String(req.params.sha)),current=status(root,config);

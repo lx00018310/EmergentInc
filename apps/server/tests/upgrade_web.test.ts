@@ -41,10 +41,54 @@ async function page(f:Awaited<ReturnType<typeof fixture>>,lang='zh-CN',query='',
   dom.window.HTMLDialogElement.prototype.close=function(){this.open=false;};
   dom.window.fetch=vi.fn(async(url:string,init:any={})=>{if(!init.method&&url in responses)return {ok:true,status:200,json:async()=>responses[url]};const response=await f.app.inject({method:init.method??'GET',url,headers:{cookie:browserCookie},...(init.body?{payload:JSON.parse(init.body)}:{})});if(response.headers['set-cookie'])browserCookie=String(response.headers['set-cookie']).split(';')[0];return {ok:response.statusCode<400,status:response.statusCode,json:async()=>response.json()};});
   await dom.window.eval(`(async()=>{${dom.window.document.querySelector('script').textContent};let selections=0;const select=selectCommit;selectCommit=async(...args)=>{selections++;try{return await select(...args);}finally{selections--;}};window.upgradeTestIdle=()=>!refreshing&&!sending&&!selections;})()`);
-  return {dom,doc:dom.window.document,poll:()=>poll()};
+  return {dom,doc:dom.window.document,poll:async()=>{await poll();await vi.waitFor(()=>expect(dom.window.upgradeTestIdle()).toBe(true),{timeout:5000});}};
 }
 
 describe('V32 single version switch flow',()=>{
+  it.each(['zh-CN','en'])('pages through distinct commits without repeated local or remote main history (%s)',async lang=>{
+    const repo=gitRepo();
+    repo.run('merge','--ff-only','feature/skills');
+    repo.run('branch','same-as-main');repo.run('branch','old-main',repo.base);
+    repo.run('update-ref','refs/remotes/origin/main',repo.tip);repo.run('update-ref','refs/remotes/origin/old-main',repo.base);
+    for(let i=0;i<37;i++)repo.commit('main change '+i);
+    const f=await switchFixture(repo),{doc,poll}=await page(f,lang);
+    const shas=()=>Array.from(doc.querySelectorAll('button[data-sha]'),(node:any)=>node.dataset.sha);
+    const first=shas();expect(first).toHaveLength(20);expect(new Set(first).size).toBe(20);
+    expect(first[0]).toBe(repo.run('rev-parse','main'));expect(doc.querySelectorAll('.branch-card')).toHaveLength(0);
+    expect(doc.getElementById('logout')).toBeNull();expect(doc.getElementById('previous-page').disabled).toBe(true);
+    expect(doc.getElementById('next-page').textContent).toBe(lang==='en'?'Next page':'下一页');
+    doc.getElementById('next-page').click();await vi.waitFor(()=>expect(doc.getElementById('graph-window').textContent).toContain(lang==='en'?'Page 2':'第 2 页'));
+    const second=shas();expect(second).toHaveLength(20);expect(second.some(sha=>first.includes(sha))).toBe(false);
+    await poll();expect(shas()).toEqual(second);expect(doc.querySelectorAll('.branch-card')).toHaveLength(0);
+    doc.getElementById('next-page').click();await vi.waitFor(()=>expect(doc.getElementById('graph-window').textContent).toContain(lang==='en'?'Page 3':'第 3 页'));
+    expect(shas()).toHaveLength(1);expect(doc.getElementById('next-page').disabled).toBe(true);
+    expect(shas().some(sha=>first.includes(sha)||second.includes(sha))).toBe(false);
+    doc.getElementById('previous-page').click();await vi.waitFor(()=>expect(shas()).toEqual(second));
+    expect(f.run).not.toHaveBeenCalled();
+  },30000);
+  it.each(['zh-CN','en'])('shows retained and active job states inside the selection panel without a selection (%s)',async lang=>{
+    const repo=gitRepo(),f=await switchFixture(repo),jobFile=path.join(f.directory,'upgrade-web-job.json');
+    f.data.candidates[0].validationLog='Candidate validation output';
+    fs.writeFileSync(jobFile,JSON.stringify({action:'switch',state:'running',phase:'validate',git:{commit:repo.base},log:'Interrupted validation',startedAt:1}));
+    const restarted=await createUpgradeWeb({root:repo.directory,config:{stateDirectory:f.directory},secret:f.secret,runCommand:f.run,status:()=>f.data,checkRunning:f.checkRunning});cleanups.push(()=>restarted.close());
+    const login=await restarted.inject({method:'POST',url:'/api/login',payload:{secret:f.secret}}),cookie=String(login.headers['set-cookie']).split(';')[0];
+    const status=(await restarted.inject({url:'/api/upgrades',headers:{cookie}})).json();
+    const {doc,poll}=await page({...f,app:restarted,cookie},lang,'',{'/api/upgrades':status});
+    const panel=doc.getElementById('selected-commit');expect(panel.hidden).toBe(false);
+    for(const id of ['job','job-state','log','validation-log','sync-git','recover','error'])expect(panel.contains(doc.getElementById(id))).toBe(true);
+    expect(doc.getElementById('job-state').textContent).toContain(lang==='en'?'Interrupted':'操作中断');
+    expect(doc.getElementById('log').textContent).toBe('Interrupted validation');
+    expect(doc.getElementById('validation-log').textContent).toBe('Candidate validation output');expect(doc.getElementById('recover').hidden).toBe(false);
+    status.busy=true;status.job.state='running';delete status.job.error;await poll();
+    expect(doc.getElementById('job-state').textContent).toContain(lang==='en'?'Switching · Prepare and validate':'正在切换 · 准备并校验');
+    expect(doc.getElementById('switch-state').hidden).toBe(true);
+    status.busy=false;status.job.state='succeeded';await poll();
+    expect(doc.getElementById('job-state').textContent).toContain(lang==='en'?'Switch completed':'切换完成');
+    status.job.state='failed';status.job.error='UPGRADE_VALIDATION_FAILED';await poll();
+    expect(doc.getElementById('job-state').textContent).toContain(lang==='en'?'Candidate validation failed':'候选校验失败');
+    status.job.state='needs_git_sync';delete status.job.error;await poll();expect(doc.getElementById('sync-git').hidden).toBe(false);
+    expect(f.run).not.toHaveBeenCalled();
+  },30000);
   it.each(['zh-CN','en'])('only selects until one click merges, validates, approves and publishes from a branch card (%s)',async lang=>{
     const repo=gitRepo(),f=await switchFixture(repo),{doc,poll}=await page(f,lang);
     expect(doc.querySelectorAll('.main-step').length).toBe(2);expect(doc.querySelectorAll('.branch-card')).toHaveLength(1);
@@ -54,6 +98,8 @@ describe('V32 single version switch flow',()=>{
     await poll();await poll();expect(f.run).not.toHaveBeenCalled();expect(repo.run('rev-parse','main')).toBe(repo.base);
     expect(doc.getElementById('switch').textContent).toContain(lang==='en'?'Prepare + validate':'准备 + 校验');
     doc.getElementById('switch').click();await f.done();await poll();
+    expect(doc.getElementById('selected-commit').contains(doc.getElementById('job'))).toBe(true);
+    expect(doc.getElementById('job-state').textContent).toContain(lang==='en'?'Switch completed':'切换完成');
     expect(f.run.mock.calls.map(c=>c[1][0])).toEqual(['prepare','approve','apply']);
     const result=repo.run('rev-parse','main');expect(result).not.toBe(repo.tip);expect(repo.run('rev-list','--parents','-n','1',result).split(' ').slice(1)).toEqual([repo.base,repo.tip]);
     expect(f.run.mock.calls[0][1].at(-1)).toBe(result);expect(f.run.mock.calls[1][1]).toContain('a'.repeat(64));
@@ -68,6 +114,7 @@ describe('V32 single version switch flow',()=>{
     doc.querySelector('button[data-sha="'+repo.tip+'"]').click();await vi.waitFor(()=>expect(doc.getElementById('switch').disabled).toBe(false));
     doc.getElementById('switch').click();await f.done('failed');await poll();await poll();
     expect(f.run).toHaveBeenCalledOnce();expect(repo.run('rev-parse','main')).toBe(repo.base);expect(doc.getElementById('job-state').textContent).toContain('Candidate validation failed');
+    expect(doc.getElementById('selected-commit').contains(doc.getElementById('job-state'))).toBe(true);
     doc.getElementById('error').textContent='Actual failure';await poll();expect(doc.getElementById('error').textContent).toBe('Actual failure');
   },30000);
   it('denies delegated release mutation and retains only read-only release metadata',async()=>{
@@ -347,6 +394,29 @@ describe('main integration, restore and local branch deletion',()=>{
 });
 
 describe('V27 dual-tree git upgrade', () => {
+  it('limits mixed branch pages to distinct visible commits, including branch history beyond its tip page',async()=>{
+    const repo=gitRepo();repo.run('checkout','feature/skills');
+    for(let i=0;i<23;i++)repo.commit('feature change '+i);
+    const tip=repo.run('rev-parse','HEAD');repo.run('checkout','main');
+    repo.run('update-ref','refs/remotes/origin/feature/skills',tip);repo.run('update-ref','refs/remotes/origin/main',repo.base);
+    const first=readGitGraph(repo.directory),second=readGitGraph(repo.directory,20,1);
+    expect(first).toMatchObject({page:0,hasMore:true,limit:20});expect(first.commits).toHaveLength(20);
+    expect(second).toMatchObject({page:1,hasMore:false,limit:20});expect(second.commits).toHaveLength(7);
+    expect(new Set([...first.commits,...second.commits].map((c:any)=>c.sha)).size).toBe(27);
+    expect(readGitGraph(repo.directory,20,-1).page).toBe(0);expect(readGitGraph(repo.directory,20,999).page).toBe(1);
+    for(const graph of [first,second]){
+      const visible=new Set(graph.commits.map((c:any)=>c.sha));
+      expect(graph.firstParent.every((sha:string)=>visible.has(sha))).toBe(true);
+      expect(graph.branches.some((b:any)=>b.ref==='refs/remotes/origin/main')).toBe(false);
+      expect(graph.branches.every((b:any)=>b.commits.every((sha:string)=>visible.has(sha)))).toBe(true);
+    }
+    const f=await switchFixture(repo),{doc}=await page(f);
+    expect(doc.querySelectorAll('button[data-sha]')).toHaveLength(20);expect(doc.querySelectorAll('.branch-card')).toHaveLength(1);
+    doc.getElementById('next-page').click();await vi.waitFor(()=>expect(doc.querySelectorAll('button[data-sha]')).toHaveLength(7));
+    expect(doc.querySelectorAll('button[data-sha="'+tip+'"]')).toHaveLength(0);
+    expect(doc.querySelectorAll('.branch-card')).toHaveLength(1);expect(doc.querySelectorAll('.main-step')).toHaveLength(2);
+    const pageShas=Array.from(doc.querySelectorAll('button[data-sha]'),(n:any)=>n.dataset.sha);expect(new Set(pageShas).size).toBe(7);
+  },30000);
   it('shows real branches and tags without counting internal tool checkpoint refs as development',()=>{
     const repo=gitRepo();repo.run('checkout','-b','scratch');const checkpoint=repo.commit('internal checkpoint','scratch.txt');repo.run('update-ref','refs/cline/checkpoints/test/1',checkpoint);repo.run('checkout','main');repo.run('branch','-D','scratch');repo.run('tag','approved-base',repo.base);
     let graph=readGitGraph(repo.directory);expect(graph.commits.map((c:any)=>c.sha)).not.toContain(checkpoint);expect(graph.refs.map((r:any)=>r.ref)).toContain('refs/tags/approved-base');expect(graph.refs.map((r:any)=>r.ref)).not.toContain('refs/cline/checkpoints/test/1');
