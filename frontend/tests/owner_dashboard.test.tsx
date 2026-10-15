@@ -172,7 +172,7 @@ describe('OWNER task overview and truthful status boundaries', () => {
     render(<CompanyProposalCard proposal={{id:'close',kind:'close_task',goalId:'goal-a',goalRevision:1,hash:'a'.repeat(64),
       payload:{title:'Research',evidence:[{id:'evidence-a',sha256:'b'.repeat(64)}]},state:'PENDING',createdAt:1,result:null}}/>);
     expect(screen.getByRole('link',{name:'View task deliverables'}).getAttribute('href')).toBe('/OWNER?goal=goal-a');
-    expect(screen.getByRole('button',{name:'Approve and execute'})).toBeTruthy();
+    expect(screen.getByRole('button',{name:'Approve'})).toBeTruthy();
   });
   it('does not offer decisions for a malformed proposal', () => {
     const fetch=vi.spyOn(globalThis,'fetch');

@@ -114,12 +114,6 @@ export class OwnerWorkService {
     if(typeof infinite==='boolean')this.manager.registry.control.setGatewayInfiniteEnergy(world.world_id,infinite);
     const amount=refill?Math.max(0,100000-account.energy):0;
     if(amount)runtime.store.applyExternalReward({pixelId,amount,idempotencyKey:`owner-chat-energy:${key}`,source:'owner_chat',reason:'Owner explicitly requested gateway energy refill'});
-    // Explicit refill permits retrying energy-blocked work; never replay unknown calls or a manual pause.
-    const waiting=runtime.store.db.prepare("SELECT 1 FROM messages WHERE recipient=? AND status='WAITING_PIXEL_BUDGET' LIMIT 1").get(pixelId);
-    const previous=runtime.store.runs.getLatestRun(),remaining=previous?Math.max(0,previous.run_limit-previous.run_spent-previous.run_reserved):0;
-    const rounds=previous?.end_round==null?0:Math.max(1,Math.min(20,previous.end_round-runtime.run.getWorldRound()));
-    if((refill||infinite===true)&&waiting&&remaining>0&&rounds>0&&!runtime.run.getStatus().running&&!this.quiesced()&&(!this.manager.automation||this.manager.automation.isOn())&&runtime.run.getStatus().stop_reason!=='USER_STOPPED'&&!runtime.store.getUnfinalizedOperations().hasUnfinalized)
-      await runtime.run.start({rounds,runBudgetTokens:remaining});
     return {personId,name:profile.narrative.displayName,pixelId,energy:runtime.store.pixels.getPixelAccount(pixelId)!.energy,infiniteEnergy:this.manager.registry.control.gatewayInfiniteEnergy(world.world_id),running:runtime.run.getStatus().running};
   }
   async decide(id:string,hash:string,decision:'approve'|'reject',defer=false) {
@@ -233,7 +227,7 @@ export class OwnerWorkService {
           }
         }
         else if(i.kind==='energy'&&only(i,['kind','personId','refill','infinite'])&&typeof i.personId==='string'&&(i.refill===undefined||typeof i.refill==='boolean')&&(i.infinite===undefined||typeof i.infinite==='boolean')&&(i.refill===true||typeof i.infinite==='boolean')){
-          const result=await this.energy(i.personId,i.refill===true,i.infinite,key);extra.energy=result;answer=say(`${result.name}：当前入口元胞 ${result.pixelId} 的能量为 ${result.energy}，无限能量${result.infiniteEnergy?'已开启':'已关闭'}。其他元胞是否获能仍由入口自主决定，执行授权和实际计费继续有效。`,`${result.name}: gateway ${result.pixelId} has ${result.energy} energy; automatic replenishment is ${result.infiniteEnergy?'enabled':'disabled'}. The gateway decides whether to supply other cells. Execution authorization and actual billing remain in effect.`);
+          const result=await this.energy(i.personId,i.refill===true,i.infinite,key);extra.energy=result;answer=say(`${result.name}：当前入口元胞 ${result.pixelId} 的能量为 ${result.energy}，无限能量${result.infiniteEnergy?'已开启':'已关闭'}。补能量不会自动启动任务；需要继续执行时，请在运行面板明确确认。其他元胞是否获能仍由入口自主决定，执行授权和实际计费继续有效。`,`${result.name}: gateway ${result.pixelId} has ${result.energy} energy; automatic replenishment is ${result.infiniteEnergy?'enabled':'disabled'}. Funding energy does not start a task; confirm execution separately in the Run panel. The gateway decides whether to supply other cells. Execution authorization and actual billing remain in effect.`);
         } else if(i.kind==='recruit'&&only(i,['kind','role','reason','instruction'])){extra.request=this.requestRecruit({role:i.role,reason:i.reason,instruction:i.instruction},say('老板窗口助手','Owner assistant'),`dispatch:${key}`);answer=say('已提出招聘申请。请在待办中查看职责、理由和初始任务；批准后才创建人物并派发任务。','A recruitment request was created. Review the role, reason and initial task in Inbox. Approval creates the person and dispatches the task.');}
         else throw new Error('OWNER_DISPATCH_INVALID');
         const response={answer,...extra,sources:['Owner dispatch / actual World runs / owner_work_tasks'],as_of:new Date().toISOString(),usage:routed.usage};db.prepare("UPDATE owner_dispatch_calls SET state='DONE',response_json=? WHERE request_key=?").run(JSON.stringify(response),key);return response;
@@ -269,6 +263,7 @@ export class OwnerWorkService {
         const turn=(await this.gateway.turns(personId)).find(t=>t.turnId===turnId);
         if(turn?.status==='replied'){db.prepare("UPDATE owner_work_tasks SET state='REPLIED',reply=?,reason=NULL,updated_at=? WHERE id=?").run(turn.reply,Date.now(),row.id);continue;}
         if(turn?.status==='no_reply'||turn?.status==='failed'){db.prepare("UPDATE owner_work_tasks SET state=?,reason=?,updated_at=? WHERE id=?").run(turn.status==='failed'?'FAILED':'NO_REPLY',turn.blockReason??'Run ended without an Owner reply',Date.now(),row.id);continue;}
+        if(row.run_id&&runtime.run.getStatus().running&&runtime.run.getStatus().run_id===row.run_id&&row.state!=='RUNNING')db.prepare("UPDATE owner_work_tasks SET state='RUNNING',reason=NULL,updated_at=? WHERE id=?").run(Date.now(),row.id);
         if(!row.run_id&&!runtime.run.getStatus().running){
           if(this.closed||this.quiesced())return;
           if(this.manager.automation&&!this.manager.automation.isOn())continue;
@@ -283,7 +278,7 @@ export class OwnerWorkService {
         }
       } catch(e){db.prepare("UPDATE owner_work_tasks SET state='BLOCKED',reason=?,updated_at=? WHERE id=?").run(e instanceof Error?e.message:String(e),Date.now(),row.id);}
     }
-    // An explicit energy retry or a manual recovery can later produce the real reply.
+    // A separately resumed run can later produce the real reply.
     for(const row of db.prepare("SELECT * FROM owner_work_tasks WHERE state IN ('BLOCKED','NO_REPLY') AND turn_id IS NOT NULL").all()) {
       try {
         const turn=(await this.gateway.turns(String(row.person_id))).find(t=>t.turnId===row.turn_id);

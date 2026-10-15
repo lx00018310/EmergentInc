@@ -96,6 +96,7 @@ export class BusinessService {
     } finally { this.drafting = false; }
   }
   start(options: { exclusiveWorkspaceLockHeld?: boolean } = {}) {
+    if(this.timer)return;
     this.stopping = false;
     // Only bootstrap may attest to the OS-process check performed by acquireWorkspaceLock.
     // A time-expired lease alone never proves an external request was not dispatched.
@@ -121,12 +122,13 @@ export class BusinessService {
       }
     }
     this.timer = setInterval(() => {
-      void this.tick().catch(() => { this.failure = "SCHEDULER_REQUIRES_REVIEW"; if (this.timer) clearInterval(this.timer); });
+      void this.tick().catch(() => { this.failure = "SCHEDULER_REQUIRES_REVIEW"; if (this.timer) clearInterval(this.timer);this.timer=undefined; });
     }, 1000);
     this.timer.unref();
+    this.failure=null;
   }
   async stop() {
-    this.stopping = true; if (this.timer) clearInterval(this.timer); await this.taskInFlight;
+    this.stopping = true; if (this.timer) clearInterval(this.timer);this.timer=undefined; await this.taskInFlight;
     while (this.drafting) await new Promise(resolve => setTimeout(resolve, 25));
     this.store.releaseWorker(this.workerId);
   }

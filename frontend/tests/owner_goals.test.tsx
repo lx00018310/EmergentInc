@@ -21,19 +21,19 @@ describe('V32 approval-only company UI',()=>{
     fireEvent.click(screen.getByRole('link',{name:t('AI company dashboard')}));
     expect(screen.queryByRole('textbox')).toBeNull();expect(screen.queryByRole('spinbutton')).toBeNull();expect(screen.queryByRole('checkbox')).toBeNull();
     expect(screen.getAllByRole('img').length).toBeGreaterThan(0);
-    expect(screen.getByRole('button',{name:t('Approve and execute')})).toBeTruthy();expect(screen.getByRole('button',{name:t('Reject')})).toBeTruthy();
+    expect(screen.getByRole('button',{name:t('Approve')})).toBeTruthy();expect(screen.getByRole('button',{name:t('Reject')})).toBeTruthy();
   });
   it.each(['approve','reject'] as const)('sends the exact proposal hash once for %s with a durable retry key',async decision=>{
     const done=vi.fn(),fetch=vi.spyOn(globalThis,'fetch').mockResolvedValue(response({...proposal,state:decision==='approve'?'EXECUTED':'REJECTED'}));
     render(<CompanyProposalCard proposal={proposal} onDone={done}/>);
-    fireEvent.click(screen.getByRole('button',{name:t(decision==='approve'?'Approve and execute':'Reject')}));
+    fireEvent.click(screen.getByRole('button',{name:t(decision==='approve'?'Approve':'Reject')}));
     await vi.waitFor(()=>expect(done).toHaveBeenCalledOnce());expect(fetch).toHaveBeenCalledOnce();
     expect(JSON.parse(fetch.mock.calls[0][1]!.body as string)).toEqual({decision,hash:proposal.hash,idempotencyKey:decision+'_'+proposal.id});expect(screen.queryByRole('button')).toBeNull();
   });
   it('reuses an approval key after a lost response and does not declare success',async()=>{
     const fetch=vi.spyOn(globalThis,'fetch').mockRejectedValueOnce(new Error('Lost response')).mockResolvedValue(response({...proposal,state:'EXECUTED'}));render(<CompanyProposalCard proposal={proposal}/>);
-    fireEvent.click(screen.getByRole('button',{name:'Approve and execute'}));await screen.findByRole('alert');expect(screen.queryByRole('status')).toBeNull();
-    fireEvent.click(screen.getByRole('button',{name:'Approve and execute'}));await screen.findByRole('status');
+    fireEvent.click(screen.getByRole('button',{name:'Approve'}));await screen.findByRole('alert');expect(screen.queryByRole('status')).toBeNull();
+    fireEvent.click(screen.getByRole('button',{name:'Approve'}));await screen.findByRole('status');
     expect(JSON.parse(fetch.mock.calls[0][1]!.body as string)).toEqual(JSON.parse(fetch.mock.calls[1][1]!.body as string));
   });
   it('maps legacy links to the dashboard and retains an in-flight chat reply',async()=>{

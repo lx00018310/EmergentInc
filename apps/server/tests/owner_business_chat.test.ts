@@ -11,6 +11,7 @@ import { WorldRegistryService } from '../src/services/world_registry_service.js'
 import { WorldRuntimeManager } from '../src/services/world_runtime_manager.js';
 import { OwnerAutomationGate } from '../src/services/owner_automation_gate.js';
 import { OwnerGoalScheduler } from '../src/services/owner_goal_scheduler.js';
+import { OwnerOverviewService } from '../src/services/owner_overview_service.js';
 
 const cleanups:(()=>Promise<void>)[]=[];
 afterEach(async()=>{for(const close of cleanups.splice(0).reverse())await close();});
@@ -94,6 +95,35 @@ describe('V31 current Owner business authority',()=>{
     // A historical pause retry cannot stop a newer authorization.
     await send({...payload,question:'先暂停。',requestKey:'http-pause'});expect(f.gate.view().desiredMode).toBe('ON');
     await app.close();
+  });
+  it.each(['zh-CN','en'] as const)('reports actual blockers without charging, funding or resuming the company (%s)',async language=>{
+    const f=fixture();f.manager.options.projectRoot=resolve('.');
+    f.control.db.prepare("INSERT INTO owner_model_permits(id,batch_id,state,reserved_tokens,created_at) VALUES('unknown','initial','UNKNOWN',100,?)").run(Date.now());
+    f.gate.halt('OWNER_OUTCOME_REVIEW_REQUIRED');
+    f.control.db.prepare("INSERT INTO owner_work_tasks(id,request_key,person_id,person_name,instruction,state,reason,created_at,updated_at) VALUES('old-task','old-request',?,'Research','Check actual sources','BLOCKED','WAITING_PIXEL_BUDGET',?,?)").run(f.a.qianji_id,Date.now(),Date.now());
+    const before={budget:f.gate.budget.view(),control:f.control.db.prepare('SELECT * FROM owner_automation_control').get(),unknown:f.gate.modelCalls()};
+    const app=await createServer({workspaceRoot:f.root,worlds:f.worlds,ownerAuth:{secret:'x'.repeat(40),secureCookies:false}});cleanups.push(()=>app.close());
+    const cookie=String((await app.inject({method:'POST',url:'/api/login',payload:{secret:'x'.repeat(40)}})).headers['set-cookie']).split(';')[0]!;
+    const overview=vi.spyOn(OwnerOverviewService.prototype,'overview').mockRejectedValue(new Error('UNRELATED_OVERVIEW_UNAVAILABLE'));cleanups.push(async()=>{overview.mockRestore();});
+    const result=await app.inject({method:'POST',url:'/api/owner/chat',headers:{cookie},payload:{question:language==='en'?'Top up Research and list the remaining problems and next steps.':'Research 元胞能量不足？给补充上，然后列出还有什么问题和接下来的事情。',history:[],language,requestKey:'blocker-report-'+language}});
+    expect(result.statusCode,result.body).toBe(200);const report=result.json();
+    expect(report.answer).toContain(language==='en'?'1 model call(s)':'1 笔模型调用');
+    expect(report.answer).toContain(language==='en'?'has not been authorized':'金额预算尚未授权');
+    expect(report.answer).toContain(language==='en'?'unlimited energy':'已启用无限能量');
+    expect(report.answer).toContain(language==='en'?'Automatic operation is off':'自动经营开关当前关闭');
+    expect(report.usage).toEqual({tokens:0,cost_cny:0});expect(report.sources).toContain('owner_work_tasks');
+    expect(report.companyProposal).toBeUndefined();expect(f.calls).toHaveLength(0);expect(f.gate.goals.list()).toHaveLength(0);expect(overview).not.toHaveBeenCalled();
+    expect({budget:f.gate.budget.view(),control:f.control.db.prepare('SELECT * FROM owner_automation_control').get(),unknown:f.gate.modelCalls()}).toEqual(before);
+    expect(()=>f.gate.budget.authorize(100_000_000)).toThrow('OWNER_OUTCOME_REVIEW_REQUIRED');
+  });
+  it('reports an unknown call even when the company has an approved money budget',async()=>{
+    const f=fixture();f.manager.options.projectRoot=resolve('.');f.on();f.off();
+    f.control.db.prepare("INSERT INTO owner_model_permits(id,batch_id,state,reserved_tokens,created_at) VALUES('unknown','initial','UNKNOWN',100,?)").run(Date.now());f.gate.halt('OWNER_OUTCOME_REVIEW_REQUIRED');
+    const app=await createServer({workspaceRoot:f.root,worlds:f.worlds,ownerAuth:{secret:'x'.repeat(40),secureCookies:false}});cleanups.push(()=>app.close());
+    const cookie=String((await app.inject({method:'POST',url:'/api/login',payload:{secret:'x'.repeat(40)}})).headers['set-cookie']).split(';')[0]!;
+    const result=await app.inject({method:'POST',url:'/api/owner/chat',headers:{cookie},payload:{question:'列出当前问题',history:[],language:'zh-CN',requestKey:'funded-unknown-report'}});
+    expect(result.statusCode,result.body).toBe(200);expect(result.json().answer).toContain('1 笔模型调用');expect(result.json().answer).not.toContain('金额预算尚未授权');
+    expect(f.calls).toHaveLength(0);expect(f.gate.view().desiredMode).toBe('OFF');expect(f.gate.modelCalls()).toHaveLength(1);
   });
 });
 

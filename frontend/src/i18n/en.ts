@@ -1,4 +1,9 @@
 export const en: Record<string, string> = {
+  "准备或重试候选": "Prepare or retry candidate",
+  "候选准备已完成，请在版本维护页面继续校验和批准。": "Candidate preparation is complete. Continue validation and approval in version maintenance.",
+  "方向已批准；候选准备是独立操作，失败后可在此重试。": "The direction is approved. Candidate preparation is separate and can be retried here if it fails.",
+  "请先批准当前代的 Gene 方向，再准备候选。": "Approve the current generation's Gene direction before preparing its candidate.",
+  "该方向没有可准备的资产候选。": "This direction has no asset candidate available for preparation.",
   "Advanced usage and recovery": "Advanced usage and recovery",
   "Known model cost: ¥{0}; unpriced calls: {1}": "Known model cost: ¥{0}; unpriced calls: {1}",
   "Tokens are authorized automatically in 10M batches. Model API calls incur real costs. OFF pauses new work; usage survives restarts.": "Tokens are authorized automatically in 10M batches. Model API calls incur real costs. OFF pauses new work; usage survives restarts.",

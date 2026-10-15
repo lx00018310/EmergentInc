@@ -128,11 +128,13 @@ describe('Owner role dispatch and actual execution',()=>{
     expect(runtime.store.ledger.listEntriesByPixel('0_0_0').filter(e=>e.entry_type==='external_reward')).toHaveLength(1);
     expect(f.control.gatewayInfiniteEnergy(f.b.world_id)).toBe(true);
   });
-  it('keeps energy-blocked work visible and obtains the real reply after an explicit refill',async()=>{
+  it('keeps energy-blocked work paused after refill and obtains the reply only after explicit execution',async()=>{
     const f=fixture(),runtime=await f.manager.open(f.a.world_id);runtime.store.db.prepare('UPDATE pixel_accounts SET energy=322').run();
     f.control.setGatewayInfiniteEnergy(f.a.world_id,false);
     await f.work.dispatch([{personId:f.a.qianji_id,instruction:'Do the work'}],'waiting');await f.finish();expect(f.work.view().tasks[0]).toMatchObject({state:'BLOCKED',reason:'WAITING_PIXEL_BUDGET'});
-    await f.work.energy(f.a.qianji_id,true,true,'refill');await f.finish();expect(f.work.view().tasks[0]).toMatchObject({state:'REPLIED',reply:'Actual work result'});
+    const prior=runtime.store.runs.getLatestRun()!,calls=f.calls.length;
+    await f.work.energy(f.a.qianji_id,true,true,'refill');await f.finish();expect(f.work.view().tasks[0].state).toBe('BLOCKED');expect(f.calls).toHaveLength(calls);expect(runtime.store.runs.getLatestRun()!.run_id).toBe(prior.run_id);
+    await runtime.run.start({rounds:Math.max(1,prior.end_round!-runtime.run.getWorldRound()),runBudgetTokens:prior.run_limit-prior.run_spent-prior.run_reserved});await f.finish();expect(f.work.view().tasks[0]).toMatchObject({state:'REPLIED',reply:'Actual work result'});
   });
   it('returns a final report after a real tool feedback step, preserving the original Owner turn',async()=>{
     const f=fixture();let calls=0;
@@ -147,7 +149,8 @@ describe('Owner role dispatch and actual execution',()=>{
     f.control.setGatewayInfiniteEnergy(f.a.world_id,false);
     await f.work.dispatch([{personId:f.a.qianji_id,instruction:'Do the work'}],'limited');await f.finish();
     const old=runtime.store.runs.getLatestRun()!;runtime.store.db.prepare('UPDATE runs SET run_spent=90000 WHERE run_id=?').run(old.run_id);
-    await f.work.energy(f.a.qianji_id,true,true,'refill-limited');await f.finish();expect(runtime.store.runs.getLatestRun()!.run_limit).toBe(10000);
+    await f.work.energy(f.a.qianji_id,true,true,'refill-limited');await f.finish();expect(runtime.store.runs.getLatestRun()!.run_id).toBe(old.run_id);expect(runtime.store.runs.getLatestRun()!.run_spent).toBe(90000);
+    await runtime.run.start({rounds:Math.max(1,old.end_round!-runtime.run.getWorldRound()),runBudgetTokens:10000});await f.finish();expect(runtime.store.runs.getLatestRun()!.run_limit).toBe(10000);
   });
   it('performs a real read, source submission and final report across three steps without touching active source',async()=>{
     const f=fixture(),before=f.work.code!.read('frontend/src/sample.ts');let calls=0;

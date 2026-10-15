@@ -126,7 +126,7 @@ export async function createServer(options: CreateServerOptions): Promise<Fastif
               sources:['Owner overview / control (qianji_worlds / qianji_profiles)','control_events','runs / pixel_accounts / world_outbox / tips.md','life_events / current_events','world_revenue_events',
                 ...(data.availability.business?['business_plans / business_requests / business_events']:[]),...(data.availability.upgrade==='available'?['Upgrade Service /status']:[])]};
           }}) : undefined;
-        registerOwnerRoutes(api,overview,chat,work,gate,scheduler,options.evolution);
+        registerOwnerRoutes(api,overview,chat,work,gate,options.evolution);
       }
       else if (mode === "legacy" || options.coreStore) {
         if (!options.coreStore || !options.worldService || !options.runService || !options.promptService || !options.toolRegistry) throw new Error("LEGACY_SERVICES_REQUIRED");

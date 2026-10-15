@@ -1,4 +1,5 @@
 import { t as tr, useLanguage } from '../../../i18n';
+import { useState } from 'react';
 import { businessApi } from '../business_api';
 import { EventStream } from './EventStream';
 import { LayerHeader, LayerSummary, StateBadge } from './LayerHeader';
@@ -19,6 +20,7 @@ export function GenomeLayer({ genome, currentGeneration, busy, act }: {
   genome: LifeOverview['genome']; currentGeneration: string; busy: boolean; act: LifeAction;
 }) {
   useLanguage();
+  const [prepared,setPrepared]=useState<Record<string,boolean>>({});
   const waiting = genome.proposals.filter(p => ['PROPOSED', 'CANDIDATE_READY'].includes(p.state));
   const current = genome.generations.find(g => g.id === currentGeneration);
   return <section className="life-layer life-genome" aria-label={tr("L2 基因层")} data-layer="GENOME">
@@ -44,6 +46,10 @@ export function GenomeLayer({ genome, currentGeneration, busy, act }: {
         {p.target_generation_id && <p>{tr("目标代：")}{p.target_generation_id}</p>}
         {p.state === 'PROPOSED' && <div className="business-actions"><button disabled={busy} onClick={() => void act(() => businessApi(`evolution/proposals/${p.id}/decision`, { decision: 'APPROVED' }))}>{tr("批准方向")}</button>
           <button disabled={busy} onClick={() => void act(() => businessApi(`evolution/proposals/${p.id}/decision`, { decision: 'REJECTED' }))}>{tr("拒绝")}</button></div>}
+        {p.state==='APPROVED'&&p.generation_id===currentGeneration&&p.source_ref.startsWith('promotion:')&&<div className="business-actions">
+          <button disabled={busy} onClick={()=>void act(async()=>{await businessApi(`evolution/proposals/${p.id}/prepare`,{expectedGeneration:currentGeneration});setPrepared(old=>({...old,[p.id]:true}));})}>{tr('准备或重试候选')}</button>
+          <p>{tr(prepared[p.id]?'候选准备已完成，请在版本维护页面继续校验和批准。':'方向已批准；候选准备是独立操作，失败后可在此重试。')}</p>
+        </div>}
       </details>)}
       <h3>{tr("基因事件 · 最近 20 条")}</h3><EventStream events={genome.events} empty={tr("尚无基因提案形成记录；代际身份见 Gene History。")} />
       <h3>{tr("Gene History · 最近六代")}</h3>{genome.generations.slice(0, 6).map(g => <details key={g.id}>

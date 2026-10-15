@@ -1,4 +1,9 @@
 export const zhCN: Record<string, string> = {
+  "准备或重试候选": "准备或重试候选",
+  "候选准备已完成，请在版本维护页面继续校验和批准。": "候选准备已完成，请在版本维护页面继续校验和批准。",
+  "方向已批准；候选准备是独立操作，失败后可在此重试。": "方向已批准；候选准备是独立操作，失败后可在此重试。",
+  "请先批准当前代的 Gene 方向，再准备候选。": "请先批准当前代的 Gene 方向，再准备候选。",
+  "该方向没有可准备的资产候选。": "该方向没有可准备的资产候选。",
   "Advanced usage and recovery": "高级用量与恢复",
   "Known model cost: ¥{0}; unpriced calls: {1}": "已知模型费用：¥{0}；费用待核实调用：{1}",
   "Tokens are authorized automatically in 10M batches. Model API calls incur real costs. OFF pauses new work; usage survives restarts.": "系统自动按 1000 万 Token 累计授信和续批。模型 API 调用会产生实际费用。OFF 暂停新工作，重启不清零用量。",

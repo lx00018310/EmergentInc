@@ -37,10 +37,6 @@ export class OwnerProposalService {
       if(input.decision==='approve'){
         if(p.kind==='budget'){
           result=this.gate.budget.authorize(p.payload.totalMicros);
-          for(const goal of this.gate.goals.list().filter(g=>g.status==='BLOCKED'&&/OWNER_COMPANY_BUDGET_(REQUIRED|EXHAUSTED)/.test(g.reason??''))){
-            this.gate.goals.state(goal.id,'READY');
-            this.gate.store.db.prepare("UPDATE owner_work_tasks SET state='RUNNING',reason=NULL WHERE id IN (SELECT task_id FROM owner_goal_dispatches WHERE goal_id=? AND state IN ('QUEUED','RUNNING')) AND run_id IS NOT NULL").run(goal.id);
-          }
         }
         else if(p.kind==='task_plan'){const plan=this.plans.get(p.goalId!);if(!plan||digest(plan)!==p.payload.planHash)ownerConflict('OWNER_PROPOSAL_CHANGED');this.plans.approve(p.goalId!);result=this.gate.goals.get(p.goalId!);}
         else {

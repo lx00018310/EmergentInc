@@ -30,6 +30,20 @@ it('shows life facts and submits only a Proposal direction decision', async () =
   expect(screen.queryByRole('button', { name: /出生|Release|Hash/ })).toBeNull();
 });
 
+it.each(['en','zh-CN'] as const)('retries candidate preparation independently of its approved direction (%s)',async lang=>{
+  setLanguage(lang);const payload=lifeFixture();payload.genome.proposals[0].state='APPROVED';payload.genome.proposals[0].source_ref='promotion:asset-one';
+  let attempts=0;const fetcher=vi.spyOn(globalThis,'fetch').mockImplementation(async url=>String(url).endsWith('/prepare')?++attempts===1?{ok:false,status:409,json:async()=>({detail:'GENE_CANDIDATE_PREPARATION_UNAVAILABLE'})} as Response:{ok:true,json:async()=>({id:'prepared'})} as Response:{ok:true,json:async()=>payload} as Response);
+  const {container}=render(<EvolutionPanel/>);await screen.findByRole('heading',{name:lang==='en'?/Current life:\s*G0002/:'当前生命：G0002'});
+  fireEvent.click(screen.getByText(lang==='en'?'View inherited rules, Gene Proposals and history':'查看遗传规则、Gene Proposal 与历史'));
+  (container.querySelector('details[id="owner-detail:proposal1"]') as HTMLDetailsElement).open=true;
+  const label=lang==='en'?'Prepare or retry candidate':'准备或重试候选';
+  fireEvent.click(screen.getByRole('button',{name:label}));await screen.findByRole('alert');
+  expect(screen.queryByRole('button',{name:lang==='en'?'Approve direction':'批准方向'})).toBeNull();
+  fireEvent.click(screen.getByRole('button',{name:label}));await screen.findByText(lang==='en'?'Candidate preparation is complete. Continue validation and approval in version maintenance.':'候选准备已完成，请在版本维护页面继续校验和批准。');
+  const posts=fetcher.mock.calls.filter(call=>call[1]?.method==='POST');expect(posts).toHaveLength(2);expect(posts.every(call=>call[0]==='/api/evolution/proposals/proposal1/prepare')).toBe(true);
+  expect(JSON.parse(posts[1][1]!.body as string)).toEqual({expectedGeneration:'G0002'});
+});
+
 it('lands at the four layers after GENE login and retains the business tabs', async () => {
   window.history.replaceState(null, '', '/GENE');
   const life = lifeFixture();

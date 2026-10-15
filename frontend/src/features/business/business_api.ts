@@ -11,6 +11,8 @@ export const explanations: Record<string, string> = {
   get APPROVAL_VERSION_CONFLICT() { return tr("方案已更新，请刷新后批准当前版本。"); },
   get PROPOSAL_GENERATION_CHANGED() { return tr("PROPOSAL_GENERATION_CHANGED"); },
   get PROPOSAL_NOT_PENDING() { return tr("PROPOSAL_NOT_PENDING"); },
+  get GENE_DIRECTION_NOT_APPROVED() { return tr('请先批准当前代的 Gene 方向，再准备候选。'); },
+  get GENE_CANDIDATE_PREPARATION_UNAVAILABLE() { return tr('该方向没有可准备的资产候选。'); },
   get INVALID_OWNER_SECRET() { return tr("登录口令不正确。"); }, get LOGIN_RATE_LIMITED() { return tr("尝试次数过多，请一分钟后再试。"); },
   get DATASET_REQUIRED() { return tr("请先上传该请求指定的资料。"); }, get INVALID_BUDGET() { return tr("请检查金额、次数与有效期。"); },
   get DECISION_ALREADY_RUNNING() { return tr("Pixel 正在拟定另一份方案，请稍后重试。"); },

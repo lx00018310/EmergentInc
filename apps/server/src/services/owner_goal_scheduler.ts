@@ -22,6 +22,13 @@ export class OwnerGoalScheduler {
     const db = this.gate.store.db, goals = this.gate.goals;
     for(const goal of goals.list()){this.evaluator.observePayments(goal);if(goals.get(goal.id).reason==='OWNER_PAYMENTS_VERIFIED')this.gate.proposals.closeProposal(goal.id);}
     for(const world of this.manager.list()){const runtime=this.manager.peek(world.world_id);if(runtime)this.gate.reconcileWorld(runtime.store,world.world_id);}
+    if(this.gate.isOn()){
+      for(const goal of goals.list().filter(g=>g.status==='BLOCKED'&&/^OWNER_COMPANY_BUDGET_(REQUIRED|EXHAUSTED)$/.test(g.reason??''))){
+        goals.state(goal.id,'READY');
+        db.prepare("UPDATE owner_work_tasks SET state='QUEUED',reason=NULL,updated_at=? WHERE id IN (SELECT task_id FROM owner_goal_dispatches WHERE goal_id=? AND state IN ('QUEUED','RUNNING')) AND state='BLOCKED' AND reason IN ('OWNER_COMPANY_BUDGET_REQUIRED','OWNER_COMPANY_BUDGET_EXHAUSTED') AND run_id IS NOT NULL").run(Date.now(),goal.id);
+      }
+      await this.manager.resumeInterrupted();
+    }
     // Observation and receipt reconciliation also run while OFF. They cannot dispatch work.
     for (const d of db.prepare("SELECT d.*,s.attempts FROM owner_goal_dispatches d JOIN owner_goal_steps s USING(id) WHERE d.state IN ('QUEUED','RUNNING') ORDER BY s.created_at").all()) {
       const goal = goals.get(String(d.goal_id));let runtime = this.manager.peek(String(d.world_id));

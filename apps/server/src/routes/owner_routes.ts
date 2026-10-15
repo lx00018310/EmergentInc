@@ -4,12 +4,11 @@ import type { OwnerChatService } from '../services/owner_chat_service.js';
 import { proposeOwnerAction } from '../services/owner_actions.js';
 import type { OwnerWorkService } from '../services/owner_work_service.js';
 import type { OwnerAutomationGate } from '../services/owner_automation_gate.js';
-import type { OwnerGoalScheduler } from '../services/owner_goal_scheduler.js';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { createHash } from 'node:crypto';
 
-export function registerOwnerRoutes(app:FastifyInstance, overview:OwnerOverviewService, chat?:OwnerChatService, work?:OwnerWorkService, gate?:OwnerAutomationGate, scheduler?:OwnerGoalScheduler,maintenance?:{quiesced?:()=>boolean;switching?:()=>boolean;resume?:()=>Promise<void>}){
+export function registerOwnerRoutes(app:FastifyInstance, overview:OwnerOverviewService, chat?:OwnerChatService, work?:OwnerWorkService, gate?:OwnerAutomationGate, maintenance?:{quiesced?:()=>boolean;switching?:()=>boolean;resume?:()=>Promise<void>}){
   const assertModelReady=()=>{
     if(!work)return;
     if(!work.manager.options.isModelConfigured)throw Object.assign(new Error('MODEL_NOT_CONFIGURED'),{statusCode:409});
@@ -19,7 +18,7 @@ export function registerOwnerRoutes(app:FastifyInstance, overview:OwnerOverviewS
   if(gate){
     const goals=gate.goals;
     app.get('/owner/proposals',()=>({items:gate.proposals.list()}));
-    app.post<{Params:{id:string}}>('/owner/proposals/:id/decision',async req=>{const p=gate.proposals.decide(req.params.id,req.body);if(gate.isOn())await work?.manager.resumeInterrupted();await scheduler?.tick();return p;});
+    app.post<{Params:{id:string}}>('/owner/proposals/:id/decision',async req=>{const p=gate.proposals.decide(req.params.id,req.body);return p;});
     app.get('/owner/goals',req=>{const query=req.query as any;return {items:goals.list(query.archived==='true')};});
     app.post('/owner/goals',req=>goals.create(req.body));
     app.get<{Params:{id:string}}>('/owner/goals/:id',req=>goals.detail(req.params.id));
@@ -33,15 +32,15 @@ export function registerOwnerRoutes(app:FastifyInstance, overview:OwnerOverviewS
       const bytes=fs.readFileSync(file);if(createHash('sha256').update(bytes).digest('hex')!==evidence.sha256)return reply.status(409).send({detail:'OWNER_EVIDENCE_CHANGED'});
       return reply.type('text/plain; charset=utf-8').header('Content-Security-Policy',"default-src 'none'; sandbox").send(bytes);
     });
-    app.patch<{Params:{id:string}}>('/owner/goals/:id',async req=>{const goal=goals.edit(req.params.id,req.body);await scheduler?.tick();return goal;});
-    app.post<{Params:{id:string}}>('/owner/goals/:id/actions',async req=>{const goal=goals.action(req.params.id,req.body);if(goal.status==='READY'&&gate.isOn())await work?.manager.resumeInterrupted();await scheduler?.tick();return goals.get(goal.id);});
+    app.patch<{Params:{id:string}}>('/owner/goals/:id',async req=>{const goal=goals.edit(req.params.id,req.body);return goal;});
+    app.post<{Params:{id:string}}>('/owner/goals/:id/actions',async req=>{const goal=goals.action(req.params.id,req.body);return goals.get(goal.id);});
     app.get('/owner/automation',()=>gate.view());
     app.get('/owner/automation/report',()=>gate.report());
     app.get('/owner/automation/calls',()=>({items:gate.modelCalls()}));
     app.post<{Params:{id:string}}>('/owner/automation/calls/:id/reconcile',req=>gate.reconcileCall(req.params.id,req.body));
     app.post('/owner/automation',async req=>{
       if ((req.body as any)?.desiredMode === 'ON')assertModelReady();
-      gate.control(req.body);if(gate.isOn())await work?.manager.resumeInterrupted();await scheduler?.tick();return gate.view();
+      gate.control(req.body);return gate.view();
     });
   }
   app.get('/owner/overview',()=>overview.overview());
@@ -75,26 +74,39 @@ export function registerOwnerRoutes(app:FastifyInstance, overview:OwnerOverviewS
         const p=gate.proposals.propose('budget',{totalMicros:Math.round(micros)},`budget:${controlKey}`);
         if(amount[1]){const decided=gate.proposals.decide(p.id,{decision:'approve',hash:p.hash,idempotencyKey:`budget_${controlKey}`});return response(say('公司金额预算已批准。','The company money budget is approved.'),{companyProposal:decided,budget:gate.budget.view()});}
         return response(say('公司预算提案已生成，请批准或拒绝。','The company budget proposal is ready for approval or rejection.'),{companyProposal:p});
-      });if(amount[1]&&gate.isOn())await work?.manager.resumeInterrupted();await scheduler?.tick();return result;}
+      });return result;}
       const decision=command.replace(/^(批准|同意|拒绝)(任务|计划|提案)/,'$1 $2 ').match(/^(批准|同意|拒绝|approve|reject)(?:\s+(.+))?$/i)??(/^(?:按这个计划执行|批准这项任务|执行这个计划)$/.test(command)?['','approve','']:null);
       if(decision){const result=gate.goals.request(controlKey,controlPayload,()=>{
         const target=decision[2]?.replace(/^(?:任务|计划|提案)\s*|^(?:task|plan|proposal)\s+/i,''),all=gate.proposals.list(),matches=target?all.filter(p=>p.id===target||p.payload.title===target):all.filter(p=>p.state==='PENDING');
         if(matches.length!==1)return response(say('请说明要决定的提案名称，或在看板点击对应审批。','Specify the proposal name, or use its decision buttons on the dashboard.'));
         const p=matches[0]!,decided=gate.proposals.decide(p.id,{decision:/拒绝|reject/i.test(decision[1]!)?'reject':'approve',hash:p.hash,idempotencyKey:'decision_'+controlKey});return response(say('提案决定已记录，实际结果见公司看板。','The decision is recorded. Actual execution results appear on the company dashboard.'),{companyProposal:decided});
-      });if(gate.isOn())await work?.manager.resumeInterrupted();await scheduler?.tick();return result;}
+      });return result;}
       const task=command.match(/^(暂停|停止|继续|结案|pause|stop|resume|close)\s*(?:任务|task)\s*(.*)$/i);
       if(task){const matches=gate.goals.list().filter(g=>task[2]?g.id===task[2]||g.title===task[2]:!['COMPLETED','STOPPED'].includes(g.status));if(matches.length!==1)return response(say('请说明要操作的任务名称或 ID。','Specify the task name or ID.'));
         const goal=matches[0]!;if(/结案|close/i.test(task[1]!)){if(gate.store.db.prepare("SELECT 1 FROM owner_goal_dispatches WHERE goal_id=? AND state IN ('QUEUED','RUNNING')").get(goal.id))return response(say('该任务仍在执行，请等待当前动作结束后再结案。','Wait for the active task action to finish before closing.'));const p=gate.proposals.closeProposal(goal.id);if(p)gate.goals.state(goal.id,'WAITING_APPROVAL','OWNER_GOAL_NEEDS_VERIFICATION');return response(p?say('结案提案已生成，请核对成果后批准。','The close proposal is ready; review the deliverables before approval.'):say('尚无可核对的成果，不能结案。','There are no verifiable deliverables to close yet.'),p?{companyProposal:p}:{});}
         const action=/暂停|pause/i.test(task[1]!)?'pause':/停止|stop/i.test(task[1]!)?'stop':['PAUSED','WAITING_RESOURCE'].includes(goal.status)?'resume':'reopen';
-        const updated=gate.goals.action(goal.id,{action,expectedRevision:goal.revision,idempotencyKey:controlKey});await scheduler?.tick();return response(say('任务状态已更新。','The task state is updated.'),{createdGoal:updated});
+        const updated=gate.goals.action(goal.id,{action,expectedRevision:goal.revision,idempotencyKey:controlKey});return response(say('任务状态已更新。','The task state is updated.'),{createdGoal:updated});
       }
-      if(/^(?:公司状态|任务进度|查看任务|查看预算|company status|task status|show budget)$/i.test(command)){
-        const budget=gate.budget.view(),goals=gate.goals.list(),active=goals.filter(g=>!['COMPLETED','STOPPED','ARCHIVED'].includes(g.status));
+      const budget=gate.budget.view(),automation=gate.view();
+      if(/^(?:公司状态|任务进度|查看任务|查看预算|company status|task status|show budget)$/i.test(command)||budget.availableMicros===0||automation.reason==='OWNER_OUTCOME_REVIEW_REQUIRED'){
+        const goals=gate.goals.list(),active=goals.filter(g=>!['COMPLETED','STOPPED','ARCHIVED'].includes(g.status));
         const statuses:Record<string,[string,string]>={DRAFT:['待批准','Awaiting approval'],READY:['待执行','Queued'],RUNNING:['执行中','Running'],WAITING_APPROVAL:['待验收','Awaiting acceptance'],WAITING_RESOURCE:['等待条件','Waiting for a condition'],PAUSED:['已暂停','Paused'],BLOCKED:['需要跟进','Needs follow-up'],FAILED:['需要跟进','Needs follow-up']};
         const money=(n:number)=>(n/1000000).toFixed(6),lines=active.slice(-10).map(g=>`- ${g.title}: ${say(...statuses[g.status]!)}`);
-        return response(say(`公司记录：总授权 ¥${money(budget.totalMicros)}，已结算 ¥${money(budget.spentMicros)}，预留 ¥${money(budget.reservedMicros)}，可用 ¥${money(budget.availableMicros)}。当前 ${active.length} 项未结案任务。`,`Company records: authorized ¥${money(budget.totalMicros)}, settled ¥${money(budget.spentMicros)}, reserved ¥${money(budget.reservedMicros)}, available ¥${money(budget.availableMicros)}. ${active.length} open tasks.`)+(lines.length?'\n'+lines.join('\n'):''),{automation:gate.view(),budget,goals});
+        const unknown=gate.modelCalls().length;
+        if(automation.reason==='EVOLUTION_QUIESCED')lines.unshift(say('- 执行仍处于维护暂停。','- Execution is paused for maintenance.'));
+        if(unknown)lines.push(say(`- 有 ${unknown} 笔模型调用的结果或费用待核对，核对前保持暂停。`,`- ${unknown} model call(s) need outcome or cost verification. Execution stays paused until verified.`));
+        else if(automation.reason==='OWNER_OUTCOME_REVIEW_REQUIRED')lines.push(say('- 有执行结果待核对，核对前保持暂停。','- An execution outcome needs verification. Execution stays paused until verified.'));
+        if(automation.desiredMode==='OFF')lines.push(say('- 自动经营开关当前关闭。结束维护、查询状态或补充预算不会自动开启。','- Automatic operation is off. Ending maintenance, reading status, or funding the budget does not turn it on.'));
+        if(budget.activatedAt===null)lines.push(say('- 公司金额预算尚未授权。收费规划和执行前，请明确并批准人民币总额度；元胞能量与金额预算分别记录。','- The company money budget has not been authorized. Specify and approve the total CNY amount before paid planning or execution; Pixel energy is recorded separately.'));
+        else if(!budget.availableMicros)lines.push(say('- 公司可用金额预算为零，收费规划和执行需先补充并批准额度。','- The available company money budget is zero. Paid planning and execution require an approved increase.'));
+        const worlds=work?.manager.list()??[];
+        for(const task of work?.view().tasks.filter(t=>['BLOCKED','FAILED','NO_REPLY'].includes(t.state)).slice(0,10)??[]){
+          const world=worlds.find(w=>w.qianji_id===task.personId),infinite=world&&gate.store.gatewayInfiniteEnergy(world.world_id);
+          const state=task.reason==='WAITING_PIXEL_BUDGET'?infinite?say('任务记录仍标记等待元胞能量，但该人物已启用无限能量；需核对当前执行条件。','The task still records an energy wait, but this person has unlimited energy; current execution conditions need review.'):say('任务记录为等待元胞能量。','The task records an energy wait.'):say('任务记录需要跟进。','The task needs follow-up.');
+          lines.push(`- ${task.personName}: ${state}`);
+        }
+        return {...response(say(`公司记录：总授权 ¥${money(budget.totalMicros)}，已结算 ¥${money(budget.spentMicros)}，预留 ¥${money(budget.reservedMicros)}，可用 ¥${money(budget.availableMicros)}。当前 ${active.length} 项未结案任务。`,`Company records: authorized ¥${money(budget.totalMicros)}, settled ¥${money(budget.spentMicros)}, reserved ¥${money(budget.reservedMicros)}, available ¥${money(budget.availableMicros)}. ${active.length} open tasks.`)+(lines.length?'\n'+lines.join('\n'):''),{automation,budget,goals}),sources:['owner_company_budget','owner_automation_control','owner_goals','owner_work_tasks','qianji_worlds','world_gateway_energy']};
       }
-      if(gate.budget.view().activatedAt===null)return response(say('请先用一句话给公司金额预算，例如“公司预算 100 元”。批准后 AI 才能进行收费规划和执行。','Provide a company money budget, for example “company budget CNY 100”. Paid planning and execution begin after approval.'),{budget:gate.budget.view()});
     }
     const resume = /^(?:请)?(?:继续(?:运行|执行|自动经营)?|开始执行|开始运行)$|^(?:please )?(?:resume|continue(?: running)?|start running)$/i.test(command);
     // Bootstrap only a current executable Owner command. Queries/history never wake a paused company.
@@ -109,9 +121,9 @@ export function registerOwnerRoutes(app:FastifyInstance, overview:OwnerOverviewS
         }
         const response=gate.goals.request(controlKey,controlPayload,()=>{
           assertModelReady();gate.ensureRunning('owner_chat',0,'resume');
-          return {answer:b.language==='en'?'Automatic operation has resumed.':'自动经营已恢复。',automation:gate.view(),sources:['owner_automation_control'],as_of:new Date().toISOString(),usage:{tokens:0,cost_cny:0}};
+          return {answer:b.language==='en'?'Automatic operation is enabled. Tasks continue through the scheduler.':'自动经营已开启，任务由调度继续执行。',automation:gate.view(),sources:['owner_automation_control'],as_of:new Date().toISOString(),usage:{tokens:0,cost_cny:0}};
         });
-        if(gate.isOn())await work.manager.resumeInterrupted();await scheduler?.tick();
+
         return response;
       }
       assertModelReady();gate.ensureRunning('owner_chat',0,'initial');

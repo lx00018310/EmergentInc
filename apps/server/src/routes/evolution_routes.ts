@@ -11,11 +11,12 @@ export interface EvolutionServices {
   recoveryOrigin?: string;
   worldOverview?:()=>unknown[];
   beforeProposalDecision?:(id:string,decision:string)=>void;
-  onProposalApproved?: (id:string)=>Promise<unknown>|unknown;
+  prepareProposal?: (id:string)=>Promise<unknown>|unknown;
   quiesced?: () => boolean; switching?:()=>boolean; quiesce?: () => Promise<void>; resume?: () => Promise<void>;
 }
 export async function registerEvolutionRoutes(app: FastifyInstance, services: EvolutionServices) {
   const { life, dream, memoryGate, body } = services;
+  const preparing=new Map<string,Promise<unknown>>();
   app.get("/evolution/overview", async () => {
     const overview = life.overview(), status = dream.status();
     return { ...overview, body:{...overview.body,...(services.worldOverview?{worlds:services.worldOverview(),projection:true}: {})}, dream: status, trust: { ...overview.trust, recovery: await recoveryHealth(services.recoveryOrigin) },
@@ -43,8 +44,18 @@ export async function registerEvolutionRoutes(app: FastifyInstance, services: Ev
       if (b?.expectedState !== undefined && proposal.state !== b.expectedState) return reply.status(409).send({ detail: "PROPOSAL_NOT_PENDING" });
     }
     services.beforeProposalDecision?.(req.params.id,b.decision);
-    const decided=life.lineage.decideProposal(req.params.id, b.decision);
-    const request=b.decision==='APPROVED'?await services.onProposalApproved?.(req.params.id):undefined;return {...decided,...(request?{candidateRequest:request}:{})};
+    return life.lineage.decideProposal(req.params.id, b.decision);
+  });
+  app.post<{Params:{id:string}}>('/evolution/proposals/:id/prepare',async(req,reply)=>{
+    const proposal=life.lineage.proposal(req.params.id),active=String(life.lineage.activeGeneration()?.id);
+    if(String(proposal.generation_id)!==active||(req.body as any)?.expectedGeneration!==active)return reply.status(409).send({detail:'PROPOSAL_GENERATION_CHANGED'});
+    if(proposal.state!=='APPROVED')return reply.status(409).send({detail:'GENE_DIRECTION_NOT_APPROVED'});
+    if(!services.prepareProposal)return reply.status(409).send({detail:'GENE_CANDIDATE_PREPARATION_UNAVAILABLE'});
+    services.beforeProposalDecision?.(req.params.id,'APPROVED');
+    const old=preparing.get(req.params.id);if(old)return old;
+    const flight=Promise.resolve().then(async()=>{const result=await services.prepareProposal!(req.params.id);if(!result)throw Object.assign(new Error('GENE_CANDIDATE_PREPARATION_UNAVAILABLE'),{statusCode:409});if(String(life.lineage.activeGeneration()?.id)!==active||life.lineage.proposal(req.params.id).state!=='APPROVED')throw Object.assign(new Error('PROPOSAL_GENERATION_CHANGED'),{statusCode:409});return result;});
+    preparing.set(req.params.id,flight);
+    try{return await flight;}finally{if(preparing.get(req.params.id)===flight)preparing.delete(req.params.id);}
   });
   app.post("/evolution/corrections", async req => {
     const b = req.body as any; lifeId(b?.key); if (b?.pixel_id) lifeId(b.pixel_id);

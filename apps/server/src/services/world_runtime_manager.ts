@@ -33,7 +33,6 @@ export class WorldRuntimeManager {
   diagnose(id:string,code:string){this.failures.set(id,code);}
   private opened = new Map<string, WorldRuntime>();
   private opening = new Map<string, Promise<WorldRuntime>>();
-  private recoveryEnabled = false;
   constructor(readonly registry: WorldRegistryService, readonly genome: GenomeManifest, readonly options: WorldRuntimeOptions) {if(!registry.lineage.worldsEnabled)throw new Error('V23_WORLD_LINEAGE_REQUIRED');}
   currents(){return [...this.opened.values()].map(r=>({id:r.id,current:r.life.current}));}
   peek(id:string){return this.opened.get(id);}
@@ -102,14 +101,13 @@ export class WorldRuntimeManager {
         }
         else {const checkpoint=store.runs.getCheckpoint(String(permit.run_id));this.automation.reconcileRun(String(permit.run_id),(checkpoint?.next_round??0)-1,Boolean(checkpoint?.resume_pending));}
       }
-      if(this.recoveryEnabled)await run.resumeInterrupted();
       return runtime;
     } catch(error){await api?.close();current?.close();store?.close();unlock();throw error;}
   }
   async close(id:string) { const runtime=this.opened.get(id);if(!runtime)return;runtime.run.requestSuspend();await this.wait(runtime);await runtime.api.close();runtime.life.current.close();runtime.store.close();runtime.unlock();this.opened.delete(id); }
   private async wait(runtime:WorldRuntime) { const deadline=Date.now()+30000;while(runtime.run.getStatus().running){if(Date.now()>deadline)throw new Error('WORLD_QUIESCE_TIMEOUT');await new Promise(r=>setTimeout(r,20));} }
-  async resumeInterrupted(){this.recoveryEnabled=true;for(const runtime of this.opened.values())await runtime.run.resumeInterrupted();}
-  async quiesceAll(){this.recoveryEnabled=false;for(const runtime of this.opened.values())runtime.run.requestSuspend();for(const runtime of this.opened.values())await this.wait(runtime);}
+  async resumeInterrupted(){for(const runtime of this.opened.values())await runtime.run.resumeInterrupted();}
+  async quiesceAll(){for(const runtime of this.opened.values())runtime.run.requestSuspend();for(const runtime of this.opened.values())await this.wait(runtime);}
   async closeAll(){await this.quiesceAll();for(const id of [...this.opened.keys()])await this.close(id);}
   async replaceGateway(id:string,pixel:string,revision:number){const runtime=await this.open(id);if(!runtime.store.pixels.getPixelAccount(pixel)?.active)throw new Error('GATEWAY_PIXEL_NOT_ACTIVE');this.registry.control.transaction(()=>this.registry.control.setGateway(id,pixel,revision));}
 }

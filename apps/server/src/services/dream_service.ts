@@ -180,6 +180,7 @@ export class DreamService {
     } finally { this.busy = false; }
   }
   start() {
+    if(this.timer)return;
     const specification = { kind: "daily" as const, time: this.time, timezone: this.timezone, maxOccurrences: 366 };
     let next = nextBusinessOccurrence(specification, Date.now());
     this.timer = setInterval(() => {
@@ -190,7 +191,7 @@ export class DreamService {
     this.timer.unref();
   }
   async stop() {
-    if (this.timer) clearInterval(this.timer); await this.inFlight;
+    if (this.timer) clearInterval(this.timer);this.timer=undefined; await this.inFlight;
     while (this.busy) await new Promise(resolve => setTimeout(resolve, 25));
   }
 }
