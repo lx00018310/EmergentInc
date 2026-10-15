@@ -13,7 +13,9 @@ afterEach(()=>{cleanup();vi.restoreAllMocks();});
 describe('V32 approval-only company UI',()=>{
   it.each(['en','zh-CN'] as const)('has exactly two navigation entries and read-only money/status charts (%s)',async lang=>{
     setLanguage(lang);vi.spyOn(globalThis,'fetch').mockResolvedValue(response(data));render(<OwnerConsole/>);
-    await screen.findByText(t('Company status')+': '+t('Company observed: STOPPED'));
+    const companyStatus=within(screen.getByRole('status'));
+    expect(companyStatus.getByText(t('Company status'))).toBeTruthy();
+    await companyStatus.findByText(t('Company observed: STOPPED'));
     expect(within(screen.getByRole('navigation')).getAllByRole('link').map(n=>n.textContent)).toEqual([t('Boss chat'),t('AI company dashboard')]);
     expect(screen.getByRole('textbox')).toBeTruthy();expect(screen.queryByRole('switch')).toBeNull();
     fireEvent.click(screen.getByRole('link',{name:t('AI company dashboard')}));
