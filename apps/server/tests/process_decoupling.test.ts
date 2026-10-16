@@ -98,3 +98,19 @@ it('funds an unopened World without resuming its suspended task; the scheduler r
   await f.scheduler.tick();await vi.waitFor(()=>expect(f.manager.list().some(w=>w.running)).toBe(false));
   expect(f.calls).toHaveLength(2);expect(runtime.run.getStatus().run_id).toBe(runId);expect(runtime.store.db.prepare('SELECT COUNT(*) n FROM tool_executions').get()!.n).toBe(1);
 },15000);
+
+it('clears a resolved historical cost review without waking the company or hiding other unknown outcomes',async()=>{
+  const f=goalFixture();cleanups.push(f.close);const runtime=await f.manager.open(f.a.world_id),core=runtime.store,pixelId=f.registry.control.world(f.a.world_id).gateway_pixel_id!;
+  const message=core.messages.enqueueMessage({sender:'system',recipient:pixelId,content:'Retained response',roundNum:1});
+  core.budgets.reserve({callId:'historical-cost',runId:'old-run',pixelId,estimatedTokens:100});
+  core.settleAndStoreModelResponse({callId:'historical-cost',runId:'old-run',pixelId,messageId:message.messageId,model:'test',promptHash:'h',rawResponse:'Stored result',usage:{promptTokens:30,completionTokens:10,cachedTokens:5,actualTokens:40,costCny:null}});
+  f.control.db.prepare("INSERT INTO owner_model_permits(id,batch_id,world_id,state,reserved_tokens,actual_tokens,created_at) VALUES('historical-permit','initial',?,'UNKNOWN',100,40,?)").run(f.a.world_id,Date.now());
+  f.control.db.prepare("INSERT INTO owner_model_sources VALUES('historical-permit','historical-cost','world')").run();f.gate.halt('OWNER_OUTCOME_REVIEW_REQUIRED');
+  let otherUnknown=true;f.gate.addUnknownCheck(()=>otherUnknown);
+  const energy=core.pixels.getPixelAccount(pixelId)!.energy,spent=core.budgets.getGlobalBudget()!.totalSpent;
+  core.resolveRecoveryOperation({kind:'model',id:'historical-cost',decision:'settle_billed',actualTokens:40,costCny:0.000209,reason:'Verified frozen pricing and stored usage'});
+  await f.scheduler.tick();expect(f.gate.modelCalls()).toHaveLength(0);expect(f.gate.view().reason).toBe('OWNER_OUTCOME_REVIEW_REQUIRED');
+  otherUnknown=false;await f.scheduler.tick();expect(f.gate.view()).toMatchObject({desiredMode:'OFF',reason:null,observedState:'STOPPED',spentTokens:40,reservedTokens:0});
+  expect(f.gate.budget.view()).toMatchObject({activatedAt:null,totalMicros:0,historicalCostMicros:209});
+  expect(core.pixels.getPixelAccount(pixelId)!.energy).toBe(energy);expect(core.budgets.getGlobalBudget()!.totalSpent).toBe(spent);expect(f.calls).toHaveLength(0);
+});

@@ -244,9 +244,17 @@ export class CoreStore {
       if (params.kind === "model") {
         const reservation = this.db.prepare("SELECT * FROM reservations WHERE call_id = ? AND status = 'OPEN'").get(params.id) as any;
         const call = this.modelCalls.getModelCall(params.id);
-        if (!reservation && call?.outcome !== "CALL_OUTCOME_UNKNOWN") throw new Error("Model operation is not unresolved");
+        const costOnly = !reservation && params.decision === "settle_billed" && call?.actualTokens != null && call.costCny === null &&
+          ["SUCCESS", "MODEL_RESPONSE_INVALID"].includes(call.outcome) &&
+          Boolean(this.db.prepare("SELECT 1 FROM reservations WHERE call_id=? AND status='SETTLED'").get(params.id));
+        if (!reservation && !costOnly && call?.outcome !== "CALL_OUTCOME_UNKNOWN") throw new Error("Model operation is not unresolved");
         const messageId = call?.messageId;
-        if (params.decision === "confirm_not_billed") {
+        if (costOnly) {
+          if (!Number.isSafeInteger(params.actualTokens) || params.actualTokens !== call!.actualTokens) throw new Error("Invalid actual token count");
+          if (params.costCny == null) throw new Error("Invalid billed cost");
+          // Tokens and response are already settled. Record only the verified missing money amount.
+          this.db.prepare("UPDATE model_calls SET cost_cny=? WHERE call_id=?").run(params.costCny, params.id);
+        } else if (params.decision === "confirm_not_billed") {
           if (call && ["SUCCESS", "MODEL_RESPONSE_INVALID"].includes(call.outcome)) throw new Error("Received responses must be settled or abandoned, not retried as unsent");
           this.budgets.refund(params.id);
           if (messageId) this.messages.updateStatus(messageId, "QUEUED");

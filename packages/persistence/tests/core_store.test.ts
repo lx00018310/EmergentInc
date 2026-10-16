@@ -57,6 +57,27 @@ describe("Persistence: CoreStore & Repositories", () => {
     expect(store.pixels.getPixelAccount("p")?.energy).toBe(1000);
   });
 
+  it("records a verified missing cost after token settlement without changing tokens or replaying a response", () => {
+    store.pixels.upsertPixelAccount({ pixelId: "p", energy: 1000, active: true, refundDeficitTokens: 0, spendBlockedReason: null });
+    const message = store.messages.enqueueMessage({ sender: "system", recipient: "p", content: "test", roundNum: 1 });
+    store.budgets.reserve({ callId: "cost-only", runId: "r", pixelId: "p", estimatedTokens: 100 });
+    store.settleAndStoreModelResponse({ callId: "cost-only", runId: "r", pixelId: "p", messageId: message.messageId,
+      model: "m", promptHash: "h", rawResponse: "Stored result", usage: { promptTokens: 30, completionTokens: 10, cachedTokens: 5, actualTokens: 40, costCny: null } });
+    const before = { account: store.pixels.getPixelAccount("p"), budget: store.budgets.getGlobalBudget(),
+      message: store.messages.getMessage(message.messageId), reservation: store.db.prepare("SELECT * FROM reservations WHERE call_id='cost-only'").get() };
+    const input = { kind: "model" as const, id: "cost-only", decision: "settle_billed" as const, actualTokens: 40, costCny: 0.000209, reason: "Verified stored response and the original frozen price" };
+    expect(() => store.resolveRecoveryOperation({ ...input, actualTokens: 41 })).toThrow();
+    expect(() => store.resolveRecoveryOperation({ ...input, costCny: null })).toThrow();
+    expect(() => store.resolveRecoveryOperation({ ...input, decision: "confirm_not_billed" })).toThrow();
+    expect(store.db.prepare("SELECT COUNT(*) n FROM recovery_decisions").get()!.n).toBe(0);
+    store.resolveRecoveryOperation(input);
+    expect(store.modelCalls.getModelCall("cost-only")).toMatchObject({ actualTokens: 40, costCny: 0.000209, outcome: "SUCCESS", rawResponse: "Stored result" });
+    expect({ account: store.pixels.getPixelAccount("p"), budget: store.budgets.getGlobalBudget(),
+      message: store.messages.getMessage(message.messageId), reservation: store.db.prepare("SELECT * FROM reservations WHERE call_id='cost-only'").get() }).toEqual(before);
+    expect(() => store.resolveRecoveryOperation(input)).toThrow();
+    expect(store.db.prepare("SELECT COUNT(*) n FROM recovery_decisions").get()!.n).toBe(1);
+  });
+
   it("resolves unfinalized calling message by returning to queue or abandoning", () => {
     store.pixels.upsertPixelAccount({ pixelId: "p_msg", energy: 1000, active: true, refundDeficitTokens: 0, spendBlockedReason: null });
     const msg = store.messages.enqueueMessage({ sender: "system", recipient: "p_msg", content: "test calling", roundNum: 1 });

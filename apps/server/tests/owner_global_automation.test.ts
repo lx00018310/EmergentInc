@@ -58,7 +58,7 @@ describe('V29 global permits',()=>{
     await expect(f.gate.provider(f.provider,f.meter).call({model:'test',messages:[],promptHash:'unknown',maxTokens:200})).rejects.toThrow();
     expect(()=>f.gate.ensureRunning('resume',0,'resume')).toThrow('OWNER_OUTCOME_REVIEW_REQUIRED');
     const permit=f.gate.modelCalls()[0];f.gate.reconcileCall(String(permit.id),{actualTokens:30,costCny:0.1,reason:'Owner verified actual provider billing evidence',expectedRevision:f.gate.view().revision,idempotencyKey:crypto.randomUUID()});
-    f.gate.ensureRunning('scheduler');expect(f.gate.view().desiredMode).toBe('OFF');
+    f.gate.ensureRunning('scheduler');expect(f.gate.view()).toMatchObject({desiredMode:'OFF',reason:null,observedState:'STOPPED'});
     f.gate.ensureRunning('explicit_owner_resume',0,'resume');expect(f.gate.view()).toMatchObject({desiredMode:'ON',maxTokens:0,spentTokens:30,reservedTokens:0});
   });
   it('does not apply a historical OFF again after a newer ON authorization',()=>{

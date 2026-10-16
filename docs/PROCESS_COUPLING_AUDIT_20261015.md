@@ -52,3 +52,17 @@ The final read-only check confirmed the same live state. Source changes are on m
 未知结果必须先核对、收费需要明确金额授权、发布必须绑定准确批准的候选。这些属于执行和账本约束，继续保留。
 
 Unknown outcomes still require verification, paid work still needs explicit money authorization, and publication still binds the exact approved candidate.
+
+## 2026-10-16 历史金额缺失 / Historical missing cost
+
+G0030 的一笔 `glm-5.3-flash` 调用已保存回复，输入 6948、输出 1431、缓存 2688，合计 8379 Tokens 已结算。原冻结版本将缓存价格写成 `cached_input_cost_per_million`，计费器读取 `cached_cost_per_million`，所以该次缓存命中未算出金额。原冻结版本完整性及套餐价格已核实；按当时统一 0.025 元/百万 Token 的套餐摊销口径，补录历史金额 ¥0.000209，不产生新增扣费。
+
+The stored response and 8379-token settlement were complete. The original frozen release used the wrong cached-price key, leaving only the cost missing. Its integrity and uniform subscription rate were verified; the historical amortized amount is CNY 0.000209, with no new provider charge.
+
+恢复方法现在允许为已结算 Token 的成功/无效回复补录明确金额，要求 Token 数保持一致，不再次结算 Token，也不重放回复。公司在全部真实未知项解决后清理旧停止原因，保留 OFF；仍有其他未知项时继续阻断。在线修复审计编号：`459aa0c6-acee-4275-8129-3751b4c9f724`。
+
+Recovery can supplement a verified missing cost for an already settled response without changing tokens or replaying it. Company review reasons clear only when all unknown outcomes are resolved; OFF is preserved. The repair has an explicit recovery audit record.
+
+验证：12 个相关测试文件中 106 项不同用例通过，类型检查通过。最终 G0036 为 ready、OFF，待核对调用 0、原因为空，中英文状态查询消耗 0；金额预算授权未改变。原回复、Token、能量、任务、Run 和预留记录前后相同。本机证据：`cache/historical-cost-repair/verified-price.json`、`live-repair.json`、`final-api-check.json`。当前冻结发布源码未改动。
+
+Validation: 106 distinct relevant tests across 12 files and type checking passed. G0036 is ready and OFF, with zero pending calls. Bilingual status checks cost zero tokens. Response, energy, tokens, tasks, Runs, reservations and budget authorization were preserved. The frozen release source is unchanged.

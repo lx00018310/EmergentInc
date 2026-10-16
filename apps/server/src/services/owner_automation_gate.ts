@@ -155,7 +155,9 @@ export class OwnerAutomationGate {
       else if(call&&call.outcome!=='CALL_OUTCOME_UNKNOWN'&&call.actualTokens!==null&&call.costCny!==null)
         this.store.transaction(()=>{this.budget.settle(String(row.id),Math.ceil(call.costCny!*1000000));this.store.db.prepare("UPDATE owner_model_permits SET state='SETTLED',actual_tokens=?,cost_cny=? WHERE id=?").run(call.actualTokens,call.costCny,row.id);});
     }
+    this.clearResolvedReview();
   }
+  private clearResolvedReview(){if(!this.hasUnknown())this.store.db.prepare("UPDATE owner_automation_control SET reason=NULL WHERE reason='OWNER_OUTCOME_REVIEW_REQUIRED'").run();}
   modelCalls() { return this.store.db.prepare("SELECT p.*,s.source_id,s.source_kind FROM owner_model_permits p LEFT JOIN owner_model_sources s ON s.permit_id=p.id WHERE p.state='UNKNOWN' ORDER BY p.created_at").all(); }
   report():OwnerRunReport {
     const automation=this.view();
@@ -174,6 +176,7 @@ export class OwnerAutomationGate {
       this.budget.settle(id,Math.ceil(input.costCny*1000000));
       this.store.db.prepare("UPDATE owner_model_permits SET state='SETTLED',actual_tokens=?,cost_cny=? WHERE id=?").run(input.actualTokens,input.costCny,id);
       this.store.db.prepare('INSERT INTO control_events(kind,world_id,payload,created_at) VALUES(?,NULL,?,?)').run('owner_model_usage_reconciled',JSON.stringify({permitId:id,...input}),Date.now());
+      this.clearResolvedReview();
       // This resolves only control accounting. Original World/Business recovery remains mandatory.
       this.store.db.prepare('UPDATE owner_automation_control SET revision=revision+1,updated_at=? WHERE id=1').run(Date.now());
       return this.view();
