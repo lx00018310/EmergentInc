@@ -10,13 +10,11 @@ import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 const cleanups:(()=>Promise<void>)[]=[];afterEach(async()=>{for(const fn of cleanups.splice(0).reverse())await fn();});
 describe('V29 global permits',()=>{
-  it('defaults new World gateways to unlimited energy, preserves legacy and manual settings on reopen, and never refills neighbors',async()=>{
-    const f=goalFixture();cleanups.push(f.close);expect(f.control.gatewayInfiniteEnergy(f.a.world_id)).toBe(true);
-    f.control.db.prepare('DELETE FROM world_gateway_energy WHERE world_id=?').run(f.b.world_id);
-    f.control.setGatewayInfiniteEnergy(f.a.world_id,false);
-    const reopened=new WorldRegistryStore(f.control.db.dbPath);try{expect(reopened.gatewayInfiniteEnergy(f.a.world_id)).toBe(false);expect(reopened.gatewayInfiniteEnergy(f.b.world_id)).toBe(false);}finally{reopened.close();}
-    f.on();f.control.setGatewayInfiniteEnergy(f.a.world_id,true);const runtime=await f.manager.open(f.a.world_id);
-    expect(runtime.store.hasUnlimitedEnergy('0_0_0')).toBe(true);expect(runtime.store.hasUnlimitedEnergy('1_0_0')).toBe(false);f.off();expect(runtime.store.hasUnlimitedEnergy('0_0_0')).toBe(false);
+  it('does not install gateway energy replenishment in company mode',async()=>{
+    const f=goalFixture();cleanups.push(f.close);f.on();const runtime=await f.manager.open(f.a.world_id);
+    expect(runtime.store.hasUnlimitedEnergy('0_0_0')).toBe(false);expect(runtime.store.hasUnlimitedEnergy('1_0_0')).toBe(false);
+    runtime.store.db.prepare('UPDATE pixel_accounts SET energy=0').run();runtime.store.ensureUnlimitedEnergy('0_0_0',500,'no-auto-refill');
+    expect(runtime.store.pixels.getPixelAccount('0_0_0')!.energy).toBe(0);
   });
   it('reuses the same inbox message after a crash between World and control persistence, without a second paid task',async()=>{
     const f=goalFixture();cleanups.push(f.close);f.on();const gateway=new QianjiWorldGateway(f.manager),first=await gateway.enqueue(f.a.qianji_id,'One durable task','stable-key');
@@ -38,7 +36,7 @@ describe('V29 global permits',()=>{
   });
   it('counts started rounds without a shared round ceiling, including interruptions and idempotent completion',()=>{
     const store=new WorldRegistryStore(),gate=new OwnerAutomationGate(store);cleanups.push(async()=>store.close());
-    gate.budget.authorize(100000000);gate.control({desiredMode:'ON',runMode:'BOUNDED',requestedRounds:2,expectedRevision:0,idempotencyKey:crypto.randomUUID()});
+    gate.budget.configure({tokenMillions:1,unitPrice:(100000000)/1000000,priceCurrency:'CNY',expectedRevision:gate.budget.view().revision});gate.control({desiredMode:'ON',runMode:'BOUNDED',requestedRounds:2,expectedRevision:0,idempotencyKey:crypto.randomUUID()});
     for(let i=1;i<=30;i++){gate.reserveRun('world',`run-${i}`,1,1);gate.runCreated(`run-${i}`);gate.beginRound(`run-${i}`,1);gate.beginRound(`run-${i}`,1);if(i%3){gate.completeRound(`run-${i}`,1);gate.completeRound(`run-${i}`,1);}gate.finished(`run-${i}`,false);}
     expect(gate.view()).toMatchObject({startedRounds:30,reservedRounds:0,completedRounds:20});
     gate.enforceLimits();expect(gate.view()).toMatchObject({desiredMode:'ON',runMode:'CONTINUOUS',requestedRounds:null});expect(()=>gate.reserveRun('world','extra',1,1)).not.toThrow();gate.cancelRun('extra');

@@ -10,24 +10,16 @@ const item: any = { profile: {qianjiId:'qj_energy',careerStatus:'active',created
   currentBinding:null,physical:{active:true,refundDeficitTokens:0},world:{world_id:'world_energy',status:'ACTIVE',gateway_pixel_id:'0_0_0',infiniteEnergy:false} };
 beforeEach(() => vi.clearAllMocks());
 
-it.each([['zh-CN','无限能量','入口更多操作'],['en','Unlimited energy','More actions for 入口']])('saves a persisted gateway-only checkbox in %s', async (lang,label,menu) => {
+it.each([['zh-CN','无限能量','入口更多操作'],['en','Unlimited energy','More actions for 入口']])('removes the individual energy setting in %s', (lang,label,menu) => {
   localStorage.setItem('emergentinc.language',lang);
-  const save=vi.fn().mockResolvedValue(undefined);
-  const view=render(<QianjiCard item={item} selected onSelect={vi.fn()} onInfiniteEnergyChange={save}/>);
+  render(<QianjiCard item={item} selected onSelect={vi.fn()}/>);
   fireEvent.click(screen.getByRole('button',{name:menu}));
-  const checkbox=screen.getByRole('menuitemcheckbox',{name:label}) as HTMLInputElement;
-  expect(checkbox.checked).toBe(false);
-  fireEvent.click(checkbox);
-  await waitFor(()=>expect(save).toHaveBeenCalledWith('qj_energy',true));
-  view.rerender(<QianjiCard item={{...item,world:{...item.world,infiniteEnergy:true}}} selected onSelect={vi.fn()} onInfiniteEnergyChange={save}/>);
-  expect(checkbox.checked).toBe(true);
-  fireEvent.click(checkbox);
-  await waitFor(()=>expect(save).toHaveBeenCalledWith('qj_energy',false));
+  expect(screen.queryByRole('menuitemcheckbox',{name:label})).toBeNull();
 });
 
 it.each([
-  ['zh-CN','元胞能量不足，等待补充后重试。','存在未决调用，请进入 World 恢复处理后再运行。'],
-  ['en','The Pixel has insufficient energy. Replenish it, then retry.','Unresolved calls require review in World recovery before running again.'],
+  ['zh-CN','历史个人额度等待；公司启动且总金额预算充足后由调度恢复。','存在未决调用，请进入 World 恢复处理后再运行。'],
+  ['en','Old individual allowance wait. Company scheduling resumes when enabled and funded.','Unresolved calls require review in World recovery before running again.'],
 ])('shows the specific energy message without mislabeling other blocked states in %s', async (lang,energy,other) => {
   localStorage.setItem('emergentinc.language',lang);
   vi.mocked(fetchQianjiChat).mockResolvedValue([

@@ -77,7 +77,8 @@ export interface OwnerAutomation {
 }
 export interface OwnerRunReport { asOf:number; automation:OwnerAutomation; goals:{goalId:string;title:string;status:OwnerGoalStatus;spentTokens:number;reservedTokens:number;knownCostCny:number;evidence:OwnerGoalEvidence[];reason:string|null}[] }
 
-export interface CompanyBudget { currency:'CNY'; totalMicros:number; spentMicros:number; reservedMicros:number; availableMicros:number; revision:number; activatedAt:number|null; unknownCalls:number; historicalCostMicros?:number }
+export const COMPANY_BUDGET_USD_CNY = 7;
+export interface CompanyBudget { configuration?:{tokenMillions:number;unitPriceCnyMicros:number}|null;needsRefill?:boolean;currency:'CNY'; totalMicros:number; spentMicros:number; reservedMicros:number; availableMicros:number; revision:number; activatedAt:number|null; unknownCalls:number; historicalCostMicros?:number }
 export interface CompanyProposal { id:string; kind:'budget'|'task_plan'|'close_task'; goalId:string|null; goalRevision:number|null; hash:string; payload:any; state:'PENDING'|'APPROVED'|'REJECTED'|'EXECUTED'; createdAt:number; result:any }
 export type TaskTrigger = {kind:'once'} | {kind:'continuous'} | {kind:'interval';everyMinutes:number} | {kind:'daily'|'weekly';time:string;timezone:string;weekdays?:number[]};
 export interface CompanyTaskNode { key:string; title:string; instruction:string; dependsOn:string[]; trigger:TaskTrigger; filename:string; personId?:string }

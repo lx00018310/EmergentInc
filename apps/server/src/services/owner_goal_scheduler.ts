@@ -23,7 +23,7 @@ export class OwnerGoalScheduler {
     for(const goal of goals.list()){this.evaluator.observePayments(goal);if(goals.get(goal.id).reason==='OWNER_PAYMENTS_VERIFIED')this.gate.proposals.closeProposal(goal.id);}
     for(const world of this.manager.list()){const runtime=this.manager.peek(world.world_id);if(runtime)this.gate.reconcileWorld(runtime.store,world.world_id);}
     if(this.gate.isOn()){
-      for(const goal of goals.list().filter(g=>g.status==='BLOCKED'&&/^OWNER_COMPANY_BUDGET_(REQUIRED|EXHAUSTED)$/.test(g.reason??''))){
+      for(const goal of goals.list().filter(g=>g.status==='BLOCKED'&&/^(OWNER_COMPANY_BUDGET_(REQUIRED|EXHAUSTED)|WAITING_(PIXEL|RUN|EXECUTION)_BUDGET|RUN_BUDGET_EXHAUSTED|EXECUTION_BUDGET_EXHAUSTED|OWNER_TOKEN_LIMIT)$/.test(g.reason??''))){
         goals.state(goal.id,'READY');
         db.prepare("UPDATE owner_work_tasks SET state='QUEUED',reason=NULL,updated_at=? WHERE id IN (SELECT task_id FROM owner_goal_dispatches WHERE goal_id=? AND state IN ('QUEUED','RUNNING')) AND state='BLOCKED' AND reason IN ('OWNER_COMPANY_BUDGET_REQUIRED','OWNER_COMPANY_BUDGET_EXHAUSTED') AND run_id IS NOT NULL").run(Date.now(),goal.id);
       }

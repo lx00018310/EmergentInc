@@ -15,7 +15,7 @@ function removeFixture(directory:string){
   fs.rmSync(directory,{recursive:true,force:true});
 }
 export async function fixture(root=path.resolve('.')) {
-  const directory = fs.mkdtempSync(path.join(tmpdir(), 'upgrade-web-'));
+  const directory = fs.mkdtempSync(path.join(fs.realpathSync.native(tmpdir()), 'upgrade-web-'));
   const secret = 'test-upgrade-owner-secret'.repeat(3);
   const run = vi.fn(async (_root: string, _args: string[], output: (text: string) => void) => { output('checked'); });
   const checkRunning = vi.fn(async (_generation: string) => {});
@@ -61,13 +61,13 @@ let template:{directory:string;base:string;first:string;tip:string}|undefined;
 afterAll(()=>{if(template)removeFixture(template.directory);});
 export function gitRepo(){
   if(!template){
-    const original=repoCommands(fs.mkdtempSync(path.join(tmpdir(),'upgrade-git-template-'))),{run,commit}=original;
+    const original=repoCommands(fs.mkdtempSync(path.join(fs.realpathSync.native(tmpdir()),'upgrade-git-template-'))),{run,commit}=original;
     run('init','-b','main');run('config','user.name','Tester');run('config','user.email','t@example.com');
     run('commit','--allow-empty','-m','root');const base=commit('base');
     run('checkout','-b','feature/skills');const first=commit('add SKILL.md'),tip=commit('polish SKILL.md');run('checkout','main');
     template={directory:original.directory,base,first,tip};
   }
-  const directory=fs.mkdtempSync(path.join(tmpdir(),'upgrade-git-'));
+  const directory=fs.mkdtempSync(path.join(fs.realpathSync.native(tmpdir()),'upgrade-git-'));
   fs.cpSync(template.directory,directory,{recursive:true});
   cleanups.push(async()=>removeFixture(directory));
   return {...repoCommands(directory),base:template.base,first:template.first,tip:template.tip};

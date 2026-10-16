@@ -88,7 +88,7 @@ describe('V31 current Owner business authority',()=>{
     expect((await app.inject({method:'POST',url:'/api/owner/chat',payload})).statusCode).toBe(401);expect(f.gate.view().maxTokens).toBe(0);
     const cookie=String((await app.inject({method:'POST',url:'/api/login',payload:{secret:'x'.repeat(40)}})).headers['set-cookie']).split(';')[0]!;
     const send=(body:any)=>app.inject({method:'POST',url:'/api/owner/chat',headers:{cookie},payload:body});
-    expect((await send(payload)).json().answer).toContain('预算');expect(f.calls).toHaveLength(0);await send({...payload,question:'批准公司预算 100 元',requestKey:'budget-http'});const result=await send({...payload,requestKey:'http-funded-goal'});expect(result.statusCode,result.body).toBe(200);expect(result.json().createdGoal.status).toBe('DRAFT');expect(f.gate.view()).toMatchObject({maxTokens:0,desiredMode:'ON'});
+    expect((await send(payload)).json().answer).toContain('预算');expect(f.calls).toHaveLength(0);expect((await app.inject({method:'POST',url:'/api/owner/budget',headers:{cookie},payload:{tokenMillions:100,unitPrice:2,priceCurrency:'CNY',expectedRevision:0,idempotencyKey:'budget-http'}})).statusCode).toBe(200);const result=await send({...payload,requestKey:'http-funded-goal'});expect(result.statusCode,result.body).toBe(200);expect(result.json().createdGoal.status).toBe('DRAFT');expect(f.gate.view()).toMatchObject({maxTokens:0,desiredMode:'ON'});
     await send({...payload,question:'先暂停。',requestKey:'http-pause'});expect(f.gate.view().desiredMode).toBe('OFF');
     expect((await send({...payload,requestKey:'http-after-off'})).statusCode).not.toBe(200);expect(f.gate.view().desiredMode).toBe('OFF');
     await send({...payload,question:'继续运行',requestKey:'http-resume'});expect(f.gate.view().desiredMode).toBe('ON');
@@ -109,12 +109,12 @@ describe('V31 current Owner business authority',()=>{
     expect(result.statusCode,result.body).toBe(200);const report=result.json();
     expect(report.answer).toContain(language==='en'?'1 model call(s)':'1 笔模型调用');
     expect(report.answer).toContain(language==='en'?'has not been authorized':'金额预算尚未授权');
-    expect(report.answer).toContain(language==='en'?'unlimited energy':'已启用无限能量');
+    expect(report.answer).toContain(language==='en'?'no individual energy refill':'无需单独补能');
     expect(report.answer).toContain(language==='en'?'Automatic operation is off':'自动经营开关当前关闭');
     expect(report.usage).toEqual({tokens:0,cost_cny:0});expect(report.sources).toContain('owner_work_tasks');
     expect(report.companyProposal).toBeUndefined();expect(f.calls).toHaveLength(0);expect(f.gate.goals.list()).toHaveLength(0);expect(overview).not.toHaveBeenCalled();
     expect({budget:f.gate.budget.view(),control:f.control.db.prepare('SELECT * FROM owner_automation_control').get(),unknown:f.gate.modelCalls()}).toEqual(before);
-    expect(()=>f.gate.budget.authorize(100_000_000)).toThrow('OWNER_OUTCOME_REVIEW_REQUIRED');
+    expect(()=>f.gate.budget.configure({tokenMillions:1,unitPrice:(100_000_000)/1000000,priceCurrency:'CNY',expectedRevision:f.gate.budget.view().revision})).toThrow('OWNER_OUTCOME_REVIEW_REQUIRED');
   });
   it('reports an unknown call even when the company has an approved money budget',async()=>{
     const f=fixture();f.manager.options.projectRoot=resolve('.');f.on();f.off();

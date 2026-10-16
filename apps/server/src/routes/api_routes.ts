@@ -99,7 +99,7 @@ export async function registerApiRoutes(
   server.post("/run/start", async (req, reply) => {
     const body: any = req.body || {};
     const rounds = Number(body.rounds ?? 1);
-    const runBudgetTokens = Number(body.run_budget_tokens ?? 1000000);
+    const runBudgetTokens = runService.automation ? undefined : Number(body.run_budget_tokens ?? 1000000);
 
     try {
       const res = await runService.start({

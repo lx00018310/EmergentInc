@@ -89,6 +89,7 @@ export interface WorldDto {
 }
 
 export interface RunStatusDto {
+  company_money_budget?: boolean;
   running: boolean;
   requested_rounds: number;
   completed_rounds: number;
@@ -118,7 +119,7 @@ export interface RunStatusDto {
 export interface RunStartRequest {
   rounds: number;
   command?: string; // Deprecated; controls do not dispatch messages.
-  run_budget_tokens: number;
+  run_budget_tokens?: number;
 }
 
 export interface PromptDto {

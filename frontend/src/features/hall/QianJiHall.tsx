@@ -6,7 +6,6 @@ import { useWorldPolling } from '../../hooks/useWorldPolling';
 import { usePixelTips } from '../../hooks/usePixelTips';
 import { useQianjiPolling } from '../../hooks/useQianjiPolling';
 import { startRun } from '../../api/run';
-import { setQianjiInfiniteEnergy } from '../../api/qianji';
 import { QianjiCard, type QianjiMenuAction } from '../qianji/QianjiCard';
 import { QianjiProfilePanel, type QianjiProfileModal } from '../qianji/QianjiProfilePanel';
 import { ApprovalPanel } from './ApprovalPanel';
@@ -68,11 +67,7 @@ export const QianJiHall: React.FC<QianJiHallProps> = ({ selectedQianjiId, onSele
     if (action === 'meeting') { onOpenMeeting?.(); return; }
     setModalRequest({ modal: action, nonce: ++modalNonce.current });
   };
-  const handleInfiniteEnergyChange = async (id: string, enabled: boolean) => {
-    setRunError(null);
-    try { await setQianjiInfiniteEnergy(id,enabled); await refresh(); }
-    catch (err) { setRunError(err instanceof Error ? err.message : String(err)); }
-  };
+
 
   const handleSent = async () => {
     await refresh();
@@ -187,7 +182,7 @@ export const QianJiHall: React.FC<QianJiHallProps> = ({ selectedQianjiId, onSele
           {!loading && !qianjiError && items.length === 0 && <p className="qj-empty">{tr("暂无人物，点击下方 + 招募第一位人物。")}</p>}
           <div className="qj-roster-list">{items.map(item => (
             <QianjiCard key={item.profile.qianjiId} item={item} selected={selectedQianjiId === item.profile.qianjiId}
-              onSelect={selectPerson} onMenuAction={handleMenuAction} showMeetingAction={Boolean(onOpenMeeting)} onInfiniteEnergyChange={handleInfiniteEnergyChange} />
+              onSelect={selectPerson} onMenuAction={handleMenuAction} showMeetingAction={Boolean(onOpenMeeting)} />
           ))}
             <div className="qj-roster-add" ref={addMenuRef}>
               <button className="qj-add-button" type="button" aria-label={tr("新建人物位")} aria-haspopup="menu" aria-expanded={addMenuOpen} onClick={() => setAddMenuOpen(open => !open)}>+</button>

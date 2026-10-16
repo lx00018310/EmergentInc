@@ -82,7 +82,7 @@ export const RunControls: React.FC<RunControlsProps> = ({
 
     if (isRunning) return;
 
-    if (!Number.isSafeInteger(runBudget) || runBudget <= 0) {
+    if (!runStatus?.company_money_budget && (!Number.isSafeInteger(runBudget) || runBudget <= 0)) {
       onLogMessage('error', (tr("[ERROR] 本次运行上限必须为大于 0 的整数 Token。")));
       return;
     }
@@ -93,7 +93,7 @@ export const RunControls: React.FC<RunControlsProps> = ({
     try {
       const started = await startRun({
         rounds: parsed.rounds,
-        run_budget_tokens: Number(runBudget),
+        ...(!runStatus?.company_money_budget ? {run_budget_tokens:Number(runBudget)} : {}),
       });
       if (typeof started.run_id === 'string') setStartedRunId(started.run_id);
       onLogMessage('success', tr("[SUCCESS] 推进任务已成功启动 ({0} 轮)。", [parsed.rounds]));
@@ -157,6 +157,7 @@ export const RunControls: React.FC<RunControlsProps> = ({
         </div>
       )}
 
+      {!runStatus?.company_money_budget && <>
       <div
         style={{
           display: 'flex',
@@ -186,6 +187,7 @@ export const RunControls: React.FC<RunControlsProps> = ({
         </div>
       </div>
 
+      </>}
       <div className="command-input-group">
         <input
           type="text"

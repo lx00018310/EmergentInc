@@ -43,18 +43,20 @@ export interface TokenCapacity {
 export class BudgetRepository {
   private companyRun:(runId:string)=>boolean=()=>false;
   public useCompanyMoneyBudget(policy:(runId:string)=>boolean){this.companyRun=policy;}
+  public isCompanyRun(runId:string|null):boolean{return Boolean(runId&&this.companyRun(runId));}
   constructor(private db: SqliteDatabase, private ensureEnergy?: (pixelId: string, required: number, key: string) => void) {}
 
   /** Current token capacity across every limit that will be enforced by reserve(). */
   public getAvailableTokenCapacity(params: { runId: string; pixelId: string; executionId?: string | null }): TokenCapacity {
+    const company=this.companyRun(params.runId);
     const pixel = this.db.prepare(`SELECT energy, refund_deficit_tokens FROM pixel_accounts WHERE pixel_id=?`).get(params.pixelId) as any;
     if (!pixel) throw new Error(`Pixel ${params.pixelId} not found`);
-    if (Number(pixel.refund_deficit_tokens) > 0) throw new SpendBlockedError(`Pixel ${params.pixelId} spend blocked by refund deficit (${pixel.refund_deficit_tokens} tokens)`);
-    const capacities: Array<TokenCapacity> = [{ availableTokens: Math.max(0, Number(pixel.energy)), limitingKind: "PIXEL" }];
+    if (!company && Number(pixel.refund_deficit_tokens) > 0) throw new SpendBlockedError(`Pixel ${params.pixelId} spend blocked by refund deficit (${pixel.refund_deficit_tokens} tokens)`);
+    const capacities: Array<TokenCapacity> = [{ availableTokens: company?Number.MAX_SAFE_INTEGER:Math.max(0, Number(pixel.energy)), limitingKind: "PIXEL" }];
     const run = this.db.prepare("SELECT run_limit, run_spent, run_reserved, execution_id FROM runs WHERE run_id=?").get(params.runId) as any;
     if (run) {
       if ((run.execution_id ?? null) !== (params.executionId ?? null)) throw new Error("EXECUTION_SCOPE_RUN_CONFLICT");
-      if(!this.companyRun(params.runId)||params.executionId)capacities.push({ availableTokens: Math.max(0, Number(run.run_limit) - Number(run.run_spent) - Number(run.run_reserved)), limitingKind: "RUN" });
+      if(!company)capacities.push({ availableTokens: Math.max(0, Number(run.run_limit) - Number(run.run_spent) - Number(run.run_reserved)), limitingKind: "RUN" });
     } else if (params.executionId) {
       throw new Error("EXECUTION_RUN_NOT_FOUND");
     }
@@ -62,8 +64,8 @@ export class BudgetRepository {
       const execution = this.db.prepare(`SELECT budget_tokens, spent_tokens, reserved_tokens, kind, subject_id
         FROM executions WHERE execution_id=? AND status='running'`).get(params.executionId) as any;
       if (!execution) throw new Error("EXECUTION_NOT_RUNNING");
-      capacities.push({ availableTokens: Math.max(0, Number(execution.budget_tokens) - Number(execution.spent_tokens) - Number(execution.reserved_tokens)), limitingKind: "EXECUTION" });
-      if (execution.kind === "trial_candidate") {
+      if(!company)capacities.push({ availableTokens: Math.max(0, Number(execution.budget_tokens) - Number(execution.spent_tokens) - Number(execution.reserved_tokens)), limitingKind: "EXECUTION" });
+      if (!company && execution.kind === "trial_candidate") {
         const trial = this.db.prepare(`SELECT t.total_budget_tokens,
             COALESCE(SUM(e.spent_tokens + e.reserved_tokens), 0) AS used_tokens
           FROM trials t LEFT JOIN executions e ON e.kind='trial_candidate' AND e.subject_id=t.trial_id
@@ -118,6 +120,7 @@ export class BudgetRepository {
     narrativeRevision?: number | null;
   }): void {
     const { callId, runId, pixelId, estimatedTokens } = params;
+    const company=this.companyRun(runId);
     const now = Date.now() / 1000;
 
     this.db.transaction(() => {
@@ -150,14 +153,14 @@ export class BudgetRepository {
       if (!pixel) {
         throw new Error(`Pixel ${pixelId} not found`);
       }
-      if (pixel.refund_deficit_tokens > 0) {
+      if (!company && pixel.refund_deficit_tokens > 0) {
         throw new SpendBlockedError(
           `Pixel ${pixelId} spend blocked by refund deficit (${pixel.refund_deficit_tokens} tokens)`
         );
       }
-      this.ensureEnergy?.(pixelId, estimatedTokens, `reserve:${callId}`);
+      if(!company)this.ensureEnergy?.(pixelId, estimatedTokens, `reserve:${callId}`);
       pixel = pixelStmt.get(pixelId) as any;
-      if (pixel.energy < estimatedTokens) {
+      if (!company && pixel.energy < estimatedTokens) {
         throw new BudgetExceededError(
           `Pixel ${pixelId} insufficient energy: balance ${pixel.energy} < estimated ${estimatedTokens}`,
           "PIXEL"
@@ -171,7 +174,7 @@ export class BudgetRepository {
       const run = runStmt.get(runId) as any;
       if (run) {
         if ((run.execution_id ?? null) !== (params.executionId ?? null)) throw new Error("EXECUTION_SCOPE_RUN_CONFLICT");
-        if ((!this.companyRun(runId)||params.executionId) && run.run_spent + run.run_reserved + estimatedTokens > run.run_limit) {
+        if (!company && run.run_spent + run.run_reserved + estimatedTokens > run.run_limit) {
           throw new BudgetExceededError(
             `Run ${runId} budget exceeded: limit=${run.run_limit}, current=${run.run_spent + run.run_reserved}, request=${estimatedTokens}`,
             "RUN"
@@ -183,10 +186,10 @@ export class BudgetRepository {
         const execution = this.db.prepare(`SELECT budget_tokens, spent_tokens, reserved_tokens, kind, subject_id
           FROM executions WHERE execution_id=? AND status='running'`).get(params.executionId) as any;
         if (!run || !execution) throw new Error("EXECUTION_RUN_SCOPE_INVALID");
-        if (execution.spent_tokens + execution.reserved_tokens + estimatedTokens > execution.budget_tokens) {
+        if (!company && execution.spent_tokens + execution.reserved_tokens + estimatedTokens > execution.budget_tokens) {
           throw new BudgetExceededError(`Execution ${params.executionId} budget exceeded`, "EXECUTION");
         }
-        if (execution.kind === "trial_candidate") {
+        if (!company && execution.kind === "trial_candidate") {
           const trial = this.db.prepare(`SELECT t.total_budget_tokens,
               COALESCE(SUM(e.spent_tokens + e.reserved_tokens), 0) AS used_tokens
             FROM trials t LEFT JOIN executions e ON e.kind='trial_candidate' AND e.subject_id=t.trial_id
@@ -240,6 +243,7 @@ export class BudgetRepository {
       const pixelId = res.pixel_id;
 
       // 1. 扣减 Pixel 能量
+      if(!this.companyRun(runId)){
       this.ensureEnergy?.(pixelId, actualTokens, `settle:${callId}`);
       this.db.prepare(`
         UPDATE pixel_accounts 
@@ -248,6 +252,7 @@ export class BudgetRepository {
             updated_at = ?
         WHERE pixel_id = ?
       `).run(actualTokens, actualTokens, now, pixelId);
+      }
 
       // 2. 扣除 Run 预算 (释放 reserved，增加 spent)
       this.db.prepare(`

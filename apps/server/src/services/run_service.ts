@@ -9,7 +9,7 @@ export interface RunStartOptions {
   goalBinding?: GoalRunBinding;
   rounds: number;
   commandText?: string; // Deprecated: never dispatched to agents.
-  runBudgetTokens: number;
+  runBudgetTokens?: number;
   /** Server-resolved organization scope. Never populated from a world Run HTTP body. */
   executionId?: string | null;
   /** Internal synchronous transaction hook; route handlers never accept this value. */
@@ -161,6 +161,7 @@ export class RunService {
 
     return {
       running: this.isRunning,
+      company_money_budget: Boolean(this.automation),
       run_id: this.currentRunId ?? latestRun?.run_id ?? null,
       current_loop: this.currentRunId ?? latestRun?.run_id ?? null,
       current_run: this.currentRunId ?? latestRun?.run_id ?? null,
@@ -196,7 +197,7 @@ export class RunService {
       throw new Error("rounds must be a positive integer.");
     }
     if(this.automation&&options.rounds>20)throw Object.assign(new Error('OWNER_RUN_ROUND_LIMIT'),{statusCode:400});
-    if (!Number.isSafeInteger(options.runBudgetTokens) || options.runBudgetTokens <= 0) {
+    if (!this.automation && (!Number.isSafeInteger(options.runBudgetTokens) || Number(options.runBudgetTokens) <= 0)) {
       throw new Error("run_budget_tokens must be positive.");
     }
 
@@ -237,7 +238,7 @@ export class RunService {
         execution_id: executionId,
         start_round: startRound,
         end_round: endRound,
-        run_limit: options.runBudgetTokens,
+        run_limit: this.automation ? 0 : options.runBudgetTokens!,
         run_spent: 0,
         run_reserved: 0,
         genesis_revision: genesisRevision,
@@ -470,8 +471,8 @@ export class RunService {
         (SELECT COUNT(*) FROM messages WHERE execution_id=? AND status IN ('PROCESSING','RESERVED','CALLING','CALL_OUTCOME_UNKNOWN','AWAITING_SETTLEMENT')) +
         (SELECT COUNT(*) FROM model_calls WHERE execution_id=? AND outcome='CALL_OUTCOME_UNKNOWN') AS count`)
       .get(executionId, executionId, executionId) as any;
-    let overBudget = execution.spentTokens + execution.reservedTokens > execution.budgetTokens;
-    if (execution.kind === "trial_candidate") {
+    let overBudget = !this.automation && execution.spentTokens + execution.reservedTokens > execution.budgetTokens;
+    if (!this.automation && execution.kind === "trial_candidate") {
       const trialBudget = this.store.db.prepare(`SELECT t.total_budget_tokens,
           COALESCE(SUM(e.spent_tokens + e.reserved_tokens), 0) AS used_tokens
         FROM trials t LEFT JOIN executions e ON e.kind='trial_candidate' AND e.subject_id=t.trial_id

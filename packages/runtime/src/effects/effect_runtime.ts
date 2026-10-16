@@ -350,7 +350,8 @@ export class EffectRuntime {
     }
     const fromAccount = this.ctx.store.pixels.getPixelAccount(effect.fromPixelId);
     const toAccount = this.ctx.store.pixels.getPixelAccount(effect.transfer.target);
-    const automaticEnergy = this.ctx.store.hasUnlimitedEnergy(effect.fromPixelId) && fromAccount?.active && fromAccount.refundDeficitTokens===0;
+    const company = this.ctx.store.budgets.isCompanyRun(this.ctx.runId);
+    const automaticEnergy = company || this.ctx.store.hasUnlimitedEnergy(effect.fromPixelId) && fromAccount?.active && fromAccount.refundDeficitTokens===0;
 
     const validation = validateEnergyTransfer({
       fromPixelId: effect.fromPixelId,
@@ -385,6 +386,11 @@ export class EffectRuntime {
       return;
     }
 
+    // Company AI calls need no virtual energy allocation. Retain the effect receipt without moving balances.
+    if(company){
+      this.ctx.store.effects.recordEffect({effect_id:effect.effectId,message_id:effect.messageId,effect_type:effect.effectType,effect_index:effect.effectIndex,payload_hash:effect.payloadHash,status:'APPLIED',details:JSON.stringify({companyMoneyBudget:true}),created_at:Date.now()/1000});
+      return;
+    }
     // 原子划转
     this.ctx.store.transaction(() => {
       this.ctx.store.ensureUnlimitedEnergy(effect.fromPixelId,effect.transfer.amount,`transfer:${effect.effectId}`);
@@ -441,7 +447,9 @@ export class EffectRuntime {
       return;
     }
     const parentAccount = this.ctx.store.pixels.getPixelAccount(effect.parentPixelId);
-    const automaticEnergy = this.ctx.store.hasUnlimitedEnergy(effect.parentPixelId) && parentAccount?.active && parentAccount.refundDeficitTokens===0;
+    const company = this.ctx.store.budgets.isCompanyRun(this.ctx.runId);
+    const initialEnergy = company ? 0 : effect.request.initial_energy;
+    const automaticEnergy = company || this.ctx.store.hasUnlimitedEnergy(effect.parentPixelId) && parentAccount?.active && parentAccount.refundDeficitTokens===0;
     const activePixels = this.ctx.store.pixels.listActivePixels();
     const occupiedPositions = new Set(activePixels.map((p) => p.pixelId));
 
@@ -555,7 +563,7 @@ export class EffectRuntime {
         id: childPixelId,
         position: validation.childCoord,
         active: true,
-        energy: effect.request.initial_energy,
+        energy: initialEnergy,
         parent: effect.parentPixelId,
         born_round: this.ctx.round,
         last_active_round: this.ctx.round,
@@ -572,15 +580,15 @@ export class EffectRuntime {
         if (current?.active || (current && (current.energy !== 0 || current.refundDeficitTokens > 0))) {
           throw new Error("Reproduction target changed during reset");
         }
-        this.ctx.store.ensureUnlimitedEnergy(effect.parentPixelId,effect.request.initial_energy,`reproduce:${effect.effectId}`);
+        if(!company)this.ctx.store.ensureUnlimitedEnergy(effect.parentPixelId,initialEnergy,`reproduce:${effect.effectId}`);
         const parent = this.ctx.store.pixels.getPixelAccount(effect.parentPixelId);
-        if (!parent?.active || parent.energy < effect.request.initial_energy) {
+        if (!parent?.active || !company && parent.energy < initialEnergy) {
           throw new Error("Reproduction parent no longer has enough energy");
         }
-        const parentAfter = this.ctx.store.pixels.updateEnergy(effect.parentPixelId, -effect.request.initial_energy);
+        const parentAfter = company ? parent.energy : this.ctx.store.pixels.updateEnergy(effect.parentPixelId, -initialEnergy);
         this.ctx.store.pixels.upsertPixelAccount({
           pixelId: childPixelId,
-          energy: effect.request.initial_energy,
+          energy: initialEnergy,
           active: true,
           refundDeficitTokens: 0,
           spendBlockedReason: null,
@@ -615,13 +623,13 @@ export class EffectRuntime {
         }
         this.ctx.store.ledger.appendEntry({
           entry_id: `${effect.effectId}_parent`, timestamp: now, pixel_id: effect.parentPixelId,
-          entry_type: "reproduction_out", amount: -effect.request.initial_energy,
+          entry_type: "reproduction_out", amount: -initialEnergy,
           balance_after: parentAfter, details: JSON.stringify({ child: childPixelId, incarnation }),
         });
         this.ctx.store.ledger.appendEntry({
           entry_id: `${effect.effectId}_child`, timestamp: now, pixel_id: childPixelId,
-          entry_type: "reproduction_in", amount: effect.request.initial_energy,
-          balance_after: effect.request.initial_energy,
+          entry_type: "reproduction_in", amount: initialEnergy,
+          balance_after: initialEnergy,
           details: JSON.stringify({ parent: effect.parentPixelId, incarnation }),
         });
         this.ctx.store.effects.recordEffect({

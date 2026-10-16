@@ -27,7 +27,7 @@ describe('V32 company money, proposals and task loop',()=>{
     const f=goalFixture();cleanups.push(f.close);f.control.db.prepare("UPDATE owner_automation_control SET max_tokens=1000000000,desired_mode='ON'").run();
     expect(f.gate.budget.view()).toMatchObject({totalMicros:0,activatedAt:null});expect(f.gate.isOn()).toBe(false);
     await expect(f.gate.provider(f.provider,f.meter).call({model:'test',messages:[],maxTokens:100,promptHash:'test'})).rejects.toThrow('OWNER_COMPANY_BUDGET_REQUIRED');
-    expect(f.calls).toHaveLength(0);f.gate.budget.authorize(10000);f.off();f.gate.enforceLimits();expect(f.gate.view().desiredMode).toBe('OFF');
+    expect(f.calls).toHaveLength(0);f.gate.budget.configure({tokenMillions:1,unitPrice:(10000)/1000000,priceCurrency:'CNY',expectedRevision:f.gate.budget.view().revision});f.off();f.gate.enforceLimits();expect(f.gate.view().desiredMode).toBe('OFF');
     expect(()=>f.gate.control({maxTokens:1000000000,expectedRevision:f.gate.view().revision,idempotencyKey:crypto.randomUUID()})).toThrow();
   });
   it('atomically reserves integer money on two connections and settles only the actual cost once',async()=>{
@@ -38,7 +38,7 @@ describe('V32 company money, proposals and task loop',()=>{
       f.control.db.prepare('UPDATE owner_company_budget SET total_micros=1300').run();
       f.respond(()=>new Promise(r=>{release=r;}));const request={model:'test',messages:[],maxTokens:100,promptHash:'money'};
       const first=f.gate.provider(f.provider,f.meter).call(request);expect(f.gate.budget.view().reservedMicros).toBe(1226);
-      await expect(other.provider(f.provider,f.meter).call(request)).rejects.toThrow('OWNER_COMPANY_BUDGET_EXHAUSTED');expect(f.calls).toHaveLength(1);
+      await expect(other.provider(f.provider,f.meter).call(request)).rejects.toThrow('OWNER_COMPANY_BUDGET_BUSY');expect(other.budget.view().needsRefill).toBe(false);expect(f.calls).toHaveLength(1);
       release({rawText:'Done',usage:{promptTokens:20,completionTokens:10,cachedTokens:0}});await first;
       expect(other.budget.view()).toMatchObject({spentMicros:40,reservedMicros:0,availableMicros:1260});
     }finally{otherStore.close();}
@@ -100,7 +100,7 @@ describe('V32 company money, proposals and task loop',()=>{
     const request=f.work.view().requests[0];await f.work.decide(request.id,request.hash,'reject');expect(f.gate.goals.get(goal.id).status).toBe('BLOCKED');expect(f.calls).toHaveLength(4);
   });
   it('resumes a composed plan in a second OS process using real saved tool receipts and an explicitly fake HTTP model',async()=>{
-    const f=goalFixture();cleanups.push(f.close);f.gate.budget.authorize(1000000);f.on();const goal=f.goal('Process restart plan','manual');f.gate.proposals.plans.install(goal.id,plan,true);let calls=0;
+    const f=goalFixture();cleanups.push(f.close);f.gate.budget.configure({tokenMillions:1,unitPrice:(1000000)/1000000,priceCurrency:'CNY',expectedRevision:f.gate.budget.view().revision});f.on();const goal=f.goal('Process restart plan','manual');f.gate.proposals.plans.install(goal.id,plan,true);let calls=0;
     const model=createHttpServer((req,res)=>{req.resume();req.on('end',()=>{const n=++calls,content=JSON.stringify(n%2?{operations:[{tool:'save_artifact',args:{filename:n===1?'first.md':'second.md',content:'Immutable HTTP fixture evidence '+n}}],send_to:'STOP'}:{owner_reply:'The actual fixture artifact is retained',send_to:'STOP'});res.setHeader('Content-Type','application/json');res.end(JSON.stringify({choices:[{message:{content}}],usage:{prompt_tokens:20,completion_tokens:10,prompt_tokens_details:{cached_tokens:0}}}));});});
     const port=await listenTestHttp(model);cleanups.push(()=>new Promise<void>(done=>model.close(()=>done())));
     const run=promisify(execFile),env={PATH:process.env.PATH,SystemRoot:process.env.SystemRoot,MCL_API_KEY:'explicit-isolated-http-fixture',MCL_MODEL:'test',MCL_BASE_URL:`http://127.0.0.1:${port}/v1`,EMERGENTINC_TEST_REAL_COMPANY_BUDGET_CNY:'1'};
@@ -116,7 +116,7 @@ describe('V32 company money, proposals and task loop',()=>{
     const f=goalFixture();cleanups.push(f.close);f.on();f.control.db.prepare("INSERT INTO owner_model_permits VALUES('historical-usage','initial',NULL,NULL,NULL,'SETTLED',0,2000000000,0,0)").run();
     await f.gate.provider(f.provider,f.meter).call({model:'test',messages:[],promptHash:'over-old-token-ceiling',maxTokens:100});expect(f.gate.isOn()).toBe(true);expect(f.gate.view().spentTokens).toBe(2000000030);
     f.control.db.prepare('UPDATE owner_company_budget SET total_micros=100').run();await expect(f.gate.provider(f.provider,f.meter).call({model:'test',messages:[],promptHash:'unaffordable',maxTokens:100})).rejects.toBeInstanceOf(InfrastructureFailureError);
-    expect(f.calls).toHaveLength(1);expect(f.gate.modelCalls()).toHaveLength(0);expect(f.gate.proposals.list().find(p=>p.kind==='budget')).toMatchObject({state:'PENDING',payload:{totalMicros:1266}});
+    expect(f.calls).toHaveLength(1);expect(f.gate.modelCalls()).toHaveLength(0);expect(f.gate.budget.view().needsRefill).toBe(true);expect(f.gate.proposals.list()).toHaveLength(0);
   });
   it('records node completion once when a second connection settles the occurrence before the first observer enters its transaction',()=>{
     const f=goalFixture();cleanups.push(f.close);const goal=f.goal('Concurrent completion','manual');f.gate.proposals.plans.install(goal.id,plan,true);f.gate.proposals.plans.claim(goal.id,'research','concurrent-completion');const store=new WorldRegistryStore(f.control.db.dbPath),other=new OwnerAutomationGate(store),transaction=f.control.transaction.bind(f.control);
@@ -143,8 +143,8 @@ describe('V32 company money, proposals and task loop',()=>{
     cleanups.push(()=>app.close());
     const chat=(question:string)=>app.inject({method:'POST',url:'/api/owner/chat',payload:{question,history:[],language:'zh-CN',requestKey:crypto.randomUUID()}});
     const needed=await chat('帮我做一次研究');expect(needed.json().answer).toContain('预算');expect(f.calls).toHaveLength(0);
-    const budget=await chat('公司预算 1 元');expect(budget.json().companyProposal.kind).toBe('budget');const p=budget.json().companyProposal;
-    const approved=await chat('批准 '+p.id);expect(approved.statusCode).toBe(200);expect(f.gate.budget.view().totalMicros).toBe(1000000);
+    const budget=await chat('公司预算 1 元');expect(budget.json().companyProposal).toBeUndefined();expect(budget.json().answer).toContain('公司金额预算');
+    const saved=await app.inject({method:'POST',url:'/api/owner/budget',payload:{tokenMillions:1,unitPrice:1,priceCurrency:'CNY',expectedRevision:0,idempotencyKey:'direct-settings'}});expect(saved.statusCode).toBe(200);expect(f.gate.budget.view().totalMicros).toBe(1000000);
     expect((await chat('公司状态')).json().usage.tokens).toBe(0);expect((await chat('暂停')).statusCode).toBe(200);expect(f.calls).toHaveLength(0);
   });
   it('handles explicit Chinese and English recruitment approval in chat before a money budget exists',async()=>{
@@ -170,12 +170,12 @@ describe('V32 company money, proposals and task loop',()=>{
   it('resumes a maintenance pause from an explicit free chat command and never replays an old resume over a newer pause',async()=>{
     const f=goalFixture();cleanups.push(f.close);let paused=true,resumes=0;const app=await createServer({workspaceRoot:f.root,worlds:f.worlds,evolution:{quiesced:()=>paused,switching:()=>false,resume:async()=>{paused=false;resumes++;}} as any});cleanups.push(()=>app.close());
     const chat=(question:string,requestKey=crypto.randomUUID())=>app.inject({method:'POST',url:'/api/owner/chat',payload:{question,history:[],language:'zh-CN',requestKey}});
-    expect((await chat('批准公司预算 1 元')).statusCode).toBe(200);expect(paused).toBe(true);expect((await chat('继续运行','maintenance-resume')).statusCode).toBe(200);expect(paused).toBe(false);expect(resumes).toBe(1);expect(f.gate.view().desiredMode).toBe('ON');expect(f.calls).toHaveLength(0);
+    expect((await app.inject({method:'POST',url:'/api/owner/budget',payload:{tokenMillions:1,unitPrice:1,priceCurrency:'CNY',expectedRevision:0,idempotencyKey:'paused-settings'}})).statusCode).toBe(200);expect(paused).toBe(true);expect((await chat('继续运行','maintenance-resume')).statusCode).toBe(200);expect(paused).toBe(false);expect(resumes).toBe(1);expect(f.gate.view().desiredMode).toBe('ON');expect(f.calls).toHaveLength(0);
     await chat('暂停公司');paused=true;await chat('继续运行','maintenance-resume');expect(paused).toBe(true);expect(f.gate.view().desiredMode).toBe('OFF');expect(resumes).toBe(1);
   });
   it('keeps pause and recorded status usable during a software switch while preventing new approvals from racing its snapshots',async()=>{
     const f=goalFixture();cleanups.push(f.close);const app=await createServer({workspaceRoot:f.root,worlds:f.worlds,evolution:{quiesced:()=>true,switching:()=>true} as any});cleanups.push(()=>app.close());
-    const p=f.gate.proposals.propose('budget',{totalMicros:1000000},'switch-budget-proposal'),chat=(question:string)=>app.inject({method:'POST',url:'/api/owner/chat',payload:{question,history:[],language:'zh-CN',requestKey:crypto.randomUUID()}});
-    expect((await chat('公司状态')).statusCode).toBe(200);expect((await chat('暂停公司')).statusCode).toBe(200);expect((await chat('批准 '+p.id)).statusCode).toBe(409);expect(f.gate.proposals.list()[0].state).toBe('PENDING');expect(f.gate.budget.view().activatedAt).toBeNull();expect(f.calls).toHaveLength(0);
+    const chat=(question:string)=>app.inject({method:'POST',url:'/api/owner/chat',payload:{question,history:[],language:'zh-CN',requestKey:crypto.randomUUID()}});
+    expect((await chat('公司状态')).statusCode).toBe(200);expect((await chat('暂停公司')).statusCode).toBe(200);expect((await app.inject({method:'POST',url:'/api/owner/budget',payload:{tokenMillions:1,unitPrice:1,priceCurrency:'CNY',expectedRevision:0,idempotencyKey:'switch-settings'}})).statusCode).toBe(409);expect(f.gate.proposals.list()).toHaveLength(0);expect(f.gate.budget.view().activatedAt).toBeNull();expect(f.calls).toHaveLength(0);
   });
 });

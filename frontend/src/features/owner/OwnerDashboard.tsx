@@ -5,13 +5,14 @@ import { OwnerInbox } from './OwnerInbox';
 import { OwnerActivity } from './OwnerActivity';
 import { CompanyProposalCard } from './CompanyProposalCard';
 import { OwnerWork } from './OwnerWork';
+import { OwnerBudget } from './OwnerBudget';
 import { OwnerExtensions } from './OwnerExtensions';
 import { OwnerTaskBoard, ownerBoardItems, ownerBoardColumn } from './OwnerTaskBoard';
 import { ownerApprovalPair, ownerStatusLabel, ownerTime } from './ownerPresentation';
 
 export function OwnerDashboard({ data, onDone }: { data: OwnerOverview; onDone: () => void }) {
   useLanguage();
-  const pending = (data.proposals ?? []).filter(p => p.state === 'PENDING');
+  const pending = (data.proposals ?? []).filter(p => p.state === 'PENDING' && p.kind !== 'budget');
   const approvals = data.inbox.filter(item => ownerApprovalPair(item));
   const followup = data.inbox.filter(item => !ownerApprovalPair(item));
   const alerts = data.alerts ?? [];
@@ -53,7 +54,7 @@ export function OwnerDashboard({ data, onDone }: { data: OwnerOverview; onDone: 
           <OwnerInbox items={followup} alerts={alerts} onDone={onDone} title={null} id="owner-followup-items" />}
       </section>
     </div>
-    <Budget data={data} />
+    <OwnerBudget data={data} onDone={onDone} />
     <People data={data} />
     <OwnerWork work={data.work} showTasks={false} />
     {data.storefront && <details className="owner-card">
@@ -77,42 +78,6 @@ export function OwnerDashboard({ data, onDone }: { data: OwnerOverview; onDone: 
       {(data.proposals ?? []).filter(p => p.state !== 'PENDING').map(p => <CompanyProposalCard key={p.id} proposal={p} />)}
     </details>
   </div>;
-}
-
-function Budget({ data }: { data: OwnerOverview }) {
-  const budget = data.budget;
-  const valid = budget && budget.currency === 'CNY' && [budget.totalMicros, budget.spentMicros, budget.reservedMicros, budget.availableMicros]
-    .every(Number.isSafeInteger) && [budget.totalMicros, budget.spentMicros, budget.reservedMicros].every(n => n >= 0);
-  const money = (n: number) => Number.isFinite(n) ? '¥' + (n / 1000000).toLocaleString(language(),
-    { maximumFractionDigits: 6 }) : '—';
-  const spent = valid && budget.totalMicros ? Math.min(100, budget.spentMicros / budget.totalMicros * 100) : 0;
-  const reserved = valid && budget.totalMicros ?
-    Math.min(100 - spent, budget.reservedMicros / budget.totalMicros * 100) : 0;
-  return <section className="owner-card" aria-label={t('Company money budget')}><h2>{t('Company money budget')}</h2>
-    {!budget ? <p>{t('Budget data unavailable.')}</p> : !valid ? <p role="alert">{t('Budget data is invalid. Review the ledger before spending.')}</p> : <>
-      <div className="owner-metric-grid">{([
-        ['Total authorized budget', budget.totalMicros, ''],
-        ['Settled cost', budget.spentMicros, ''],
-        ['Reserved cost', budget.reservedMicros, budget.reservedMicros > 0 ? 'warning' : ''],
-        ['Available budget', budget.availableMicros, budget.availableMicros > 0 ? 'ok' : budget.activatedAt === null ? 'warning' : 'danger'],
-      ] as const).map(([label, value, tone]) => <div key={label} className={'owner-metric' + (tone ? ' owner-metric--' + tone : '')}>
-        <span>{t(label)}</span><strong>{money(value)}</strong></div>)}</div>
-      <div className="owner-money-bar" role="img" aria-label={t('Settled cost') + ': ' + money(budget.spentMicros) +
-        '; ' + t('Reserved cost') + ': ' + money(budget.reservedMicros) + '; ' + t('Available budget') + ': ' + money(budget.availableMicros)}>
-        <span style={{ width: spent + '%' }} /><i style={{ width: reserved + '%' }} /></div>
-      {budget.activatedAt === null && <p className="owner-notice">{t('Give a company money budget in Boss chat to begin.')}</p>}
-      {budget.activatedAt !== null && budget.availableMicros <= 0 && <p className="owner-notice">{t('OWNER_COMPANY_BUDGET_EXHAUSTED')}</p>}
-      {budget.unknownCalls > 0 && <p className="owner-notice">{t('Unsettled calls needing review: {0}', [budget.unknownCalls])}</p>}
-      <p className="owner-muted">{t('Tokens measure usage. Only the company money budget authorizes spending.')}</p>
-      {!!budget.historicalCostMicros && <p className="owner-muted">{t('Historical cost before this budget')}: {money(budget.historicalCostMicros)}</p>}
-      {!!data.costs?.length && <details><summary>{t('Daily settled cost (Asia/Shanghai)')}</summary>
-        <div className="company-status-chart" role="img" aria-label={t('Daily settled cost (Asia/Shanghai)')}>
-          {data.costs.map(c => <div key={c.day}><span>{c.day}</span><meter min={0}
-            max={Math.max(1, ...data.costs!.map(row => Number.isFinite(row.micros) ? row.micros : 0))}
-            value={Number.isFinite(c.micros) ? Math.max(0, c.micros) : 0} /><strong>{money(c.micros)}</strong></div>)}
-        </div></details>}
-    </>}
-  </section>;
 }
 
 function People({ data }: { data: OwnerOverview }) {

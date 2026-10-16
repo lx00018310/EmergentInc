@@ -88,7 +88,7 @@ export const OwnerChat: React.FC<{missionControl?:boolean;onDone?:()=>void;work?
   return (
     <div className="owner-chat">
       <div className="owner-chat-history" ref={historyRef} aria-label={tr("老板窗口对话记录")}>
-        {messages.length === 0 && <p className="form-hint">{tr(missionControl ? 'Describe a task or company budget. AI proposes steps, executes approved work and reports real results. You decide when to close each task.' : "可询问项目进度、运行状态和 Pixel 工作。回答会读取提问时的最新数据，并列出依据。")}</p>}
+        {messages.length === 0 && <p className="form-hint">{tr(missionControl ? 'Describe a task. Set the shared money allowance on the company dashboard. AI executes approved work and reports actual results for your acceptance.' : "可询问项目进度、运行状态和 Pixel 工作。回答会读取提问时的最新数据，并列出依据。")}</p>}
         {messages.map((message, index) => (
           <div className={`owner-chat-message ${message.role}`} key={index} ref={message.role === 'assistant' && index === messages.length - 1 ? answerRef : undefined}>
             <strong>{message.role === 'user' ? (tr("老板")) : (tr("助手"))}</strong>

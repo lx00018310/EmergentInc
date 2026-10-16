@@ -26,5 +26,5 @@ if(mode==='unknown'){
   const original=manager.options.provider.call;
   manager.options.provider.call=async(...args)=>{worldId=String(control.db.prepare('SELECT world_id FROM owner_run_permits LIMIT 1').get()!.world_id);return original(...args);};
 }
-gate.budget.authorize(100000000);gate.control({desiredMode:'ON',runMode:'BOUNDED',requestedRounds:7,expectedRevision:gate.view().revision,idempotencyKey:crypto.randomUUID()});
+gate.budget.configure({tokenMillions:1,unitPrice:(100000000)/1000000,priceCurrency:'CNY',expectedRevision:gate.budget.view().revision});gate.control({desiredMode:'ON',runMode:'BOUNDED',requestedRounds:7,expectedRevision:gate.view().revision,idempotencyKey:crypto.randomUUID()});
 await new OwnerGoalScheduler(manager,work,gate).tick();

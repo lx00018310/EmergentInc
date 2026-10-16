@@ -13,6 +13,7 @@ export class OwnerProposalService {
   }
   list():CompanyProposal[]{return this.gate.store.db.prepare('SELECT * FROM owner_company_proposals ORDER BY created_at,id').all().map(r=>({id:String(r.id),kind:r.kind as CompanyProposal['kind'],goalId:r.goal_id as string|null,goalRevision:r.goal_revision as number|null,payload:JSON.parse(String(r.payload)),hash:String(r.hash),state:r.state as CompanyProposal['state'],result:r.result?JSON.parse(String(r.result)):null,createdAt:Number(r.created_at)}));}
   propose(kind:CompanyProposal['kind'],payload:unknown,key:string,goalId?:string){
+    if(kind==='budget')ownerConflict('OWNER_USE_COMPANY_BUDGET_SETTINGS');
     const goal=goalId?this.gate.goals.get(goalId):undefined,body={kind,payload,goalId:goalId??null,goalRevision:goal?.specificationRevision??null},hash=digest(body);
     return this.gate.store.transaction(()=>{
       const old=this.gate.store.db.prepare('SELECT id,hash FROM owner_company_proposals WHERE operation_key=?').get(key);if(old){if(old.hash!==hash)ownerConflict('IDEMPOTENCY_CONFLICT');return this.list().find(p=>p.id===old.id)!;}
@@ -35,9 +36,7 @@ export class OwnerProposalService {
       if(p.goalId){const goal=this.gate.goals.get(p.goalId);if(goal.specificationRevision!==p.goalRevision||['STOPPED','ARCHIVED','COMPLETED'].includes(goal.status))ownerConflict('OWNER_GOAL_PERMISSION_CHANGED');}
       let result:unknown=null;
       if(input.decision==='approve'){
-        if(p.kind==='budget'){
-          result=this.gate.budget.authorize(p.payload.totalMicros);
-        }
+        if(p.kind==='budget')ownerConflict('OWNER_USE_COMPANY_BUDGET_SETTINGS');
         else if(p.kind==='task_plan'){const plan=this.plans.get(p.goalId!);if(!plan||digest(plan)!==p.payload.planHash)ownerConflict('OWNER_PROPOSAL_CHANGED');this.plans.approve(p.goalId!);result=this.gate.goals.get(p.goalId!);}
         else {
           const detail=this.gate.goals.detail(p.goalId!);if(detail.goal.status!=='WAITING_APPROVAL')ownerConflict('OWNER_PROPOSAL_CHANGED');if(!p.payload.evidence.every((s:any)=>detail.evidence.some(e=>e.id===s.id&&e.sha256===s.sha256&&e.specificationRevision===p.goalRevision)))ownerConflict('OWNER_EVIDENCE_CHANGED');

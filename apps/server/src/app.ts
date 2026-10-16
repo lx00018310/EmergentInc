@@ -68,7 +68,7 @@ export async function createServer(options: CreateServerOptions): Promise<Fastif
   app.addHook("preHandler", async (req, reply) => {
     const route=req.url.split('?')[0]!;
     if(route==='/api/owner/automation')return;
-    if(!options.evolution?.switching?.()&&(route==='/api/owner/chat'||/^\/api\/owner\/(proposals|requests)\/[^/]+\/decision$/.test(route)))return;
+    if(!options.evolution?.switching?.()&&(route==='/api/owner/chat'||route==='/api/owner/budget'||/^\/api\/owner\/(proposals|requests)\/[^/]+\/decision$/.test(route)))return;
     const command=String((req.body as any)?.question??'').trim().replace(/[。.!！]+$/,'');
     if(route==='/api/owner/chat'&&(/^(?:先|请)?(?:暂停|暂停公司|停止运行|暂停自动经营)$|^(?:please )?(?:pause|pause company|stop running)$|^(?:暂停|停止|pause|stop)\s*(?:任务|task)\s*.+$/i.test(command)||/^(?:公司状态|任务进度|查看任务|查看预算|company status|task status|show budget)$/i.test(command)))return;
     if (options.evolution?.quiesced?.() && req.method !== "GET" && req.url.startsWith("/api/") &&

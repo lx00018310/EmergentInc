@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "company_money": 1,
+  "company_money": 2,
   "task_workflow": 1,
   "currency": "CNY",
   "money_unit": "micros"

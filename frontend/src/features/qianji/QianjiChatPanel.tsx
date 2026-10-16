@@ -7,7 +7,8 @@ import { ApiError } from '../../api/client';
 function requestKey(): string {
   return globalThis.crypto?.randomUUID?.() ?? `qchat-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
-function blockedMessage(reason:string|null|undefined):string {
+function blockedMessage(reason:string|null|undefined,company:boolean):string {
+  if(company&&/^(?:WAITING_(?:PIXEL|RUN|EXECUTION)_BUDGET|(?:RUN|EXECUTION)_BUDGET_EXHAUSTED)$/.test(reason??''))return tr("Old individual allowance wait. Company scheduling resumes when enabled and funded.");
   if(reason==='WAITING_PIXEL_BUDGET')return tr("元胞能量不足，等待补充后重试。");
   if(['PAUSED_RECOVERY_REQUIRED','CALL_OUTCOME_UNKNOWN','TOOL_OUTCOME_UNKNOWN','AWAITING_SETTLEMENT'].includes(reason??''))return tr("存在未决调用，请进入 World 恢复处理后再运行。");
   if(reason==='ROUND_LIMIT_REACHED')return tr("本次轮数已用完，任务尚未回复。可在 World 中继续运行。");
@@ -29,7 +30,7 @@ export const QianjiChatPanel: React.FC<{
   const controller = useRef<AbortController | null>(null);
   const pendingRequest = useRef<{ question: string; key: string; rounds:number } | null>(null);
   const currentBinding = item.currentBinding;
-  const canChat = Boolean((item.world?.status==='ACTIVE'||currentBinding) && item.physical?.active && (item.physical.refundDeficitTokens ?? 0) === 0 && item.profile.careerStatus !== 'retired') && !sendBlocked;
+  const canChat = Boolean((item.world?.status==='ACTIVE'||currentBinding) && item.physical?.active && (Boolean(item.world) || (item.physical.refundDeficitTokens ?? 0) === 0) && item.profile.careerStatus !== 'retired') && !sendBlocked;
 
   const refresh = useCallback(async (signal?: AbortSignal) => {
     try {
@@ -84,13 +85,13 @@ export const QianjiChatPanel: React.FC<{
             <p className="qj-chat-question"><b>{tr("阁主")}</b>{turn.question}</p>
             {turn.status === 'replied' && turn.reply !== null
               ? <p className="qj-chat-reply"><b>{item.profile.narrative.displayName}</b>{turn.reply}</p>
-              : <p className={`qj-chat-state state-${turn.status}`}>{turn.status === 'queued' ? (tr("等待本轮处理")) : turn.status === 'processing' ? (tr("运行中")) : turn.status === 'no_reply' ? (tr("本次没有直接回复")) : turn.status === 'blocked' ? blockedMessage(turn.blockReason) : (tr("本次失败，可查看 Engine 状态"))}</p>}
+              : <p className={`qj-chat-state state-${turn.status}`}>{turn.status === 'queued' ? (tr("等待本轮处理")) : turn.status === 'processing' ? (tr("运行中")) : turn.status === 'no_reply' ? (tr("本次没有直接回复")) : turn.status === 'blocked' ? blockedMessage(turn.blockReason,Boolean(item.world)) : (tr("本次失败，可查看 Engine 状态"))}</p>}
             {turn.status==='blocked'&&item.world&&<a href={`/YUAN?world=${encodeURIComponent(item.world.world_id)}`}>{tr("查看 World 运行与恢复")}</a>}
           </article>
         ))}
       </div>
       <form onSubmit={submit} className="qj-chat-form">
-        {item.world&&<details><summary>{tr('Advanced runtime information')}</summary><p>{tr("发送后按指定轮数运行本 World，额度上限 100,000 Tokens；任务完成或阻塞时可提前停止。")}</p><label>{tr("运行轮数（1–20）")} <input type="number" min={1} max={20} value={rounds} onChange={event=>setRounds(Number(event.target.value))} disabled={!canChat||submitting}/></label></details>}
+        {item.world&&<details><summary>{tr('Advanced runtime information')}</summary><p>{tr("Runs this World for the selected rounds using the shared company money budget. Stops early on completion or blockers.")}</p><label>{tr("运行轮数（1–20）")} <input type="number" min={1} max={20} value={rounds} onChange={event=>setRounds(Number(event.target.value))} disabled={!canChat||submitting}/></label></details>}
         <label htmlFor={`qj-chat-${item.profile.qianjiId}`}>{tr("发送给") + " "}{item.profile.narrative.displayName}</label>
         <textarea id={`qj-chat-${item.profile.qianjiId}`} value={content} onChange={event => setContent(event.target.value)} rows={3} maxLength={4000}
           placeholder={sendBlocked ?? (canChat ? (tr("输入问题或指令…")) : item.world?(tr("当前 World 没有活跃入口，请更换入口")):(tr("当前人物未绑定可运行的 Pixel")))} disabled={!canChat || submitting} />

@@ -81,9 +81,9 @@ export function BusinessHome() {
         <section><h2>{tr("你想改善什么业务？")}</h2><p>{tr("当前可处理资料、在已连接的 GitHub 仓库提交经批准的议题，并记录经营凭据。发布动作不等于获客成功；链上收款可在生命总览配置和核验，既有 CNY 手工凭据保留独立来源。")}</p>
           <form onSubmit={e => { e.preventDefault(); void act(propose); }}><label>{tr("业务方向")}<textarea value={direction} required maxLength={8000}
             placeholder={tr("例如：我想减少每周整理询盘表的时间，先检查现有资料里缺了什么。")} onChange={e => setDirection(e.target.value)} /></label>
-            <button className="primary" disabled={busy || !data.companyTokenQuota&&!data.settings || !data.modelConfigured}>{tr("让 Pixel 提方案")}</button>
+            <button className="primary" disabled={busy || !data.companyMoneyBudget&&!data.settings || !data.modelConfigured}>{tr("让 Pixel 提方案")}</button>
             {!data.modelConfigured && <p>{tr("请由实例管理员配置模型与明确报价；系统当前不会调用付费模型。")}</p>}</form></section>
-        {data.companyTokenQuota?<p><a href="/OWNER#owner-goals">{tr('Company token quota')}</a></p>:<details open={!data.settings}><summary>{tr("费用授权")}{data.settings ? tr(" · 累计上限 {0}", [money(data.settings.limit_micros)]) : (" " + tr("· 首次使用请先确认"))}</summary>
+        {data.companyMoneyBudget?<p><a href="/OWNER#owner-company-budget">{tr('Company money budget')}</a></p>:<details open={!data.settings}><summary>{tr("费用授权")}{data.settings ? tr(" · 累计上限 {0}", [money(data.settings.limit_micros)]) : (" " + tr("· 首次使用请先确认"))}</summary>
           <p>{tr("拟定方案也可能收费。这里授权的是累计上限，修改额度不会清除已发生费用。实际账单异常超过预估时保留真实费用并停止后续支出。")}</p>
           <form onSubmit={e => { e.preventDefault(); void act(() => businessApi('business/budget', {
             limitMicros: Math.round(Number(total) * 1000000), draftLimitMicros: Math.round(Number(draft) * 1000000),
@@ -111,8 +111,8 @@ export function BusinessHome() {
         <div className="business-title"><h2>{view.plan.title}</h2><span>{states[view.state]} {" " + tr("· 第") + " "}{view.revision} {" " + tr("版")}</span></div>
         <p>{view.plan.objective}</p><dl><dt>{tr("服务对象")}</dt><dd>{view.plan.audience}</dd><dt>{tr("待验证假设")}</dt><dd>{view.plan.hypothesis}</dd>
           <dt>{tr("衡量结果")}</dt><dd>{view.plan.metric.name}：{view.plan.metric.baseline} → {view.plan.metric.target}{tr("；证据：")}{view.plan.metric.evidence}</dd>
-          <dt>{tr("费用与期限")}</dt><dd>{!data.companyTokenQuota&&<>{tr("累计上限") + " "}{money(view.plan.budgetMicros)}</>}{tr("；已确认") + " "}{money(view.spentMicros)}{tr("，预留") + " "}{money(view.reservedMicros)}{tr("；截至") + " "}{new Date(view.plan.expiresAt).toLocaleString()}</dd>
-          <dt>{tr("允许的动作")}</dt><dd>{view.plan.actions.map((a, i) => a.capability === 'review_feedback' ? <p key={i}>{tr(data.companyTokenQuota?'Review new feedback using the company token quota; revisions still need approval. Purpose:':'复盘本方案的新反馈，按次数和费用上限调用模型；修订仍需你批准。用途：')}{a.purpose}</p> : a.capability === 'github_issue_create' ? <div key={i}>
+          <dt>{tr("费用与期限")}</dt><dd>{!data.companyMoneyBudget&&<>{tr("累计上限") + " "}{money(view.plan.budgetMicros)}</>}{tr("；已确认") + " "}{money(view.spentMicros)}{tr("，预留") + " "}{money(view.reservedMicros)}{tr("；截至") + " "}{new Date(view.plan.expiresAt).toLocaleString()}</dd>
+          <dt>{tr("允许的动作")}</dt><dd>{view.plan.actions.map((a, i) => a.capability === 'review_feedback' ? <p key={i}>{tr(data.companyMoneyBudget?'Review new feedback using the company money budget; revisions still need approval. Purpose:':'复盘本方案的新反馈，按次数和费用上限调用模型；修订仍需你批准。用途：')}{a.purpose}</p> : a.capability === 'github_issue_create' ? <div key={i}>
             <p>{tr("以") + " "}{a.accountLogin} {" " + tr("的账号，在") + " "}{a.repository} {" " + tr("创建一条议题：")}{a.title}</p><p style={{whiteSpace:'pre-wrap'}}>{a.body}</p><p>{tr("用途：")}{a.purpose}{tr("（GitHub 议题第 1 版）")}</p></div> :
             <p key={i}>{tr("处理资料") + " "}{a.datasetId}：{a.purpose}{tr("（资料报告第 1 版）")}</p>)}</dd>
           <dt>{tr("执行时间")}</dt><dd>{view.plan.schedule ? <>{view.plan.schedule.kind === 'daily' ? tr("每天 {0}（{1}）", [view.plan.schedule.time, view.plan.schedule.timezone]) : tr("每 {0} 分钟", [view.plan.schedule.everyMinutes])}{tr("，最多") + " "}{view.plan.schedule.maxOccurrences} {" " + tr("次；离线合并一次，避免集中补跑。")}</> : (tr("批准且资料齐备后执行一次。"))}
@@ -120,7 +120,7 @@ export function BusinessHome() {
           <dt>{tr("停止条件")}</dt><dd>{view.plan.stopCondition}</dd></dl>
         {view.previousPlan && <details open={view.state === 'AWAITING_APPROVAL'}><summary>{tr("与上一版本的差异")}</summary>
           {(['objective', 'budgetMicros', 'expiresAt', 'actions', 'metric', 'resources', 'schedule'] as const).filter(key =>
-            !(data.companyTokenQuota&&key==='budgetMicros')&&JSON.stringify(view.previousPlan![key]) !== JSON.stringify(view.plan[key])).map(key => <p key={key}>
+            !(data.companyMoneyBudget&&key==='budgetMicros')&&JSON.stringify(view.previousPlan![key]) !== JSON.stringify(view.plan[key])).map(key => <p key={key}>
               <strong>{{ objective: (tr("目标")), budgetMicros: (tr("累计预算")), expiresAt: (tr("有效期")), actions: (tr("行动范围")), metric: (tr("验收指标")), resources: (tr("资源依赖")), schedule: (tr("执行时间")) }[key]}</strong>
               <br />{tr("此前：")}{planValue(key, view.previousPlan![key])}<br />{tr("现在：")}{planValue(key, view.plan[key])}</p>)}
         </details>}
@@ -140,7 +140,7 @@ export function BusinessHome() {
             <button disabled={busy}>{tr("保存反馈")}</button></form>
           {data.events?.filter((e: any) => e.plan_id === view.id && e.kind === 'owner_feedback').map((e: any) => <p key={e.id}>{JSON.parse(e.payload).note} · {JSON.parse(e.payload).evidence}</p>)}
         </details>
-        {view.revision > 1 && <StrategyHistory id={view.id} revision={view.revision} busy={busy} act={act} companyTokenQuota={data.companyTokenQuota}/>}
+        {view.revision > 1 && <StrategyHistory id={view.id} revision={view.revision} busy={busy} act={act} companyMoneyBudget={data.companyMoneyBudget}/>}
       </section>)}</>}
       {tab === 'resources' && <><section><h2>{tr("业务资料")}</h2><p>{tr("上传 Excel 导出的 UTF-8 CSV 表格或 JSON 行数组，最多 500 KB。资料固定保存，修改内容须上传新资料并修订方案。")}</p>
         <label>{tr("请求中的资料标识（没有指定可留空）")}<input value={uploadId} onChange={e => setUploadId(e.target.value)} /></label>

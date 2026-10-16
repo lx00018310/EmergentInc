@@ -1,6 +1,8 @@
 import type { FastifyInstance } from 'fastify';
 import type { OwnerOverviewService } from '../services/owner_overview_service.js';
 import type { OwnerChatService } from '../services/owner_chat_service.js';
+import {COMPANY_BUDGET_USD_CNY} from '@emergentinc/protocol';
+import { exactKeys } from '../services/owner_goal_service.js';
 import { proposeOwnerAction } from '../services/owner_actions.js';
 import type { OwnerWorkService } from '../services/owner_work_service.js';
 import type { OwnerAutomationGate } from '../services/owner_automation_gate.js';
@@ -17,6 +19,12 @@ export function registerOwnerRoutes(app:FastifyInstance, overview:OwnerOverviewS
   };
   if(gate){
     const goals=gate.goals;
+    app.post('/owner/budget',req=>{
+      if(maintenance?.switching?.())throw Object.assign(new Error('EVOLUTION_QUIESCED'),{statusCode:409});
+      const input=req.body as any;exactKeys(input,['tokenMillions','unitPrice','priceCurrency','expectedRevision','idempotencyKey']);
+      const {idempotencyKey}=input,settings={tokenMillions:input.tokenMillions,unitPrice:input.unitPrice,priceCurrency:input.priceCurrency,expectedRevision:input.expectedRevision};
+      return goals.request(idempotencyKey,{budget:settings},()=>gate.budget.configure(settings));
+    });
     app.get('/owner/proposals',()=>({items:gate.proposals.list()}));
     app.post<{Params:{id:string}}>('/owner/proposals/:id/decision',async req=>{const p=gate.proposals.decide(req.params.id,req.body);return p;});
     app.get('/owner/goals',req=>{const query=req.query as any;return {items:goals.list(query.archived==='true')};});
@@ -68,13 +76,7 @@ export function registerOwnerRoutes(app:FastifyInstance, overview:OwnerOverviewS
         if(hire&&(hire.type==='recruit_approve'||hire.type==='recruit_reject'))return work.ask(b.requestKey,b.question,b.history,b.language,data,chat!,undefined,{id:hire.requestId,hash:hire.hash,decision:hire.type==='recruit_approve'?'approve':'reject'});
         return response(proposal?.answer??say('请指定唯一的招聘申请 ID 或职责名称。','Specify a unique recruitment request ID or role.'));
       }
-      const amount=command.match(/^(?:(批准|同意|approve)\s*)?(?:公司(?:总)?预算(?:设为|为|是)?|company (?:total )?budget(?: is| of)?)\s*(?:¥|￥|CNY\s*)?(\d+(?:\.\d{1,6})?)\s*(?:元|人民币|CNY)?$/i);
-      if(amount){const result=gate.goals.request(controlKey,controlPayload,()=>{
-        const [whole,fraction='']=amount[2]!.split('.'),micros=Number(BigInt(whole!)*1000000n+BigInt(fraction.padEnd(6,'0')));if(!Number.isSafeInteger(micros)||micros<=0)throw Object.assign(new Error('OWNER_MONEY_INVALID'),{statusCode:400});
-        const p=gate.proposals.propose('budget',{totalMicros:Math.round(micros)},`budget:${controlKey}`);
-        if(amount[1]){const decided=gate.proposals.decide(p.id,{decision:'approve',hash:p.hash,idempotencyKey:`budget_${controlKey}`});return response(say('公司金额预算已批准。','The company money budget is approved.'),{companyProposal:decided,budget:gate.budget.view()});}
-        return response(say('公司预算提案已生成，请批准或拒绝。','The company budget proposal is ready for approval or rejection.'),{companyProposal:p});
-      });return result;}
+      if(/^(?:批准|同意)?公司(?:金额)?预算|^(?:approve )?company budget|^(?:增加|补充)预算$/i.test(command))return response(say('请在 AI 公司看板的“公司金额预算”中设置 Token 数量和单价，保存后直接生效。','Set the token quantity and unit price under Company money budget on the AI company dashboard, then save to apply.'));
       const decision=command.replace(/^(批准|同意|拒绝)(任务|计划|提案)/,'$1 $2 ').match(/^(批准|同意|拒绝|approve|reject)(?:\s+(.+))?$/i)??(/^(?:按这个计划执行|批准这项任务|执行这个计划)$/.test(command)?['','approve','']:null);
       if(decision){const result=gate.goals.request(controlKey,controlPayload,()=>{
         const target=decision[2]?.replace(/^(?:任务|计划|提案)\s*|^(?:task|plan|proposal)\s+/i,''),all=gate.proposals.list(),matches=target?all.filter(p=>p.id===target||p.payload.title===target):all.filter(p=>p.state==='PENDING');
@@ -88,24 +90,22 @@ export function registerOwnerRoutes(app:FastifyInstance, overview:OwnerOverviewS
         const updated=gate.goals.action(goal.id,{action,expectedRevision:goal.revision,idempotencyKey:controlKey});return response(say('任务状态已更新。','The task state is updated.'),{createdGoal:updated});
       }
       const budget=gate.budget.view(),automation=gate.view();
-      if(/^(?:公司状态|任务进度|查看任务|查看预算|company status|task status|show budget)$/i.test(command)||budget.availableMicros===0||automation.reason==='OWNER_OUTCOME_REVIEW_REQUIRED'){
+      if(/^(?:公司状态|任务进度|查看任务|查看预算|company status|task status|show budget)$/i.test(command)||budget.availableMicros===0||budget.needsRefill||automation.reason==='OWNER_OUTCOME_REVIEW_REQUIRED'){
         const goals=gate.goals.list(),active=goals.filter(g=>!['COMPLETED','STOPPED','ARCHIVED'].includes(g.status));
         const statuses:Record<string,[string,string]>={DRAFT:['待批准','Awaiting approval'],READY:['待执行','Queued'],RUNNING:['执行中','Running'],WAITING_APPROVAL:['待验收','Awaiting acceptance'],WAITING_RESOURCE:['等待条件','Waiting for a condition'],PAUSED:['已暂停','Paused'],BLOCKED:['需要跟进','Needs follow-up'],FAILED:['需要跟进','Needs follow-up']};
-        const money=(n:number)=>(n/1000000).toFixed(6),lines=active.slice(-10).map(g=>`- ${g.title}: ${say(...statuses[g.status]!)}`);
+        const money=(n:number)=>(n/1000000/(b.language==='en'?COMPANY_BUDGET_USD_CNY:1)).toFixed(6),lines=active.slice(-10).map(g=>`- ${g.title}: ${say(...statuses[g.status]!)}`);
         const unknown=gate.modelCalls().length;
         if(automation.reason==='EVOLUTION_QUIESCED')lines.unshift(say('- 执行仍处于维护暂停。','- Execution is paused for maintenance.'));
         if(unknown)lines.push(say(`- 有 ${unknown} 笔模型调用的结果或费用待核对，核对前保持暂停。`,`- ${unknown} model call(s) need outcome or cost verification. Execution stays paused until verified.`));
         else if(automation.reason==='OWNER_OUTCOME_REVIEW_REQUIRED')lines.push(say('- 有执行结果待核对，核对前保持暂停。','- An execution outcome needs verification. Execution stays paused until verified.'));
         if(automation.desiredMode==='OFF')lines.push(say('- 自动经营开关当前关闭。结束维护、查询状态或补充预算不会自动开启。','- Automatic operation is off. Ending maintenance, reading status, or funding the budget does not turn it on.'));
-        if(budget.activatedAt===null)lines.push(say('- 公司金额预算尚未授权。收费规划和执行前，请明确并批准人民币总额度；元胞能量与金额预算分别记录。','- The company money budget has not been authorized. Specify and approve the total CNY amount before paid planning or execution; Pixel energy is recorded separately.'));
-        else if(!budget.availableMicros)lines.push(say('- 公司可用金额预算为零，收费规划和执行需先补充并批准额度。','- The available company money budget is zero. Paid planning and execution require an approved increase.'));
-        const worlds=work?.manager.list()??[];
+        if(budget.activatedAt===null)lines.push(say('- 公司金额预算尚未授权。请在公司看板设置 Token 数量与单价并保存；所有人物和任务共享公司金额预算。','- The company money budget has not been authorized. Set the token quantity and unit price on the company dashboard and save; all people and tasks share this money allowance.'));
+        else if(budget.needsRefill||!budget.availableMicros)lines.push(say('- 公司金额预算不足，请人工修改 Token 数量并保存一批新额度。','- The company allowance is insufficient. Change the token quantity manually and save a fresh allowance.'));
         for(const task of work?.view().tasks.filter(t=>['BLOCKED','FAILED','NO_REPLY'].includes(t.state)).slice(0,10)??[]){
-          const world=worlds.find(w=>w.qianji_id===task.personId),infinite=world&&gate.store.gatewayInfiniteEnergy(world.world_id);
-          const state=task.reason==='WAITING_PIXEL_BUDGET'?infinite?say('任务记录仍标记等待元胞能量，但该人物已启用无限能量；需核对当前执行条件。','The task still records an energy wait, but this person has unlimited energy; current execution conditions need review.'):say('任务记录为等待元胞能量。','The task records an energy wait.'):say('任务记录需要跟进。','The task needs follow-up.');
+          const state=/^WAITING_(PIXEL|RUN|EXECUTION)_BUDGET$/.test(task.reason??'')?say('历史任务因旧元胞或运行额度等待；公司获准执行且金额预算充足后，由调度恢复，无需单独补能。','This historical task waits on an old Pixel or Run allowance. The scheduler resumes it when company operation is enabled and funded; no individual energy refill is required.'):say('任务记录需要跟进。','The task needs follow-up.');
           lines.push(`- ${task.personName}: ${state}`);
         }
-        return {...response(say(`公司记录：总授权 ¥${money(budget.totalMicros)}，已结算 ¥${money(budget.spentMicros)}，预留 ¥${money(budget.reservedMicros)}，可用 ¥${money(budget.availableMicros)}。当前 ${active.length} 项未结案任务。`,`Company records: authorized ¥${money(budget.totalMicros)}, settled ¥${money(budget.spentMicros)}, reserved ¥${money(budget.reservedMicros)}, available ¥${money(budget.availableMicros)}. ${active.length} open tasks.`)+(lines.length?'\n'+lines.join('\n'):''),{automation,budget,goals}),sources:['owner_company_budget','owner_automation_control','owner_goals','owner_work_tasks','qianji_worlds','world_gateway_energy']};
+        return {...response(say(`公司记录：总授权 ¥${money(budget.totalMicros)}，已结算 ¥${money(budget.spentMicros)}，预留 ¥${money(budget.reservedMicros)}，可用 ¥${money(budget.availableMicros)}。当前 ${active.length} 项未结案任务。`,`Company records: authorized $${money(budget.totalMicros)}, settled $${money(budget.spentMicros)}, reserved $${money(budget.reservedMicros)}, available $${money(budget.availableMicros)}. ${active.length} open tasks.`)+(lines.length?'\n'+lines.join('\n'):''),{automation,budget,goals}),sources:['owner_company_budget','owner_automation_control','owner_goals','owner_work_tasks','qianji_worlds']};
       }
     }
     const resume = /^(?:请)?(?:继续(?:运行|执行|自动经营)?|开始执行|开始运行)$|^(?:please )?(?:resume|continue(?: running)?|start running)$/i.test(command);

@@ -31,7 +31,7 @@ export function goalFixture() {
   work=new OwnerWorkService(manager,()=>maintenance);
   const payments=new PaymentService(join(root,'system/payment/payment.sqlite3'),control,lineage),scheduler=new OwnerGoalScheduler(manager,work,gate,payments);
   const worlds={manager,promotion:new GenePromotionService(manager,root,lineage),payments,monitor:new PaymentMonitor(payments),provider,meter,modelName:'test',ownerWork:work};
-  const on=(rounds:number|null=7,_legacyTokens=10_000_000,key=crypto.randomUUID())=>{if(gate.budget.view().activatedAt===null)gate.budget.authorize(100_000_000);return gate.control({desiredMode:'ON',expectedRevision:gate.view().revision,idempotencyKey:key});};
+  const on=(rounds:number|null=7,_legacyTokens=10_000_000,key=crypto.randomUUID())=>{if(gate.budget.view().activatedAt===null)gate.budget.configure({tokenMillions:1,unitPrice:(100_000_000)/1000000,priceCurrency:'CNY',expectedRevision:gate.budget.view().revision});return gate.control({desiredMode:'ON',expectedRevision:gate.view().revision,idempotencyKey:key});};
   const off=()=>gate.control({desiredMode:'OFF',expectedRevision:gate.view().revision,idempotencyKey:crypto.randomUUID()});
   const goal=(title='Research draft',kind:'artifact'|'manual'='artifact')=>gate.goals.create({title,objective:title,maxTokens:1_000_000,acceptance:kind==='artifact'?{kind,filename:'result.md',minBytes:10}:{kind,description:'Three real customers with independently verified payment evidence'},idempotencyKey:crypto.randomUUID()});
   const finish=async()=>{await vi.waitFor(async()=>{await work.tick();await scheduler.tick();expectIdle();},{timeout:8000,interval:10});};

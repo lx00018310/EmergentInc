@@ -9,11 +9,11 @@ import { setLanguage,t } from '../src/i18n';
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 describe('business owner journey', () => {
   it('uses the shared company quota instead of cash authorization in both languages',async()=>{
-    const payload={companyTokenQuota:true,modelConfigured:true,plans:[],datasets:[],requests:[],unknownOperations:[],tasks:[],spentMicros:0,reservedMicros:0};
+    const payload={companyMoneyBudget:true,modelConfigured:true,plans:[],datasets:[],requests:[],unknownOperations:[],tasks:[],spentMicros:0,reservedMicros:0};
     vi.spyOn(globalThis,'fetch').mockImplementation(async url=>({ok:true,json:async()=>String(url).includes('/evolution/')?lifeFixture():payload} as Response));
     for(const lang of ['zh-CN','en'] as const){
       setLanguage(lang);render(<BusinessHome/>);fireEvent.click(screen.getByRole('button',{name:t('经营'),exact:true}));
-      await screen.findByRole('link',{name:t('Company token quota')});
+      await screen.findByRole('link',{name:t('Company money budget')});
       expect(screen.queryByText(t('费用授权'))).toBeNull();expect(screen.queryByLabelText(t('总费用上限（元）'))).toBeNull();
       expect(screen.getByRole('button',{name:t('让 Pixel 提方案')})).toHaveProperty('disabled',false);cleanup();
     }

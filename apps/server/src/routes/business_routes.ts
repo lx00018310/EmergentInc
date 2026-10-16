@@ -12,7 +12,7 @@ export async function registerBusinessRoutes(app: FastifyInstance, service: Busi
     return reply.status(status).send({ detail: status === 500 && !/^[A-Z_]+$/.test(code) ? "BUSINESS_OPERATION_FAILED" : code });
   });
   app.get("/business/overview", async () => ({ ...store.overview(), ...service.status() }));
-  app.post("/business/budget", async req => { store.configure(req.body as any); return store.settings(); });
+  app.post("/business/budget", async req => { if(service.status().companyMoneyBudget)throw new Error("OWNER_USE_COMPANY_BUDGET_SETTINGS"); store.configure(req.body as any); return store.settings(); });
   app.post("/business/intents", async req => {
     const b = req.body as any;
     if (typeof b?.direction !== "string" || typeof b?.key !== "string") throw new Error("INVALID_DIRECTION_OR_KEY");

@@ -106,6 +106,7 @@ export class OwnerWorkService {
     if(!this.ticking)await this.tick(binding?.dispatchId); return this.view().tasks.filter(t=>tasks.some(a=>a.personId===t.personId)&&db.prepare('SELECT request_key FROM owner_work_tasks WHERE id=?').get(t.id)?.request_key===key);
   }
   async energy(personId:string,refill:boolean,infinite:boolean|undefined,key:string) {
+    if(this.manager.automation)throw new Error('OWNER_USE_COMPANY_BUDGET_SETTINGS');
     const profile=this.manager.registry.control.qianji.getProfile(personId),world=this.manager.registry.control.worldForQianji(personId);
     if(!profile||profile.careerStatus==='retired'||world.status!=='ACTIVE')throw new Error('OWNER_PERSON_UNAVAILABLE');
     const runtime=await this.manager.open(world.world_id),pixelId=world.gateway_pixel_id;
@@ -227,7 +228,9 @@ export class OwnerWorkService {
           }
         }
         else if(i.kind==='energy'&&only(i,['kind','personId','refill','infinite'])&&typeof i.personId==='string'&&(i.refill===undefined||typeof i.refill==='boolean')&&(i.infinite===undefined||typeof i.infinite==='boolean')&&(i.refill===true||typeof i.infinite==='boolean')){
-          const result=await this.energy(i.personId,i.refill===true,i.infinite,key);extra.energy=result;answer=say(`${result.name}：当前入口元胞 ${result.pixelId} 的能量为 ${result.energy}，无限能量${result.infiniteEnergy?'已开启':'已关闭'}。补能量不会自动启动任务；需要继续执行时，请在运行面板明确确认。其他元胞是否获能仍由入口自主决定，执行授权和实际计费继续有效。`,`${result.name}: gateway ${result.pixelId} has ${result.energy} energy; automatic replenishment is ${result.infiniteEnergy?'enabled':'disabled'}. Funding energy does not start a task; confirm execution separately in the Run panel. The gateway decides whether to supply other cells. Execution authorization and actual billing remain in effect.`);
+          if(this.manager.automation)answer=say('所有人物和任务共享公司金额预算，无需分别补能量。请在公司看板设置 Token 数量和单价。','All people and tasks share the company money allowance; no individual energy refill is needed. Set the token quantity and unit price on the company dashboard.');
+          else {const result=await this.energy(i.personId,i.refill===true,i.infinite,key);extra.energy=result;answer=say(`${result.name}：当前入口元胞 ${result.pixelId} 的能量为 ${result.energy}，无限能量${result.infiniteEnergy?'已开启':'已关闭'}。补能量不会自动启动任务；需要继续执行时，请在运行面板明确确认。其他元胞是否获能仍由入口自主决定，执行授权和实际计费继续有效。`,`${result.name}: gateway ${result.pixelId} has ${result.energy} energy; automatic replenishment is ${result.infiniteEnergy?'enabled':'disabled'}. Funding energy does not start a task; confirm execution separately in the Run panel. The gateway decides whether to supply other cells. Execution authorization and actual billing remain in effect.`);}
+
         } else if(i.kind==='recruit'&&only(i,['kind','role','reason','instruction'])){extra.request=this.requestRecruit({role:i.role,reason:i.reason,instruction:i.instruction},say('老板窗口助手','Owner assistant'),`dispatch:${key}`);answer=say('已提出招聘申请。请在待办中查看职责、理由和初始任务；批准后才创建人物并派发任务。','A recruitment request was created. Review the role, reason and initial task in Inbox. Approval creates the person and dispatches the task.');}
         else throw new Error('OWNER_DISPATCH_INVALID');
         const response={answer,...extra,sources:['Owner dispatch / actual World runs / owner_work_tasks'],as_of:new Date().toISOString(),usage:routed.usage};db.prepare("UPDATE owner_dispatch_calls SET state='DONE',response_json=? WHERE request_key=?").run(JSON.stringify(response),key);return response;
@@ -248,12 +251,17 @@ export class OwnerWorkService {
       if(goal&&(goal.specificationRevision!==linked!.goal_revision||['STOPPED','ARCHIVED','COMPLETED'].includes(goal.status))){db.prepare("UPDATE owner_recruit_requests SET state='CANCELLED' WHERE id=? AND state='PENDING'").run(row.request_id);db.prepare('DELETE FROM owner_recruit_decisions WHERE request_id=?').run(row.request_id);continue;}
       await this.decide(String(row.request_id),String(row.hash),'approve');
     }
-    for(const row of db.prepare("SELECT t.*,COALESCE(l.rounds,20) requested_rounds FROM owner_work_tasks t LEFT JOIN owner_work_run_limits l ON l.task_id=t.id WHERE t.state IN ('QUEUED','RUNNING') ORDER BY t.created_at").all()) {
+    for(const row of db.prepare("SELECT t.*,COALESCE(l.rounds,20) requested_rounds FROM owner_work_tasks t LEFT JOIN owner_work_run_limits l ON l.task_id=t.id WHERE t.state IN ('QUEUED','RUNNING') OR (t.state='BLOCKED' AND t.reason IN ('WAITING_PIXEL_BUDGET','WAITING_RUN_BUDGET','WAITING_EXECUTION_BUDGET','RUN_BUDGET_EXHAUSTED','EXECUTION_BUDGET_EXHAUSTED','OWNER_COMPANY_BUDGET_REQUIRED','OWNER_COMPANY_BUDGET_EXHAUSTED','OWNER_TOKEN_LIMIT')) ORDER BY t.created_at").all()) {
       if(this.closed||this.quiesced())return;
       try {
         const personId=String(row.person_id),world=this.manager.registry.control.worldForQianji(personId),runtime=await this.manager.open(world.world_id);
+        if(row.state==='BLOCKED'){
+          if(!this.manager.automation?.isOn()||runtime.run.getStatus().stop_reason==='USER_STOPPED')continue;
+          if(!row.run_id||!runtime.store.runs.getCheckpoint(String(row.run_id))?.resume_pending)row.run_id=null;
+          db.prepare("UPDATE owner_work_tasks SET state='QUEUED',reason=NULL,run_id=?,updated_at=? WHERE id=?").run(row.run_id,Date.now(),row.id);row.state='QUEUED';
+        }
         let turnId=row.turn_id?String(row.turn_id):null;
-        // A new assignment waits for its own bounded Run instead of consuming another Run's budget.
+        // A new assignment waits for the current Run to finish before using this World's inbox.
         if(!turnId&&runtime.run.getStatus().running)continue;
         const linked=this.manager.automation?db.prepare('SELECT * FROM owner_goal_dispatches WHERE task_id=?').get(row.id):undefined;
         const binding=linked?{goalId:String(linked.goal_id),specificationRevision:Number(linked.goal_revision),dispatchId:String(linked.id)}:undefined;
@@ -268,7 +276,7 @@ export class OwnerWorkService {
           if(this.closed||this.quiesced())return;
           if(this.manager.automation&&!this.manager.automation.isOn())continue;
           if(this.manager.automation&&this.manager.list().some(w=>w.running))continue;
-          await runtime.run.start({rounds:Number(row.requested_rounds),runBudgetTokens:100000,goalBinding:binding,onRunCreated:runId=>{db.prepare("UPDATE owner_work_tasks SET state='RUNNING',run_id=?,updated_at=? WHERE id=?").run(runId,Date.now(),row.id);db.prepare('UPDATE world_chat_turns SET run_id=? WHERE turn_id=?').run(runId,turnId);if(binding)db.prepare('UPDATE owner_goal_dispatches SET run_id=? WHERE id=?').run(runId,binding.dispatchId);}});
+          await runtime.run.start({rounds:Number(row.requested_rounds),...(this.manager.automation?{}:{runBudgetTokens:100000}),goalBinding:binding,onRunCreated:runId=>{db.prepare("UPDATE owner_work_tasks SET state='RUNNING',run_id=?,updated_at=? WHERE id=?").run(runId,Date.now(),row.id);db.prepare('UPDATE world_chat_turns SET run_id=? WHERE turn_id=?').run(runId,turnId);if(binding)db.prepare('UPDATE owner_goal_dispatches SET run_id=? WHERE id=?').run(runId,binding.dispatchId);}});
           if(binding)db.prepare('UPDATE owner_goals SET last_scheduled_at=? WHERE id=?').run(Date.now(),binding.goalId);
         } else if(row.run_id&&!runtime.run.getStatus().running) {
           const checkpoint=runtime.store.runs.getCheckpoint(String(row.run_id));

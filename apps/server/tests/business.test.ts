@@ -34,7 +34,7 @@ function seed(store: BusinessStore, body = plan(), key = "seed", id?: string, re
 describe("business authorization, costs and durable execution", () => {
   it('uses the company money budget for drafting and review without separate cash allowances',async()=>{
     const f=fixture(),control=new WorldRegistryStore();resources.push(()=>control.close());const gate=new OwnerAutomationGate(control);
-    f.service.attachAutomation(gate);gate.budget.authorize(100000000);gate.control({desiredMode:'ON',expectedRevision:0,idempotencyKey:crypto.randomUUID()});
+    f.service.attachAutomation(gate);gate.budget.configure({tokenMillions:1,unitPrice:(100000000)/1000000,priceCurrency:'CNY',expectedRevision:gate.budget.view().revision});gate.control({desiredMode:'ON',expectedRevision:0,idempotencyKey:crypto.randomUUID()});
     f.call.mockResolvedValueOnce({rawText:JSON.stringify(plan({budgetMicros:0,actions:[{capability:'review_feedback',version:'1',purpose:'Review feedback'}]})),usage:{promptTokens:100,completionTokens:100,cachedTokens:0}});
     const p=await f.service.propose('Review retained evidence','company-quota-draft');
     expect(f.store.settings()).toBeUndefined();expect(p.spentMicros).toBe(200);
@@ -51,7 +51,7 @@ describe("business authorization, costs and durable execution", () => {
     f.store.approve(review.id,review.revision,review.hash);f.store.approve(data.id,data.revision,data.hash);
     f.store.recordFeedback(review.id,'feedback-quota','Actual feedback','Owner observation');
     const control=new WorldRegistryStore();resources.push(()=>control.close());const gate=new OwnerAutomationGate(control);f.service.attachAutomation(gate);
-    gate.budget.authorize(100000000);gate.control({desiredMode:'ON',expectedRevision:0,idempotencyKey:crypto.randomUUID()});
+    gate.budget.configure({tokenMillions:1,unitPrice:(100000000)/1000000,priceCurrency:'CNY',expectedRevision:gate.budget.view().revision});gate.control({desiredMode:'ON',expectedRevision:0,idempotencyKey:crypto.randomUUID()});
     f.call.mockRejectedValueOnce(new InfrastructureFailureError('OWNER_COMPANY_BUDGET_EXHAUSTED'));
     const due=Number(f.store.db.prepare('SELECT MIN(next_run_at) n FROM business_schedules').get()!.n);vi.useFakeTimers();
     vi.setSystemTime(due-1);await f.service.tick();expect(f.store.overview().tasks).toHaveLength(0);
@@ -70,7 +70,7 @@ describe("business authorization, costs and durable execution", () => {
     const f=fixture();f.budget();f.store.addDataset('inquiries','Actual fixture data',[]);const p=seed(f.store);f.store.approve(p.id,p.revision,p.hash);
     const control=new WorldRegistryStore();resources.push(()=>control.close());const gate=new OwnerAutomationGate(control);f.service.attachAutomation(gate);
     await f.service.tick();expect(f.store.overview().tasks[0].state).toBe('READY');await expect(f.service.propose('Inspect data','gated-intent')).rejects.toThrow('OWNER_AUTOMATION_OFF');expect(f.call).not.toHaveBeenCalled();
-    gate.budget.authorize(100000000);gate.control({desiredMode:'ON',runMode:'CONTINUOUS',expectedRevision:0,idempotencyKey:crypto.randomUUID()});await f.service.tick();expect(f.store.overview().tasks[0].state).toBe('SUCCEEDED');expect(f.call).not.toHaveBeenCalled();
+    gate.budget.configure({tokenMillions:1,unitPrice:(100000000)/1000000,priceCurrency:'CNY',expectedRevision:gate.budget.view().revision});gate.control({desiredMode:'ON',runMode:'CONTINUOUS',expectedRevision:0,idempotencyKey:crypto.randomUUID()});await f.service.tick();expect(f.store.overview().tasks[0].state).toBe('SUCCEEDED');expect(f.call).not.toHaveBeenCalled();
   });
   it("does not call a model without an initial Owner allowance", async () => {
     const { service, call } = fixture();

@@ -130,10 +130,6 @@ export async function fetchQianjiList(signal?: AbortSignal, careerStatus?: Qianj
   const response = await apiRequest<{ items: QianjiListItemDto[] }>(`/api/qianji${careerStatus ? `?careerStatus=${careerStatus}` : ''}`, { signal });
   return response.items;
 }
-export async function setQianjiInfiniteEnergy(qianjiId: string, enabled: boolean): Promise<void> {
-  await apiRequest(`/api/qianji/${encodeURIComponent(qianjiId)}/infinite-energy`, {method:'PUT',body:JSON.stringify({enabled})});
-}
-
 export async function recruitQianji(idempotencyKey: string): Promise<QianjiProfileDto> {
   const response = await apiRequest<{ profile: QianjiProfileDto }>('/api/qianji/recruit', {
     method: 'POST', body: JSON.stringify({ idempotencyKey }),
@@ -176,7 +172,7 @@ export async function fetchQianjiChat(qianjiId: string, signal?: AbortSignal): P
 
 export async function postQianjiChat(qianjiId: string, content: string, idempotencyKey: string, rounds=20): Promise<{ turn: QianjiChatTurnDto; created: boolean }> {
   return apiRequest(`/api/qianji/${encodeURIComponent(qianjiId)}/chat`, {
-    method: 'POST', body: JSON.stringify({ content, idempotencyKey, ...(worldsEnabled()?{rounds,runBudgetTokens:100000}:{}) }),
+    method: 'POST', body: JSON.stringify({ content, idempotencyKey, ...(worldsEnabled()?{rounds}:{}) }),
   });
 }
 

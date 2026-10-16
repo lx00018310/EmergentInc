@@ -6,12 +6,12 @@ import {setLanguage,t} from '../src/i18n';
 import {en} from '../src/i18n/en';
 import {zhCN} from '../src/i18n/zh-CN';
 const response=(value:unknown)=>({ok:true,status:200,headers:new Headers({'content-type':'application/json'}),json:async()=>value}) as Response;
-const proposal={id:'proposal_test',kind:'budget' as const,goalId:null,goalRevision:null,payload:{totalMicros:1000000},hash:'a'.repeat(64),state:'PENDING' as const,result:null,createdAt:1};
+const proposal={id:'proposal_test',kind:'task_plan' as const,goalId:null,goalRevision:null,payload:{title:'Review task',plan:{summary:'Execute the actual task',nodes:[{key:'once',title:'Research',instruction:'Find the source',trigger:{kind:'once'}}]}},hash:'a'.repeat(64),state:'PENDING' as const,result:null,createdAt:1};
 const data={asOf:1,summary:{},people:[],inbox:[],alerts:[],activity:[],goals:[],proposals:[proposal],taskPlans:[],budget:{currency:'CNY',totalMicros:1000000,spentMicros:10,reservedMicros:20,availableMicros:999970,activatedAt:1},automation:{observedState:'STOPPED',reason:null},availability:{business:true,upgrade:'not_configured'}};
 beforeEach(()=>{localStorage.clear();setLanguage('en');window.history.replaceState(null,'','/OWNER');});
 afterEach(()=>{cleanup();vi.restoreAllMocks();});
-describe('V32 approval-only company UI',()=>{
-  it.each(['en','zh-CN'] as const)('has exactly two navigation entries and read-only money/status charts (%s)',async lang=>{
+describe('V32 company settings and approval UI',()=>{
+  it.each(['en','zh-CN'] as const)('has two navigation entries, shared budget settings and money/status charts (%s)',async lang=>{
     setLanguage(lang);vi.spyOn(globalThis,'fetch').mockResolvedValue(response(data));render(<OwnerConsole/>);
     const companyStatus=within(screen.getByRole('status'));
     expect(companyStatus.getByText(t('Company status'))).toBeTruthy();
@@ -19,7 +19,7 @@ describe('V32 approval-only company UI',()=>{
     expect(within(screen.getByRole('navigation')).getAllByRole('link').map(n=>n.textContent)).toEqual([t('Boss chat'),t('AI company dashboard')]);
     expect(screen.getByRole('textbox')).toBeTruthy();expect(screen.queryByRole('switch')).toBeNull();
     fireEvent.click(screen.getByRole('link',{name:t('AI company dashboard')}));
-    expect(screen.queryByRole('textbox')).toBeNull();expect(screen.queryByRole('spinbutton')).toBeNull();expect(screen.queryByRole('checkbox')).toBeNull();
+    expect(screen.queryByRole('textbox')).toBeNull();expect(screen.getAllByRole('spinbutton')).toHaveLength(2);expect(screen.queryByRole('checkbox')).toBeNull();
     expect(screen.getAllByRole('img').length).toBeGreaterThan(0);
     expect(screen.getByRole('button',{name:t('Approve')})).toBeTruthy();expect(screen.getByRole('button',{name:t('Reject')})).toBeTruthy();
   });

@@ -17,25 +17,23 @@ import {goalFixture} from './fixtures/owner_goals.js';
 const cleanups:(()=>Promise<void>)[]=[];
 afterEach(async()=>{for(const close of cleanups.splice(0).reverse())await close();vi.restoreAllMocks();vi.unstubAllEnvs();});
 
-it('returns the recorded approval independently of later scheduler failure',async()=>{
+it('returns saved money settings independently of later scheduler failure',async()=>{
   const f=goalFixture();cleanups.push(f.close);
   const tick=vi.spyOn(OwnerGoalScheduler.prototype,'tick').mockRejectedValue(new Error('ISOLATED_SCHEDULER_FAILED'));
   const resume=vi.spyOn(f.manager,'resumeInterrupted').mockRejectedValue(new Error('ISOLATED_RESUME_FAILED'));
   const app=await createServer({workspaceRoot:f.root,worlds:f.worlds});cleanups.push(()=>app.close());
-  const proposal=f.gate.proposals.propose('budget',{totalMicros:1000000},'separate-budget');
-  const result=await app.inject({method:'POST',url:'/api/owner/proposals/'+proposal.id+'/decision',payload:{decision:'approve',hash:proposal.hash,idempotencyKey:'separate-approval'}});
-  expect(result.statusCode,result.body).toBe(200);expect(result.json().state).toBe('EXECUTED');
+  const result=await app.inject({method:'POST',url:'/api/owner/budget',payload:{tokenMillions:1,unitPrice:1,priceCurrency:'CNY',expectedRevision:0,idempotencyKey:'separate-budget'}});
+  expect(result.statusCode,result.body).toBe(200);expect(result.json().totalMicros).toBe(1000000);
   expect(tick).not.toHaveBeenCalled();expect(resume).not.toHaveBeenCalled();
   await expect(f.scheduler.tick()).rejects.toThrow('ISOLATED_SCHEDULER_FAILED');
-  expect(f.gate.proposals.list()[0].state).toBe('EXECUTED');expect(f.gate.budget.view().totalMicros).toBe(1000000);
+  expect(f.gate.proposals.list()).toHaveLength(0);expect(f.gate.budget.view().totalMicros).toBe(1000000);
   const enabled=await app.inject({method:'POST',url:'/api/owner/automation',payload:{desiredMode:'ON',expectedRevision:f.gate.view().revision,idempotencyKey:'separate-enable'}});
   expect(enabled.statusCode,enabled.body).toBe(200);expect(enabled.json().desiredMode).toBe('ON');expect(resume).not.toHaveBeenCalled();expect(f.calls).toHaveLength(0);
 });
 
 it('authorizes money without changing tasks; only an enabled scheduler removes a money wait',async()=>{
   const f=goalFixture();cleanups.push(f.close);const goal=f.goal();f.gate.goals.state(goal.id,'BLOCKED','OWNER_COMPANY_BUDGET_EXHAUSTED');
-  const proposal=f.gate.proposals.propose('budget',{totalMicros:1000000},'money-only');
-  f.gate.proposals.decide(proposal.id,{decision:'approve',hash:proposal.hash,idempotencyKey:'approve-money-only'});
+  f.gate.budget.configure({tokenMillions:1,unitPrice:1,priceCurrency:'CNY',expectedRevision:0});
   expect(f.gate.goals.get(goal.id).status).toBe('BLOCKED');expect(f.gate.view().desiredMode).toBe('OFF');
   await f.scheduler.tick();expect(f.gate.goals.get(goal.id).status).toBe('BLOCKED');
   const worlds=f.manager.list();vi.spyOn(f.manager,'list').mockImplementation(()=>worlds.map(w=>({...w,running:true})));vi.spyOn(f.manager,'resumeInterrupted').mockResolvedValue();
@@ -93,8 +91,8 @@ it('funds an unopened World without resuming its suspended task; the scheduler r
   await vi.waitFor(()=>expect(f.manager.list().some(w=>w.running)).toBe(false));
   const world=f.manager.list().find(w=>w.opened)!,runId=f.manager.peek(world.world_id)!.run.getStatus().run_id;
   await f.manager.resumeInterrupted();await f.manager.close(world.world_id);f.on();
-  const funded=await f.work.energy(world.qianji_id,true,true,'fund-unopened');expect(funded.running).toBe(false);expect(f.calls).toHaveLength(1);
-  const runtime=f.manager.peek(world.world_id)!;expect(runtime.store.db.prepare('SELECT COUNT(*) n FROM tool_executions').get()!.n).toBe(0);
+  f.gate.budget.configure({tokenMillions:200,unitPrice:2,priceCurrency:'CNY',expectedRevision:f.gate.budget.view().revision});expect(f.manager.peek(world.world_id)).toBeUndefined();expect(f.calls).toHaveLength(1);
+  const runtime=await f.manager.open(world.world_id);expect(runtime.run.getStatus().running).toBe(false);expect(runtime.store.db.prepare('SELECT COUNT(*) n FROM tool_executions').get()!.n).toBe(0);
   await f.scheduler.tick();await vi.waitFor(()=>expect(f.manager.list().some(w=>w.running)).toBe(false));
   expect(f.calls).toHaveLength(2);expect(runtime.run.getStatus().run_id).toBe(runId);expect(runtime.store.db.prepare('SELECT COUNT(*) n FROM tool_executions').get()!.n).toBe(1);
 },15000);

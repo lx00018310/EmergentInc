@@ -240,18 +240,7 @@ export async function registerQianjiRoutes(server: FastifyInstance, options: Qia
     });
   });
 
-  server.put("/qianji/:id/infinite-energy", async (request, reply) => {
-    const id=String((request.params as any).id??''),body=request.body;
-    if(!options.worlds)return reply.status(404).send({detail:'WORLD_MODE_REQUIRED'});
-    if(!isRecord(body)||!hasOnlyKeys(body,['enabled'])||typeof body.enabled!=='boolean')return reply.status(400).send({detail:'INFINITE_ENERGY_INPUT_INVALID'});
-    const profile=store.qianji.getProfile(id);
-    if(!profile)return reply.status(404).send({detail:'Qianji not found'});
-    if(profile.careerStatus==='retired')return reply.status(409).send({detail:'QIANJI_RETIRED'});
-    const world=options.worlds.registry.control.worldForQianji(id);
-    if(world.status!=='ACTIVE')return reply.status(409).send({detail:'WORLD_NOT_ACTIVE'});
-    options.worlds.registry.control.setGatewayInfiniteEnergy(world.world_id,body.enabled);
-    return reply.send({enabled:body.enabled});
-  });
+  server.put("/qianji/:id/infinite-energy", async (_request,reply) => reply.status(409).send({detail:'OWNER_USE_COMPANY_BUDGET_SETTINGS'}));
 
   server.get("/qianji/:id/history/artifacts/:bindingId/:filename", async (request, reply) => {
     const params = request.params as any;
@@ -290,13 +279,13 @@ export async function registerQianjiRoutes(server: FastifyInstance, options: Qia
     if (!profile) return reply.status(404).send({ detail: "Qianji not found" });
     if (profile.careerStatus === "retired") return reply.status(409).send({ detail: "QIANJI_RETIRED" });
     if(options.gateway && options.worlds){
-      if(!Number.isSafeInteger(body.rounds)||Number(body.rounds)<1||Number(body.rounds)>20||!Number.isSafeInteger(body.runBudgetTokens)||Number(body.runBudgetTokens)<1||Number(body.runBudgetTokens)>1000000)
+      if(!Number.isSafeInteger(body.rounds)||Number(body.rounds)<1||Number(body.rounds)>20||!options.worlds.automation&&(!Number.isSafeInteger(body.runBudgetTokens)||Number(body.runBudgetTokens)<1||Number(body.runBudgetTokens)>1000000))
         return reply.status(400).send({detail:'CHAT_EXPLICIT_RUN_BUDGET_REQUIRED'});
       const world=options.worlds.registry.control.worldForQianji(id),runtime=await options.worlds.open(world.world_id);
       const status=runtime.run.getStatus();
       if(status.unfinalized_operations&&!status.running)return reply.status(409).send({detail:'PAUSED_RECOVERY_REQUIRED'});
       const result=await options.gateway.enqueue(id,String(body.content),String(body.idempotencyKey));
-      if(!result.run_id && !result.reply && !runtime.run.getStatus().running) await runtime.run.start({rounds:Number(body.rounds),runBudgetTokens:Number(body.runBudgetTokens),onRunCreated:runId=>
+      if(!result.run_id && !result.reply && !runtime.run.getStatus().running) await runtime.run.start({rounds:Number(body.rounds),...(options.worlds.automation?{}:{runBudgetTokens:Number(body.runBudgetTokens)}),onRunCreated:runId=>
         store.db.prepare('UPDATE world_chat_turns SET run_id=? WHERE turn_id=?').run(runId,result.turn_id)});
       return reply.status(202).send({status:'queued',turnId:result.turn_id,messageId:result.message_id,worldId:result.world_id});
     }

@@ -48,6 +48,9 @@ export class RoundScheduler {
     // 1. 尝试激活已补充能量的元胞等待消息
 
     // 2. 自然唤醒只作用于当前调度范围内的合格成员。
+    if(this.store.budgets.isCompanyRun(runId)){
+      this.store.db.prepare("UPDATE messages SET status='QUEUED',updated_at=? WHERE status IN ('WAITING_PIXEL_BUDGET','WAITING_RUN_BUDGET','WAITING_EXECUTION_BUDGET') AND execution_id IS ?").run(Date.now()/1000,executionId);
+    }
     const execution = executionId ? this.store.executions.get(executionId) : null;
     const activePixels = executionId
       ? this.store.executions.listEligibleMembers(executionId)
@@ -135,6 +138,7 @@ export class RoundScheduler {
       }
 
       // 领取下一条消息
+      if(this.store.budgets.isCompanyRun(runId))this.store.db.prepare("UPDATE pixel_accounts SET active=1 WHERE active=0 AND energy=0 AND spend_blocked_reason IS NULL AND pixel_id IN (SELECT recipient FROM messages WHERE execution_id IS ? AND status IN ('QUEUED','RESPONSE_STORED'))").run(executionId);
       const message = this.store.messages.claimNext(currentRound, executionId);
       if (!message) {
         // 未来轮次仍有消息时继续推进；否则立即停止，避免空转到轮数上限。

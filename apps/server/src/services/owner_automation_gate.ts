@@ -50,7 +50,7 @@ export class OwnerAutomationGate {
   attach(maintenance: () => boolean, suspend: () => void, unresolved: () => boolean) { this.maintenance = maintenance; this.suspend = suspend; this.unresolved = unresolved; }
   private row() { return this.store.db.prepare('SELECT * FROM owner_automation_control WHERE id=1').get()!; }
   private usage(){return this.store.db.prepare("SELECT COALESCE(SUM(actual_tokens),0) spent,COALESCE(SUM(CASE WHEN state IN ('SENT','UNKNOWN') THEN MAX(0,reserved_tokens-COALESCE(actual_tokens,0)) ELSE 0 END),0) reserved,COALESCE(SUM(cost_cny),0) cost,SUM(state!='NOT_SENT' AND cost_cny IS NULL) unknown_cost FROM owner_model_permits").get()!;}
-  isOn() { return this.row().desired_mode==='ON'&&!this.maintenance()&&!this.hasUnknown()&&this.budget.view().activatedAt!==null&&this.budget.view().availableMicros>0; }
+  isOn() { return this.row().desired_mode==='ON'&&!this.maintenance()&&!this.hasUnknown()&&this.budget.view().activatedAt!==null&&this.budget.view().availableMicros>0&&!this.budget.view().needsRefill; }
   private hasUnknown() { return Boolean(this.store.db.prepare("SELECT 1 FROM owner_model_permits WHERE state='UNKNOWN'").get()) || this.unresolved() || this.unknownChecks.some(check=>check()); }
   ensureRunning(source: string, required = 0, start: 'never' | 'initial' | 'resume' = 'never'): OwnerAutomation {
     return this.store.transaction(() => {
@@ -60,7 +60,7 @@ export class OwnerAutomationGate {
       if(this.hasUnknown())ownerConflict('OWNER_OUTCOME_REVIEW_REQUIRED');
       if(old.reason&&!['OWNER_TOKEN_LIMIT','OWNER_OUTCOME_REVIEW_REQUIRED'].includes(String(old.reason)))ownerConflict(String(old.reason));
       const budget=this.budget.view();if(budget.activatedAt===null)ownerConflict('OWNER_COMPANY_BUDGET_REQUIRED');
-      if(!budget.availableMicros)ownerConflict('OWNER_COMPANY_BUDGET_EXHAUSTED');
+      if(budget.needsRefill||!budget.availableMicros)ownerConflict('OWNER_COMPANY_BUDGET_EXHAUSTED');
       if(old.desired_mode==='OFF'&&(this.live.size||this.calls.size||this.external.size||this.serviceFlights()))ownerConflict('OWNER_AUTOMATION_STOPPING');
       if(old.desired_mode!=='ON')this.store.db.prepare("UPDATE owner_automation_control SET desired_mode='ON',run_mode='CONTINUOUS',requested_rounds=NULL,revision=revision+1,reason=NULL,updated_at=? WHERE id=1").run(Date.now());
       return this.view();
@@ -97,8 +97,8 @@ export class OwnerAutomationGate {
     const usage=this.usage();
     const inFlight = this.live.size + this.calls.size + this.external.size + this.serviceFlights();
     const unknown = this.hasUnknown(), budget=this.budget.view();
-    const observedState=r.desired_mode==='OFF'?(inFlight?'STOPPING':unknown?'BLOCKED':'STOPPED'):this.maintenance()||unknown?'BLOCKED':budget.availableMicros<=0?'LIMIT_REACHED':inFlight?'RUNNING':'IDLE';
-    return {desiredMode:r.desired_mode as 'ON'|'OFF',runMode:'CONTINUOUS',requestedRounds:null,maxTokens:Number(r.max_tokens),revision:Number(r.revision),batchId:String(r.batch_id),updatedAt:Number(r.updated_at),reason:this.maintenance()?'EVOLUTION_QUIESCED':unknown?'OWNER_OUTCOME_REVIEW_REQUIRED':r.desired_mode==='ON'&&budget.availableMicros<=0?(budget.activatedAt===null?'OWNER_COMPANY_BUDGET_REQUIRED':'OWNER_COMPANY_BUDGET_EXHAUSTED'):r.reason as string|null,observedState,inFlight,startedRounds:Number(rounds.started??0),completedRounds:Number(rounds.completed??0),reservedRounds:Number(rounds.reserved??0),spentTokens:Number(usage.spent),reservedTokens:Number(usage.reserved),knownCostCny:Number(usage.cost),unknownCostCalls:Number(usage.unknown_cost??0),budget};
+    const observedState=r.desired_mode==='OFF'?(inFlight?'STOPPING':unknown?'BLOCKED':'STOPPED'):this.maintenance()||unknown?'BLOCKED':(budget.needsRefill||budget.availableMicros<=0)?'LIMIT_REACHED':inFlight?'RUNNING':'IDLE';
+    return {desiredMode:r.desired_mode as 'ON'|'OFF',runMode:'CONTINUOUS',requestedRounds:null,maxTokens:Number(r.max_tokens),revision:Number(r.revision),batchId:String(r.batch_id),updatedAt:Number(r.updated_at),reason:this.maintenance()?'EVOLUTION_QUIESCED':unknown?'OWNER_OUTCOME_REVIEW_REQUIRED':r.desired_mode==='ON'&&(budget.needsRefill||budget.availableMicros<=0)?(budget.activatedAt===null?'OWNER_COMPANY_BUDGET_REQUIRED':'OWNER_COMPANY_BUDGET_EXHAUSTED'):r.reason as string|null,observedState,inFlight,startedRounds:Number(rounds.started??0),completedRounds:Number(rounds.completed??0),reservedRounds:Number(rounds.reserved??0),spentTokens:Number(usage.spent),reservedTokens:Number(usage.reserved),knownCostCny:Number(usage.cost),unknownCostCalls:Number(usage.unknown_cost??0),budget};
   }
   reserveRun(worldId: string, runId: string, startRound: number, rounds: number, binding?: GoalRunBinding) {
     this.ensureRunning('reserve_run');
@@ -143,7 +143,7 @@ export class OwnerAutomationGate {
     this.store.db.prepare("UPDATE owner_round_permits SET state='COMPLETED' WHERE run_id=? AND round_no<=? AND state IN ('STARTED','RESERVED')").run(runId, completedThrough);
     this.finished(runId, resumable);
   }
-  enforceLimits() { if(this.row().desired_mode==='ON'&&!this.live.size&&!this.calls.size&&!this.budget.view().availableMicros)this.suspend(); }
+  enforceLimits() { if(this.row().desired_mode==='ON'&&!this.live.size&&!this.calls.size&&(this.budget.view().needsRefill||!this.budget.view().availableMicros))this.suspend(); }
   async externalAction<T>(key: string, action: () => Promise<T>): Promise<T> {
     this.assertOn(); this.external.add(key); try { return await action(); } finally { this.external.delete(key); }
   }
@@ -210,8 +210,12 @@ export class OwnerAutomationGate {
         this.budget.reserve(id,reserveMoney);
         if(request.auditCallId)this.store.db.prepare('INSERT INTO owner_model_sources VALUES(?,?,?)').run(id,request.auditCallId,sourceKind);
       });}catch(e){
-        const reason=(e as Error).message;
-        if(reason==='OWNER_COMPANY_BUDGET_EXHAUSTED'){const b=this.budget.view(),totalMicros=b.spentMicros+b.reservedMicros+reserveMoney;this.proposals.propose('budget',{totalMicros},`budget-needed:${b.revision}:${totalMicros}`);}
+        let reason=(e as Error).message;
+        if(reason==='OWNER_COMPANY_BUDGET_EXHAUSTED'){
+          const budget=this.budget.view();
+          if(!budget.needsRefill&&budget.reservedMicros>0&&budget.totalMicros-budget.spentMicros>=reserveMoney)reason='OWNER_COMPANY_BUDGET_BUSY';
+          else this.budget.markInsufficient();
+        }
         throw Object.assign(new InfrastructureFailureError(reason),{statusCode:(e as any).statusCode??409});
       }
       this.calls.add(id);
