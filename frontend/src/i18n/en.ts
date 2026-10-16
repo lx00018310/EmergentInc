@@ -1,4 +1,5 @@
 export const en: Record<string, string> = {
+  'Unknown costs retain their money reservations until verified. A reviewed outcome does not require a second decision to start the company.': 'Unknown costs retain their money reservations until verified. A reviewed outcome does not require a second decision to start the company.',
   'OWNER_COMPANY_BUDGET_BUSY': 'The company allowance is reserved by ongoing calls. Wait for settlement, then retry.',
   'Company budget needs a manual refill': 'Company budget needs a manual refill',
   'Old individual allowance wait. Company scheduling resumes when enabled and funded.': 'Old individual allowance wait. Company scheduling resumes when enabled and funded.',

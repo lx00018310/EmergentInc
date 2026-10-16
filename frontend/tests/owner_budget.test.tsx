@@ -39,3 +39,7 @@ it('keeps a historical budget proposal without budget approval buttons',()=>{
   render(<CompanyProposalCard proposal={{id:'old',kind:'budget',goalId:null,goalRevision:null,payload:{totalMicros:1000000},hash:'a'.repeat(64),state:'PENDING',result:null,createdAt:1}}/>);
   expect(screen.queryByRole('button')).toBeNull();expect(screen.getByText(t('Budget proposals are retired. Use Company money budget settings.'))).toBeTruthy();
 });
+it.each(['en','zh-CN'] as const)('keeps unknown-cost reservations visible without labeling them as spent (%s)',lang=>{
+  setLanguage(lang);render(<OwnerBudget data={data({totalMicros:200000000,availableMicros:199990000,reservedMicros:10000,spentMicros:0,unknownCalls:1,activatedAt:1})} onDone={vi.fn()}/>);
+  expect(screen.getByText(t('Unknown costs retain their money reservations until verified. A reviewed outcome does not require a second decision to start the company.'))).toBeTruthy();
+});

@@ -253,4 +253,20 @@ describe('company control beside the status', () => {
     const bodies = fetcher.mock.calls.filter(c => c[1]?.method === 'POST').map(c => JSON.parse(c[1]!.body as string));
     expect(bodies.map(b => b.expectedRevision)).toEqual([3, 5]);expect(screen.queryByRole('alert')).toBeNull();
   });
+  it.each(['en','zh-CN'] as const)('does not repeat the current review banner or retain its error after recovery (%s)',async lang=>{
+    setLanguage(lang);let data=overview({automation:{...automation('OFF'),observedState:'BLOCKED',reason:'OWNER_OUTCOME_REVIEW_REQUIRED'}}),resolved=false,posts=0;
+    vi.spyOn(globalThis,'fetch').mockImplementation(async(url,init)=>{
+      if(String(url)==='/api/owner/automation'&&init?.method==='POST'){
+        posts++;if(!resolved)return new Response(JSON.stringify({detail:'OWNER_OUTCOME_REVIEW_REQUIRED'}),{status:409,headers:{'content-type':'application/json'}});
+        data={...data,automation:automation('ON',4)};return response(data.automation);
+      }
+      return response(data);
+    });
+    render(<OwnerConsole/>);fireEvent.click(await screen.findByRole('button',{name:t('Start company')}));
+    await vi.waitFor(()=>expect((screen.getByRole('button',{name:t('Start company')}) as HTMLButtonElement).disabled).toBe(false));
+    expect(screen.getAllByText(t('OWNER_OUTCOME_REVIEW_REQUIRED'))).toHaveLength(1);expect(screen.queryByRole('alert')).toBeNull();
+    resolved=true;data={...data,automation:automation('OFF')};fireEvent.click(screen.getByRole('button',{name:t('Refresh')}));
+    await vi.waitFor(()=>expect(screen.queryByText(t('OWNER_OUTCOME_REVIEW_REQUIRED'))).toBeNull());expect(posts).toBe(1);
+    fireEvent.click(screen.getByRole('button',{name:t('Start company')}));await screen.findByRole('button',{name:t('Pause company')});expect(posts).toBe(2);
+  });
 });

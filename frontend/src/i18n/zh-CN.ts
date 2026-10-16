@@ -1,4 +1,5 @@
 export const zhCN: Record<string, string> = {
+  'Unknown costs retain their money reservations until verified. A reviewed outcome does not require a second decision to start the company.': '未知费用在核实前继续保留金额预留；已处理的调用结果无需再次决定即可启动公司。',
   'OWNER_COMPANY_BUDGET_BUSY': '公司额度正由进行中的调用预留，请等待结算后重试。',
   'Company budget needs a manual refill': '公司预算需要人工补充',
   'Old individual allowance wait. Company scheduling resumes when enabled and funded.': '历史个人额度等待；公司启动且总金额预算充足后由调度恢复。',

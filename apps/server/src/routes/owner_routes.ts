@@ -44,7 +44,7 @@ export function registerOwnerRoutes(app:FastifyInstance, overview:OwnerOverviewS
     app.post<{Params:{id:string}}>('/owner/goals/:id/actions',async req=>{const goal=goals.action(req.params.id,req.body);return goals.get(goal.id);});
     app.get('/owner/automation',()=>gate.view());
     app.get('/owner/automation/report',()=>gate.report());
-    app.get('/owner/automation/calls',()=>({items:gate.modelCalls()}));
+    app.get('/owner/automation/calls',()=>({items:gate.modelCalls(true)}));
     app.post<{Params:{id:string}}>('/owner/automation/calls/:id/reconcile',req=>gate.reconcileCall(req.params.id,req.body));
     app.post('/owner/automation',async req=>{
       if ((req.body as any)?.desiredMode === 'ON')assertModelReady();
@@ -98,6 +98,7 @@ export function registerOwnerRoutes(app:FastifyInstance, overview:OwnerOverviewS
         if(automation.reason==='EVOLUTION_QUIESCED')lines.unshift(say('- 执行仍处于维护暂停。','- Execution is paused for maintenance.'));
         if(unknown)lines.push(say(`- 有 ${unknown} 笔模型调用的结果或费用待核对，核对前保持暂停。`,`- ${unknown} model call(s) need outcome or cost verification. Execution stays paused until verified.`));
         else if(automation.reason==='OWNER_OUTCOME_REVIEW_REQUIRED')lines.push(say('- 有执行结果待核对，核对前保持暂停。','- An execution outcome needs verification. Execution stays paused until verified.'));
+        if(budget.unknownCalls>unknown)lines.push(say('- 已处理调用仍有未知费用；金额预留保留，不阻止公司启动。','- Reviewed calls still have unknown costs. Their money reservations remain held without blocking company startup.'));
         if(automation.desiredMode==='OFF')lines.push(say('- 自动经营开关当前关闭。结束维护、查询状态或补充预算不会自动开启。','- Automatic operation is off. Ending maintenance, reading status, or funding the budget does not turn it on.'));
         if(budget.activatedAt===null)lines.push(say('- 公司金额预算尚未授权。请在公司看板设置 Token 数量与单价并保存；所有人物和任务共享公司金额预算。','- The company money budget has not been authorized. Set the token quantity and unit price on the company dashboard and save; all people and tasks share this money allowance.'));
         else if(budget.needsRefill||!budget.availableMicros)lines.push(say('- 公司金额预算不足，请人工修改 Token 数量并保存一批新额度。','- The company allowance is insufficient. Change the token quantity manually and save a fresh allowance.'));

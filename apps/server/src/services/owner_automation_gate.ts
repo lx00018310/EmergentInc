@@ -7,7 +7,7 @@ import { OwnerGoalService, exactKeys, ownerConflict, ownerInput } from './owner_
 
 export interface GoalRunBinding { goalId: string; specificationRevision: number; dispatchId: string; resourceApprovalId?:string }
 import { OwnerProposalService } from './owner_proposal_service.js';
-import { OwnerCompanyBudget,modelCostMicros } from './owner_company_budget.js';
+import { OwnerCompanyBudget,modelCostMicros,reviewedOutcomeSql } from './owner_company_budget.js';
 export class OwnerAutomationGate {
   readonly goals: OwnerGoalService;
   readonly budget: OwnerCompanyBudget;
@@ -51,7 +51,7 @@ export class OwnerAutomationGate {
   private row() { return this.store.db.prepare('SELECT * FROM owner_automation_control WHERE id=1').get()!; }
   private usage(){return this.store.db.prepare("SELECT COALESCE(SUM(actual_tokens),0) spent,COALESCE(SUM(CASE WHEN state IN ('SENT','UNKNOWN') THEN MAX(0,reserved_tokens-COALESCE(actual_tokens,0)) ELSE 0 END),0) reserved,COALESCE(SUM(cost_cny),0) cost,SUM(state!='NOT_SENT' AND cost_cny IS NULL) unknown_cost FROM owner_model_permits").get()!;}
   isOn() { return this.row().desired_mode==='ON'&&!this.maintenance()&&!this.hasUnknown()&&this.budget.view().activatedAt!==null&&this.budget.view().availableMicros>0&&!this.budget.view().needsRefill; }
-  private hasUnknown() { return Boolean(this.store.db.prepare("SELECT 1 FROM owner_model_permits WHERE state='UNKNOWN'").get()) || this.unresolved() || this.unknownChecks.some(check=>check()); }
+  private hasUnknown() { return Boolean(this.store.db.prepare(`SELECT 1 FROM owner_model_permits p WHERE p.state='UNKNOWN' AND NOT ${reviewedOutcomeSql}`).get()) || this.unresolved() || this.unknownChecks.some(check=>check()); }
   ensureRunning(source: string, required = 0, start: 'never' | 'initial' | 'resume' = 'never'): OwnerAutomation {
     return this.store.transaction(() => {
       const old=this.row(),initial=old.desired_mode==='OFF'&&old.revision===0&&old.reason===null;
@@ -150,15 +150,23 @@ export class OwnerAutomationGate {
   reconcileWorld(core: CoreStore, worldId: string) {
     for(const row of this.store.db.prepare("SELECT p.id,s.source_id FROM owner_model_permits p JOIN owner_model_sources s ON s.permit_id=p.id WHERE p.world_id=? AND p.state='UNKNOWN' AND s.source_kind='world'").all(worldId)) {
       const call=core.modelCalls.getModelCall(String(row.source_id));
-      const decision=core.db.prepare("SELECT decision FROM recovery_decisions WHERE kind='model' AND id=? ORDER BY created_at DESC LIMIT 1").get(row.source_id);
+      const decision=core.db.prepare("SELECT decision_id,decision FROM recovery_decisions WHERE kind='model' AND id=? ORDER BY created_at DESC LIMIT 1").get(row.source_id);
       if(decision?.decision==='confirm_not_billed')this.store.db.prepare("UPDATE owner_model_permits SET state='NOT_SENT',actual_tokens=0,cost_cny=0 WHERE id=?").run(row.id);
       else if(call&&call.outcome!=='CALL_OUTCOME_UNKNOWN'&&call.actualTokens!==null&&call.costCny!==null)
         this.store.transaction(()=>{this.budget.settle(String(row.id),Math.ceil(call.costCny!*1000000));this.store.db.prepare("UPDATE owner_model_permits SET state='SETTLED',actual_tokens=?,cost_cny=? WHERE id=?").run(call.actualTokens,call.costCny,row.id);});
+      else if(decision&&['abandon','settle_reserved'].includes(String(decision.decision))&&call?.outcome==='CALL_OUTCOME_RECONCILED'&&
+        call.messageId&&core.messages.getMessage(call.messageId)?.status==='ABANDONED'&&
+        !core.db.prepare("SELECT 1 FROM reservations WHERE call_id=? AND status='OPEN'").get(row.source_id)){
+        // One recovery decision suffices. Keep UNKNOWN money reserved until actual billing is verified.
+        this.store.db.prepare(`INSERT INTO control_events(kind,world_id,payload,created_at)
+          SELECT 'owner_model_outcome_reviewed',?,?,? FROM owner_model_permits p WHERE p.id=? AND NOT ${reviewedOutcomeSql}`)
+          .run(worldId,JSON.stringify({permitId:row.id,sourceCallId:row.source_id,sourceDecisionId:decision.decision_id,decision:decision.decision}),Date.now(),row.id);
+      }
     }
     this.clearResolvedReview();
   }
   private clearResolvedReview(){if(!this.hasUnknown())this.store.db.prepare("UPDATE owner_automation_control SET reason=NULL WHERE reason='OWNER_OUTCOME_REVIEW_REQUIRED'").run();}
-  modelCalls() { return this.store.db.prepare("SELECT p.*,s.source_id,s.source_kind FROM owner_model_permits p LEFT JOIN owner_model_sources s ON s.permit_id=p.id WHERE p.state='UNKNOWN' ORDER BY p.created_at").all(); }
+  modelCalls(includeReviewed=false) { return this.store.db.prepare(`SELECT p.*,s.source_id,s.source_kind,${reviewedOutcomeSql} reviewed FROM owner_model_permits p LEFT JOIN owner_model_sources s ON s.permit_id=p.id WHERE p.state='UNKNOWN' ${includeReviewed?'':`AND NOT ${reviewedOutcomeSql}`} ORDER BY p.created_at`).all(); }
   report():OwnerRunReport {
     const automation=this.view();
     return {asOf:Date.now(),automation,goals:[...this.goals.list(),...this.goals.list(true)].map(goal=>{

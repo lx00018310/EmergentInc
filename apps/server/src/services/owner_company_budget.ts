@@ -4,6 +4,9 @@ import { ownerInput, ownerConflict } from './owner_goal_service.js';
 import { COMPANY_BUDGET_USD_CNY, type CompanyBudget } from '@emergentinc/protocol';
 import type { ModelPricing } from '@emergentinc/model';
 
+// A copied World recovery receipt handles the outcome, but does not invent a known bill.
+export const reviewedOutcomeSql = "EXISTS (SELECT 1 FROM control_events e WHERE e.kind='owner_model_outcome_reviewed' AND json_extract(e.payload,'$.permitId')=p.id)";
+
 export function modelCostMicros(price:ModelPricing,input:number,output:number,cached=0):number {
   const rate=(n:number)=>{const m=/^(\d+)(?:\.(\d{1,6}))?$/.exec(String(n));if(!m)throw new Error('MODEL_PRICE_PRECISION_UNSUPPORTED');return BigInt(m[1])*1000000n+BigInt((m[2]??'').padEnd(6,'0'));};
   if(![input,output,cached].every(n=>Number.isSafeInteger(n)&&n>=0)||cached>input)throw new Error('USAGE_UNKNOWN');
@@ -42,7 +45,7 @@ export class OwnerCompanyBudget {
     ownerInput(Number.isSafeInteger(rate)&&rate>0&&Number.isSafeInteger(amount),'OWNER_MONEY_INVALID');
     return this.store.transaction(()=>{
       const v=this.view();if(v.revision!==input.expectedRevision)ownerConflict();
-      if(this.store.db.prepare("SELECT 1 FROM owner_model_permits WHERE state IN ('SENT','UNKNOWN')").get())ownerConflict('OWNER_OUTCOME_REVIEW_REQUIRED');
+      if(this.store.db.prepare(`SELECT 1 FROM owner_model_permits p WHERE p.state='SENT' OR (p.state='UNKNOWN' AND NOT ${reviewedOutcomeSql})`).get())ownerConflict('OWNER_OUTCOME_REVIEW_REQUIRED');
       if(v.needsRefill&&v.configuration?.tokenMillions===input.tokenMillions)ownerConflict('OWNER_BUDGET_TOKEN_CHANGE_REQUIRED');
       const spent=Number(this.store.db.prepare("SELECT COALESCE(SUM(r.settled_micros),0) spent FROM owner_money_reservations r JOIN owner_model_permits p ON p.id=r.permit_id WHERE p.state='SETTLED'").get()!.spent);
       ownerInput(Number.isSafeInteger(spent+amount),'OWNER_MONEY_INVALID');

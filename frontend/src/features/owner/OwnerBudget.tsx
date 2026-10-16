@@ -51,6 +51,7 @@ export function OwnerBudget({ data, onDone }: { data: OwnerOverview; onDone: () 
       <div className="owner-money-bar" role="img" aria-label={t('Settled cost')+': '+money(budget.spentMicros)+'; '+t('Reserved cost')+': '+money(budget.reservedMicros)+'; '+t('Available budget')+': '+money(budget.availableMicros)}><span style={{width:spent+'%'}}/><i style={{width:reserved+'%'}}/></div>
       {budget.activatedAt===null&&<p className="owner-notice">{t('Set the token quantity and unit price, then save the company budget.')}</p>}
       {budget.needsRefill&&<p className="owner-notice">{t('OWNER_COMPANY_BUDGET_EXHAUSTED')}</p>}
+      {budget.unknownCalls>0&&<p className="owner-muted">{t('Unknown costs retain their money reservations until verified. A reviewed outcome does not require a second decision to start the company.')}</p>}
       {!!budget.historicalCostMicros&&<p className="owner-muted">{t('Historical cost before this budget')}: {money(budget.historicalCostMicros)}</p>}
       {!!data.costs?.length&&<details><summary>{t('Daily settled cost (Asia/Shanghai)')}</summary><div className="company-status-chart" role="img" aria-label={t('Daily settled cost (Asia/Shanghai)')}>
         {data.costs.map(c=><div key={c.day}><span>{c.day}</span><meter min={0} max={Math.max(1,...data.costs!.map(row=>Number.isFinite(row.micros)?row.micros:0))} value={Number.isFinite(c.micros)?Math.max(0,c.micros):0}/><strong>{money(c.micros)}</strong></div>)}

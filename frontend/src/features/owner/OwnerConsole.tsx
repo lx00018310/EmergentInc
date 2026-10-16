@@ -4,6 +4,7 @@ import { fetchOwnerOverview, ownerError, ownerGoalRequest, type OwnerAutomation,
 import { OwnerChat } from './OwnerChat';
 import { OwnerDashboard } from './OwnerDashboard';
 import { companyStatus, ownerTime, validOwnerOverview } from './ownerPresentation';
+import { ApiError } from '../../api/client';
 import './owner.css';
 
 type OwnerTab = 'owner-chat' | 'owner-dashboard';
@@ -51,6 +52,7 @@ export function OwnerConsole() {
     return () => window.removeEventListener('hashchange', sync);
   }, []);
   const status = companyStatus(data), automation = data?.automation;
+  const controlMessage=controlError&&!(controlError instanceof ApiError&&controlError.detail==='OWNER_OUTCOME_REVIEW_REQUIRED'&&automation?.reason!=='OWNER_OUTCOME_REVIEW_REQUIRED')?ownerError(controlError):null;
   const canControl = automation && ['ON', 'OFF'].includes(automation.desiredMode) && Number.isSafeInteger(automation.revision);
   async function toggleCompany() {
     if (!automation || !canControl || controlFlight.current) return;
@@ -79,7 +81,7 @@ export function OwnerConsole() {
           {canControl && <button className={'owner-btn owner-btn--sm' + (automation.desiredMode === 'ON' ? ' owner-btn--ghost' : '')}
             disabled={controlling || automation.observedState === 'STOPPING'} onClick={() => void toggleCompany()}>
             {t(controlling ? 'Submitting…' : automation.desiredMode === 'ON' ? 'Pause company' : 'Start company')}</button>}</p>
-        {!!controlError && <p className="owner-company-control-error" role="alert">{ownerError(controlError)}</p>}
+        {controlMessage&&controlMessage!==status.label&&<p className="owner-company-control-error" role="alert">{controlMessage}</p>}
         <div className="owner-refresh-line"><span>{t('Last refreshed')}: {data ? ownerTime(data.asOf) : '—'}
           {' · '}{t('Asia/Shanghai')}</span>
           <button className="owner-btn owner-btn--ghost owner-btn--sm" disabled={refreshing}
