@@ -94,6 +94,8 @@ export async function confirmUpgradeHandoff(projectRoot, workspace, env, previou
 
 export async function launchApproved(projectRoot, args = [], {openPage=openBrowser,startupTimeoutMs=120000}={}) {
   const env = ownerEnvironment(projectRoot);
+  // Ordinary launch uses persisted company control; maintenance supplies its own pause flag.
+  delete env.EMERGENTINC_START_PAUSED;
   if (env.EMERGENTINC_ACTIVE_GENERATION_FILE || env.EMERGENTINC_CANDIDATE_MODE === '1' || env.EMERGENTINC_LOCAL_UPGRADE_TOKEN)
     throw new Error('LOCAL_LAUNCH_CONFIGURATION_CONFLICT');
   const workspace = path.resolve(env.EMERGENTINC_WORKSPACE_ROOT || path.join(projectRoot, 'workspace'));

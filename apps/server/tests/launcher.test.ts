@@ -26,7 +26,7 @@ async function fixture(){
   fs.writeFileSync(join(project,'packages/persistence/dist/index.js'),`export function readGenome(){return {geneHash:'${geneHash}'}}`);
   fs.writeFileSync(join(project,'apps/server/dist/main.js'),`
     import {createServer} from 'node:http';import {writeFileSync} from 'node:fs';
-    writeFileSync(process.env.FIXTURE_PID_FILE,JSON.stringify({pid:process.pid,args:process.argv.slice(2)}));
+    writeFileSync(process.env.FIXTURE_PID_FILE,JSON.stringify({pid:process.pid,args:process.argv.slice(2),maintenancePaused:process.env.EMERGENTINC_START_PAUSED==='1'}));
     if(process.argv.includes('--exit-before-ready'))process.exit(7);
     const began=Date.now();let readyChecks=0,homeChecks=0;
     const server=createServer((req,res)=>{
@@ -68,10 +68,12 @@ function startLauncher(f:Awaited<ReturnType<typeof fixture>>,args:string[],timeo
   return {record,error,finished,diagnostics:()=>diagnostics};
 }
 describe('approved UI launcher readiness',()=>{
-  it('opens only after the spawned process, approved generation and actual homepage are ready',async()=>{
-    const f=await fixture(),run=startLauncher(f,['--open-browser','--mock']);await vi.waitFor(()=>expect(fs.existsSync(run.record),run.diagnostics()).toBe(true),{timeout:4000});
+  it.each(['none','project-env','parent-env'] as const)('opens an approved ordinary launch without inheriting a maintenance pause (%s)',async source=>{
+    const f=await fixture();vi.stubEnv('EMERGENTINC_START_PAUSED',source==='parent-env'?'1':'');
+    if(source==='project-env')fs.writeFileSync(join(f.project,'.env'),'EMERGENTINC_START_PAUSED=1\n');
+    const run=startLauncher(f,['--open-browser','--mock']);await vi.waitFor(()=>expect(fs.existsSync(run.record),run.diagnostics()).toBe(true),{timeout:4000});
     const opened=JSON.parse(fs.readFileSync(run.record,'utf8')),owned=JSON.parse(fs.readFileSync(f.pidFile,'utf8'));
-    expect(opened.url).toBe(`http://127.0.0.1:${f.port}/`);expect(opened.live.processId).toBe(owned.pid);expect(opened.ready).toMatchObject({ready:true,generation:'G0001'});expect(opened.status).toBe(200);expect(opened.body).toContain('Actual homepage');expect(owned.args).toEqual(['--mock']);
+    expect(opened.url).toBe(`http://127.0.0.1:${f.port}/`);expect(opened.live.processId).toBe(owned.pid);expect(opened.ready).toMatchObject({ready:true,generation:'G0001'});expect(opened.status).toBe(200);expect(opened.body).toContain('Actual homepage');expect(owned.args).toEqual(['--mock']);expect(owned.maintenancePaused).toBe(false);
     await fetch(opened.url+'stop');expect(await run.finished).toBe(0);
   },15000);
   it('does not open a page when the process fails before becoming ready',async()=>{
