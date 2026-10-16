@@ -1,4 +1,6 @@
 export const en: Record<string, string> = {
+  "Start company": "Start company",
+  "Pause company": "Pause company",
   "准备或重试候选": "Prepare or retry candidate",
   "候选准备已完成，请在版本维护页面继续校验和批准。": "Candidate preparation is complete. Continue validation and approval in version maintenance.",
   "方向已批准；候选准备是独立操作，失败后可在此重试。": "The direction is approved. Candidate preparation is separate and can be retried here if it fails.",

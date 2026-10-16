@@ -7,7 +7,7 @@ import { OwnerActivity } from '../src/features/owner/OwnerActivity';
 import { CompanyProposalCard } from '../src/features/owner/CompanyProposalCard';
 import { companyStatus, ownerTime } from '../src/features/owner/ownerPresentation';
 import { setLanguage, t } from '../src/i18n';
-import type { OwnerOverview, OwnerWorkTask } from '../../packages/protocol/src/types/owner';
+import type { OwnerAutomation, OwnerOverview, OwnerWorkTask } from '../../packages/protocol/src/types/owner';
 
 const assignment = (id: string, state: OwnerWorkTask['state'], extra: Partial<OwnerWorkTask> = {}): OwnerWorkTask =>
   ({ id, personId: 'person-a', personName: 'Alice', instruction: 'Inspect ' + id + '. Report the findings.',
@@ -23,6 +23,11 @@ function overview(extra: Partial<OwnerOverview> = {}): OwnerOverview {
     ...extra,
   };
 }
+const automation = (desiredMode: 'ON' | 'OFF', revision = 3): OwnerAutomation => ({
+  desiredMode, revision, runMode: 'CONTINUOUS', requestedRounds: null, observedState: desiredMode === 'ON' ? 'IDLE' : 'STOPPED',
+  reason: null, inFlight: 0, startedRounds: 0, completedRounds: 0, reservedRounds: 0, maxTokens: 0,
+  spentTokens: 0, reservedTokens: 0, knownCostCny: 0, unknownCostCalls: 0, batchId: 'test', updatedAt: 1,
+});
 const response = (data: unknown) => new Response(JSON.stringify(data), { headers: { 'content-type': 'application/json' } });
 beforeEach(() => { localStorage.clear(); setLanguage('en'); window.history.replaceState(null, '', '/OWNER#owner-dashboard'); });
 afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.useRealTimers(); });
@@ -182,5 +187,70 @@ describe('OWNER task overview and truthful status boundaries', () => {
     expect(screen.getByRole('alert')).toBeTruthy();
     expect(screen.queryByRole('button')).toBeNull();
     expect(fetch).not.toHaveBeenCalled();
+  });
+});
+
+describe('company control beside the status', () => {
+  it.each(['en', 'zh-CN'] as const)('starts and pauses through the existing API from both pages (%s)', async lang => {
+    setLanguage(lang); window.history.replaceState(null, '', '/OWNER');
+    let data = overview({ automation: automation('OFF'), budget: { ...overview().budget!, activatedAt: 1, totalMicros: 1000000, availableMicros: 1000000 } });
+    const fetcher = vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+      if (String(url) === '/api/owner/automation' && init?.method === 'POST') {
+        const input = JSON.parse(init.body as string), next = automation(input.desiredMode, data.automation!.revision + 1);
+        data = { ...data, automation: next }; return response(next);
+      }
+      return response(data);
+    });
+    render(<OwnerConsole/>);
+    const start = await screen.findByRole('button', { name: t('Start company') });
+    expect(start.closest('.owner-topbar-status')?.textContent).toContain(t('Company status'));
+    fireEvent.click(start); await screen.findByRole('button', { name: t('Pause company') });
+    fireEvent.click(screen.getByRole('link', { name: t('AI company dashboard') }));
+    fireEvent.click(screen.getByRole('button', { name: t('Pause company') }));
+    await screen.findByRole('button', { name: t('Start company') });
+    const posts = fetcher.mock.calls.filter(c => c[1]?.method === 'POST');
+    expect(posts.map(c => c[0])).toEqual(['/api/owner/automation', '/api/owner/automation']);
+    const bodies = posts.map(c => JSON.parse(c[1]!.body as string));
+    expect(bodies[0]).toMatchObject({ desiredMode: 'ON', expectedRevision: 3 });
+    expect(bodies[1]).toMatchObject({ desiredMode: 'OFF', expectedRevision: 4 });
+    expect(bodies[0].idempotencyKey).toEqual(expect.any(String));expect(bodies[1].idempotencyKey).not.toBe(bodies[0].idempotencyKey);
+  });
+  it.each(['en', 'zh-CN'] as const)('shows a blocked start without approving money or displaying success (%s)', async lang => {
+    setLanguage(lang);const data = overview({ automation: automation('OFF') });
+    const fetcher = vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) =>
+      String(url) === '/api/owner/automation' && init?.method === 'POST' ?
+        new Response(JSON.stringify({ detail: 'OWNER_COMPANY_BUDGET_REQUIRED' }), { status: 409, headers: { 'content-type': 'application/json' } }) : response(data));
+    render(<OwnerConsole/>);fireEvent.click(await screen.findByRole('button', { name: t('Start company') }));
+    expect((await screen.findByRole('alert')).textContent).toBe(t('OWNER_COMPANY_BUDGET_REQUIRED'));
+    await vi.waitFor(() => expect((screen.getByRole('button', { name: t('Start company') }) as HTMLButtonElement).disabled).toBe(false));
+    expect(screen.queryByRole('button', { name: t('Pause company') })).toBeNull();
+    expect(fetcher.mock.calls.filter(c => c[1]?.method === 'POST').map(c => c[0])).toEqual(['/api/owner/automation']);
+  });
+  it('submits one pause during repeated clicks and allows pausing with an exhausted budget', async () => {
+    let data = overview({ automation: automation('ON') }), finish!: (value: Response) => void;
+    const fetcher = vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) =>
+      String(url) === '/api/owner/automation' && init?.method === 'POST' ? new Promise<Response>(resolve => { finish = resolve; }) : response(data));
+    render(<OwnerConsole/>);const pause = await screen.findByRole('button', { name: 'Pause company' });
+    fireEvent.click(pause);fireEvent.click(pause);
+    expect((screen.getByRole('button', { name: 'Submitting…' }) as HTMLButtonElement).disabled).toBe(true);
+    expect(fetcher.mock.calls.filter(c => c[1]?.method === 'POST')).toHaveLength(1);
+    data = { ...data, automation: automation('OFF', 4) };
+    await act(async () => finish(response(data.automation)));
+    await screen.findByRole('button', { name: 'Start company' });
+  });
+  it('refreshes a stale revision and waits for another explicit click before retrying', async () => {
+    let data = overview({ automation: automation('OFF') }), posts = 0;
+    const fetcher = vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+      if (String(url) === '/api/owner/automation' && init?.method === 'POST') {
+        if (++posts === 1) { data = { ...data, automation: automation('OFF', 5) }; return new Response(JSON.stringify({ detail: 'OWNER_REVISION_CONFLICT' }), { status: 409, headers: { 'content-type': 'application/json' } }); }
+        data = { ...data, automation: automation('ON', 6) };return response(data.automation);
+      }
+      return response(data);
+    });
+    render(<OwnerConsole/>);fireEvent.click(await screen.findByRole('button', { name: 'Start company' }));
+    await screen.findByRole('alert');await vi.waitFor(() => expect((screen.getByRole('button', { name: 'Start company' }) as HTMLButtonElement).disabled).toBe(false));
+    expect(posts).toBe(1);fireEvent.click(screen.getByRole('button', { name: 'Start company' }));await screen.findByRole('button', { name: 'Pause company' });
+    const bodies = fetcher.mock.calls.filter(c => c[1]?.method === 'POST').map(c => JSON.parse(c[1]!.body as string));
+    expect(bodies.map(b => b.expectedRevision)).toEqual([3, 5]);expect(screen.queryByRole('alert')).toBeNull();
   });
 });

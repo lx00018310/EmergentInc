@@ -427,6 +427,7 @@
 .owner-console .owner-chat-evidence { font-size: 12px; color: #525966; border-top: 1px solid #e5e7eb; margin-top: 12px; }
 .owner-console textarea { background: #fff; color: #111827; }
 .owner-console .owner-work { max-height: none; overflow: visible; padding: 0; border: 0; background: transparent; }
+.owner-company-control-error { margin: 0; color: var(--owner-danger); max-width: 460px; font-size: 13px; }
 .owner-console-status { margin-left: auto; display: grid; gap: 6px; justify-items: end; min-width: 0; }
 .owner-topbar-status { margin: 0; flex-wrap: wrap; }
 .owner-refresh-line { display: flex; align-items: center; gap: 10px; color: var(--owner-dim); font-size: 12px; flex-wrap: wrap; }

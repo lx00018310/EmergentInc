@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { t, useLanguage } from '../../i18n';
-import { fetchOwnerOverview, ownerError, type OwnerOverview } from '../../api/owner';
+import { fetchOwnerOverview, ownerError, ownerGoalRequest, type OwnerAutomation, type OwnerOverview } from '../../api/owner';
 import { OwnerChat } from './OwnerChat';
 import { OwnerDashboard } from './OwnerDashboard';
 import { companyStatus, ownerTime, validOwnerOverview } from './ownerPresentation';
@@ -13,8 +13,9 @@ const parseHash = (): OwnerTab => !window.location.hash && !window.location.sear
 export function OwnerConsole() {
   useLanguage();
   const [tab, setTab] = useState<OwnerTab>(parseHash), [data, setData] = useState<OwnerOverview>(),
-    [error, setError] = useState<unknown>(null), [refreshing, setRefreshing] = useState(false);
-  const request = useRef(0), controller = useRef<AbortController>();
+    [error, setError] = useState<unknown>(null), [refreshing, setRefreshing] = useState(false),
+    [controlling, setControlling] = useState(false), [controlError, setControlError] = useState<unknown>(null);
+  const request = useRef(0), controller = useRef<AbortController>(), controlFlight = useRef(false);
   const refresh = useCallback(async () => {
     const serial = ++request.current;
     controller.current?.abort();
@@ -49,7 +50,21 @@ export function OwnerConsole() {
     window.addEventListener('hashchange', sync);
     return () => window.removeEventListener('hashchange', sync);
   }, []);
-  const status = companyStatus(data);
+  const status = companyStatus(data), automation = data?.automation;
+  const canControl = automation && ['ON', 'OFF'].includes(automation.desiredMode) && Number.isSafeInteger(automation.revision);
+  async function toggleCompany() {
+    if (!automation || !canControl || controlFlight.current) return;
+    controlFlight.current = true; setControlling(true); setControlError(null);
+    try {
+      const next = await ownerGoalRequest<OwnerAutomation>('automation', 'POST', {
+        desiredMode: automation.desiredMode === 'ON' ? 'OFF' : 'ON',
+        expectedRevision: automation.revision, idempotencyKey: crypto.randomUUID(),
+      });
+      setData(previous => previous ? { ...previous, automation: next } : previous);
+      await refresh();
+    } catch (e) { setControlError(e); await refresh(); }
+    finally { controlFlight.current = false; setControlling(false); }
+  }
   return <main className="owner-console">
     <header className="owner-topbar">
       <div className="owner-brand"><strong>EmergentInc</strong></div>
@@ -60,7 +75,11 @@ export function OwnerConsole() {
       </nav>
       <div className="owner-console-status">
         <p className="owner-topbar-status" role="status"><span>{t('Company status')}</span>
-          <span className={'owner-badge owner-badge--' + status.tone}>{status.label}</span></p>
+          <span className={'owner-badge owner-badge--' + status.tone}>{status.label}</span>
+          {canControl && <button className={'owner-btn owner-btn--sm' + (automation.desiredMode === 'ON' ? ' owner-btn--ghost' : '')}
+            disabled={controlling || automation.observedState === 'STOPPING'} onClick={() => void toggleCompany()}>
+            {t(controlling ? 'Submitting…' : automation.desiredMode === 'ON' ? 'Pause company' : 'Start company')}</button>}</p>
+        {!!controlError && <p className="owner-company-control-error" role="alert">{ownerError(controlError)}</p>}
         <div className="owner-refresh-line"><span>{t('Last refreshed')}: {data ? ownerTime(data.asOf) : '—'}
           {' · '}{t('Asia/Shanghai')}</span>
           <button className="owner-btn owner-btn--ghost owner-btn--sm" disabled={refreshing}
