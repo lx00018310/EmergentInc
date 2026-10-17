@@ -249,4 +249,31 @@ describe("trusted Generation lifecycle (local runtime contract doubles)", () => 
     expect(f.lineage.activeGeneration()!.id).toBe("G0001"); expect(f.supervisor.get("r2").state).toBe("FAILED");
     expect(f.runtime.start).toHaveBeenCalledTimes(1);
   });
+  it("reuses the trusted validation of a byte-identical source tree and still re-runs changed sources", async () => {
+    const f = fixture(), base = join(f.releases, "r1");
+    vi.mocked(f.runtime.validateRelease).mockClear();
+    // Every candidate here stays based on G0001, so the manifest generation must always be 2.
+    const makeOwner = (id: string, source: string) => {
+      const directory = join(f.releases, id);
+      fs.cpSync(base, directory, { recursive: true }); fs.unlinkSync(join(directory, ".env"));
+      fs.writeFileSync(join(directory, "genome/manifest.json"), JSON.stringify({ ...readGenome(base).manifest, generation: 2 }));
+      fs.writeFileSync(join(directory, "apps/server/core.txt"), source);
+      const proposal = f.lineage.proposeGene("G0001", "owner", point); f.lineage.decideProposal(proposal.id, "APPROVED");
+      f.supervisor.submitOwnerRelease({ id, base_generation: "G0001", base_release: "r1", proposal_id: proposal.id, patch: [],
+        owner_release: { label: id, reason: "Explicit Owner maintenance", source_commit: "a".repeat(40), release_hash: releaseHash(directory) } });
+      return id;
+    };
+    const first = await f.supervisor.validate(makeOwner("owner-v1", "V2 core"));
+    expect(vi.mocked(f.runtime.validateRelease).mock.calls[0][1]?.skipTests).toBeFalsy();
+    // Same source bytes under a new release id: the validation result is reused.
+    const second = await f.supervisor.validate(makeOwner("owner-v2", "V2 core"));
+    expect(vi.mocked(f.runtime.validateRelease).mock.calls[1][1]?.skipTests).toBe(true);
+    expect(second.candidate.candidate_hash).not.toBe(first.candidate.candidate_hash); // Exact identity stays per-candidate.
+    const trusted = new SqliteDatabase(join(f.directory, "trusted/evolution.sqlite3"));
+    try { expect(trusted.prepare("SELECT COUNT(*) n FROM events WHERE kind='gene_validation_reused' AND candidate_id='owner-v2'").get()!.n).toBe(1); } finally { trusted.close(); }
+    // A changed source tree never reuses anything.
+    const third = await f.supervisor.validate(makeOwner("owner-v3", "a real source change"));
+    expect(vi.mocked(f.runtime.validateRelease).mock.calls[2][1]?.skipTests).toBeFalsy();
+    expect(third.candidate.source_release_hash).not.toBe(second.candidate.source_release_hash);
+  });
 });

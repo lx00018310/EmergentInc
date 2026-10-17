@@ -5,7 +5,7 @@ import { DatabaseSync } from "node:sqlite";
 import { CurrentStore, LineageStore, SqliteDatabase, readGenome, generationDirectory, writeGenerationPointer } from "@emergentinc/persistence";
 import { lifeId, lifeText } from "@emergentinc/protocol";
 import { GeneRequest, GeneCandidate, EvolutionRuntime } from "./protocol.js";
-import { ReleaseBuilder, releaseHash, evolutionHash } from "./release_builder.js";
+import { ReleaseBuilder, releaseHash, sourceReleaseHash, evolutionHash } from "./release_builder.js";
 import { snapshotDatabase,copyDirectoryNew } from "./migration_runner.js";
 import { GenerationMigrator } from "./generation_migrator.js";
 import { rollbackPlan, canDeleteRelease, ReleaseGeneration } from './release_history.js';
@@ -114,18 +114,34 @@ export class GenerationSupervisor {
     if (c.state !== "SUBMITTED") throw new Error("GENE_NOT_VALIDATABLE");
     this.busy = true;
     try {
-      await this.runtime.validateRelease(c.directory); // Fixed trusted sequence: typecheck, test, build.
-      const compatibility=this.runtime.worlds?await instanceCompatibility(this.workspace,c.request.base_generation,c.directory,this.runtime.worlds()):undefined;
+      // A release whose source bytes (excluding reproduced dependencies) already passed the full trusted
+      // validation against this exact base may skip re-running typecheck/build/tests. checked() still
+      // re-verifies candidate_release_hash before every approval and publication, so trust never bypasses bytes.
+      const currentSourceHash = sourceReleaseHash(c.directory);
+      const prior = this.db.prepare(`SELECT id FROM candidates WHERE id<>? AND candidate_json IS NOT NULL
+        AND json_extract(candidate_json,'$.base_generation')=? AND json_extract(candidate_json,'$.source_release_hash')=?
+        AND json_extract(candidate_json,'$.release_id')=id AND state IN ('VALIDATED','APPROVED','BORN') ORDER BY created_at DESC LIMIT 1`)
+        .get(id, c.request.base_generation, currentSourceHash) as {id:string}|undefined;
+      let reused = false, compatibility:unknown=undefined;
+      if (prior) {
+        try { this.checked(this.get(prior.id)); reused = true; }
+        catch { reused = false; } // The prior release bytes changed on disk; fall back to a full validation.
+      }
+      // Every candidate still needs install+build artifacts; only the test suite is skipped on reuse.
+      await this.runtime.validateRelease(c.directory, { skipTests: reused });
+      if (reused) this.event(id, "gene_validation_reused", { reusedFrom: prior!.id });
+      compatibility=this.runtime.worlds?await instanceCompatibility(this.workspace,c.request.base_generation,c.directory,this.runtime.worlds()):undefined;
       const genome = readGenome(c.directory);
       if (genome.geneHash === base.gene_hash) throw new Error("GENE_HASH_MUST_CHANGE");
       if (genome.manifest.generation !== this.nextNumber()) throw new Error("GENOME_GENERATION_NUMBER_CONFLICT");
       const bound = { id, base_generation: c.request.base_generation, base_release: c.request.base_release,
         proposal_id: c.request.proposal_id, patch_hash: evolutionHash(c.request.patch), gene_hash: genome.geneHash,
-        candidate_release_hash: releaseHash(c.directory), release_id: id, ...(compatibility?{instance_compatibility:compatibility}:{}), ...(c.request.owner_release ? {owner_release: c.request.owner_release} : {}) };
+        candidate_release_hash: releaseHash(c.directory), source_release_hash: currentSourceHash, release_id: id,
+        ...(compatibility?{instance_compatibility:compatibility}:{}), ...(c.request.owner_release ? {owner_release: c.request.owner_release} : {}) };
       const candidate: GeneCandidate = { ...bound, candidate_hash: evolutionHash(bound), directory: c.directory };
       this.db.transaction(() => {
         this.db.prepare("UPDATE candidates SET state='VALIDATED',candidate_json=? WHERE id=?").run(JSON.stringify(candidate), id);
-        this.event(id, "gene_candidate_validated", candidate);
+        this.event(id, reused ? "gene_candidate_validated_reused" : "gene_candidate_validated", candidate);
       });
       this.lineage.db.prepare("UPDATE gene_proposals SET state='CANDIDATE_READY',candidate_hash=? WHERE id=?")
         .run(candidate.candidate_hash, candidate.proposal_id);

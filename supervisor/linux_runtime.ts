@@ -54,12 +54,13 @@ export class LinuxEvolutionRuntime implements EvolutionRuntime {
       `--setenv=EMERGENTINC_PNPM_PATH=${c.pnpmPath}`, "/usr/bin/node", path.join(c.trustedRoot, "candidate_harness.mjs"),
       action, directory, workspace, generation], 1800000);
   }
-  async validateRelease(directory: string) {
+  async validateRelease(directory: string, options: { skipTests?: boolean } = {}) {
     this.inside(directory);
     const store = path.join(directory, ".build-store");
     if (fs.existsSync(store)) throw new Error("BUILD_STORE_TARGET_MUST_BE_NEW");
     fs.cpSync(this.config.pnpmStore, store, { recursive: true });
     await execute("/usr/bin/chown", ["-R", `${this.config.validatorUser}:${this.config.validatorUser}`, directory]);
+    if (options.skipTests) fs.writeFileSync(path.join(directory, ".skip-tests"), "");
     await this.isolate("build", directory);
     const relative = path.relative(directory, store);
     if (relative !== ".build-store") throw new Error("BUILD_STORE_PATH_INVALID");

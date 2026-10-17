@@ -24,6 +24,23 @@ export function releaseHash(root: string) {
   };
   walk(""); return hash.digest("hex");
 }
+/** Source identity across release directories: excludes installed dependencies, which --frozen-lockfile reproduces. */
+export function sourceReleaseHash(root: string) {
+  const hash = createHash("sha256"), absoluteRoot = fs.realpathSync(root);
+  const walk = (relative: string) => {
+    const absolute = path.join(root, relative), stat = fs.lstatSync(absolute);
+    if (stat.isSymbolicLink()) {
+      const target = fs.realpathSync(absolute), inside = path.relative(absoluteRoot, target);
+      if (inside.startsWith("..") || path.isAbsolute(inside)) throw new Error("RELEASE_EXTERNAL_SYMLINK_FORBIDDEN");
+      hash.update(relative).update("\0link\0").update(fs.readlinkSync(absolute)).update("\0");
+    } else if (stat.isDirectory()) {
+      if (relative.split("/").includes("node_modules")) return;
+      for (const name of fs.readdirSync(absolute).sort()) walk(relative ? `${relative}/${name}` : name);
+    } else if (stat.isFile()) hash.update(relative).update("\0file\0").update(fs.readFileSync(absolute)).update("\0");
+    else throw new Error("RELEASE_SPECIAL_FILE_FORBIDDEN");
+  };
+  walk(""); return hash.digest("hex");
+}
 export class ReleaseBuilder {
   constructor(readonly releasesDirectory: string) {}
   create(base: string, id: string, patch: GenePatchFile[]) {

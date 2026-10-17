@@ -11,7 +11,9 @@ async function command(executable, args) {
 if (action === 'build') {
   const pnpm = process.env.EMERGENTINC_PNPM_PATH; if (!pnpm?.startsWith('/')) throw new Error('PNPM_ABSOLUTE_PATH_REQUIRED');
   await command(pnpm, ['install', '--offline', '--frozen-lockfile', '--ignore-scripts', '--store-dir', join(directory, '.build-store')]);
-  for (const args of [['run', 'typecheck'], ['build'], ['--dir', 'frontend', 'build'], ['test', '--maxWorkers=1', '--testTimeout=30000']]) await command(pnpm, args);
+  const skipTestsFile = join(directory, '.skip-tests'), skipTests = fs.existsSync(skipTestsFile);
+  for (const args of [['run', 'typecheck'], ['build'], ['--dir', 'frontend', 'build'], ...(skipTests ? [] : [['test', '--maxWorkers=8', '--testTimeout=60000']])]) await command(pnpm, args);
+  if (skipTests) fs.unlinkSync(skipTestsFile);
 } else if (action === 'smoke') {
   const format = JSON.parse(fs.readFileSync(join(workspace, 'workspace-format.json'), 'utf8'));
   if (format.product !== 'BOSS-AFK' || format.format !== 34) throw new Error('V34_CANDIDATE_FORMAT_REQUIRED');

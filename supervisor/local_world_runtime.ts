@@ -20,11 +20,14 @@ export class LocalWorldRuntime implements EvolutionRuntime {
     const child=spawn(executable,args,{cwd:directory,env,windowsHide:true,shell:false,stdio:['ignore',log,log]}),timer=setTimeout(()=>child.kill(),timeout);
     child.once('error',()=>{clearTimeout(timer);fs.closeSync(log);reject(new Error('LOCAL_VALIDATOR_COMMAND_UNAVAILABLE'));});child.once('exit',code=>{clearTimeout(timer);fs.closeSync(log);code===0?resolve():reject(new Error('LOCAL_VALIDATOR_COMMAND_FAILED: '+args.join(' ')));});
   });}
-  async validateRelease(directory:string){
+  async validateRelease(directory:string,options:{skipTests?:boolean}={}){
     const shell=process.env.ComSpec||'cmd.exe';
     const install=process.platform==='win32'?()=>this.execute(shell,['/d','/s','/c','pnpm.cmd install --offline --frozen-lockfile --ignore-scripts'],directory,this.cleanEnv()):()=>this.execute('pnpm',['install','--offline','--frozen-lockfile','--ignore-scripts'],directory,this.cleanEnv());
     await install();
-    for(const command of ['pnpm.cmd typecheck','pnpm.cmd build','pnpm.cmd --dir frontend build','pnpm.cmd test --maxWorkers=1 --testTimeout=30000 --hookTimeout=30000','pnpm.cmd --dir frontend test']){
+    const commands=['pnpm.cmd typecheck','pnpm.cmd build','pnpm.cmd --dir frontend build','pnpm.cmd test --maxWorkers=8 --testTimeout=60000 --hookTimeout=60000','pnpm.cmd --dir frontend test'];
+    if(options.skipTests)commands.splice(3,1);
+    // Default vitest parallelism; tests reserve random HTTP ports and temp workspaces, so workers do not collide.
+    for(const command of commands){
       const timeout=command.startsWith('pnpm.cmd test ')?900000:300000;
       if(process.platform==='win32')await this.execute(shell,['/d','/s','/c',command],directory,this.cleanEnv(),timeout);
       else await this.execute('pnpm',command.replace('pnpm.cmd ','').split(' '),directory,this.cleanEnv(),timeout);

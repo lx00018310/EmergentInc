@@ -11,7 +11,7 @@ export interface GeneCandidate {
   instance_compatibility?: unknown;
 }
 export interface EvolutionRuntime {
-  validateRelease(directory: string): Promise<void>;
+  validateRelease(directory: string, options?: { skipTests?: boolean }): Promise<void>;
   checkRunning?(generationId: string): Promise<void>;
   quiesce(): Promise<void>;
   finalDream(): Promise<void>;
