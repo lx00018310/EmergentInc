@@ -28,4 +28,11 @@
 @keyframes boss-sheet-up{from{transform:translateY(48px);opacity:.5}to{transform:none;opacity:1}}
 @keyframes boss-fade{from{background:#0000}}
 .boss-actions{flex-wrap:wrap}.boss-dialog article,.boss-dialog details{overflow-wrap:anywhere}
+/* 三按钮决策区:通过/拒绝/返工并说明。返工输入框独占一行,不与按钮挤压重叠。 */
+.owner-decision{margin-top:8px}
+.owner-decision .owner-btn{margin:0 8px 8px 0}
+.owner-btn--approve{background:#1b4b35;border-color:#1b4b35;color:#fff}
+.owner-btn--reject{border-color:#c6aaa5;color:#8a4439}
+.boss-actions label,.owner-decision label{flex-basis:100%;display:flex;flex-direction:column;gap:4px;margin:8px 0 0}
+.boss-actions textarea,.owner-decision textarea,.boss-budget textarea{display:block;width:100%;border:1px solid #ddd;border-radius:6px;padding:8px;font:inherit;resize:vertical}
 @media(prefers-reduced-motion:reduce){.boss-shell *{animation:none!important;transition:none!important;scroll-behavior:auto!important}}
