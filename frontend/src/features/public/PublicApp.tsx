@@ -3,12 +3,14 @@ import { LanguageSwitch, t, useLanguage } from '../../i18n';
 import { publicApi, type Product, type Site } from './api';
 import { Checkout, savedOrder } from './Checkout';
 import {BackendLogin} from './BackendLogin';
+import {clearLegacyBossStorage} from '../boss/bossStorage';
 import './public.css';
 
 export function PublicApp() {
+  useEffect(clearLegacyBossStorage,[]);
   const lang=useLanguage(),zh=lang==='zh-CN';
   const [site,setSite]=useState<Site>(),[products,setProducts]=useState<Product[]>([]),[error,setError]=useState('');
-  const [selected,setSelected]=useState<Product>(),[buy,setBuy]=useState(()=>Boolean(savedOrder()||sessionStorage.getItem('emergentinc.checkout-intent')));
+  const [selected,setSelected]=useState<Product>(),[buy,setBuy]=useState(()=>Boolean(savedOrder()||sessionStorage.getItem('boss.v34.checkout-intent')));
   const [backend,setBackend]=useState(false),[lookup,setLookup]=useState(''),[lookupError,setLookupError]=useState(''),[orderKey,setOrderKey]=useState('initial');
   useEffect(()=>{void Promise.all([publicApi<Site>('site'),publicApi<{items:Product[]}>('products')])
     .then(([s,p])=>{setSite(s);setProducts(p.items);}).catch(()=>setError('The store could not be loaded. Please refresh.'));},[]);
@@ -16,7 +18,7 @@ export function PublicApp() {
   const name=(product:Product,index:number)=>(zh?product.product_name_zh:product.product_name_en)||t('Product {0}',[String(index+1).padStart(2,'0')]);
   const available=(product:Product)=>Boolean(product.product_enabled&&product.product_price);
   function choose(product:Product,checkout:boolean){
-    if(checkout&&!sessionStorage.getItem('emergentinc.checkout-intent')){
+    if(checkout&&!sessionStorage.getItem('boss.v34.checkout-intent')){
       window.history.replaceState(null,'','/#orders');setOrderKey('checkout-'+crypto.randomUUID());
     }
     setSelected(product);setBuy(checkout);

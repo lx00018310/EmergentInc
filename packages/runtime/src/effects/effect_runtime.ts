@@ -766,43 +766,7 @@ export class EffectRuntime {
       });
       return;
     }
-    const turn = this.ctx.store.qianjiChat.getTurnForMessage(effect.messageId);
-    const message = this.ctx.store.messages.getMessage(effect.messageId);
-    const modelCall = this.ctx.modelCallId ? this.ctx.store.modelCalls.getModelCall(this.ctx.modelCallId) : null;
-    const binding = turn ? this.ctx.store.qianji.getBinding(turn.bindingId) : null;
-    const current = turn ? this.ctx.store.qianji.getCurrentBindingByPixel(effect.pixelId) : null;
-    const valid = Boolean(turn && message && binding && current &&
-      turn.bindingId === message.recipientBindingId &&
-      turn.qianjiId === binding.qianjiId && binding.pixelId === effect.pixelId &&
-      current.bindingId === turn.bindingId && modelCall?.bindingId === turn.bindingId &&
-      modelCall.messageId === effect.messageId);
-    const now = Date.now() / 1000;
-    if (!valid) {
-      this.ctx.store.transaction(() => {
-        this.ctx.store.effects.recordEffect({
-          effect_id: effect.effectId, message_id: effect.messageId, effect_type: effect.effectType,
-          effect_index: effect.effectIndex, payload_hash: effect.payloadHash, status: "FAILED",
-          details: JSON.stringify({ error: "OWNER_REPLY_NOT_A_VALID_CHAT_TURN" }), created_at: now,
-        });
-      });
-      if (message) this.enqueueMessage({
-        runId: this.ctx.runId,
-        roundNum: this.ctx.round + 1,
-        sender: "system",
-        recipient: effect.pixelId,
-        content: "OWNER_REPLY was ignored because this message is not a valid Qianji chat turn.",
-        sourceType: "system",
-      });
-      return;
-    }
-    this.ctx.store.transaction(() => {
-      const applied = this.ctx.store.qianjiChat.completeReply(effect.messageId, turn!.bindingId, effect.reply, this.ctx.modelCallId ?? null);
-      this.ctx.store.effects.recordEffect({
-        effect_id: effect.effectId, message_id: effect.messageId, effect_type: effect.effectType,
-        effect_index: effect.effectIndex, payload_hash: effect.payloadHash, status: applied ? "APPLIED" : "FAILED",
-        ...(applied ? {} : { details: JSON.stringify({ error: "OWNER_REPLY_ALREADY_RECORDED" }) }),
-        created_at: now,
-      });
-    });
+    this.ctx.store.effects.recordEffect({effect_id:effect.effectId,message_id:effect.messageId,effect_type:effect.effectType,
+      effect_index:effect.effectIndex,payload_hash:effect.payloadHash,status:'FAILED',details:JSON.stringify({error:'OWNER_REPLY_REQUIRES_WORKER_SCOPE'}),created_at:Date.now()/1000});
   }
 }

@@ -221,6 +221,7 @@ export class OpenAICompatibleProvider implements ModelProvider {
           messages: request.messages,
           temperature: request.temperature ?? 0.2,
           max_tokens: request.maxTokens ?? 2000,
+          ...(request.responseFormat?{response_format:{type:request.responseFormat}}:{}),
           ...(this.stream ? { stream: true, stream_options: { include_usage: true } } : {}),
         }),
         signal: controller.signal,

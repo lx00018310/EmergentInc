@@ -1,6 +1,6 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import {createHash} from 'node:crypto';
+import {createHash,randomUUID} from 'node:crypto';
 import {pathToFileURL} from 'node:url';
 import {DatabaseSync} from 'node:sqlite';
 import {checkOwnerAutomationRollback} from './owner_automation_compatibility.js';
@@ -77,5 +77,7 @@ export async function prepareCompatibilityFixture(destination:string,target:any,
     gate.goals.create({title:'Synthetic compatibility goal',objective:'A public compatibility fixture only',acceptance:{kind:'artifact',filename:'fixture.md',minBytes:1},maxTokens:100000,idempotencyKey:'synthetic-fixture-goal'});
     for(const worldId of worldIds)registry.create({displayName:'Synthetic compatibility person',traits:{},behaviorProfile:[]},{worldId});
   }finally{control.close();lineage.close();}
-  fs.writeFileSync(path.join(destination,'workspace-layout.json'),JSON.stringify({schema:1,version:23,candidate:true,synthetic:true}),{flag:'wx'});
+  fs.writeFileSync(path.join(destination,'workspace-layout.json'),JSON.stringify({schema:1,version:34,candidate:true,synthetic:true}),{flag:'wx'});
+  for(const name of ['worlds','runtime','private','assets'])fs.mkdirSync(path.join(destination,name),{recursive:true});
+  fs.writeFileSync(path.join(destination,'workspace-format.json'),JSON.stringify({product:'BOSS-AFK',format:34,instanceId:randomUUID(),initializedAt:new Date().toISOString()}),{flag:'wx'});
 }

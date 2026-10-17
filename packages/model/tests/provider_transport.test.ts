@@ -9,6 +9,11 @@ const provider = () => new OpenAICompatibleProvider({ baseUrl: "https://fixture.
 afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
 
 describe("Optional streaming transport", () => {
+  it('sends explicit JSON mode without leaking the internal audit identifier',async()=>{
+    const fetch=vi.fn().mockResolvedValue(new Response(JSON.stringify({choices:[{message:{content:'{"ok":true}'}}],usage:{prompt_tokens:3,completion_tokens:2,total_tokens:5}}),{status:200,headers:{'Content-Type':'application/json'}}));vi.stubGlobal('fetch',fetch);
+    await provider().call({...request,responseFormat:'json_object',auditCallId:'private-controller-id'});
+    const payload=JSON.parse(fetch.mock.calls[0][1].body);expect(payload.response_format).toEqual({type:'json_object'});expect(payload.auditCallId).toBeUndefined();
+  });
   const streamed = () => new OpenAICompatibleProvider({ baseUrl: "https://fixture.invalid", apiKey: "fixture-only", stream: true, maxRetries: 0 });
   function response(events: string) {
     // One byte per chunk exercises split UTF-8 characters and event boundaries.

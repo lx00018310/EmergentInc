@@ -28,6 +28,11 @@ async function fixture() {
   return { runtime, state, requests, close, workspace };
 }
 describe('local publication preflight', () => {
+  it('builds the frontend before running tests that start the actual BOSS HTTP server',async()=>{
+    const f=await fixture();let frontendBuilt=false,testRuns=0;
+    (f.runtime as any).execute=async(_executable:string,args:string[])=>{const command=args.join(' ');if(/frontend build/.test(command))frontendBuilt=true;if(/\btest\b/.test(command)){expect(frontendBuilt,'The real BOSS route requires compiled frontend assets').toBe(true);testRuns++;}};
+    await f.runtime.validateRelease(f.workspace);expect(testRuns).toBe(2);
+  });
   it('finishes stopping an already exited process without requiring an HTTP response',async()=>{
     const f=await fixture(),child=spawn(process.execPath,['-e',''],{windowsHide:true,stdio:'ignore'});
     await new Promise<void>((done,reject)=>{child.once('exit',()=>done());child.once('error',reject);});

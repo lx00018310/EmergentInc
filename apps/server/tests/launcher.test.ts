@@ -17,7 +17,8 @@ const cleanups:(()=>Promise<void>)[]=[];
 afterEach(async()=>{for(const cleanup of cleanups.splice(0).reverse())await cleanup();vi.unstubAllEnvs();vi.restoreAllMocks();});
 async function fixture(){
   const root=fs.mkdtempSync(join(tmpdir(),'launcher-ready-')),project=join(root,'project'),workspace=join(root,'workspace');
-  for(const dir of ['genome','apps/server/dist','packages/persistence/dist','frontend/dist'])fs.mkdirSync(join(project,dir),{recursive:true});
+  for(const dir of ['genome','apps/server/dist','apps/server/src','packages/persistence/dist','packages/persistence/src','frontend/dist'])fs.mkdirSync(join(project,dir),{recursive:true});
+  fs.writeFileSync(join(project,'apps/server/src/main.ts'),'// Synthetic fixture source.');fs.writeFileSync(join(project,'packages/persistence/src/index.ts'),'// Synthetic fixture source.');
   const port=await reserveTestHttpPort();
   vi.stubEnv('EMERGENTINC_WORKSPACE_ROOT',workspace);vi.stubEnv('PORT',String(port));vi.stubEnv('HOST','127.0.0.1');
   for(const key of ['EMERGENTINC_LOCAL_EVOLUTION_CONFIG','EMERGENTINC_ACTIVE_GENERATION_FILE','EMERGENTINC_CANDIDATE_MODE','EMERGENTINC_LOCAL_UPGRADE_TOKEN'])vi.stubEnv(key,'');
@@ -33,15 +34,16 @@ async function fixture(){
       res.setHeader('Content-Type','application/json');
       if(req.url==='/health/live')res.end(JSON.stringify({alive:true,processId:process.pid}));
       else if(req.url==='/health/ready'){readyChecks++;const ready=Date.now()-began>=200;res.statusCode=ready?200:503;res.end(JSON.stringify({ready,generation:'G0001'}));}
-      else if(req.url==='/'){homeChecks++;res.statusCode=Date.now()-began>=700?200:503;res.setHeader('Content-Type','text/html');res.end('<html>Actual homepage</html>');}
+      else if(['/','/BOSS'].includes(req.url)){homeChecks++;res.statusCode=Date.now()-began>=700?200:503;res.setHeader('Content-Type','text/html');res.end('<html>Actual homepage</html>');}
       else if(req.url==='/stop'){res.setHeader('Connection','close');res.end('{}');server.close(()=>process.exit(0));}
       else if(req.url==='/crash'){res.setHeader('Connection','close');res.end('{}');server.close(()=>process.exit(7));}
       else res.end(JSON.stringify({readyChecks,homeChecks}));
     });server.listen(Number(process.env.PORT),'127.0.0.1');process.on('SIGTERM',()=>server.close(()=>process.exit(0)));
   `);
   const id='local-launcher-test',recordDirectory=join(workspace,'runtime/local-upgrades',id),release=await freezeLocalRelease(project,join(recordDirectory,'release'),async()=>{});
-  const lineage=new LineageStore(join(workspace,'lineage/lineage.sqlite3')),generation=lineage.createGeneration({id:'G0001',number:1,geneHash,releaseId:id,state:'ACTIVE'});
-  const current=new CurrentStore(join(workspace,'generations/G0001/current.sqlite3'));current.initialize(generation,'1');current.close();lineage.close();writeGenerationPointer(workspace,'G0001');
+  const lineage=new LineageStore(join(workspace,'system/lineage/lineage.sqlite3')),generation=lineage.createGeneration({id:'G0001',number:1,geneHash,releaseId:id,state:'ACTIVE'});
+  const current=new CurrentStore(join(workspace,'system/generations/G0001/current.sqlite3'));current.initialize(generation,'1');current.close();lineage.close();writeGenerationPointer(join(workspace,'system'),'G0001');fs.writeFileSync(join(workspace,'workspace-format.json'),JSON.stringify({product:'BOSS-AFK',format:34,instanceId:crypto.randomUUID()}));fs.writeFileSync(join(workspace,'workspace-layout.json'),JSON.stringify({schema:1,version:34}));
+  new WorldRegistryStore(join(workspace,'system/control/control.sqlite3')).close();
   const candidate={id,scope:'windows_owner_initialization',workspace,projectRoot:project,target:'G0001',geneHash,release},hash=createHash('sha256').update(JSON.stringify(candidate)).digest('hex');
   fs.writeFileSync(join(recordDirectory,'record.json'),JSON.stringify({candidate,candidateHash:hash,state:'COMMITTED',ownerAuthorization:{candidateHash:hash}}));
   cleanups.push(async()=>{if(fs.existsSync(pidFile)){const pid=JSON.parse(fs.readFileSync(pidFile,'utf8')).pid;try{process.kill(pid);}catch(e){if((e as NodeJS.ErrnoException).code!=='ESRCH')throw e;}}
@@ -55,7 +57,7 @@ function startLauncher(f:Awaited<ReturnType<typeof fixture>>,args:string[],timeo
     import {launchApproved} from ${JSON.stringify(pathToFileURL(resolve('scripts/launch-approved.mjs')).href)};
     import {writeFileSync} from 'node:fs';
     try{process.exitCode=await launchApproved(${JSON.stringify(f.project)},${JSON.stringify(args)},{startupTimeoutMs:${timeout},openPage:async(url)=>{
-      const live=await(await fetch(url+'health/live')).json(),ready=await(await fetch(url+'health/ready')).json(),home=await fetch(url);
+      const live=await(await fetch(new URL('/health/live',url))).json(),ready=await(await fetch(new URL('/health/ready',url))).json(),home=await fetch(url);
       writeFileSync(${JSON.stringify(record)},JSON.stringify({url,live,ready,status:home.status,body:await home.text()}));
       if(${browserFails})throw new Error('Browser unavailable');
     }});}catch(e){writeFileSync(${JSON.stringify(error)},e.message);process.exitCode=1;}
@@ -73,8 +75,8 @@ describe('approved UI launcher readiness',()=>{
     if(source==='project-env')fs.writeFileSync(join(f.project,'.env'),'EMERGENTINC_START_PAUSED=1\n');
     const run=startLauncher(f,['--open-browser','--mock']);await vi.waitFor(()=>expect(fs.existsSync(run.record),run.diagnostics()).toBe(true),{timeout:4000});
     const opened=JSON.parse(fs.readFileSync(run.record,'utf8')),owned=JSON.parse(fs.readFileSync(f.pidFile,'utf8'));
-    expect(opened.url).toBe(`http://127.0.0.1:${f.port}/`);expect(opened.live.processId).toBe(owned.pid);expect(opened.ready).toMatchObject({ready:true,generation:'G0001'});expect(opened.status).toBe(200);expect(opened.body).toContain('Actual homepage');expect(owned.args).toEqual(['--mock']);expect(owned.maintenancePaused).toBe(false);
-    await fetch(opened.url+'stop');expect(await run.finished).toBe(0);
+    expect(opened.url).toBe(`http://127.0.0.1:${f.port}/BOSS`);expect(opened.live.processId).toBe(owned.pid);expect(opened.ready).toMatchObject({ready:true,generation:'G0001'});expect(opened.status).toBe(200);expect(opened.body).toContain('Actual homepage');expect(owned.args).toEqual(['--mock']);expect(owned.maintenancePaused).toBe(false);
+    await fetch(new URL('/stop',opened.url));expect(await run.finished).toBe(0);
   },15000);
   it('does not open a page when the process fails before becoming ready',async()=>{
     const f=await fixture(),run=startLauncher(f,['--open-browser','--exit-before-ready']);expect(await run.finished).toBe(1);expect(fs.readFileSync(run.error,'utf8')).toContain('EXITED_BEFORE_READY');expect(fs.existsSync(run.record)).toBe(false);
@@ -110,8 +112,8 @@ async function handoffFixture(){
   const lineage=new LineageStore(join(workspace,'system/lineage/lineage.sqlite3'),{v23:true});
   const generation=lineage.createGeneration({id:'G0002',number:2,geneHash,releaseId:id,state:'ACTIVE'});lineage.close();
   const current=new CurrentStore(join(workspace,'system/generations/G0002/current.sqlite3'));current.initialize(generation,'1');current.close();writeGenerationPointer(join(workspace,'system'),'G0002');
-  const control=new WorldRegistryStore(join(workspace,'system/control/control.sqlite3'));control.close();fs.writeFileSync(join(workspace,'workspace-layout.json'),'{"schema":1,"version":23}');
-  fs.mkdirSync(join(workspace,'runtime'));fs.writeFileSync(join(workspace,'runtime/instance.lock'),'{"pid":42}');
+  const control=new WorldRegistryStore(join(workspace,'system/control/control.sqlite3'));control.close();fs.writeFileSync(join(workspace,'workspace-layout.json'),'{"schema":1,"version":34}');
+  fs.writeFileSync(join(workspace,'workspace-format.json'),JSON.stringify({product:'BOSS-AFK',format:34,instanceId:crypto.randomUUID()}));fs.mkdirSync(join(workspace,'runtime'));fs.writeFileSync(join(workspace,'runtime/instance.lock'),'{"pid":42}');
   const activeReleaseFile=join(state,'active.json');fs.writeFileSync(activeReleaseFile,JSON.stringify({directory:release.directory}));
   const configFile=join(f.root,'owner-config.json');fs.writeFileSync(configFile,JSON.stringify({ownerProjectRoot:f.project,workspace,releases,stateDirectory:state,activeReleaseFile}));
   const request={base_generation:'G0001',base_release:'local-old'},bound={id,release_id:id,gene_hash:geneHash,candidate_release_hash:release.hash},hash=createHash('sha256').update(JSON.stringify(bound)).digest('hex');

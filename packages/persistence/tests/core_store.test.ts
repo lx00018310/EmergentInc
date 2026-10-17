@@ -4,6 +4,7 @@ import {
   BudgetExceededError,
   SpendBlockedError,
   initSchema,
+  SqliteDatabase,
 } from "../src/index.js";
 
 describe("Persistence: CoreStore & Repositories", () => {
@@ -57,6 +58,18 @@ describe("Persistence: CoreStore & Repositories", () => {
     expect(store.pixels.getPixelAccount("p")?.energy).toBe(1000);
   });
 
+  it('replays an exact recovery receipt once without resetting a later message or changing its budget',()=>{
+    const message=store.messages.enqueueMessage({sender:'system',recipient:'p',content:'Exact unresolved operation',roundNum:1});store.messages.updateStatus(message.messageId,'CALL_OUTCOME_UNKNOWN');
+    const input={kind:'message' as const,id:message.messageId,decision:'confirm_not_billed' as const,reason:'Verified request did not run',idempotencyKey:'recovery-exact-key'};
+    const first=store.resolveRecoveryOperation(input);store.messages.updateStatus(message.messageId,'CALLING');
+    expect(store.resolveRecoveryOperation(input)).toEqual(first);expect(store.messages.getMessage(message.messageId)!.status).toBe('CALLING');expect(store.db.prepare('SELECT COUNT(*) n FROM recovery_decisions').get()!.n).toBe(1);
+    expect(()=>store.resolveRecoveryOperation({...input,decision:'abandon'})).toThrow('IDEMPOTENCY_CONFLICT');expect(()=>store.resolveRecoveryOperation({...input,id:'another-operation'})).toThrow('IDEMPOTENCY_CONFLICT');expect(()=>store.resolveRecoveryOperation({...input,idempotencyKey:'bad'})).toThrow('RECOVERY_IDEMPOTENCY_INVALID');
+  });
+  it('stops only the explicitly acknowledged interrupted run and removes its automatic resume checkpoint',()=>{
+    for(const id of ['stopped-run','other-run']){store.runs.createRun({run_id:id,start_round:1,run_limit:100,run_spent:0,run_reserved:0,genesis_revision:1,status:'RUNNING',created_at:1});store.runs.createCheckpoint(id,2);}
+    const input={kind:'run' as const,id:'stopped-run',decision:'acknowledge' as const,reason:'Owner explicitly stops this interrupted run',idempotencyKey:'stop-interrupted-run'};const result=store.resolveRecoveryOperation(input);
+    expect(store.runs.getRun('stopped-run')).toMatchObject({status:'STOPPED',stop_reason:'USER_STOPPED'});expect(store.runs.getCheckpoint('stopped-run')!.resume_pending).toBe(0);expect(store.runs.getCheckpoint('other-run')!.resume_pending).toBe(1);expect(store.resolveRecoveryOperation(input)).toEqual(result);
+  });
   it("records a verified missing cost after token settlement without changing tokens or replaying a response", () => {
     store.pixels.upsertPixelAccount({ pixelId: "p", energy: 1000, active: true, refundDeficitTokens: 0, spendBlockedReason: null });
     const message = store.messages.enqueueMessage({ sender: "system", recipient: "p", content: "test", roundNum: 1 });
@@ -151,22 +164,12 @@ describe("Persistence: CoreStore & Repositories", () => {
   });
 
   it("migrates legacy non-null cost columns idempotently without losing historical costs", () => {
-    store.db.exec(`DROP TABLE model_calls;
-      CREATE TABLE model_calls (
-        call_id TEXT PRIMARY KEY, run_id TEXT NOT NULL, pixel_id TEXT NOT NULL,
-        message_id TEXT, model TEXT NOT NULL, pricing_revision TEXT, prompt_hash TEXT,
-        raw_response TEXT, normalized_response TEXT,
-        prompt_tokens INTEGER NOT NULL DEFAULT 0, completion_tokens INTEGER NOT NULL DEFAULT 0,
-        cached_tokens INTEGER NOT NULL DEFAULT 0, actual_tokens INTEGER NOT NULL DEFAULT 0,
-        cost_cny REAL NOT NULL DEFAULT 0, outcome TEXT NOT NULL, created_at REAL NOT NULL);
-      INSERT INTO model_calls (call_id,run_id,pixel_id,model,cost_cny,outcome,created_at)
-        VALUES ('old','r','p','m',0.25,'MODEL_RESPONSE_INVALID',1);`);
-    initSchema(store.db);
-    initSchema(store.db);
-    expect(store.modelCalls.getModelCall("old")?.costCny).toBe(0.25);
-    store.db.exec("UPDATE model_calls SET cost_cny = NULL, actual_tokens = NULL WHERE call_id = 'old'");
-    expect(store.modelCalls.getModelCall("old")?.costCny).toBeNull();
-    expect(store.modelCalls.getPixelStepCosts("p")[0].modelCost).toBeNull();
+    const db=new SqliteDatabase(':memory:');
+    try{db.exec("CREATE TABLE old_model_calls(id TEXT PRIMARY KEY,cost REAL); INSERT INTO old_model_calls VALUES('old',0.25)");
+      expect(()=>initSchema(db)).toThrow('V34_DESTRUCTIVE_RESET_REQUIRED');
+      expect(db.prepare('SELECT * FROM old_model_calls').get()).toMatchObject({id:'old',cost:0.25});
+    }finally{db.close();}
+
   });
 
   it("should initialize schema and global budget correctly", () => {

@@ -3,7 +3,7 @@ import * as path from 'node:path';
 import {LineageStore} from '../packages/persistence/dist/index.js';
 import {GenerationSupervisor} from '../supervisor/dist/generation_supervisor.js';
 import {LocalWorldRuntime} from '../supervisor/dist/local_world_runtime.js';
-import {ownerEnvironment} from './local-release.mjs';
+import {ownerEnvironment,bossWorkspaceFormat} from './local-release.mjs';
 
 // Explicit local Owner CLI. No Body/HTTP caller can approve an exact candidate through this interface.
 const [configFile,action,value,exactHash,...extra]=process.argv.slice(2);let supervisor,lineage,lock;
@@ -12,6 +12,7 @@ try{
   const config=JSON.parse(fs.readFileSync(path.resolve(configFile),'utf8'));
   if(!config.ownerProjectRoot)throw new Error('OWNER_PROJECT_ROOT_REQUIRED');
   for(const key of ['workspace','releases','stateDirectory','activeReleaseFile'])config[key]=path.resolve(config.ownerProjectRoot,config[key]);
+  if(!bossWorkspaceFormat(config.workspace))throw new Error('V34_WORKSPACE_INITIALIZATION_REQUIRED');
   config.ownerEnvironment=ownerEnvironment(config.ownerProjectRoot);fs.mkdirSync(config.stateDirectory,{recursive:true});
   lock=path.join(config.stateDirectory,'operator.lock');if(fs.existsSync(lock)){const raw=fs.readFileSync(lock,'utf8'),previous=JSON.parse(raw);if(!Number.isSafeInteger(previous.pid)||previous.pid<1)throw new Error('INVALID_EVOLUTION_LOCK');
     try{process.kill(previous.pid,0);throw new Error('EVOLUTION_ALREADY_RUNNING');}catch(error){if(error.code!=='ESRCH')throw error;}if(fs.readFileSync(lock,'utf8')!==raw)throw new Error('EVOLUTION_LOCK_CHANGED');fs.unlinkSync(lock);}

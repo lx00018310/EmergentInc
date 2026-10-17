@@ -50,106 +50,13 @@ describe("Persistence: rectification migrations & cost semantics", () => {
     `);
   }
 
-  it("normalizes legacy engine_feedback messages to feedback idempotently and records a marker", () => {
-    const db = new SqliteDatabase(":memory:");
-    try {
-      createLegacyMessagesSchema(db);
-      initSchema(db);
-
-      const rows = db.prepare("SELECT message_id, source_type FROM messages ORDER BY message_id").all() as any[];
-      expect(rows.find(r => r.message_id === "m_fb1")?.source_type).toBe("feedback");
-      expect(rows.find(r => r.message_id === "m_fb2")?.source_type).toBe("feedback");
-      expect(rows.find(r => r.message_id === "m_ok")?.source_type).toBe("pixel");
-
-      const marker = db.prepare("SELECT value FROM schema_meta WHERE key = 'legacy_engine_feedback_normalized'").get() as any;
-      expect(Number(marker?.value ?? 0)).toBe(2);
-
-      // 幂等：重复迁移不改变结果
-      initSchema(db);
-      const rowsAgain = db.prepare("SELECT source_type, COUNT(*) as c FROM messages GROUP BY source_type").all() as any[];
-      expect(rowsAgain.find(r => r.source_type === "feedback")?.c).toBe(2);
-      const markerAgain = db.prepare("SELECT value FROM schema_meta WHERE key = 'legacy_engine_feedback_normalized'").get() as any;
-      expect(Number(markerAgain?.value ?? 0)).toBe(2);
-    } finally {
-      db.close();
-    }
+  it('rejects old tables without rewriting their facts',()=>{
+    const db=new SqliteDatabase(':memory:');try{createLegacyMessagesSchema(db);expect(()=>initSchema(db)).toThrow('V34_DESTRUCTIVE_RESET_REQUIRED');expect(db.prepare("SELECT COUNT(*) n FROM messages WHERE source_type='engine_feedback'").get()!.n).toBe(2);}finally{db.close();}
   });
-
-  it("maps legacy default-zero rounds to null while new writes keep real round 0", () => {
-    const db = new SqliteDatabase(":memory:");
-    try {
-      // 旧库：cost_cny NOT NULL（触发 nullable 重建）+ round_num 皆为迁移默认 0
-      db.exec(`
-        CREATE TABLE model_calls (
-          call_id TEXT PRIMARY KEY, run_id TEXT NOT NULL, pixel_id TEXT NOT NULL,
-          message_id TEXT, model TEXT NOT NULL, pricing_revision TEXT, prompt_hash TEXT,
-          raw_response TEXT, normalized_response TEXT,
-          prompt_tokens INTEGER NOT NULL DEFAULT 0, completion_tokens INTEGER NOT NULL DEFAULT 0,
-          cached_tokens INTEGER NOT NULL DEFAULT 0, actual_tokens INTEGER NOT NULL DEFAULT 0,
-          cost_cny REAL NOT NULL DEFAULT 0, outcome TEXT NOT NULL, created_at REAL NOT NULL
-        );
-        INSERT INTO model_calls (call_id, run_id, pixel_id, model, cost_cny, outcome, created_at)
-          VALUES ('legacy_a', 'r', 'p', 'm', 0.01, 'SUCCESS', 1);
-      `);
-      initSchema(db);
-
-      // legacy 默认 0 被迁移为 NULL（轮次未知）
-      const legacyRow = db.prepare("SELECT round_num FROM model_calls WHERE call_id = 'legacy_a'").get() as any;
-      expect(legacyRow.round_num).toBeNull();
-
-      // 迁移后的库上继续写入真实 Round 0：保持为 0，重复 initSchema 不改写
-      const repo = new ModelCallRepository(db);
-      repo.recordModelCall({
-        callId: "fresh_1", runId: "r", pixelId: "p", roundNum: 0,
-        model: "m", promptTokens: 1, completionTokens: 1, cachedTokens: null,
-        actualTokens: 2, costCny: 0.001, outcome: "SUCCESS", createdAt: 10,
-      });
-      initSchema(db);
-      const freshRow = db.prepare("SELECT round_num FROM model_calls WHERE call_id = 'fresh_1'").get() as any;
-      expect(Number(freshRow.round_num)).toBe(0);
-      // legacy 仍为 NULL，未被二次迁移污染
-      const legacyStill = db.prepare("SELECT round_num FROM model_calls WHERE call_id = 'legacy_a'").get() as any;
-      expect(legacyStill.round_num).toBeNull();
-    } finally {
-      db.close();
-    }
+  it('retains a real round zero and unknown cost across V34 initialization',()=>{
+    store.modelCalls.recordModelCall({callId:'fresh',runId:'r',pixelId:'p',roundNum:0,model:'m',promptTokens:1,completionTokens:1,cachedTokens:null,actualTokens:2,costCny:null,outcome:'SUCCESS',createdAt:1});
+    initSchema(store.db);expect(store.modelCalls.getModelCall('fresh')).toMatchObject({roundNum:0,costCny:null});
   });
-
-  it("exposes nullable round for legacy rows and preserves cost metadata through migration", () => {
-    const db = new SqliteDatabase(":memory:");
-    try {
-      db.exec(`
-        CREATE TABLE model_calls (
-          call_id TEXT PRIMARY KEY, run_id TEXT NOT NULL, pixel_id TEXT NOT NULL,
-          message_id TEXT, model TEXT NOT NULL, pricing_revision TEXT, prompt_hash TEXT,
-          raw_response TEXT, normalized_response TEXT,
-          prompt_tokens INTEGER NOT NULL DEFAULT 0, completion_tokens INTEGER NOT NULL DEFAULT 0,
-          cached_tokens INTEGER NOT NULL DEFAULT 0, actual_tokens INTEGER NOT NULL DEFAULT 0,
-          cost_cny REAL NOT NULL DEFAULT 0, outcome TEXT NOT NULL, created_at REAL NOT NULL
-        );
-        INSERT INTO model_calls (call_id, run_id, pixel_id, model, cost_cny, outcome, created_at)
-          VALUES ('legacy_c', 'r', 'p', 'm', 0.009057, 'SUCCESS', 1);
-      `);
-      initSchema(db);
-      initSchema(db); // 幂等
-
-      const repo = new ModelCallRepository(db);
-      const record = repo.getModelCall("legacy_c");
-      expect(record).not.toBeNull();
-      expect(record?.costCny).toBeCloseTo(0.009057, 10);
-      // legacy 默认 0 轮次暴露为 null（未知），不冒充真实 Round 0
-      expect(record?.roundNum).toBeNull();
-      const step = repo.getPixelStepCosts("p")[0];
-      expect(step.round).toBeNull();
-      expect(step.callId).toBe("legacy_c");
-      expect(step.runId).toBe("r");
-      expect(step.outcome).toBe("SUCCESS");
-      expect(step.modelCost).toBeCloseTo(0.009057, 10);
-    } finally {
-      db.close();
-    }
-  });
-
   it("getCostSummary reports null totals when any component is unknown, never unknown-as-zero", () => {
     // 已知模型成本 + 已知工具成本
     store.modelCalls.recordModelCall({

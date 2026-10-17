@@ -1,0 +1,1162 @@
+{
+  "baseline": "c24d8987d8b8028bf3e830e234cc60538a86eaf8",
+  "counts": {
+    "M": 83,
+    "D": 182,
+    "A": 22
+  },
+  "deletedTrackedFiles": 182,
+  "deletedTrackedFileLines": 25737,
+  "trackedDiffAddedLines": 1102,
+  "trackedDiffRemovedLines": 29549,
+  "files": [
+    {
+      "status": "M",
+      "path": ".env.example"
+    },
+    {
+      "status": "M",
+      "path": "README.md"
+    },
+    {
+      "status": "M",
+      "path": "README_CN.md"
+    },
+    {
+      "status": "M",
+      "path": "apps/server/src/app.ts"
+    },
+    {
+      "status": "A",
+      "path": "apps/server/src/boss_workspace.ts"
+    },
+    {
+      "status": "M",
+      "path": "apps/server/src/main.ts"
+    },
+    {
+      "status": "M",
+      "path": "apps/server/src/routes/api_routes.ts"
+    },
+    {
+      "status": "D",
+      "path": "apps/server/src/routes/business_routes.ts"
+    },
+    {
+      "status": "D",
+      "path": "apps/server/src/routes/evolution_routes.ts"
+    },
+    {
+      "status": "D",
+      "path": "apps/server/src/routes/gacha_routes.ts"
+    },
+    {
+      "status": "D",
+      "path": "apps/server/src/routes/meeting_routes.ts"
+    },
+    {
+      "status": "M",
+      "path": "apps/server/src/routes/owner_routes.ts"
+    },
+    {
+      "status": "D",
+      "path": "apps/server/src/routes/qianji_routes.ts"
+    },
+    {
+      "status": "M",
+      "path": "apps/server/src/routes/world_routes.ts"
+    },
+    {
+      "status": "D",
+      "path": "apps/server/src/services/automation_supervisor.ts"
+    },
+    {
+      "status": "D",
+      "path": "apps/server/src/services/body_growth_service.ts"
+    },
+    {
+      "status": "D",
+      "path": "apps/server/src/services/business_connections.ts"
+    },
+    {
+      "status": "D",
+      "path": "apps/server/src/services/business_service.ts"
+    },
+    {
+      "status": "D",
+      "path": "apps/server/src/services/dream_service.ts"
+    },
+    {
+      "status": "D",
+      "path": "apps/server/src/services/gacha_image.ts"
+    },
+    {
+      "status": "D",
+      "path": "apps/server/src/services/gacha_service.ts"
+    },
+    {
+      "status": "D",
+      "path": "apps/server/src/services/gene_promotion_service.ts"
+    },
+    {
+      "status": "M",
+      "path": "apps/server/src/services/life_context.ts"
+    },
+    {
+      "status": "D",
+      "path": "apps/server/src/services/life_overview.ts"
+    },
+    {
+      "status": "D",
+      "path": "apps/server/src/services/meeting_service.ts"
+    },
+    {
+      "status": "D",
+      "path": "apps/server/src/services/memory_gate.ts"
+    },
+    {
+      "status": "M",
+      "path": "apps/server/src/services/owner_actions.ts"
+    },
+    {
+      "status": "M",
+      "path": "apps/server/src/services/owner_automation_gate.ts"
+    },
+    {
+      "status": "M",
+      "path": "apps/server/src/services/owner_chat_service.ts"
+    },
+    {
+      "status": "M",
+      "path": "apps/server/src/services/owner_company_budget.ts"
+    },
+    {
+      "status": "M",
+      "path": "apps/server/src/services/owner_goal_service.ts"
+    },
+    {
+      "status": "M",
+      "path": "apps/server/src/services/owner_overview_service.ts"
+    },
+    {
+      "status": "M",
+      "path": "apps/server/src/services/owner_work_service.ts"
+    },
+    {
+      "status": "A",
+      "path": "apps/server/src/services/payment_schema.ts"
+    },
+    {
+      "status": "M",
+      "path": "apps/server/src/services/payment_service.ts"
+    },
+    {
+      "status": "D",
+      "path": "apps/server/src/services/public_payment_migration.ts"
+    },
+    {
+      "status": "D",
+      "path": "apps/server/src/services/public_products_migration.ts"
+    },
+    {
+      "status": "M",
+      "path": "apps/server/src/services/public_store.ts"
+    },
+    {
+      "status": "D",
+      "path": "apps/server/src/services/qianji_service.ts"
+    },
+    {
+      "status": "M",
+      "path": "apps/server/src/services/world_runtime_manager.ts"
+    },
+    {
+      "status": "M",
+      "path": "apps/server/src/services/world_tools.ts"
+    },
+    {
+      "status": "M",
+      "path": "apps/server/src/world_bootstrap.ts"
+    },
+    {
+      "status": "D",
+      "path": "apps/server/tests/approved_gene_inheritance.test.ts"
+    },
+    {
+      "status": "D",
+      "path": "apps/server/tests/automation_supervisor.test.ts"
+    },
+    {
+      "status": "D",
+      "path": "apps/server/tests/body_growth.test.ts"
+    },
+    {
+      "status": "D",
+      "path": "apps/server/tests/business.test.ts"
+    },
+    {
+      "status": "D",
+      "path": "apps/server/tests/business_connections.test.ts"
+    },
+    {
+      "status": "M",
+      "path": "apps/server/tests/company_budget_settings.test.ts"
+    },
+    {
+      "status": "D",
+      "path": "apps/server/tests/dream.test.ts"
+    },
+    {
+      "status": "D",
+      "path": "apps/server/tests/evolution_api.test.ts"
+    },
+    {
+      "status": "M",
+      "path": "apps/server/tests/fixtures/owner_goals.ts"
+    },
+    {
+      "status": "D",
+      "path": "apps/server/tests/gacha_service.test.ts"
+    },
+    {
+      "status": "D",
+      "path": "apps/server/tests/gene_promotion_snapshot.test.ts"
+    },
+    {
+      "status": "M",
+      "path": "apps/server/tests/generation_supervisor.test.ts"
+    },
+    {
+      "status": "M",
+      "path": "apps/server/tests/instance_extensions.test.ts"
+    },
+    {
+      "status": "M",
+      "path": "apps/server/tests/launcher.test.ts"
+    },
+    {
+      "status": "D",
+      "path": "apps/server/tests/life_inventory.test.ts"
+    },
+    {
+      "status": "D",
+      "path": "apps/server/tests/life_overview.test.ts"
+    },
+    {
+      "status": "D",
+      "path": "apps/server/tests/local_upgrade.test.ts"
+    },
+    {
+      "status": "M",
+      "path": "apps/server/tests/local_world_maintenance.test.ts"
+    },
+    {
+      "status": "D",
+      "path": "apps/server/tests/meeting_service.test.ts"
+    },
+    {
+      "status": "D",
+      "path": "apps/server/tests/migration_snapshot.test.ts"
+    },
+    {
+      "status": "D",
+      "path": "apps/server/tests/migration_snapshot_retry.test.ts"
+    },
+    {
+      "status": "M",
+      "path": "apps/server/tests/multi_world_generation.test.ts"
+    },
+    {
+      "status": "D",
+      "path": "apps/server/tests/owner_actions.test.ts"
+    },
+    {
+      "status": "M",
+      "path": "apps/server/tests/owner_automation_rollback.test.ts"
+    },
+    {
+      "status": "D",
+      "path": "apps/server/tests/owner_business_chat.test.ts"
+    },
+    {
+      "status": "D",
+      "path": "apps/server/tests/owner_chat.test.ts"
+    },
+    {
+      "status": "M",
+      "path": "apps/server/tests/owner_goal_scheduler.test.ts"
+    },
+    {
+      "status": "M",
+      "path": "apps/server/tests/owner_goals.test.ts"
+    },
+    {
+      "status": "M",
+      "path": "apps/server/tests/owner_overview_projection.test.ts"
+    },
+    {
+      "status": "D",
+      "path": "apps/server/tests/owner_version_process.test.ts"
+    },
+    {
+      "status": "M",
+      "path": "apps/server/tests/owner_work.test.ts"
+    },
+    {
+      "status": "M",
+      "path": "apps/server/tests/pixel_skills.test.ts"
+    },
+    {
+      "status": "M",
+      "path": "apps/server/tests/process_decoupling.test.ts"
+    },
+    {
+      "status": "M",
+      "path": "apps/server/tests/public_store.test.ts"
+    },
+    {
+      "status": "D",
+      "path": "apps/server/tests/qianji_chat.test.ts"
+    },
+    {
+      "status": "D",
+      "path": "apps/server/tests/qianji_service.test.ts"
+    },
+    {
+      "status": "D",
+      "path": "apps/server/tests/server.test.ts"
+    },
+    {
+      "status": "D",
+      "path": "apps/server/tests/server_rectification.test.ts"
+    },
+    {
+      "status": "M",
+      "path": "apps/server/tests/upgrade_web.test.ts"
+    },
+    {
+      "status": "M",
+      "path": "apps/server/tests/upgrade_web_process.test.ts"
+    },
+    {
+      "status": "M",
+      "path": "apps/server/tests/usdt_multi_chain.test.ts"
+    },
+    {
+      "status": "D",
+      "path": "apps/server/tests/v23_migration_dry_run.test.ts"
+    },
+    {
+      "status": "D",
+      "path": "apps/server/tests/v23_upgrade_approval.test.ts"
+    },
+    {
+      "status": "M",
+      "path": "apps/server/tests/v32_company.test.ts"
+    },
+    {
+      "status": "M",
+      "path": "apps/server/tests/v32_real_company.test.ts"
+    },
+    {
+      "status": "A",
+      "path": "apps/server/tests/v34_reset.test.ts"
+    },
+    {
+      "status": "M",
+      "path": "apps/server/tests/world_process_generation.test.ts"
+    },
+    {
+      "status": "D",
+      "path": "apps/server/tests/world_product_routes.test.ts"
+    },
+    {
+      "status": "A",
+      "path": "docs/V34_CHANGED_FILES.json"
+    },
+    {
+      "status": "A",
+      "path": "docs/V34_INSTANCE_VERIFICATION.json"
+    },
+    {
+      "status": "A",
+      "path": "docs/V34_REMOVAL_INVENTORY.md"
+    },
+    {
+      "status": "A",
+      "path": "docs/V34_REMOVED_FILES.json"
+    },
+    {
+      "status": "M",
+      "path": "docs/guides/OWNER_GUIDE.md"
+    },
+    {
+      "status": "A",
+      "path": "docs/guides/V34_RESET.md"
+    },
+    {
+      "status": "M",
+      "path": "frontend/index.html"
+    },
+    {
+      "status": "D",
+      "path": "frontend/src/App.tsx"
+    },
+    {
+      "status": "M",
+      "path": "frontend/src/Entry.tsx"
+    },
+    {
+      "status": "M",
+      "path": "frontend/src/OwnerEntry.tsx"
+    },
+    {
+      "status": "D",
+      "path": "frontend/src/api/files.ts"
+    },
+    {
+      "status": "D",
+      "path": "frontend/src/api/gacha.ts"
+    },
+    {
+      "status": "D",
+      "path": "frontend/src/api/meetings.ts"
+    },
+    {
+      "status": "M",
+      "path": "frontend/src/api/owner.ts"
+    },
+    {
+      "status": "D",
+      "path": "frontend/src/api/pixels.ts"
+    },
+    {
+      "status": "D",
+      "path": "frontend/src/api/prompts.ts"
+    },
+    {
+      "status": "D",
+      "path": "frontend/src/api/qianji.ts"
+    },
+    {
+      "status": "D",
+      "path": "frontend/src/api/run.ts"
+    },
+    {
+      "status": "D",
+      "path": "frontend/src/api/tools.ts"
+    },
+    {
+      "status": "D",
+      "path": "frontend/src/api/types.ts"
+    },
+    {
+      "status": "D",
+      "path": "frontend/src/api/world.ts"
+    },
+    {
+      "status": "D",
+      "path": "frontend/src/components/ErrorNotice.tsx"
+    },
+    {
+      "status": "D",
+      "path": "frontend/src/components/HelpModal.tsx"
+    },
+    {
+      "status": "D",
+      "path": "frontend/src/components/Modal.tsx"
+    },
+    {
+      "status": "A",
+      "path": "frontend/src/features/boss/BossBudget.tsx"
+    },
+    {
+      "status": "A",
+      "path": "frontend/src/features/boss/BossChat.tsx"
+    },
+    {
+      "status": "A",
+      "path": "frontend/src/features/boss/BossConsole.tsx"
+    },
+    {
+      "status": "A",
+      "path": "frontend/src/features/boss/BossPayment.tsx"
+    },
+    {
+      "status": "A",
+      "path": "frontend/src/features/boss/BossRecovery.tsx"
+    },
+    {
+      "status": "A",
+      "path": "frontend/src/features/boss/boss.css"
+    },
+    {
+      "status": "A",
+      "path": "frontend/src/features/boss/bossAttention.ts"
+    },
+    {
+      "status": "A",
+      "path": "frontend/src/features/boss/bossStorage.ts"
+    },
+    {
+      "status": "D",
+      "path": "frontend/src/features/business/BusinessHome.tsx"
+    },
+    {
+      "status": "D",
+      "path": "frontend/src/features/business/BusinessOutcomes.tsx"
+    },
+    {
+      "status": "D",
+      "path": "frontend/src/features/business/EvolutionPanel.tsx"
+    },
+    {
+      "status": "D",
+      "path": "frontend/src/features/business/PublicSiteSettings.tsx"
+    },
+    {
+      "status": "D",
+      "path": "frontend/src/features/business/StrategyHistory.tsx"
+    },
+    {
+      "status": "D",
+      "path": "frontend/src/features/business/UsdtPayments.tsx"
+    },
+    {
+      "status": "D",
+      "path": "frontend/src/features/business/V23Panel.tsx"
+    },
+    {
+      "status": "D",
+      "path": "frontend/src/features/business/business.css"
+    },
+    {
+      "status": "D",
+      "path": "frontend/src/features/business/business_api.ts"
+    },
+    {
+      "status": "D",
+      "path": "frontend/src/features/business/evolution/BodyLayer.tsx"
+    },
+    {
+      "status": "D",
+      "path": "frontend/src/features/business/evolution/EventStream.tsx"
+    },
+    {
+      "status": "D",
+      "path": "frontend/src/features/business/evolution/EvolutionLayer.tsx"
+    },
+    {
+      "status": "D",
+      "path": "frontend/src/features/business/evolution/GenomeLayer.tsx"
+    },
+    {
+      "status": "D",
+      "path": "frontend/src/features/business/evolution/LayerHeader.tsx"
+    },
+    {
+      "status": "D",
+      "path": "frontend/src/features/business/evolution/LifeArchitecture.tsx"
+    },
+    {
+      "status": "D",
+      "path": "frontend/src/features/business/evolution/TrustRootLayer.tsx"
+    },
+    {
+      "status": "D",
+      "path": "frontend/src/features/business/evolution/life.css"
+    },
+    {
+      "status": "D",
+      "path": "frontend/src/features/business/evolution/life_types.ts"
+    },
+    {
+      "status": "D",
+      "path": "frontend/src/features/business/read_table.ts"
+    },
+    {
+      "status": "D",
+      "path": "frontend/src/features/engine/EngineView.tsx"
+    },
+    {
+      "status": "D",
+      "path": "frontend/src/features/engine/WorldEngine.tsx"
+    },
+    {
+      "status": "D",
+      "path": "frontend/src/features/environment/EnvironmentEditor.tsx"
+    },
+    {
+      "status": "D",
+      "path": "frontend/src/features/files/ArtifactBrowser.tsx"
+    },
+    {
+      "status": "D",
+      "path": "frontend/src/features/files/FilePreview.tsx"
+    },
+    {
+      "status": "D",
+      "path": "frontend/src/features/files/PrivateFileBrowser.tsx"
+    },
+    {
+      "status": "D",
+      "path": "frontend/src/features/gacha/GachaView.tsx"
+    },
+    {
+      "status": "D",
+      "path": "frontend/src/features/hall/ApprovalPanel.tsx"
+    },
+    {
+      "status": "D",
+      "path": "frontend/src/features/hall/QianJiHall.tsx"
+    },
+    {
+      "status": "D",
+      "path": "frontend/src/features/meetings/MeetingView.tsx"
+    },
+    {
+      "status": "M",
+      "path": "frontend/src/features/owner/CompanyProposalCard.tsx"
+    },
+    {
+      "status": "D",
+      "path": "frontend/src/features/owner/OwnerActionCard.tsx"
+    },
+    {
+      "status": "D",
+      "path": "frontend/src/features/owner/OwnerActivity.tsx"
+    },
+    {
+      "status": "D",
+      "path": "frontend/src/features/owner/OwnerBudget.tsx"
+    },
+    {
+      "status": "D",
+      "path": "frontend/src/features/owner/OwnerChat.tsx"
+    },
+    {
+      "status": "D",
+      "path": "frontend/src/features/owner/OwnerConsole.tsx"
+    },
+    {
+      "status": "D",
+      "path": "frontend/src/features/owner/OwnerDashboard.tsx"
+    },
+    {
+      "status": "D",
+      "path": "frontend/src/features/owner/OwnerExtensions.tsx"
+    },
+    {
+      "status": "D",
+      "path": "frontend/src/features/owner/OwnerInbox.tsx"
+    },
+    {
+      "status": "D",
+      "path": "frontend/src/features/owner/OwnerStatus.tsx"
+    },
+    {
+      "status": "D",
+      "path": "frontend/src/features/owner/OwnerTaskBoard.tsx"
+    },
+    {
+      "status": "D",
+      "path": "frontend/src/features/owner/OwnerWork.tsx"
+    },
+    {
+      "status": "D",
+      "path": "frontend/src/features/owner/owner.css"
+    },
+    {
+      "status": "M",
+      "path": "frontend/src/features/owner/ownerPresentation.ts"
+    },
+    {
+      "status": "D",
+      "path": "frontend/src/features/pixels/HeartbeatLightning.ts"
+    },
+    {
+      "status": "D",
+      "path": "frontend/src/features/pixels/PixelDetails.tsx"
+    },
+    {
+      "status": "D",
+      "path": "frontend/src/features/pixels/PixelHoverTooltip.tsx"
+    },
+    {
+      "status": "D",
+      "path": "frontend/src/features/pixels/PixelListPanel.tsx"
+    },
+    {
+      "status": "D",
+      "path": "frontend/src/features/pixels/PixelMapCanvas.tsx"
+    },
+    {
+      "status": "D",
+      "path": "frontend/src/features/pixels/PixelMapRenderer.ts"
+    },
+    {
+      "status": "D",
+      "path": "frontend/src/features/pixels/PixelOperations.tsx"
+    },
+    {
+      "status": "D",
+      "path": "frontend/src/features/prompts/PromptEditor.tsx"
+    },
+    {
+      "status": "M",
+      "path": "frontend/src/features/public/BackendLogin.tsx"
+    },
+    {
+      "status": "M",
+      "path": "frontend/src/features/public/Checkout.tsx"
+    },
+    {
+      "status": "M",
+      "path": "frontend/src/features/public/PublicApp.tsx"
+    },
+    {
+      "status": "D",
+      "path": "frontend/src/features/qianji/QianjiCard.tsx"
+    },
+    {
+      "status": "D",
+      "path": "frontend/src/features/qianji/QianjiChatPanel.tsx"
+    },
+    {
+      "status": "D",
+      "path": "frontend/src/features/qianji/QianjiNarrativeEditor.tsx"
+    },
+    {
+      "status": "D",
+      "path": "frontend/src/features/qianji/QianjiProfilePanel.tsx"
+    },
+    {
+      "status": "D",
+      "path": "frontend/src/features/qianji/TechGoggleAvatar.tsx"
+    },
+    {
+      "status": "D",
+      "path": "frontend/src/features/qianji/WorldSummary.tsx"
+    },
+    {
+      "status": "D",
+      "path": "frontend/src/features/run/ConsolePanel.tsx"
+    },
+    {
+      "status": "D",
+      "path": "frontend/src/features/run/RecoveryOperations.tsx"
+    },
+    {
+      "status": "D",
+      "path": "frontend/src/features/run/RunControls.tsx"
+    },
+    {
+      "status": "D",
+      "path": "frontend/src/features/run/RunStatus.tsx"
+    },
+    {
+      "status": "D",
+      "path": "frontend/src/features/run/commandParser.ts"
+    },
+    {
+      "status": "D",
+      "path": "frontend/src/features/run/runStatusLabels.ts"
+    },
+    {
+      "status": "D",
+      "path": "frontend/src/features/tools/ToolCatalog.tsx"
+    },
+    {
+      "status": "D",
+      "path": "frontend/src/features/tools/ToolExecutionHistory.tsx"
+    },
+    {
+      "status": "D",
+      "path": "frontend/src/hooks/usePixelTips.ts"
+    },
+    {
+      "status": "D",
+      "path": "frontend/src/hooks/useQianjiPolling.ts"
+    },
+    {
+      "status": "D",
+      "path": "frontend/src/hooks/useWorldPolling.ts"
+    },
+    {
+      "status": "A",
+      "path": "frontend/src/i18n/boss.ts"
+    },
+    {
+      "status": "M",
+      "path": "frontend/src/i18n/en.ts"
+    },
+    {
+      "status": "M",
+      "path": "frontend/src/i18n/zh-CN.ts"
+    },
+    {
+      "status": "M",
+      "path": "frontend/src/main.tsx"
+    },
+    {
+      "status": "A",
+      "path": "frontend/src/styles/base.css"
+    },
+    {
+      "status": "D",
+      "path": "frontend/src/styles/index.css"
+    },
+    {
+      "status": "D",
+      "path": "frontend/tests/app_navigation.test.tsx"
+    },
+    {
+      "status": "A",
+      "path": "frontend/tests/boss.test.tsx"
+    },
+    {
+      "status": "D",
+      "path": "frontend/tests/business.test.tsx"
+    },
+    {
+      "status": "D",
+      "path": "frontend/tests/command_parser.test.ts"
+    },
+    {
+      "status": "D",
+      "path": "frontend/tests/console_panel.test.tsx"
+    },
+    {
+      "status": "D",
+      "path": "frontend/tests/engine_documents.test.tsx"
+    },
+    {
+      "status": "D",
+      "path": "frontend/tests/evolution.test.tsx"
+    },
+    {
+      "status": "D",
+      "path": "frontend/tests/file_preview.test.tsx"
+    },
+    {
+      "status": "A",
+      "path": "frontend/tests/fixtures/boss.ts"
+    },
+    {
+      "status": "A",
+      "path": "frontend/tests/fixtures/owner_flow.ts"
+    },
+    {
+      "status": "D",
+      "path": "frontend/tests/gacha_view.test.tsx"
+    },
+    {
+      "status": "D",
+      "path": "frontend/tests/owner_budget.test.tsx"
+    },
+    {
+      "status": "D",
+      "path": "frontend/tests/owner_chat.test.tsx"
+    },
+    {
+      "status": "D",
+      "path": "frontend/tests/owner_console.test.tsx"
+    },
+    {
+      "status": "D",
+      "path": "frontend/tests/owner_dashboard.test.tsx"
+    },
+    {
+      "status": "M",
+      "path": "frontend/tests/owner_entry.test.tsx"
+    },
+    {
+      "status": "D",
+      "path": "frontend/tests/owner_extensions.test.tsx"
+    },
+    {
+      "status": "D",
+      "path": "frontend/tests/owner_goals.test.tsx"
+    },
+    {
+      "status": "D",
+      "path": "frontend/tests/owner_work.test.tsx"
+    },
+    {
+      "status": "D",
+      "path": "frontend/tests/pixel_api.test.ts"
+    },
+    {
+      "status": "D",
+      "path": "frontend/tests/pixel_operations.test.tsx"
+    },
+    {
+      "status": "D",
+      "path": "frontend/tests/pixel_renderer.test.ts"
+    },
+    {
+      "status": "D",
+      "path": "frontend/tests/prompt_editor.test.tsx"
+    },
+    {
+      "status": "D",
+      "path": "frontend/tests/public_checkout.test.tsx"
+    },
+    {
+      "status": "D",
+      "path": "frontend/tests/public_entry.test.tsx"
+    },
+    {
+      "status": "M",
+      "path": "frontend/tests/public_shop.test.tsx"
+    },
+    {
+      "status": "D",
+      "path": "frontend/tests/qianji_energy.test.tsx"
+    },
+    {
+      "status": "D",
+      "path": "frontend/tests/qianji_hall.test.tsx"
+    },
+    {
+      "status": "D",
+      "path": "frontend/tests/qianji_panels.test.tsx"
+    },
+    {
+      "status": "D",
+      "path": "frontend/tests/qianji_scope.test.tsx"
+    },
+    {
+      "status": "D",
+      "path": "frontend/tests/read_failures.test.tsx"
+    },
+    {
+      "status": "D",
+      "path": "frontend/tests/release_tool_catalog.test.tsx"
+    },
+    {
+      "status": "D",
+      "path": "frontend/tests/run_controls.test.tsx"
+    },
+    {
+      "status": "D",
+      "path": "frontend/tests/run_rectification.test.tsx"
+    },
+    {
+      "status": "D",
+      "path": "frontend/tests/run_status.test.tsx"
+    },
+    {
+      "status": "D",
+      "path": "frontend/tests/run_status_labels.test.ts"
+    },
+    {
+      "status": "D",
+      "path": "frontend/tests/usdt_payments.test.tsx"
+    },
+    {
+      "status": "D",
+      "path": "frontend/tests/use_pixel_tips.test.tsx"
+    },
+    {
+      "status": "D",
+      "path": "frontend/tests/use_world_polling.test.tsx"
+    },
+    {
+      "status": "D",
+      "path": "frontend/tests/world_engine.test.tsx"
+    },
+    {
+      "status": "M",
+      "path": "packages/domain/src/index.ts"
+    },
+    {
+      "status": "D",
+      "path": "packages/domain/src/qianji/gacha.ts"
+    },
+    {
+      "status": "D",
+      "path": "packages/domain/src/qianji/gacha_prompt.ts"
+    },
+    {
+      "status": "D",
+      "path": "packages/domain/tests/gacha.test.ts"
+    },
+    {
+      "status": "D",
+      "path": "packages/persistence/src/business_evidence.ts"
+    },
+    {
+      "status": "D",
+      "path": "packages/persistence/src/business_store.ts"
+    },
+    {
+      "status": "M",
+      "path": "packages/persistence/src/core_store.ts"
+    },
+    {
+      "status": "M",
+      "path": "packages/persistence/src/index.ts"
+    },
+    {
+      "status": "M",
+      "path": "packages/persistence/src/lineage_store.ts"
+    },
+    {
+      "status": "D",
+      "path": "packages/persistence/src/migrations/business_schema.ts"
+    },
+    {
+      "status": "M",
+      "path": "packages/persistence/src/migrations/current_schema.ts"
+    },
+    {
+      "status": "M",
+      "path": "packages/persistence/src/migrations/init_schema.ts"
+    },
+    {
+      "status": "M",
+      "path": "packages/persistence/src/migrations/lineage_schema.ts"
+    },
+    {
+      "status": "D",
+      "path": "packages/persistence/src/migrations/world_life_schema.ts"
+    },
+    {
+      "status": "D",
+      "path": "packages/persistence/src/repositories/gacha_repository.ts"
+    },
+    {
+      "status": "D",
+      "path": "packages/persistence/src/repositories/qianji_chat_repository.ts"
+    },
+    {
+      "status": "M",
+      "path": "packages/persistence/src/repositories/qianji_repository.ts"
+    },
+    {
+      "status": "M",
+      "path": "packages/persistence/tests/core_store.test.ts"
+    },
+    {
+      "status": "D",
+      "path": "packages/persistence/tests/life.test.ts"
+    },
+    {
+      "status": "M",
+      "path": "packages/persistence/tests/persistence_rectification.test.ts"
+    },
+    {
+      "status": "M",
+      "path": "packages/persistence/tests/qianji_repository.test.ts"
+    },
+    {
+      "status": "M",
+      "path": "packages/protocol/src/types/owner.ts"
+    },
+    {
+      "status": "M",
+      "path": "packages/runtime/src/effects/effect_runtime.ts"
+    },
+    {
+      "status": "M",
+      "path": "packages/runtime/tests/effect_runtime.test.ts"
+    },
+    {
+      "status": "M",
+      "path": "resources/config/company_protocol.json"
+    },
+    {
+      "status": "D",
+      "path": "scripts/automation-supervisor.mjs"
+    },
+    {
+      "status": "D",
+      "path": "scripts/business-maintenance.mjs"
+    },
+    {
+      "status": "D",
+      "path": "scripts/inherit-approved-gene.mjs"
+    },
+    {
+      "status": "M",
+      "path": "scripts/launch-approved.mjs"
+    },
+    {
+      "status": "D",
+      "path": "scripts/life-core-dry-run.mjs"
+    },
+    {
+      "status": "D",
+      "path": "scripts/life-inventory.mjs"
+    },
+    {
+      "status": "D",
+      "path": "scripts/life-migrate.mjs"
+    },
+    {
+      "status": "M",
+      "path": "scripts/local-release.mjs"
+    },
+    {
+      "status": "D",
+      "path": "scripts/local-upgrade.mjs"
+    },
+    {
+      "status": "D",
+      "path": "scripts/migrate-qianji.ts"
+    },
+    {
+      "status": "M",
+      "path": "scripts/v23-approved-release.mjs"
+    },
+    {
+      "status": "M",
+      "path": "scripts/v23-generation.mjs"
+    },
+    {
+      "status": "D",
+      "path": "scripts/v23-migration-dry-run.mjs"
+    },
+    {
+      "status": "D",
+      "path": "scripts/v23-upgrade.mjs"
+    },
+    {
+      "status": "D",
+      "path": "scripts/v23-world-migrate.mjs"
+    },
+    {
+      "status": "A",
+      "path": "scripts/v34-reset-workspace.mjs"
+    },
+    {
+      "status": "M",
+      "path": "scripts/version-upgrade.mjs"
+    },
+    {
+      "status": "M",
+      "path": "supervisor/candidate_harness.mjs"
+    },
+    {
+      "status": "M",
+      "path": "supervisor/generation_supervisor.ts"
+    },
+    {
+      "status": "M",
+      "path": "supervisor/instance_compatibility.ts"
+    },
+    {
+      "status": "M",
+      "path": "supervisor/local_world_runtime.ts"
+    },
+    {
+      "status": "M",
+      "path": "supervisor/owner_automation_compatibility.ts"
+    },
+    {
+      "status": "M",
+      "path": "supervisor/payment_compatibility.ts"
+    }
+  ]
+}

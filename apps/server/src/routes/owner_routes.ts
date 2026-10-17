@@ -20,10 +20,9 @@ export function registerOwnerRoutes(app:FastifyInstance, overview:OwnerOverviewS
   if(gate){
     const goals=gate.goals;
     app.post('/owner/budget',req=>{
-      if(maintenance?.switching?.())throw Object.assign(new Error('EVOLUTION_QUIESCED'),{statusCode:409});
       const input=req.body as any;exactKeys(input,['tokenMillions','unitPrice','priceCurrency','expectedRevision','idempotencyKey']);
       const {idempotencyKey}=input,settings={tokenMillions:input.tokenMillions,unitPrice:input.unitPrice,priceCurrency:input.priceCurrency,expectedRevision:input.expectedRevision};
-      return goals.request(idempotencyKey,{budget:settings},()=>gate.budget.configure(settings));
+      return goals.request(idempotencyKey,{budget:settings},()=>{if(maintenance?.switching?.())throw Object.assign(new Error('EVOLUTION_QUIESCED'),{statusCode:409});return gate.budget.configure(settings);});
     });
     app.get('/owner/proposals',()=>({items:gate.proposals.list()}));
     app.post<{Params:{id:string}}>('/owner/proposals/:id/decision',async req=>{const p=gate.proposals.decide(req.params.id,req.body);return p;});
@@ -32,7 +31,8 @@ export function registerOwnerRoutes(app:FastifyInstance, overview:OwnerOverviewS
     app.get<{Params:{id:string}}>('/owner/goals/:id',req=>goals.detail(req.params.id));
     app.get<{Params:{id:string;evidenceId:string}}>('/owner/goals/:id/evidence/:evidenceId',async(req,reply)=>{
       const evidence=goals.detail(req.params.id).evidence.find(e=>e.id===req.params.evidenceId&&e.kind==='artifact');
-      if(!evidence?.worldId||!work)return reply.status(404).send({detail:'OWNER_EVIDENCE_NOT_FOUND'});
+      if(!evidence||!work)return reply.status(404).send({detail:'OWNER_EVIDENCE_NOT_FOUND'});
+      if(!evidence.worldId)return reply.type('text/plain; charset=utf-8').header('Content-Security-Policy',"default-src 'none'; sandbox").send(work.artifacts.read(evidence));
       const root=work.manager.registry.directory(evidence.worldId),parts=evidence.reference.split('/');
       if(parts[0]!=='evidence'||parts.some(p=>!p||p==='.'||p==='..'||/[\\:]/.test(p)))return reply.status(409).send({detail:'OWNER_EVIDENCE_CHANGED'});
       let file=root;for(const part of parts){file=path.join(file,part);if(!fs.existsSync(file)||fs.lstatSync(file).isSymbolicLink())return reply.status(409).send({detail:'OWNER_EVIDENCE_CHANGED'});}
@@ -51,16 +51,37 @@ export function registerOwnerRoutes(app:FastifyInstance, overview:OwnerOverviewS
       gate.control(req.body);return gate.view();
     });
   }
-  app.get('/owner/overview',()=>overview.overview());
+  app.get('/boss/overview',()=>overview.bossOverview());
+  app.get('/boss/company',()=>overview.overview());
+  app.get('/owner/execution-recovery',()=>work?.recovery?.view()??{attempts:[],holds:[]});
+  if(work?.recovery){
+    app.post<{Params:{id:string}}>('/owner/execution-recovery/:id/abandon',req=>work.recovery!.abandon(req.params.id,req.body));
+    app.post<{Params:{id:string}}>('/owner/safety-holds/:id/acknowledge',req=>work.recovery!.acknowledge(req.params.id,req.body));
+  }
   app.post('/owner/chat',async(req,reply)=>{
     const b=req.body as any;
     if(typeof b?.question!=='string'||!b.question.trim()||b.question.length>2000||!Array.isArray(b.history)||b.history.length>12||b.history.some((t:any)=>!t||!['user','assistant'].includes(t.role)||typeof t.content!=='string'||t.content.length>4000)||!['en','zh-CN'].includes(b.language))
       return reply.status(400).send({detail:'INVALID_OWNER_CHAT'});
-    if(b.requestKey!==undefined&&(!/^[a-zA-Z0-9_-]{1,128}$/.test(b.requestKey)||typeof b.requestKey!=='string'))return reply.status(400).send({detail:'INVALID_OWNER_CHAT'});
+    if(typeof b.requestKey!=='string'||!/^[a-zA-Z0-9_-]{1,128}$/.test(b.requestKey))return reply.status(400).send({detail:'INVALID_OWNER_CHAT'});
     if(work&&b.requestKey){const cached=work.cached(b.requestKey,b.question,b.history,b.language);if(cached)return cached;}
     const command = b.question.trim().replace(/[。.!！]+$/, '');
     const controlKey=`chat_control_${createHash('sha256').update(b.requestKey??'').digest('hex')}`;
     const controlPayload={question:b.question,history:b.history,language:b.language};
+    const decide=/^(批准|拒绝|approve|reject)\s*(?:(?=proposal_)|(?:提案|方案)\s*|(?:proposal|plan)\s+)(.+)$/i.exec(command);
+    if(gate&&b.requestKey&&decide){
+      return gate.goals.request(controlKey,controlPayload,()=>{
+        const key=decide[2]!.trim(),matches=gate.proposals.list().filter(p=>p.state==='PENDING'&&(p.id===key||p.payload.title===key));
+        if(matches.length!==1)return {answer:b.language==='en'?'Specify one pending proposal ID or its exact title.':'请指定唯一待决提案 ID 或准确标题。',sources:['owner_company_proposals'],as_of:new Date().toISOString(),usage:{tokens:0,cost_cny:0}};
+        const proposal=matches[0]!,decision=/^(批准|approve)$/i.test(decide[1]!)?'approve':'reject';
+        const result=gate.proposals.decide(proposal.id,{decision,hash:proposal.hash,idempotencyKey:`decision_${controlKey}`});
+        return {answer:b.language==='en'?'Your decision is recorded. Execution and verified completion are separate facts.':'决定已记录。执行与核验完成仍是分别记录的事实。',companyProposal:result,sources:['owner_company_proposals'],as_of:new Date().toISOString(),usage:{tokens:0,cost_cny:0}};
+      });
+    }
+    if(/^(?:当前最大的阻碍是什么|当前最大阻碍|what is the biggest blocker\??)$/i.test(command)){
+      const facts=await overview.bossOverview(),first=facts.alerts?.find(a=>a.severity==='critical')??facts.alerts?.[0];
+      const answer=first?`${first.summary} ${first.reasonKey??first.title}`:facts.budget?.activatedAt===null?(b.language==='en'?'The company budget is not authorized. Open the budget message to set an explicit allowance.':'公司预算尚未授权，请从首页预算消息设置明确额度。'):b.language==='en'?'No persisted blocker is recorded.':'当前没有已记录的阻碍。';
+      return {answer,sources:['owner_company_budget','owner_goals','runtime recovery'],as_of:new Date(facts.asOf).toISOString(),usage:{tokens:0,cost_cny:0}};
+    }
     if (gate && b.requestKey && /^(?:先|请)?(?:暂停|暂停公司|停止运行|暂停自动经营)$|^(?:please )?(?:pause|pause company|stop running)$/i.test(command)) {
       if(/^(?:先|请)?暂停$|^(?:please )?pause$/i.test(command)&&gate.goals.list().filter(g=>!['COMPLETED','STOPPED','ARCHIVED'].includes(g.status)).length>1)return {answer:b.language==='en'?'Specify the task name, or say “pause company”.':'请说明要暂停的任务名称，或明确说“暂停公司”。',usage:{tokens:0,cost_cny:0},sources:['owner_goals'],as_of:new Date().toISOString()};
       return gate.goals.request(controlKey,controlPayload,()=>{
@@ -127,7 +148,7 @@ export function registerOwnerRoutes(app:FastifyInstance, overview:OwnerOverviewS
 
         return response;
       }
-      assertModelReady();gate.ensureRunning('owner_chat',0,'initial');
+      assertModelReady();gate.assertOn();
     }
     const data=await overview.overview(), proposal=proposeOwnerAction(b.question.trim(),data,b.language);
     const hire=proposal?.proposals[0]?.action;
@@ -141,10 +162,9 @@ export function registerOwnerRoutes(app:FastifyInstance, overview:OwnerOverviewS
     }
     if(proposal)return {...proposal,sources:['Owner overview / existing approval contracts'],as_of:new Date(data.asOf).toISOString(),usage:{tokens:0,cost_cny:0}};
     if(!chat)return reply.status(409).send({detail:'MODEL_NOT_CONFIGURED'});
-    return chat.ask(b.question,b.history,b.language);
+    return reply.status(409).send({detail:'OWNER_COMPANY_CONTROL_REQUIRED'});
   });
   if(work){
-    app.get('/owner/work',()=>work.view());
     app.get<{Params:{id:string}}>('/owner/code-reports/:id',async(req,reply)=>{try{return work.code?.get(req.params.id)??reply.status(404).send({detail:'APP_CODE_REPORT_NOT_FOUND'});}catch{return reply.status(404).send({detail:'APP_CODE_REPORT_NOT_FOUND'});}});
     app.post<{Params:{id:string}}>('/owner/requests/:id/decision',async(req,reply)=>{
       const b=req.body as any;if(!b||Object.keys(b).some(k=>!['decision','hash'].includes(k))||!['approve','reject'].includes(b.decision)||typeof b.hash!=='string')return reply.status(400).send({detail:'OWNER_REQUEST_INVALID'});

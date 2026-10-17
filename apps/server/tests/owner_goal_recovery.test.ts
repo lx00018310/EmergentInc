@@ -30,7 +30,8 @@ describe('V29 actual process crash recovery',()=>{
   },15000);
   it('does not resend a request killed after dispatch or release its unknown token reservation',async()=>{
     const f=await crash('unknown'),reserved=f.gate.view().reservedTokens;expect(reserved).toBeGreaterThan(0);
-    await f.manager.resumeInterrupted();await f.scheduler.tick();expect(f.calls).toHaveLength(0);expect(f.gate.view()).toMatchObject({observedState:'BLOCKED',reservedTokens:reserved});
-    expect(()=>f.gate.control({desiredMode:'ON',runMode:'BOUNDED',requestedRounds:7,expectedRevision:f.gate.view().revision,idempotencyKey:crypto.randomUUID()})).toThrow('OWNER_OUTCOME_REVIEW_REQUIRED');
+    await f.manager.resumeInterrupted();await f.work.tick();await f.scheduler.tick();expect(f.calls).toHaveLength(0);expect(f.gate.view()).toMatchObject({desiredMode:'ON',observedState:'IDLE',reservedTokens:reserved});
+    expect(f.gate.goals.get(f.goal.id).status).toBe('BLOCKED');expect(f.gate.scopeBlocked(f.ready.worldId)).toBe(true);
+    await expect(f.runtime.run.start({rounds:1})).rejects.toThrow('OWNER_OUTCOME_REVIEW_REQUIRED');expect(f.calls).toHaveLength(0);
   },15000);
 });

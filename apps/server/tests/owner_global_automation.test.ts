@@ -41,20 +41,20 @@ describe('V29 global permits',()=>{
     expect(gate.view()).toMatchObject({startedRounds:30,reservedRounds:0,completedRounds:20});
     gate.enforceLimits();expect(gate.view()).toMatchObject({desiredMode:'ON',runMode:'CONTINUOUS',requestedRounds:null});expect(()=>gate.reserveRun('world','extra',1,1)).not.toThrow();gate.cancelRun('extra');
   },60000);
-  it('holds unknown model charges after a timeout and refuses restart or budget reset',async()=>{
+  it('holds unknown model charges after a timeout without changing the company intent',async()=>{
     const f=goalFixture();cleanups.push(f.close);f.on();f.respond(async()=>{throw new OutcomeUnknownError('Connection reset after dispatch');});
     const provider=f.gate.provider(f.provider,f.meter);await expect(provider.call({model:'test',messages:[{role:'user',content:'Test'}],promptHash:'hash',maxTokens:200})).rejects.toThrow();
-    expect(f.gate.view()).toMatchObject({desiredMode:'OFF',observedState:'BLOCKED'});expect(f.gate.view().reservedTokens).toBeGreaterThan(0);expect(()=>f.on()).toThrow('OWNER_OUTCOME_REVIEW_REQUIRED');expect(f.calls).toHaveLength(1);
+    expect(f.gate.view()).toMatchObject({desiredMode:'ON',observedState:'IDLE'});expect(f.gate.view().reservedTokens).toBeGreaterThan(0);expect(()=>f.on()).not.toThrow();expect(f.calls).toHaveLength(1);expect(f.gate.budget.view().unknownCalls).toBe(1);
   });
   it('does not treat missing prices/usage as free work and does not permit maintenance to be awakened',async()=>{
     const f=goalFixture();cleanups.push(f.close);f.on();f.maintenance(true);await expect(f.gate.provider(f.provider,f.meter).call({model:'test',messages:[],promptHash:'x',maxTokens:10})).rejects.toThrow('EVOLUTION_QUIESCED');
     f.maintenance(false);await expect(f.gate.provider(f.provider,f.meter).call({model:'missing',messages:[],promptHash:'x',maxTokens:10})).rejects.toThrow('MODEL_PRICE_REQUIRED');expect(f.calls).toHaveLength(0);
-    f.respond(async()=>({rawText:'Unknown usage'}));await f.gate.provider(f.provider,f.meter).call({model:'test',messages:[],promptHash:'x',maxTokens:10});expect(f.gate.view()).toMatchObject({desiredMode:'OFF',observedState:'BLOCKED'});
+    f.respond(async()=>({rawText:'Unknown usage'}));await f.gate.provider(f.provider,f.meter).call({model:'test',messages:[],promptHash:'x',maxTokens:10});expect(f.gate.view()).toMatchObject({desiredMode:'ON',observedState:'IDLE'});expect(f.gate.budget.view().unknownCalls).toBe(1);expect(f.gate.budget.view().reservedMicros).toBeGreaterThan(0);
   });
-  it('requires actual reconciliation and an explicit resume after an unknown bill, without renewing historical usage',async()=>{
+  it('requires actual reconciliation for an unknown bill and preserves a separate manual pause',async()=>{
     const f=goalFixture();cleanups.push(f.close);f.on();f.respond(async()=>{throw new OutcomeUnknownError('Disconnected after dispatch');});
     await expect(f.gate.provider(f.provider,f.meter).call({model:'test',messages:[],promptHash:'unknown',maxTokens:200})).rejects.toThrow();
-    expect(()=>f.gate.ensureRunning('resume',0,'resume')).toThrow('OWNER_OUTCOME_REVIEW_REQUIRED');
+    f.off();expect(f.gate.ensureRunning('scheduler').desiredMode).toBe('OFF');
     const permit=f.gate.modelCalls()[0];f.gate.reconcileCall(String(permit.id),{actualTokens:30,costCny:0.1,reason:'Owner verified actual provider billing evidence',expectedRevision:f.gate.view().revision,idempotencyKey:crypto.randomUUID()});
     f.gate.ensureRunning('scheduler');expect(f.gate.view()).toMatchObject({desiredMode:'OFF',reason:null,observedState:'STOPPED'});
     f.gate.ensureRunning('explicit_owner_resume',0,'resume');expect(f.gate.view()).toMatchObject({desiredMode:'ON',maxTokens:0,spentTokens:30,reservedTokens:0});

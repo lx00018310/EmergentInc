@@ -1,4 +1,5 @@
 import type { BusinessPlanView } from './business.js';
+import type { CompanyAttempt } from './company_execution.js';
 
 export type OwnerAction =
   | { type: 'open_details'; href: string }
@@ -15,16 +16,21 @@ export interface OwnerInboxItem {
   approveEffect?: string; rejectEffect?: string;
   approveEffectValues?: (string | number)[]; rejectEffectValues?: (string | number)[];
 }
-export interface OwnerAlert { id: string; kind: string; severity: 'normal' | 'critical'; title: string; summary: string; reasonKey?:string; createdAt: number | null; source: string; href: string }
+export interface OwnerAlert { id: string; kind: string; severity: 'normal' | 'critical'; title: string; summary: string; reasonKey?:string; createdAt: number | null; source: string; href: string; goalId?: string; taskId?: string; runId?: string; attemptId?: string; worldId?: string }
 export interface OwnerActivityItem { id: string; type: string; summary: string; summaryKey?: string; summaryValues?: (string | number)[]; createdAt: number; source: string; href: string }
 export interface OwnerPerson { id: string; name: string; worldId: string; status: string; running: boolean; runStatus: string; runId?: string | null; role?: string | null; behaviorProfile?: string[]; infiniteEnergy?: boolean; gatewayPixelId?: string | null; round?: number; energy?: number; pixels?: unknown[] }
 export interface OwnerWorkTask {
+  attempt?: CompanyAttempt;
   goalId?: string | null;
+  /** Read-only joins to existing dispatch and occurrence records. */
+  goalRevision?: number; planRevision?: number; nodeKey?: string; occurrenceId?: string;
+  dispatchId?: string; dispatchState?: string; occurrenceState?: string; scheduledAt?: number;
   id: string; personId: string; personName: string; instruction: string;
   state: 'QUEUED' | 'RUNNING' | 'REPLIED' | 'BLOCKED' | 'NO_REPLY' | 'FAILED';
   turnId: string | null; runId: string | null; reply: string | null; reason: string | null; createdAt: number; updatedAt: number;
 }
 export interface OwnerRecruitRequest {
+  goalId?: string; goalRevision?: number; nodeKey?: string;
   id: string; hash: string; requester: string; role: string; reason: string; instruction: string;
   state: 'PENDING' | 'APPROVED_QUEUED' | 'APPROVED' | 'REJECTED' | 'CANCELLED'; personId: string | null; createdAt: number;
 }
@@ -54,6 +60,17 @@ export interface OwnerOverview {
   work?: OwnerWork;
 }
 
+/** V34 public-to-Owner projection; runtime identities and full worker logs stay internal. */
+export interface BossOverview extends Pick<OwnerOverview, 'asOf' | 'automation' | 'budget' | 'proposals' | 'inbox' | 'alerts' | 'costs' | 'storefront'> {
+  goals?: Pick<OwnerGoal,'id'|'title'|'status'|'updatedAt'>[];
+  instanceId: string;
+  modelConfigured: boolean;
+  paymentConfigured: boolean;
+  paidOrderCount: number;
+  revenue: { id: string; asset: string; amount: string; at: number }[];
+  events: { id: string; kind: 'product' | 'payment' | 'goal'; title: string; at: number; reference: string }[];
+}
+
 export type OwnerGoalStatus = 'DRAFT' | 'READY' | 'RUNNING' | 'WAITING_APPROVAL' | 'WAITING_RESOURCE' | 'PAUSED' | 'BLOCKED' | 'FAILED' | 'COMPLETED' | 'STOPPED' | 'ARCHIVED';
 /** Only an artifact hash can satisfy artifact acceptance; reports are never business evidence. */
 export type OwnerGoalAcceptance = { kind: 'artifact'; filename: string; minBytes: number } | { kind: 'manual'; description: string } | {kind:'confirmed_payments';invoiceIds:string[];targetCount:number};
@@ -79,7 +96,7 @@ export interface OwnerRunReport { asOf:number; automation:OwnerAutomation; goals
 
 export const COMPANY_BUDGET_USD_CNY = 7;
 export interface CompanyBudget { configuration?:{tokenMillions:number;unitPriceCnyMicros:number}|null;needsRefill?:boolean;currency:'CNY'; totalMicros:number; spentMicros:number; reservedMicros:number; availableMicros:number; revision:number; activatedAt:number|null; unknownCalls:number; historicalCostMicros?:number }
-export interface CompanyProposal { id:string; kind:'budget'|'task_plan'|'close_task'; goalId:string|null; goalRevision:number|null; hash:string; payload:any; state:'PENDING'|'APPROVED'|'REJECTED'|'EXECUTED'; createdAt:number; result:any }
+export interface CompanyProposal { id:string; kind:'budget'|'task_plan'|'close_task'; goalId:string|null; goalRevision:number|null; hash:string; payload:any; state:'PENDING'|'APPROVED'|'REJECTED'|'EXECUTED'|'EXPIRED'; createdAt:number; result:any }
 export type TaskTrigger = {kind:'once'} | {kind:'continuous'} | {kind:'interval';everyMinutes:number} | {kind:'daily'|'weekly';time:string;timezone:string;weekdays?:number[]};
 export interface CompanyTaskNode { key:string; title:string; instruction:string; dependsOn:string[]; trigger:TaskTrigger; filename:string; personId?:string }
 export interface CompanyTaskPlan { summary:string; nodes:CompanyTaskNode[] }

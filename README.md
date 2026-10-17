@@ -1,181 +1,89 @@
-English | [中文](README_CN.md)
+<div align="center">
 
-# EmergentInc
+# BOSS:/AFK
 
-**The open-source AI engine that helps anyone start and run an online business.**
+### The boss is away. The business is alive.
 
-**Beyond chatbots. Autonomous AI that executes operations, self-upgrades, and delivers real business value.**
+**甩手掌柜 · 老板不在，生意还在。**
 
-You describe business goals, run or pause the company, and handle exceptions. EmergentInc provides autonomous AI characters and Pixels that explore opportunities, build products, run marketing, serve customers, accept crypto payments, and continuously evolve through real business activity.
+Give the company a goal. Review the decisions that matter.
 
-100% open source. Clone, configure, and run.
+[中文](README_CN.md) · [Owner guide](docs/guides/OWNER_GUIDE.md) · [V34 reset guide](docs/guides/V34_RESET.md) · [EmergentInc](https://github.com/lx00018310/EmergentInc)
 
-![EmergentInc Architecture](Imag_EmergentInc.png)
+</div>
 
----
+## One page for the boss
 
-## Quick Start
+Open **`http://127.0.0.1:8765/BOSS`** and sign in with the Owner secret.
 
-Get your instance running in 5 minutes.
+- Start or pause the company. A manual pause survives restarts.
+- See exactly three metrics selected from persisted company facts.
+- Review at most three important messages; further pending decisions remain accessible in a temporary dialog.
+- Give goals and decisions through one conversation input.
+- **Inspect Company** shows goals, acceptance rules, task reports, deliverables, workers, products and orders, with access to budget, payment and recovery settings.
 
-### Prerequisites
+The public storefront remains at `/`. Retired owner URLs redirect to `/BOSS`; the old workbenches and APIs have been removed.
 
-- **Node.js**: v24.x (required)
-- **Package Manager**: `pnpm` (v9+)
-- **OS**: Windows or Linux (macOS supported for development)
-
-### 1. Clone & Install
-
-```bash
-# Clone repository
-git clone https://github.com/lx00018310/EmergentInc.git
-cd EmergentInc
-
-# Install dependencies (Windows: pnpm.cmd)
-pnpm install --frozen-lockfile --ignore-scripts
-```
-
-### 2. Configure Environment
-
-Copy `.env.example` to `.env` and configure your credentials:
-
-```bash
-cp .env.example .env
-```
-
-Required settings in `.env`:
-- `EMERGENTINC_OWNER_SECRET`: Random string with **at least 32 characters** (protects `/OWNER` and backend management).
-- `MCL_API_KEY`: Your LLM API key (OpenAI-compatible).
-- `MCL_BASE_URL`: API base URL (default: `https://api.openai.com/v1`).
-- `MCL_MODEL`: Default model (e.g., `gpt-4o`, `gpt-4o-mini`, or any compatible model).
-
-### 3. Build & Launch
-
-**On Windows:**
-```powershell
-.\EmergentInc_UI.bat
-```
-*(Alternatively, run manually: `pnpm.cmd --dir frontend build` then `node scripts/launch-approved.mjs`)*
-
-**On Linux:**
-```bash
-bash ./EmergentInc_UI.sh
-```
-
-The launcher starts the server and automatically opens `http://127.0.0.1:8765/`.
-
-### 4. First Steps
-
-1. Visit **`http://127.0.0.1:8765/OWNER`** in your browser.
-2. Enter your `EMERGENTINC_OWNER_SECRET` to unlock the Owner Console.
-3. In **Boss chat**, give an explicit money budget, such as "company budget CNY 100", and approve its proposal. Paid planning requires this authorization. Tokens are usage measurements; there are no company, goal or Run token allowances.
-4. Describe a task. AI proposes finite steps and any recurring schedule. **Approve and execute** starts the approved workflow; **Reject** leaves it unexecuted. Real step deliverables feed subsequent steps, and the Owner decides when to close the task. A secretary is optional.
-5. The only other navigation entry is the **AI company dashboard**: approvals, tasks, deliverables, people, settled costs, reservations, verified revenue and history. Say "pause company", "resume", or name a task to pause or stop it. Pauses persist across restarts and releases. Unknown bills retain their reservations.
-6. Software upgrades at port 8766 retain two Git trees: select a commit, wait for automatic validation, then **Approve and switch**. Compatible older commits use the same flow with a new runtime generation; business data and Git branch pointers are retained. [Owner guide](docs/guides/OWNER_GUIDE.md).
-
----
-
-## How It Works
-
-EmergentInc operates as a closed-loop business cycle:
-
-```
-[Owner Sets Goal] ──> [AI Deconstructs & Executes] ──> [Public Storefront / Checkout]
-       ▲                                                           │
-       │                                                           ▼
-[Gene Evolution & Upgrades] <── [Human Approval / Receipts] <──────┘
-```
-
-1. **Set Goals**: Describe a goal in `/OWNER` chat. The existing scheduler assigns real people, using available Skills and Gene/World knowledge. Default acceptance requires source evidence and human verification; advanced acceptance rules remain available.
-2. **Autonomous Execution**: Characters and Pixels break goals into bounded Runs, writing code, generating tools, or preparing products inside a secure `pure-ast-json` sandbox.
-3. **Run Business**: Products are published to the integrated public storefront (`/`), supporting on-chain USDT payments across Solana, BSC, Polygon, and TRON.
-4. **Human in the Loop**: Recruitment, code releases, wallet rail changes and uncertain outcomes retain their existing approval and review boundaries. Owner-authorized store product actions execute directly.
-5. **Self-Evolution**: High-performing executable skills are promoted into system "Genes", inherited across Worlds and preserved through software upgrades.
-
----
-
-## Control Consoles & Endpoints
-
-| Route | Role | Description |
-| --- | --- | --- |
-| `/` | Public Storefront | Product browsing, checkout, and order lookup for visitors (no login required). |
-| `/OWNER` | Owner Console | Business goal management, automation switch, decision inbox, and live timeline. |
-| `/QIAN` | Qianji Hall | Character roster, narrative identities, conversational tasks, and income tracking. |
-| `/YUAN?world=<id>` | Pixel Workspace | World-level Pixels, execution logs, live artifacts, and multi-agent collaboration. |
-| `/GENE` | Gene & Assets | Root of trust, evolution lineage, memory, payment rails, and storefront settings. |
-| `http://127.0.0.1:8766/` | Upgrade Service | Independent web service for version checks, candidates, releases, and safe rollback. |
-
-*All UI routes support both English and Chinese with persistence.*
-
----
-
-## Key Features
-
-- **Autonomous Business Goals**: Deconstruct goals into measurable runs with hard token caps and round limits.
-- **Multi-Character & World Isolation**: Characters maintain independent identities, memory, and runtime files without cross-world corruption.
-- **Non-Custodial Web3 Payments**: Built-in payment monitoring for Solana, BSC, Polygon, and TRON USDT. Zero private key storage—verification relies purely on public on-chain finality.
-- **Safe Sandboxed Execution**: Executes custom skills via `pure-ast-json@1` without arbitrary `eval`, disk escapes, network access, or untrusted package installation.
-- **Private Extensions & Gene Heritage (V30)**: World-level private computation extensions are preserved locally, while approved system assets inherit cleanly into new Core releases.
-- **Complete Physical Data Isolation**: Code lives in Git, business facts live in SQLite. Core software updates never overwrite your business data.
-
----
-
-## Persistent Workspace & Upgrades
-
-**Code updates. Business data continues.**
-
-### Storage Structure
+## What runs underneath
 
 ```text
-workspace/
-  system/
-    control/control.sqlite3       # Goals, permits, characters, orders, storefront settings
-    payment/payment.sqlite3       # Payment rails, invoices, receipts, instance revenue
-    lineage/lineage.sqlite3        # Evolutionary lineage, memory, business evidence
-  worlds/<world_id>/
-    ledger/v9_core.sqlite3         # Checkpoints, runs, message history
-    extensions/                    # World-private extensions and active pointers (V30)
-    live/                          # Artifacts, generated files, shared resources
+Boss → Goal → Tasks → Workers → Tools / Skills → Deliverable
+                  ↓                              ↓
+             Company budget         Storefront → Order → Payment
+                  └──────────── Verified facts ────────────┘
+                                      ↓
+                               Boss attention
 ```
 
-### Safe Upgrades
+V34 keeps the actual execution and safety kernel: bounded tasks, scoped tools, persistent evidence, approvals bound to hashes/revisions, idempotency, and explicit recovery of unknown outcomes. Workers are created for approved work without character draws or image generation.
 
-- **Zero Overwrite**: The `workspace/` directory is strictly separated from repository source code and frozen release directories.
-- **Independent Upgrade Portal**: Access `http://127.0.0.1:8766/` (or run `EmergentInc_Upgrade.bat`) to inspect candidate releases, run dry-run compatibility checks, approve hashes, and switch releases.
-- **Atomic Rollback**: If a new release fails health checks or compatibility validation, the system rolls back cleanly with zero loss to orders, revenue, or memories.
+Company costs use a shared **CNY money budget**. Revenue comes only from verified **USDT receipts**. These currencies are displayed separately. A model report, a submitted transfer, or a published product is never counted as verified revenue.
 
----
+## Start locally
 
-## Security & Boundary
+Requirements: Node.js with built-in `node:sqlite` support (22.13 or later), pnpm, and an OpenAI-compatible model endpoint.
 
-- **No Private Keys**: EmergentInc does not store wallet private keys, sign transactions, or hold custody of funds. Payment rails only listen to public blockchain transactions.
-- **Owner Authentication**: The `EMERGENTINC_OWNER_SECRET` is verified strictly server-side and never injected into the client-side JavaScript bundle.
-- **Sandbox Bounds**: Pure AST interpreter restricts tool execution to verified AST trees with strict byte and execution step caps.
-- **Reality Principle**: A new instance starts **OFF/0** and the first executable Owner command can activate it with automatic quota. Manual OFF persists across restarts. Unknown billing, maintenance and unverified external outcomes block new work until reviewed.
+```powershell
+pnpm.cmd install --frozen-lockfile --ignore-scripts
+Copy-Item .env.example .env
+```
 
----
+Set `EMERGENTINC_OWNER_SECRET` to a random secret of at least 32 characters. Configure `MCL_API_KEY`, `MCL_BASE_URL`, and `MCL_MODEL` in `.env`; verify the model's **CNY pricing** in `resources/config/model_pricing.json` before authorizing money. Keep `.env` private.
 
-## Troubleshooting & Documentation
+On Windows, run `EmergentInc_UI.bat` or `EmergentInc_UI.ps1`. The launcher builds a fresh installation and runs an approved frozen release. For an explicit terminal launch after building:
 
-### Common Issues
+```powershell
+pnpm.cmd build
+pnpm.cmd --dir frontend build
+node scripts/launch-approved.mjs --open-browser
+```
 
-- **Node Version Error**: EmergentInc requires Node.js 24. Ensure your active runtime matches (`node -v`).
-- **Owner Secret Too Short**: `EMERGENTINC_OWNER_SECRET` must be at least 32 characters.
-- **Port Conflict**: Default runtime port is `8765`, upgrade service port is `8766`. Ensure both ports are free.
+A fresh V34 company starts **OFF**, with **no authorized budget, workers, goals, tasks, orders, receipts, or chat history**. Use the homepage budget message to authorize an amount, then start the company. Configure receive-only payments when required; no private wallet key belongs in chat.
 
-### Deep Architecture & Implementation Guides
+An unmarked, nonempty old workspace is refused with `V34_DESTRUCTIVE_RESET_REQUIRED`. Normal startup, installation, pull, and software updates never perform a destructive reset. See the [separate, irreversible reset procedure](docs/guides/V34_RESET.md).
 
-All technical deep dives and historical implementation notes are maintained in `docs/`:
-- [Owner Operating Guide](docs/guides/OWNER_GUIDE.md)
-- [V30 Core Assets & Extensions Report](docs/EmergentInc_V30_实施记录.md)
-- [V29 Goal Control Implementation](docs/EmergentInc_V29_实施记录.md)
-- [Version Upgrade Entry Points](docs/版本升级入口.md)
-- [Security Boundary Specification](docs/security_boundary.md)
+## Current scope
 
----
+Implemented: authenticated bilingual Boss page, real goal/task execution, deterministic Worker creation, artifact evidence, shared money authorization and settlement, exact decisions, recovery, public products/orders, receive-only USDT verification, and controlled software publication/rollback on port **8766**. Enabled payment rails depend on configuration and chain finality.
 
-## License & Support
+The product is experimental. Autonomous market research, delivery quality, external publishing, customer acquisition, and commercial income depend on available models, tools, permissions, and independent evidence. They are outcomes to verify, not guarantees. Company inspection displays existing business records; the system does not provide autonomous wallet spending or promise profit.
 
-- **License**: Open-source under [MIT License](LICENSE) (see repository LICENSE).
-- **Feedback & Issues**: Submit bugs and discussions via [GitHub Issues](https://github.com/lx00018310/EmergentInc/issues).
-- **Customization Services**: For commercial deployments and enterprise agent customization, contact via `/OWNER` or project maintainers.
+Software rollback after V34 preserves new company data. It cannot recover the pre-V34 instance destroyed by the one-time reset. [Removal inventory and verification](docs/V34_REMOVAL_INVENTORY.md) records the scope of the reduction.
+
+## Development checks
+
+```powershell
+pnpm.cmd typecheck
+pnpm.cmd --dir frontend test
+pnpm.cmd --dir frontend build
+pnpm.cmd test --maxWorkers=1 --testTimeout=30000 --hookTimeout=30000
+git diff --check
+```
+
+The process integration test uses synthetic model responses and chain evidence in an isolated workspace. No test payment is real revenue.
+
+## Open source
+
+Built on [EmergentInc](https://github.com/lx00018310/EmergentInc). See [LICENSE](LICENSE).
+
+**Tell it what to do. Decide what matters.**

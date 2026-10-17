@@ -1,7 +1,17 @@
 {
   "schema": 1,
+  "workspace_format": 34,
   "company_money": 2,
   "task_workflow": 1,
+  "company_execution": 1,
+  "scoped_admission": 1,
+  "company_workers": 3,
+  "company_recovery": 1,
+  "company_agents": 1,
+  "company_model_receipts": 1,
+  "company_artifacts": 1,
+  "company_tools": 1,
+  "company_control_plane": 1,
   "currency": "CNY",
   "money_unit": "micros"
 }

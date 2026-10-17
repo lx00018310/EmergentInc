@@ -118,7 +118,7 @@ describe('four-chain USDT without private keys or guessed invoice ownership',()=
       if(method==='eth_getLogs')return [bad.receipt.logs[0],good.receipt.logs[0]];if(method==='eth_getTransactionReceipt')return params[0]===bad.receipt.transactionHash?bad.receipt:good.receipt;throw Error('unexpected');}};
     await new PaymentMonitor(f.service(),rpc).scanInvoice(f.ia.invoice_id);expect(f.service().revenue(f.a.world_id).mainnetAtomic).toBe('10000001');expect(f.service().db.prepare('SELECT COUNT(*) n FROM payment_receipts').get()!.n).toBe(1);
   });
-  it('archives a v1 USDC receipt FK graph without relabelling it or crediting USDT',()=>{
+  it('rejects a v1 USDC database without migrating or crediting its receipts',()=>{
     const f=fixture(),file=join(f.root,'legacy-payment.sqlite3'),db=new DatabaseSync(file);
     db.exec(`PRAGMA foreign_keys=ON;CREATE TABLE payment_rails(rail_id TEXT PRIMARY KEY,asset TEXT,mint TEXT);CREATE TABLE rail_events(id INTEGER PRIMARY KEY);
       CREATE TABLE payment_invoices(invoice_id TEXT PRIMARY KEY,rail_id TEXT REFERENCES payment_rails(rail_id),asset TEXT,amount_atomic TEXT,status TEXT);
@@ -128,10 +128,8 @@ describe('four-chain USDT without private keys or guessed invoice ownership',()=
       CREATE TABLE payment_outbox(receipt_id TEXT REFERENCES payment_receipts(id),delivered INTEGER);CREATE TABLE payment_scan_cursors(invoice_id TEXT REFERENCES payment_invoices(invoice_id));CREATE TABLE payment_unmatched(signature TEXT);
       INSERT INTO payment_rails VALUES('old','USDC','EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v');INSERT INTO payment_invoices VALUES('i','old','USDC','10000000','FINALIZED');
       INSERT INTO payment_receipts VALUES('r','i','old-world','10000000');INSERT INTO world_revenue_events VALUES('r','USDC','10000000');INSERT INTO payment_outbox VALUES('r',1);PRAGMA user_version=1;`);db.close();
-    const migrated=new PaymentService(file,f.control,f.lineage);clean.push(()=>migrated.close());
-    expect(migrated.legacy()).toEqual({asset:'USDC',archived:true,receipts:1});expect(migrated.rails()).toHaveLength(0);expect(migrated.revenue(f.a.world_id).mainnetAtomic).toBe('0');
-    expect(migrated.db.prepare('SELECT asset,amount_atomic,status FROM legacy_usdc_payment_invoices').get()).toMatchObject({asset:'USDC',amount_atomic:'10000000',status:'FINALIZED'});
-    expect(migrated.db.prepare('PRAGMA foreign_key_check').all()).toHaveLength(0);expect(migrated.db.prepare('PRAGMA user_version').get()!.user_version).toBe(3);
+    expect(()=>new PaymentService(file,f.control,f.lineage)).toThrow('V34_DESTRUCTIVE_RESET_REQUIRED');
+    const unchanged=new DatabaseSync(file,{readOnly:true});try{expect(unchanged.prepare('SELECT asset,amount_atomic,status FROM payment_invoices').get()).toMatchObject({asset:'USDC',amount_atomic:'10000000',status:'FINALIZED'});expect(unchanged.prepare('PRAGMA user_version').get()!.user_version).toBe(1);expect(unchanged.prepare("SELECT name FROM sqlite_master WHERE name LIKE 'legacy_%'").all()).toEqual([]);}finally{unchanged.close();}
   });
   it('drains manual scans on quiesce and flushes previously finalized receipts to Memory before Final Dream',async()=>{
     const f=fixture(),tx=evidence(f.ia);f.service().observe(f.ia.invoice_id,tx.receipt.transactionHash,'finalized',tx);

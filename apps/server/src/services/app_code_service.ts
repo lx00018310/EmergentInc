@@ -1,12 +1,13 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { randomUUID } from 'node:crypto';
 import type { AppCodeReport } from '@emergentinc/protocol';
 import type { WorldRuntimeManager } from './world_runtime_manager.js';
 import { appCodePath, appSourceFile, sourceHash, validateAppPatch } from './app_code_policy.js';
+import type { CompanyAgentService } from './company_agent_service.js';
+import { containedPath } from './safe_path.js';
 
 export class AppCodeService {
-  constructor(private manager: WorldRuntimeManager, readonly projectRoot: string) {
+  constructor(private manager: WorldRuntimeManager, readonly projectRoot: string,private agents?:CompanyAgentService) {
     manager.registry.control.db.exec(`CREATE TABLE IF NOT EXISTS owner_code_reports(id TEXT PRIMARY KEY, operation_key TEXT UNIQUE NOT NULL, report_json TEXT NOT NULL, created_at INTEGER NOT NULL)`);
   }
   listFiles() {
@@ -37,20 +38,27 @@ export class AppCodeService {
       if(report.pixelId!==pixelId||report.title!==input.title||report.summary!==input.summary||JSON.stringify(report.files)!==JSON.stringify(input.files))throw new Error('IDEMPOTENCY_CONFLICT');
       return {id:report.id,hash:report.hash,title:report.title,state:'REPORTED_TO_OWNER',testing:'Owner must prepare and validate this candidate in the independent upgrade service. Publication requires separate exact-hash approval.'};
     }
-    const runtime = await this.manager.open(worldId);
-    if (!runtime.store.pixels.getPixelAccount(pixelId)?.active) throw new Error('APP_CODE_ACTOR_INACTIVE');
+    let actorDirectory:string,personName:string;
+    if(this.agents){const actor=this.agents.get(worldId);if(actor.status!=='ACTIVE')throw new Error('APP_CODE_ACTOR_INACTIVE');actorDirectory=this.agents.directory(worldId);personName=actor.name;}
+    else {const runtime=await this.manager.open(worldId);if(!runtime.store.pixels.getPixelAccount(pixelId)?.active)throw new Error('APP_CODE_ACTOR_INACTIVE');actorDirectory=runtime.directory;personName=this.manager.registry.control.qianji.getProfile(this.manager.registry.control.world(worldId).qianji_id)!.narrative.displayName;}
     if (typeof input.title !== 'string' || !input.title.trim() || input.title.length > 200 || typeof input.summary !== 'string' || !input.summary.trim() || input.summary.length > 4000) throw new Error('APP_CODE_REPORT_INVALID');
     const files = validateAppPatch(this.projectRoot, input.files), generation = this.manager.registry.effectiveGeneration();
-    const id = `code_${randomUUID().replaceAll('-', '')}`;
-    const body = { schema: 1 as const, id, worldId, pixelId, personName: this.manager.registry.control.qianji.getProfile(this.manager.registry.control.world(worldId).qianji_id)!.narrative.displayName,
+    const id = `code_${sourceHash(operationKey).slice(0,32)}`;
+    let body = { schema: 1 as const, id, worldId, pixelId, personName,
       title: input.title, summary: input.summary, baseGeneration: String(generation.id), baseRelease: String(generation.release_id), files, createdAt: Date.now() };
+    const directory=containedPath(actorDirectory,'code-candidates',id),reportFile=containedPath(directory,'report.json');
+    if(fs.existsSync(reportFile)){
+      const existing=JSON.parse(fs.readFileSync(reportFile,'utf8')) as AppCodeReport,{hash,...saved}=existing;
+      if(hash!==sourceHash(JSON.stringify(saved))||saved.id!==id||saved.worldId!==worldId||saved.pixelId!==pixelId||saved.title!==input.title||saved.summary!==input.summary||JSON.stringify(saved.files)!==JSON.stringify(files))throw new Error('IDEMPOTENCY_CONFLICT');
+      body=saved;
+    }
     const report: AppCodeReport = { ...body, hash: sourceHash(JSON.stringify(body)) };
-    const directory = path.join(runtime.directory, 'code-candidates', id);
     fs.mkdirSync(directory, { recursive: true });
     for (const file of files) if (file.content !== null) {
-      const target = path.join(directory, 'source', file.path); fs.mkdirSync(path.dirname(target), { recursive: true }); fs.writeFileSync(target, file.content, { flag: 'wx' });
+      const target=containedPath(directory,'source',...file.path.split('/'));fs.mkdirSync(path.dirname(target),{recursive:true});
+      if(fs.existsSync(target)){if(fs.readFileSync(target,'utf8')!==file.content)throw new Error('IDEMPOTENCY_CONFLICT');}else fs.writeFileSync(target,file.content,{flag:'wx'});
     }
-    fs.writeFileSync(path.join(directory, 'report.json'), JSON.stringify(report, null, 2), { flag: 'wx' });
+    if(!fs.existsSync(reportFile))fs.writeFileSync(reportFile,JSON.stringify(report,null,2),{flag:'wx'});
     db.prepare('INSERT INTO owner_code_reports VALUES(?,?,?,?)').run(id, operationKey, JSON.stringify(report), report.createdAt);
     return { id: report.id, hash: report.hash, title: report.title, state: 'REPORTED_TO_OWNER', testing: 'Owner must prepare and validate this candidate in the independent upgrade service. Publication requires separate exact-hash approval.' };
   }

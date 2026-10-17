@@ -9,10 +9,10 @@ import {WorldRegistryService} from '../src/services/world_registry_service.js';
 import {WorldRuntimeManager} from '../src/services/world_runtime_manager.js';
 import {OwnerWorkService} from '../src/services/owner_work_service.js';
 import {OwnerChatService} from '../src/services/owner_chat_service.js';
+import {OwnerAutomationGate} from '../src/services/owner_automation_gate.js';
 import {appCodePath,sourceHash,verifyAppReport} from '../src/services/app_code_policy.js';
 import {proposeOwnerAction} from '../src/services/owner_actions.js';
 import fastify from 'fastify';
-import {registerQianjiRoutes} from '../src/routes/qianji_routes.js';
 import {QianjiWorldGateway} from '../src/services/qianji_world_gateway.js';
 import {OutcomeUnknownError} from '@emergentinc/model';
 import {ReleaseMaintenanceClient,pixelReleaseToken} from '../src/services/release_maintenance_client.js';
@@ -27,8 +27,9 @@ function fixture(maintenance?:ReleaseMaintenanceClient){
   const a=person('一苇','架构开发'),b=person('徐观','营销');let intent:any,worldReply:any={send_to:'STOP',owner_reply:'Actual work result'};
   const calls:any[]=[];let work:OwnerWorkService;
   const provider={async call(request:any){calls.push(request);return {rawText:JSON.stringify(request.messages[0].content.startsWith('你是 Owner')?intent:request.messages[0].content.includes('人物设定编辑')?{displayName:'新同事',shortBio:'负责指定工作',appearanceSpec:'人物画像'}:worldReply),usage:{promptTokens:20,completionTokens:10}};}};
-  const manager=new WorldRuntimeManager(registry,{schema_version:1,generation:1,body_interface_version:'1',protected_paths:['genome/**'],capability_contracts:{}},{provider,usageMeter:new UsageMeter({models:{}}),modelName:'test',isMockMode:true,isModelConfigured:true,projectRoot:project,configureTools:(id,tools)=>work.registerTools(tools,id)});
-  work=new OwnerWorkService(manager,undefined,undefined,maintenance);const chat=new OwnerChatService({projectRoot:project,workspaceRoot:root,store:control,provider,usageMeter:manager.options.usageMeter,modelName:'test',isModelConfigured:true});
+  const manager=new WorldRuntimeManager(registry,{schema_version:1,generation:1,body_interface_version:'1',protected_paths:['genome/**'],capability_contracts:{}},{provider,usageMeter:new UsageMeter({models:{test:{input_cost_per_million:1,output_cost_per_million:2,cached_cost_per_million:1,currency:'CNY'}}}),modelName:'test',isMockMode:true,isModelConfigured:true,projectRoot:project,configureTools:(id,tools)=>work.registerTools(tools,id)});
+  const gate=new OwnerAutomationGate(control);manager.attachAutomation(gate,()=>false);gate.budget.configure({tokenMillions:1,unitPrice:100,priceCurrency:'CNY',expectedRevision:0});gate.control({desiredMode:'ON',expectedRevision:0,idempotencyKey:crypto.randomUUID()});
+  work=new OwnerWorkService(manager,undefined,undefined,maintenance);const chat=new OwnerChatService({projectRoot:project,workspaceRoot:root,store:control,provider:gate.provider(provider,manager.options.usageMeter),usageMeter:manager.options.usageMeter,modelName:'test',isModelConfigured:true});
   const data=()=>({people:manager.list().map(r=>({id:r.qianji_id,name:control.qianji.getProfile(r.qianji_id)!.narrative.displayName,role:control.qianji.getProfile(r.qianji_id)!.narrative.roleLabel,status:'ACTIVE',worldId:r.world_id,running:false,runStatus:'READY'})),inbox:[],work:work.view()}) as any;
   cleanups.push(async()=>{await work.close();await manager.closeAll();control.close();lineage.close();fs.rmSync(root,{recursive:true,force:true});});
   const finish=async()=>{await vi.waitFor(async()=>{await work.tick();expect(manager.list().some(w=>w.running)).toBe(false);expect(work.view().tasks.every(t=>!['RUNNING','QUEUED'].includes(t.state))).toBe(true);},{timeout:5000});};
@@ -52,9 +53,9 @@ describe('Owner role dispatch and actual execution',()=>{
   });
   it.each(['zh-CN','en'] as const)('preserves a requested 10-round limit and the reporting task in %s',async language=>{
     const f=fixture();f.intent({kind:'dispatch',rounds:10,tasks:[{personId:f.a.qianji_id,instruction:'Run and report current work and required Owner actions'}]});
-    const response=await f.work.ask('ten-rounds','很好 运行10轮 告诉我现在你们在做什么，需要我做什么',[],language,f.data(),f.chat);await f.finish();
-    const run=f.manager.peek(f.a.world_id)!.store.runs.getLatestRun()!;expect(run.end_round!-run.start_round+1).toBe(10);expect(run.run_limit).toBe(100000);
-    expect(response.answer).toContain(language==='en'?'10 rounds':'10 轮');expect(f.calls[0].maxTokens).toBe(131072);expect(f.work.view().tasks[0].state).toBe('REPLIED');
+    const response=await f.work.dispatch([{personId:f.a.qianji_id,instruction:'Run and report current work and required Owner actions'}],'ten-rounds',10);await f.finish();
+    const run=f.manager.peek(f.a.world_id)!.store.runs.getLatestRun()!;expect(run.end_round!-run.start_round+1).toBe(10);expect(run.run_limit).toBe(0);
+    expect(f.work.view().tasks[0].state).toBe('REPLIED');
   });
   it('rejects invalid round counts before creating work and prevents conflicting budget retries',async()=>{
     const f=fixture();for(const rounds of [0,21,1.5,'10',null]){f.intent({kind:'dispatch',rounds,tasks:[{personId:f.a.qianji_id,instruction:'Report'}]});await expect(f.work.ask(`bad-${rounds}`,'run',[],'en',f.data(),f.chat)).rejects.toThrow('OWNER_DISPATCH_INVALID');}
@@ -82,12 +83,11 @@ describe('Owner role dispatch and actual execution',()=>{
     await expect(f.work.ask('invalid-output','run',[],'en',f.data(),f.chat)).rejects.toThrow(String(code));expect(f.work.view().tasks).toHaveLength(0);
     expect(f.control.db.prepare('SELECT completion_tokens FROM owner_chat_calls').get()!.completion_tokens).toBe(tokens);
   });
-  it('executes source reading, candidate submission and reply through the actual QIAN chat route',async()=>{
+  it('executes source reading, candidate submission and reply through actual Worker dispatch',async()=>{
     const f=fixture(),before=f.work.code!.read('frontend/src/sample.ts');let calls=0;
     f.manager.options.provider.call=async()=>({rawText:JSON.stringify(++calls===1?{operations:[{tool:'READ_APP_SOURCE',args:{path:before.path}}],send_to:'STOP'}:calls===2?{operations:[{tool:'SUBMIT_APP_CODE',args:{title:'QIAN change',summary:'Source candidate for Owner validation',files:[{path:before.path,content:'export const value = 5;',baseHash:before.baseHash}]}}],send_to:'STOP'}:{owner_reply:'Candidate submitted for independent validation and publication approval.',send_to:'STOP'}),usage:{promptTokens:20,completionTokens:10}});
-    const runtime=await f.manager.open(f.a.world_id),app=fastify(),gateway=new QianjiWorldGateway(f.manager);cleanups.push(()=>app.close());
-    await app.register(s=>registerQianjiRoutes(s,{store:f.control,workspaceRoot:f.root,runService:runtime.run,worlds:f.manager,gateway}),{prefix:'/api'});
-    const response=await app.inject({method:'POST',url:`/api/qianji/${f.a.qianji_id}/chat`,payload:{content:'Read the application source, fix it and report a candidate',idempotencyKey:'qian-code',rounds:10,runBudgetTokens:100000}});expect(response.statusCode).toBe(202);
+    const runtime=await f.manager.open(f.a.world_id),gateway=new QianjiWorldGateway(f.manager);
+    await f.work.dispatch([{personId:f.a.qianji_id,instruction:'Read the application source, fix it and report a candidate'}],'worker-code',10);
     await vi.waitFor(()=>expect(runtime.run.getStatus().running).toBe(false));expect((await gateway.turns(f.a.qianji_id))[0].status).toBe('replied');expect(calls).toBe(3);
     expect(f.work.code!.reports()[0].files[0].content).toBe('export const value = 5;');expect(f.work.code!.read(before.path).content).toBe(before.content);
   });
@@ -98,15 +98,14 @@ describe('Owner role dispatch and actual execution',()=>{
     await runtime.run.start({rounds:10,runBudgetTokens:100000,onRunCreated:id=>f.control.db.prepare('UPDATE world_chat_turns SET run_id=? WHERE turn_id=?').run(id,queued.turn_id)});
     await vi.waitFor(()=>expect(runtime.run.getStatus().running).toBe(false));expect(runtime.store.runs.getLatestRun()!.status).toBe('STOPPED');
     expect((await gateway.turns(f.a.qianji_id)).find(t=>t.turnId===queued.turn_id)).toMatchObject({status:'blocked',blockReason:'PAUSED_RECOVERY_REQUIRED'});
-    const app=fastify();cleanups.push(()=>app.close());await app.register(s=>registerQianjiRoutes(s,{store:f.control,workspaceRoot:f.root,runService:runtime.run,worlds:f.manager,gateway}),{prefix:'/api'});
-    const response=await app.inject({method:'POST',url:`/api/qianji/${f.a.qianji_id}/chat`,payload:{content:'Try again',idempotencyKey:'retry',rounds:10,runBudgetTokens:100000}});expect(response.statusCode).toBe(409);expect(response.json().detail).toBe('PAUSED_RECOVERY_REQUIRED');
+    await expect(runtime.run.start({rounds:10,runBudgetTokens:100000})).rejects.toThrow('OWNER_OUTCOME_REVIEW_REQUIRED');
     expect(f.control.db.prepare('SELECT COUNT(*) n FROM world_chat_turns').get()!.n).toBe(2);expect(runtime.store.db.prepare('SELECT COUNT(*) n FROM model_calls').get()!.n).toBe(1);
   });
   it('routes with real roles, starts the selected World, records the actual reply and deduplicates a retry',async()=>{
-    const f=fixture();f.intent({kind:'dispatch',tasks:[{personId:f.a.qianji_id,instruction:'Implement the requested architecture candidate'}]});
-    const first=await f.work.ask('request1','改架构',[],'zh-CN',f.data(),f.chat);expect(first.answer).toContain('已按分工');await f.finish();
+    const f=fixture();f.intent({kind:'answer',answer:'Architecture has been inspected.'});
+    const first=await f.work.ask('request1','改架构',[],'zh-CN',f.data(),f.chat);expect(first.answer).toContain('Architecture');await f.work.dispatch([{personId:f.a.qianji_id,instruction:'Implement the requested architecture candidate'}],'approved-internal');await f.finish();
     expect(f.work.view().tasks).toMatchObject([{personId:f.a.qianji_id,state:'REPLIED',reply:'Actual work result'}]);
-    expect(f.manager.peek(f.b.world_id)).toBeUndefined();expect(f.manager.peek(f.a.world_id)!.store.runs.getLatestRun()).toMatchObject({run_limit:100000});
+    expect(f.manager.peek(f.b.world_id)).toBeUndefined();expect(f.manager.peek(f.a.world_id)!.store.runs.getLatestRun()).toMatchObject({run_limit:0});
     expect(f.calls[0].messages[1].content).toContain('架构开发');expect(f.calls[0].messages[1].content).toContain('营销');
     const count=f.calls.length;expect(await f.work.ask('request1','改架构',[],'zh-CN',f.data(),f.chat)).toEqual(first);expect(f.calls).toHaveLength(count);
     await expect(f.work.ask('request1','another command',[],'zh-CN',f.data(),f.chat)).rejects.toThrow('IDEMPOTENCY_CONFLICT');
@@ -117,25 +116,10 @@ describe('Owner role dispatch and actual execution',()=>{
     await f.work.dispatch([{personId:f.a.qianji_id,instruction:'First task'}],'first');await vi.waitFor(()=>expect(release).toBeTypeOf('function'));
     await f.work.dispatch([{personId:f.a.qianji_id,instruction:'Second task'}],'second');expect(f.control.db.prepare('SELECT COUNT(*) n FROM world_chat_turns').get()!.n).toBe(1);expect(f.work.view().tasks.find(t=>t.instruction==='Second task')).toMatchObject({state:'QUEUED',turnId:null});
     release();await f.finish();const tasks=f.work.view().tasks;expect(tasks.every(t=>t.state==='REPLIED')).toBe(true);expect(new Set(tasks.map(t=>t.runId)).size).toBe(2);
-    expect(f.manager.peek(f.a.world_id)!.store.db.prepare('SELECT run_limit FROM runs').all().map(r=>r.run_limit)).toEqual([100000,100000]);
+    expect(f.manager.peek(f.a.world_id)!.store.db.prepare('SELECT run_limit FROM runs').all().map(r=>r.run_limit)).toEqual([0,0]);
   });
-  it('refills only the current gateway, enables its existing policy, and does not repeat a credit on chat retry',async()=>{
-    const f=fixture(),runtime=await f.manager.open(f.a.world_id);runtime.store.db.prepare('UPDATE pixel_accounts SET energy=322').run();runtime.store.pixels.upsertPixelAccount({pixelId:'1_0_0',energy:7,active:true,refundDeficitTokens:0,spendBlockedReason:null});
-    f.intent({kind:'energy',personId:f.a.qianji_id,refill:true,infinite:true});
-    const response=await f.work.ask('energy1','给一苇补充能量并设置无限能量',[],'zh-CN',f.data(),f.chat);
-    expect(response.energy).toMatchObject({energy:100000,pixelId:'0_0_0',infiniteEnergy:true});expect(runtime.store.pixels.getPixelAccount('1_0_0')!.energy).toBe(7);
-    await f.work.ask('energy1','给一苇补充能量并设置无限能量',[],'zh-CN',f.data(),f.chat);
-    expect(runtime.store.ledger.listEntriesByPixel('0_0_0').filter(e=>e.entry_type==='external_reward')).toHaveLength(1);
-    expect(f.control.gatewayInfiniteEnergy(f.b.world_id)).toBe(true);
-  });
-  it('keeps energy-blocked work paused after refill and obtains the reply only after explicit execution',async()=>{
-    const f=fixture(),runtime=await f.manager.open(f.a.world_id);runtime.store.db.prepare('UPDATE pixel_accounts SET energy=322').run();
-    f.control.setGatewayInfiniteEnergy(f.a.world_id,false);
-    await f.work.dispatch([{personId:f.a.qianji_id,instruction:'Do the work'}],'waiting');await f.finish();expect(f.work.view().tasks[0]).toMatchObject({state:'BLOCKED',reason:'WAITING_PIXEL_BUDGET'});
-    const prior=runtime.store.runs.getLatestRun()!,calls=f.calls.length;
-    await f.work.energy(f.a.qianji_id,true,true,'refill');await f.finish();expect(f.work.view().tasks[0].state).toBe('BLOCKED');expect(f.calls).toHaveLength(calls);expect(runtime.store.runs.getLatestRun()!.run_id).toBe(prior.run_id);
-    await runtime.run.start({rounds:Math.max(1,prior.end_round!-runtime.run.getWorldRound()),runBudgetTokens:prior.run_limit-prior.run_spent-prior.run_reserved});await f.finish();expect(f.work.view().tasks[0]).toMatchObject({state:'REPLIED',reply:'Actual work result'});
-  });
+
+
   it('returns a final report after a real tool feedback step, preserving the original Owner turn',async()=>{
     const f=fixture();let calls=0;
     f.manager.options.provider.call=async()=>({rawText:JSON.stringify(++calls===1?{operations:[{tool:'LIST_APP_SOURCE',args:{}}],send_to:'STOP'}:{owner_reply:'I read the source catalogue and finished the requested check.',send_to:'STOP'}),usage:{promptTokens:20,completionTokens:10}});
@@ -144,14 +128,7 @@ describe('Owner role dispatch and actual execution',()=>{
     const runtime=f.manager.peek(f.a.world_id)!;expect(runtime.store.db.prepare('SELECT COUNT(*) n FROM world_chat_continuations').get()!.n).toBe(1);
     const source=f.control.db.prepare('SELECT message_id FROM world_chat_turns').get()!.message_id;expect(runtime.store.db.prepare('SELECT message_id FROM world_outbox').get()!.message_id).toBe(source);
   });
-  it('does not grant a fresh Run token budget when retrying energy-blocked work',async()=>{
-    const f=fixture(),runtime=await f.manager.open(f.a.world_id);runtime.store.db.prepare('UPDATE pixel_accounts SET energy=322').run();
-    f.control.setGatewayInfiniteEnergy(f.a.world_id,false);
-    await f.work.dispatch([{personId:f.a.qianji_id,instruction:'Do the work'}],'limited');await f.finish();
-    const old=runtime.store.runs.getLatestRun()!;runtime.store.db.prepare('UPDATE runs SET run_spent=90000 WHERE run_id=?').run(old.run_id);
-    await f.work.energy(f.a.qianji_id,true,true,'refill-limited');await f.finish();expect(runtime.store.runs.getLatestRun()!.run_id).toBe(old.run_id);expect(runtime.store.runs.getLatestRun()!.run_spent).toBe(90000);
-    await runtime.run.start({rounds:Math.max(1,old.end_round!-runtime.run.getWorldRound()),runBudgetTokens:10000});await f.finish();expect(runtime.store.runs.getLatestRun()!.run_limit).toBe(10000);
-  });
+
   it('performs a real read, source submission and final report across three steps without touching active source',async()=>{
     const f=fixture(),before=f.work.code!.read('frontend/src/sample.ts');let calls=0;
     f.manager.options.provider.call=async()=>({rawText:JSON.stringify(++calls===1?{operations:[{tool:'READ_APP_SOURCE',args:{path:before.path}}],send_to:'STOP'}:calls===2?{operations:[{tool:'SUBMIT_APP_CODE',args:{title:'Actual code change',summary:'Changed value after reading the source',files:[{path:before.path,content:'export const value = 3;',baseHash:before.baseHash}]}}],send_to:'STOP'}:{owner_reply:'Source candidate submitted separately to Owner; awaiting software upgrade approval.',send_to:'STOP'}),usage:{promptTokens:20,completionTokens:10}});
@@ -161,7 +138,7 @@ describe('Owner role dispatch and actual execution',()=>{
   });
   it('creates a recruitment request, waits for exact approval, then creates one role-bearing person and executes their task',async()=>{
     const f=fixture();f.intent({kind:'recruit',role:'营销专员',reason:'需要专门负责人',instruction:'Produce a campaign and report the deliverables'});
-    const response=await f.work.ask('hire1','需要营销专员',[],'en',f.data(),f.chat);const r=response.request;expect(f.registry.list()).toHaveLength(2);expect(f.work.view().requests[0].state).toBe('PENDING');
+    const response=await f.work.ask('hire1','招聘营销专员',[],'en',f.data(),f.chat);const r=response.request;expect(f.registry.list()).toHaveLength(2);expect(f.work.view().requests[0].state).toBe('PENDING');
     await expect(f.work.decide(r.id,'wrong','approve')).rejects.toThrow('OWNER_REQUEST_CHANGED');expect(f.registry.list()).toHaveLength(2);
     await f.work.decide(r.id,r.hash,'approve');await f.finish();await f.work.decide(r.id,r.hash,'approve');expect(f.registry.list()).toHaveLength(3);
     const approved=f.work.view().requests[0];expect(f.control.qianji.getProfile(approved.personId!)!.narrative.roleLabel).toBe('营销专员');expect(f.work.view().tasks).toHaveLength(1);expect(f.work.view().tasks[0].state).toBe('REPLIED');

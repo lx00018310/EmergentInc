@@ -1,7 +1,11 @@
 import { createHash } from 'node:crypto';
 import type { CompanyTaskPlan, CompanyTaskPlanView, CompanyTaskNode, TaskTrigger } from '@emergentinc/protocol';
 import { nextBusinessOccurrence } from '@emergentinc/protocol';
-import { OwnerGoalService, ownerInput, ownerConflict, exactKeys } from './owner_goal_service.js';
+import { OwnerGoalService, ownerInput, ownerConflict } from './owner_goal_service.js';
+
+function taskKeys(input: unknown, keys: string[], code: string): asserts input is Record<string, any> {
+  ownerInput(input && typeof input === 'object' && !Array.isArray(input) && Object.keys(input).every(k => keys.includes(k)), code);
+}
 
 export function nextTaskOccurrence(trigger:TaskTrigger,after:number):number|null {
   if(trigger.kind==='once')return null;
@@ -28,13 +32,13 @@ export class OwnerTaskPlanService {
     goals.store.db.exec(`CREATE TABLE IF NOT EXISTS owner_task_close_intents(dispatch_id TEXT PRIMARY KEY,goal_id TEXT NOT NULL,goal_revision INTEGER NOT NULL,reason TEXT NOT NULL,state TEXT NOT NULL);`);
   }
   validate(value:unknown):CompanyTaskPlan {
-    exactKeys(value,['summary','nodes']);ownerInput(typeof value.summary==='string'&&value.summary.length>0&&value.summary.length<=1200&&Array.isArray(value.nodes)&&value.nodes.length>0&&value.nodes.length<=20,'OWNER_TASK_PLAN_INVALID');
+    taskKeys(value,['summary','nodes'],'OWNER_TASK_PLAN_INVALID');ownerInput(typeof value.summary==='string'&&value.summary.length>0&&value.summary.length<=1200&&Array.isArray(value.nodes)&&value.nodes.length>0&&value.nodes.length<=20,'OWNER_TASK_PLAN_INVALID');
     const nodes=value.nodes as CompanyTaskNode[];ownerInput(nodes.every(n=>n&&typeof n==='object'&&!Array.isArray(n)),'OWNER_TASK_PLAN_INVALID');const keys=new Set(nodes.map(n=>n.key));ownerInput(keys.size===nodes.length,'OWNER_TASK_PLAN_INVALID');
     for(const n of nodes){
-      exactKeys(n,['key','title','instruction','dependsOn','trigger','filename','personId']);
+      taskKeys(n,['key','title','instruction','dependsOn','trigger','filename','personId'],'OWNER_TASK_PLAN_INVALID');
       ownerInput(typeof n.key==='string'&&/^[a-zA-Z][\w-]{0,63}$/.test(n.key)&&typeof n.title==='string'&&n.title.length>0&&n.title.length<=160&&typeof n.instruction==='string'&&n.instruction.length>0&&n.instruction.length<=1600&&Array.isArray(n.dependsOn)&&n.dependsOn.every(d=>typeof d==='string'&&keys.has(d)&&d!==n.key)&&new Set(n.dependsOn).size===n.dependsOn.length&&typeof n.filename==='string'&&/^[-\w]+\.(md|txt|json|csv)$/.test(n.filename)&&n.filename.length<=100&&(n.personId===undefined||typeof n.personId==='string'),'OWNER_TASK_PLAN_INVALID');
       const t=n.trigger;ownerInput(t&&['once','continuous','interval','daily','weekly'].includes(t.kind),'OWNER_TASK_SCHEDULE_INVALID');
-      exactKeys(t,t.kind==='interval'?['kind','everyMinutes']:t.kind==='daily'?['kind','time','timezone']:t.kind==='weekly'?['kind','time','timezone','weekdays']:['kind']);
+      taskKeys(t,t.kind==='interval'?['kind','everyMinutes']:t.kind==='daily'?['kind','time','timezone']:t.kind==='weekly'?['kind','time','timezone','weekdays']:['kind'],'OWNER_TASK_SCHEDULE_INVALID');
       if(t.kind==='interval')ownerInput(Number.isSafeInteger(t.everyMinutes)&&t.everyMinutes>=5&&t.everyMinutes<=525600,'OWNER_TASK_SCHEDULE_INVALID');
       if(t.kind==='daily'||t.kind==='weekly'){ownerInput(/^([01]\d|2[0-3]):[0-5]\d$/.test(t.time)&&typeof t.timezone==='string','OWNER_TASK_SCHEDULE_INVALID');try{new Intl.DateTimeFormat('en',{timeZone:t.timezone});}catch{ownerInput(false,'OWNER_TASK_SCHEDULE_INVALID');}}
       if(t.kind==='weekly')ownerInput(Array.isArray(t.weekdays)&&t.weekdays.length>0&&t.weekdays.length<=7&&t.weekdays.every(d=>Number.isInteger(d)&&d>=0&&d<=6)&&new Set(t.weekdays).size===t.weekdays.length,'OWNER_TASK_SCHEDULE_INVALID');

@@ -12,14 +12,13 @@ import { PaymentMonitor, type PaymentRpc } from '../src/services/payment_monitor
 import { PublicStore } from '../src/services/public_store.js';
 import { WorldRegistryService } from '../src/services/world_registry_service.js';
 import { WorldRuntimeManager } from '../src/services/world_runtime_manager.js';
-import { GenePromotionService } from '../src/services/gene_promotion_service.js';
-import { BusinessService } from '../src/services/business_service.js';
 import { TRANSFER_TOPIC } from '../src/services/payment_assets.js';
 
 const clean: (() => Promise<void>)[] = [];
 afterEach(async () => { vi.restoreAllMocks(); for (const fn of clean.splice(0).reverse()) await fn(); });
 async function fixture() {
   const root = fs.mkdtempSync(join(tmpdir(), 'v24-store-')), lineage = new LineageStore(join(root, 'system/lineage/lineage.sqlite3'), { v23: true });
+  fs.writeFileSync(join(root,'workspace-format.json'),JSON.stringify({product:'BOSS-AFK',format:34,instanceId:crypto.randomUUID()}));
   lineage.createGeneration({ id: 'G0001', number: 1, geneHash: '1'.repeat(64), releaseId: 'r1', state: 'ACTIVE' });
   writeGenerationPointer(join(root, 'system'), 'G0001');
   const control = new WorldRegistryStore(join(root, 'system/control/control.sqlite3')), registry = new WorldRegistryService(root, control, lineage, '1');
@@ -31,8 +30,8 @@ async function fixture() {
   payments.configureRail({ rail_id: 'bsc', chain: 'bsc', network: 'mainnet', recipient_address: '0x' + '12'.repeat(20), status: 'ENABLED', expected_revision: 0, rpc_id: 'bsc-mainnet' }, 100);
   const store = new PublicStore(control, payments), secret = 'owner-secret'.repeat(4), dist = join(root, 'frontend');
   fs.mkdirSync(dist); fs.writeFileSync(join(dist, 'index.html'), '<html><div id="root">Public entry</div></html>');
-  const app = await createServer({ workspaceRoot: root, runtimeMode: 'business', ownerAuth: { secret, secureCookies: false }, businessService: new BusinessService(lineage),
-    worlds: { manager, promotion: new GenePromotionService(manager, resolve('.'), lineage), payments, monitor: new PaymentMonitor(payments), modelName: 'test' }, frontendDistDir: dist });
+  const app = await createServer({ workspaceRoot: root, ownerAuth: { secret, secureCookies: false },
+    worlds: { manager, payments, monitor: new PaymentMonitor(payments), modelName: 'test' }, frontendDistDir: dist });
   const cookie = String((await app.inject({ method: 'POST', url: '/api/login', payload: { secret } })).headers['set-cookie']).split(';')[0]!;
   clean.push(async () => { await app.close(); await manager.closeAll(); store.close(); payments.close(); control.close(); lineage.close(); fs.rmSync(root, { recursive: true, force: true }); });
   const settings = () => {
@@ -78,65 +77,6 @@ describe('V24 anonymous store with an instance treasury', () => {
     expect((await f.owner('POST','/api/public-site/products',{})).statusCode).toBe(200);expect(f.store.products().items).toHaveLength(3);
     expect(f.control.db.prepare('SELECT * FROM orders').get()).toEqual(old);
   });
-  it('migrates the single-product constraint while retaining an existing paid order and invoice graph',async()=>{
-    const f=await fixture();await f.publish();const order=await f.order(),invoice=f.payments.invoice(String(f.control.db.prepare('SELECT invoice_id FROM orders').get()!.invoice_id)),evidence=wire(invoice);
-    f.payments.observe(invoice.invoice_id,evidence.signature,'finalized',evidence.evidence);
-    const copy=join(f.root,'legacy-control.sqlite3');await snapshotDatabase(join(f.root,'system/control/control.sqlite3'),copy);
-    const old=new SqliteDatabase(copy);old.exec('PRAGMA foreign_keys=OFF;');old.transaction(()=>{
-      old.exec("DELETE FROM public_products WHERE product_id='product-2';");
-      const sql=String(old.prepare("SELECT sql FROM sqlite_master WHERE name='public_products'").get()!.sql);
-      old.exec(sql.replace(/^CREATE TABLE\s+"?public_products"?/i,'CREATE TABLE public_products_old').replace('product_id TEXT PRIMARY KEY',"product_id TEXT PRIMARY KEY CHECK(product_id='custom-service')"));
-      old.exec('INSERT INTO public_products_old SELECT * FROM public_products; DROP TABLE public_products; ALTER TABLE public_products_old RENAME TO public_products;');
-    });const before=old.prepare('SELECT * FROM orders').all(),product=old.prepare('SELECT * FROM public_products').get();old.close();
-    const control=new WorldRegistryStore(copy),upgraded=new PublicStore(control,f.payments);
-    try{expect(control.db.prepare('SELECT * FROM orders').all()).toEqual(before);expect(upgraded.product(false)).toEqual(product);expect(upgraded.products().items).toHaveLength(2);
-      expect(control.db.prepare('PRAGMA foreign_key_check').all()).toEqual([]);expect(upgraded.payment(order.order_id,order.public_order_token).status).toBe('PAID');
-    }finally{upgraded.close();control.close();}
-  });
-  it('reverses V24 attribution preserving historical receipts, but refuses any instance invoice', async () => {
-    const f=await fixture(),legacy=join(f.root,'legacy');fs.mkdirSync(join(legacy,'genome'),{recursive:true});
-    fs.writeFileSync(join(legacy,'genome/manifest.json'),JSON.stringify({capability_contracts:{}}));
-    const invoice=f.payments.createInvoice({qianji_id:f.a.qianji_id,rail_id:'bsc',amount:'12',idempotency_key:'historical-rollback'}),evidence=wire(invoice);
-    f.payments.observe(invoice.invoice_id,evidence.signature,'finalized',evidence.evidence);
-    const tables=['payment_rails','payment_invoices','payment_observations','payment_receipts','world_revenue_events','payment_outbox'];
-    const before=tables.map(table=>f.payments.db.prepare(`SELECT * FROM ${table}`).all());
-    const copy=join(f.root,'rollback.sqlite3');await snapshotDatabase(f.paymentFile,copy);
-    checkPaymentRollback(copy,legacy);preparePaymentRollback(copy,legacy);
-    const db=new SqliteDatabase(copy);
-    try{expect(db.prepare('PRAGMA user_version').get()!.user_version).toBe(2);expect(db.prepare('PRAGMA foreign_key_check').all()).toEqual([]);
-      expect(tables.map(table=>db.prepare(`SELECT * FROM ${table}`).all())).toEqual(before);
-      expect(db.prepare('PRAGMA table_info(payment_invoices)').all().find(row=>row.name==='world_id')?.notnull).toBe(1);
-    }finally{db.close();}
-    const upgraded=new PaymentService(copy,f.control,f.lineage);upgraded.createInstanceInvoice({order_id:'new_order',rail_id:'bsc',amount:'10',idempotency_key:'new-instance'});upgraded.close();
-    expect(()=>checkPaymentRollback(copy,legacy)).toThrow('V23_ROLLBACK_DENIED_INSTANCE_PAYMENT_FACTS');
-    expect(()=>preparePaymentRollback(copy,legacy)).toThrow('V23_ROLLBACK_DENIED_INSTANCE_PAYMENT_FACTS');
-    const retained=new SqliteDatabase(copy);try{expect(retained.prepare('PRAGMA user_version').get()!.user_version).toBe(3);expect(retained.prepare('SELECT count(*) n FROM payment_invoices').get()!.n).toBe(2);}finally{retained.close();}
-  });
-  it('migrates an existing V2 USDT invoice / receipt / revenue / outbox graph without rewriting any financial rows', async () => {
-    const f = await fixture(), invoice = f.payments.createInvoice({ qianji_id: f.a.qianji_id, rail_id: 'bsc', amount: '12', idempotency_key: 'historical-world' });
-    const evidence = wire(invoice); f.payments.observe(invoice.invoice_id, evidence.signature, 'finalized', evidence.evidence);
-    const copy = join(f.root, 'v2-payment.sqlite3'); await snapshotDatabase(f.paymentFile, copy);
-    const db = new SqliteDatabase(copy); db.exec('PRAGMA foreign_keys=OFF;');
-    db.transaction(() => {
-      for (const table of ['payment_invoices', 'payment_receipts', 'world_revenue_events']) {
-        const sql = String(db.prepare("SELECT sql FROM sqlite_master WHERE name=?").get(table)!.sql);
-        db.exec(sql.replace(new RegExp(`^CREATE TABLE\\s+"?${table}"?`, 'i'), `CREATE TABLE ${table}_v2`)
-          .replace(/world_id TEXT/g, 'world_id TEXT NOT NULL').replace(/qianji_id TEXT/g, 'qianji_id TEXT NOT NULL'));
-        db.exec(`INSERT INTO ${table}_v2 SELECT * FROM ${table}; DROP TABLE ${table}; ALTER TABLE ${table}_v2 RENAME TO ${table};`);
-      }
-      db.exec("CREATE UNIQUE INDEX permanent_invoice_amount ON payment_invoices(chain,network,mint,recipient_address,amount_atomic) WHERE chain!='solana'; PRAGMA user_version=2;");
-    });
-    const tables = ['payment_invoices', 'payment_observations', 'payment_receipts', 'world_revenue_events', 'payment_outbox'];
-    const before = tables.map(table => db.prepare(`SELECT * FROM ${table}`).all()); db.close();
-    const upgraded = new PaymentService(copy, f.control, f.lineage);
-    try {
-      expect(upgraded.db.prepare('PRAGMA user_version').get()!.user_version).toBe(3);
-      expect(upgraded.db.prepare('PRAGMA foreign_key_check').all()).toEqual([]);
-      expect(tables.map(table => upgraded.db.prepare(`SELECT * FROM ${table}`).all())).toEqual(before);
-      expect(upgraded.revenue(f.a.world_id).mainnetAtomic).toBe('12000001'); expect(upgraded.revenue(null).mainnetAtomic).toBe('0');
-      expect(upgraded.createInstanceInvoice({ order_id: 'order_new', rail_id: 'bsc', amount: '10', idempotency_key: 'instance-new' }).world_id).toBeNull();
-    } finally { upgraded.close(); }
-  });
   it('serves public entry and only the exact anonymous allowlist; never leaks Owner data or permits public settings mutations', async () => {
     const f = await fixture(); await f.publish();
     for (const url of ['/', '/api/public/site', '/api/public/products', '/api/public/products/custom-service', '/api/public/payment-rails']) expect((await f.app.inject(url)).statusCode).toBe(200);
@@ -171,8 +111,8 @@ describe('V24 anonymous store with an instance treasury', () => {
     expect((await f.payment(order)).json()).toMatchObject({ invoice_status: 'PAID', status: 'PAID' });
     const overview = (await f.owner('GET', '/api/public-site')).json();
     expect(overview.revenue).toMatchObject({ scope: 'INSTANCE', mainnetAtomic: '10000001' });
-    const mission=(await f.owner('GET','/api/owner/overview')).json();
-    expect(mission.activity.find((e:any)=>e.type==='Payment received')).toMatchObject({source:'world_revenue_events',href:'/GENE?view=public-site'});
+    const mission=(await f.owner('GET','/api/boss/overview')).json();
+    expect(mission.events.find((e:any)=>e.kind==='payment')).toMatchObject({reference:expect.stringMatching(/^receipt:/)});
     expect(overview.orders[0].customer_requirement).toBe('Help deploy my business'); expect(JSON.stringify(overview)).not.toContain(order.public_order_token);
     expect(f.payments.revenue(f.a.world_id).mainnetAtomic).toBe('0'); expect(f.payments.revenue(f.b.world_id).mainnetAtomic).toBe('0');
     for (const world of [f.a, f.b]) expect(f.lineage.relevantMemories({ worldId: world.world_id, kind: 'business_outcome' })).toHaveLength(1);

@@ -2,24 +2,25 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import {DatabaseSync} from 'node:sqlite';
 import {createHash} from 'node:crypto';
-import {frozenReleaseHash} from './local-release.mjs';
+import {frozenReleaseHash,bossWorkspaceFormat} from './local-release.mjs';
 
 const read=file=>JSON.parse(fs.readFileSync(file,'utf8'));
 const hash=value=>createHash('sha256').update(JSON.stringify(value)).digest('hex');
 /** Owner config and approval database are outside the mutable World workspace. */
 export function approvedWorldRelease(workspace,configFile){
+  if(!bossWorkspaceFormat(workspace))throw new Error('V34_WORKSPACE_INITIALIZATION_REQUIRED');
   if(fs.existsSync(path.join(workspace,'runtime/local-upgrade-pending.json'))||fs.existsSync(workspace+'.v23-upgrade-pending.json'))throw new Error('V23_UPGRADE_RECOVERY_REQUIRED');
   const config=read(configFile);workspace=fs.realpathSync(workspace);
   if(fs.realpathSync(config.workspace)!==workspace)throw new Error('V23_OWNER_CONFIG_WORKSPACE_CONFLICT');
   const relative=path.relative(workspace,path.resolve(config.stateDirectory));if(!relative.startsWith('..')&&!path.isAbsolute(relative))throw new Error('V23_APPROVAL_STATE_MUST_BE_OUTSIDE_WORKSPACE');
-  const layout=read(path.join(workspace,'workspace-layout.json'));if(layout.schema!==1||layout.version!==23)throw new Error('V23_WORKSPACE_REQUIRED');
+  const layout=read(path.join(workspace,'workspace-layout.json'));if(layout.schema!==1||layout.version!==34)throw new Error('V34_WORKSPACE_FORMAT_INVALID');
   const generationId=read(path.join(workspace,'system/active-generation.json')).generation_id;
   const db=new DatabaseSync(path.join(workspace,'system/lineage/lineage.sqlite3'),{readOnly:true});let generation;
   try{const rows=db.prepare("SELECT * FROM generations WHERE state='ACTIVE'").all();if(rows.length!==1||rows[0].id!==generationId)throw new Error('V23_ACTIVE_GENERATION_CONFLICT');generation=rows[0];}finally{db.close();}
   const directory=fs.realpathSync(read(config.activeReleaseFile).directory);
   if(path.basename(directory)!==generation.release_id||path.dirname(directory)!==fs.realpathSync(config.releases))throw new Error('V23_ACTIVE_RELEASE_CONFLICT');
   let releaseHash;
-  const initialFile=path.join(config.stateDirectory,'initial-v23.json');
+  const initialFile=path.join(config.stateDirectory,'initial-v34.json');
   if(fs.existsSync(initialFile)&&read(initialFile).candidate.id===generation.release_id){
     const receipt=read(initialFile),c=receipt.candidate;
     if(receipt.state!=='COMMITTED'||receipt.candidateHash!==hash(c)||receipt.ownerAuthorization?.candidateHash!==receipt.candidateHash||c.workspace!==workspace||c.target!==generation.id||c.geneHash!==generation.gene_hash||c.release.directory!==directory)throw new Error('V23_INITIAL_APPROVAL_CONFLICT');

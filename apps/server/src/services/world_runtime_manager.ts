@@ -23,9 +23,10 @@ export interface WorldRuntimeOptions { provider: ModelProvider; usageMeter: Usag
 export class WorldRuntimeManager {
   automation?: OwnerAutomationGate;
   attachAutomation(gate: OwnerAutomationGate, maintenance: () => boolean = () => false) {
+    this.automation?.execution?.reattach(gate);
     this.automation = gate;
     gate.attach(maintenance, () => { for (const runtime of this.opened.values()) runtime.run.requestSuspend(); },
-      () => [...this.opened.values()].some(r => { const u = r.store.getUnfinalizedOperations(); return u.unknownCalls.length > 0 || (u.startedToolExecutions.length > 0 || u.callingMessages.some(m=>['CALLING','CALL_OUTCOME_UNKNOWN','AWAITING_SETTLEMENT'].includes(m.status)) || Boolean(r.store.db.prepare("SELECT 1 FROM effects WHERE status IN ('PENDING','UNKNOWN')").get())) && !r.run.getStatus().running; }));
+      worldId => { const r=this.opened.get(worldId);if(!r)return false;const u = r.store.getUnfinalizedOperations();return !r.run.getStatus().running&&(u.unknownCalls.length > 0 || u.startedToolExecutions.length > 0 || u.callingMessages.some(m=>['CALLING','CALL_OUTCOME_UNKNOWN','AWAITING_SETTLEMENT'].includes(m.status)) || Boolean(r.store.db.prepare("SELECT 1 FROM effects WHERE status IN ('PENDING','UNKNOWN')").get())); });
     for (const r of this.opened.values()) r.run.automation = { gate, worldId: r.id };
   }
   private failures=new Map<string,string>();
@@ -37,7 +38,7 @@ export class WorldRuntimeManager {
   currents(){return [...this.opened.values()].map(r=>({id:r.id,current:r.life.current}));}
   peek(id:string){return this.opened.get(id);}
   async extensions(id:string){const runtime=await this.open(id);return new InstanceExtensionService(runtime.directory,id,this.genome.capability_contracts);}
-  list() { return this.registry.list().map(row=>({...row,runtimeFailure:this.failures.get(row.world_id)??null,blockedReason:this.registry.control.db.prepare('SELECT reason FROM world_recovery_blocks WHERE world_id=?').get(row.world_id)?.reason??null, opened:this.opened.has(row.world_id), running:this.opened.get(row.world_id)?.run.getStatus().running??false})); }
+  list() { return this.registry.list().map(row=>({...row,runtimeFailure:this.failures.get(row.world_id)??null,blockedReason:this.registry.control.db.prepare('SELECT reason FROM world_recovery_blocks WHERE world_id=?').get(row.world_id)?.reason??(this.automation?.scopeBlocked(row.world_id)?'OWNER_OUTCOME_REVIEW_REQUIRED':null), opened:this.opened.has(row.world_id), running:this.opened.get(row.world_id)?.run.getStatus().running??false})); }
   async open(id: string): Promise<WorldRuntime> {
     const old=this.opened.get(id); if(old){this.restoreEnergyDepleted(id,old.store);return old;}
     const pending=this.opening.get(id); if(pending)return pending;
@@ -90,18 +91,29 @@ export class WorldRuntimeManager {
         isMockMode:this.options.isMockMode,isModelConfigured:this.options.isModelConfigured});
       if(this.automation)run.automation={gate:this.automation,worldId:id};
       api=fastify({logger:false});api.setErrorHandler((error:any,_req,reply)=>reply.status(error.statusCode||400).send({detail:error.message}));
-      await api.register(async server=>registerApiRoutes(server,{worldService:world,runService:run,promptService:prompts,toolRegistry:tools,coreStore:store!,workspaceRoot:directory,worldMode:true,ownerChatService:this.options.projectRoot?new OwnerChatService({projectRoot:this.options.projectRoot,workspaceRoot:directory,store:store!,worldService:world,runService:run,provider,usageMeter:this.options.usageMeter,modelName:this.options.modelName,isModelConfigured:Boolean(this.options.isModelConfigured)}):undefined}),{prefix:'/api'});
+      await api.register(async server=>registerApiRoutes(server,{runService:run,coreStore:store!}),{prefix:'/api'});
       await api.ready(); const runtime={id,directory,store,life,world,run,api,unlock};this.opened.set(id,runtime);this.failures.delete(id);
       this.automation?.reconcileWorld(store,id);
       if(this.automation)for(const permit of this.registry.control.db.prepare('SELECT run_id FROM owner_run_permits WHERE world_id=?').all(id)) {
+        if(this.automation.execution?.isWorkerRun(String(permit.run_id)))continue;
         const prior=store.db.prepare('SELECT run_id FROM runs WHERE run_id=?').get(permit.run_id);
         if(!prior){
+          this.automation.execution?.cancelPrepared(String(permit.run_id));
           this.automation.cancelRun(String(permit.run_id));
           if(this.registry.control.db.prepare("SELECT 1 FROM sqlite_master WHERE name='owner_work_tasks'").get())this.registry.control.db.prepare("UPDATE owner_work_tasks SET state='QUEUED',run_id=NULL,reason=NULL WHERE run_id=? AND state='RUNNING'").run(permit.run_id);
           this.registry.control.db.prepare("UPDATE owner_goal_dispatches SET state='QUEUED',run_id=NULL WHERE run_id=?").run(permit.run_id);
           this.registry.control.db.prepare('UPDATE world_chat_turns SET run_id=NULL WHERE run_id=? AND reply IS NULL').run(permit.run_id);
         }
-        else {const checkpoint=store.runs.getCheckpoint(String(permit.run_id));this.automation.reconcileRun(String(permit.run_id),(checkpoint?.next_round??0)-1,Boolean(checkpoint?.resume_pending));}
+        else {
+          const runId=String(permit.run_id);this.automation.execution?.adoptAfterExit(runId);
+          const checkpoint=store.runs.getCheckpoint(runId),unfinalized=store.getUnfinalizedOperations();
+          const reason=unfinalized.unknownCalls.length||unfinalized.callingMessages.some(m=>['CALLING','CALL_OUTCOME_UNKNOWN','AWAITING_SETTLEMENT'].includes(m.status))?'CALL_OUTCOME_UNKNOWN':unfinalized.startedToolExecutions.length||store.db.prepare("SELECT 1 FROM effects WHERE status IN ('PENDING','UNKNOWN')").get()?'TOOL_OUTCOME_UNKNOWN':null;
+          if(checkpoint?.resume_pending&&reason){
+            store.runs.updateRunStatus(runId,'STOPPED',reason,'PROCESS_EXITED','The prior execution process exited with an unverified operation.');
+            this.automation.execution?.observe(runId,'blocked',reason);
+          }
+          this.automation.reconcileRun(runId,(checkpoint?.next_round??0)-1,Boolean(checkpoint?.resume_pending));
+        }
       }
       return runtime;
     } catch(error){await api?.close();current?.close();store?.close();unlock();throw error;}

@@ -6,6 +6,8 @@ import { PromptService } from "./prompt_service.js";
 import type { OwnerAutomationGate, GoalRunBinding } from './owner_automation_gate.js';
 
 export interface RunStartOptions {
+  /** Controller outbox identity; never accepted from HTTP input. */
+  preparedRunId?: string;
   goalBinding?: GoalRunBinding;
   rounds: number;
   commandText?: string; // Deprecated: never dispatched to agents.
@@ -201,7 +203,7 @@ export class RunService {
       throw new Error("run_budget_tokens must be positive.");
     }
 
-    const runId = `run_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+    const runId = options.preparedRunId ?? `run_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
     const currentWorldRound = this.getWorldRound();
     const executionId = options.executionId ?? null;
     if (executionId && !options.onRunCreated) {

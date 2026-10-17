@@ -5,7 +5,6 @@ import {
   QianjiNarrativeRevision,
   QianjiNarrativeSpec,
   QianjiProfile,
-  QianjiDraw,
   QianjiBirthIdentity,
 } from "@emergentinc/protocol";
 import { SqliteDatabase } from "../sqlite/db.js";
@@ -217,114 +216,6 @@ export class QianjiRepository {
   }
 
   /** Return identity-attributed activity separately from legacy carrier activity. */
-  public getHistory(qianjiId: string, limit = 50): {
-    modelCalls: any[];
-    toolExecutions: any[];
-    ledgerEntries: any[];
-    messages: any[];
-    costSummary: { totalCostCny: number | null; knownCostCny: number; unknownModelCount: number; unknownToolCount: number };
-    carrierLegacy: { modelCalls: any[]; toolExecutions: any[]; ledgerEntries: any[]; messages: any[];
-      costSummary: { totalCostCny: number | null; knownCostCny: number; unknownModelCount: number; unknownToolCount: number } };
-  } {
-    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 200) throw new Error("History limit must be 1-200");
-    const bindings = this.listBindings(qianjiId);
-    const bindingIds = bindings.map(binding => binding.bindingId);
-    const pixelIds = [...new Set(bindings.map(binding => binding.pixelId))];
-    if (bindingIds.length === 0) {
-      const costSummary = { totalCostCny: 0, knownCostCny: 0, unknownModelCount: 0, unknownToolCount: 0 };
-      return { modelCalls: [], toolExecutions: [], ledgerEntries: [], messages: [], costSummary,
-        carrierLegacy: { modelCalls: [], toolExecutions: [], ledgerEntries: [], messages: [], costSummary: { ...costSummary } } };
-    }
-    const bindingMarks = bindingIds.map(() => "?").join(", ");
-    const pixelMarks = pixelIds.map(() => "?").join(", ");
-    const attributedCalls = this.db.prepare(`
-      SELECT call_id AS callId, run_id AS runId, pixel_id AS pixelId, message_id AS messageId,
-        binding_id AS bindingId, narrative_revision AS narrativeRevision, round_num AS roundNum,
-        model, outcome, prompt_tokens AS promptTokens, completion_tokens AS completionTokens,
-        cost_cny AS costCny, created_at AS createdAt
-      FROM model_calls WHERE binding_id IN (${bindingMarks})
-      ORDER BY created_at DESC, call_id DESC LIMIT ?
-    `).all(...bindingIds, limit) as any[];
-    const legacyCalls = this.db.prepare(`
-      SELECT call_id AS callId, run_id AS runId, pixel_id AS pixelId, message_id AS messageId,
-        binding_id AS bindingId, narrative_revision AS narrativeRevision, round_num AS roundNum,
-        model, outcome, prompt_tokens AS promptTokens, completion_tokens AS completionTokens,
-        cost_cny AS costCny, created_at AS createdAt
-      FROM model_calls WHERE binding_id IS NULL AND pixel_id IN (${pixelMarks})
-      ORDER BY created_at DESC, call_id DESC LIMIT ?
-    `).all(...pixelIds, limit) as any[];
-    const attributedMessages = this.db.prepare(`
-      SELECT message_id AS messageId, round_num AS roundNum, hop, sender, recipient,
-        sender_binding_id AS senderBindingId, recipient_binding_id AS recipientBindingId,
-        source_type AS sourceType, status, created_at AS createdAt, updated_at AS updatedAt
-      FROM messages WHERE sender_binding_id IN (${bindingMarks}) OR recipient_binding_id IN (${bindingMarks})
-      ORDER BY created_at DESC, message_id DESC LIMIT ?
-    `).all(...bindingIds, ...bindingIds, limit) as any[];
-    const legacyMessages = this.db.prepare(`
-      SELECT message_id AS messageId, round_num AS roundNum, hop, sender, recipient,
-        sender_binding_id AS senderBindingId, recipient_binding_id AS recipientBindingId,
-        source_type AS sourceType, status, created_at AS createdAt, updated_at AS updatedAt
-      FROM messages WHERE sender_binding_id IS NULL AND recipient_binding_id IS NULL
-        AND (sender IN (${pixelMarks}) OR recipient IN (${pixelMarks}))
-      ORDER BY created_at DESC, message_id DESC LIMIT ?
-    `).all(...pixelIds, ...pixelIds, limit) as any[];
-    const attributedLedger = this.db.prepare(`
-      SELECT entry_id AS entryId, timestamp, pixel_id AS pixelId, binding_id AS bindingId,
-        entry_type AS entryType, amount, balance_after AS balanceAfter, details
-      FROM ledger_entries WHERE binding_id IN (${bindingMarks})
-      ORDER BY timestamp DESC, entry_id DESC LIMIT ?
-    `).all(...bindingIds, limit) as any[];
-    const legacyLedger = this.db.prepare(`
-      SELECT entry_id AS entryId, timestamp, pixel_id AS pixelId, binding_id AS bindingId,
-        entry_type AS entryType, amount, balance_after AS balanceAfter, details
-      FROM ledger_entries WHERE binding_id IS NULL AND pixel_id IN (${pixelMarks})
-      ORDER BY timestamp DESC, entry_id DESC LIMIT ?
-    `).all(...pixelIds, limit) as any[];
-
-    const attributedMessageIds = attributedMessages.map(item => item.messageId);
-    const attributedCallIds = attributedCalls.map(item => item.callId);
-    const legacyMessageIds = legacyMessages.map(item => item.messageId);
-    const legacyCallIds = legacyCalls.map(item => item.callId);
-    const findTools = (messageIds: string[], callIds: string[]) => {
-      const conditions: string[] = [];
-      const params: string[] = [];
-      if (messageIds.length) { conditions.push(`message_id IN (${messageIds.map(() => "?").join(", ")})`); params.push(...messageIds); }
-      if (callIds.length) { conditions.push(`model_call_id IN (${callIds.map(() => "?").join(", ")})`); params.push(...callIds); }
-      if (!conditions.length) return [];
-      return this.db.prepare(`
-        SELECT operation_id AS operationId, run_id AS runId, message_id AS messageId,
-          pixel_id AS pixelId, op_index AS opIndex, tool, status, cost_cny AS costCny,
-          model_call_id AS modelCallId, started_at AS startedAt, finished_at AS finishedAt
-        FROM tool_executions WHERE ${conditions.join(" OR ")}
-        ORDER BY started_at DESC, operation_id DESC LIMIT ?
-      `).all(...params, limit) as any[];
-    };
-    const attributedTools = findTools(attributedMessageIds, attributedCallIds);
-    const legacyTools = findTools(legacyMessageIds, legacyCallIds);
-    const costSummary = (calls: any[], tools: any[]) => {
-      const unknownModelCount = calls.filter(call => call.costCny == null).length;
-      const unknownToolCount = tools.filter(tool => tool.costCny == null).length;
-      const knownCostCny = calls.reduce((sum, call) => sum + (call.costCny == null ? 0 : Number(call.costCny)), 0)
-        + tools.reduce((sum, tool) => sum + (tool.costCny == null ? 0 : Number(tool.costCny)), 0);
-      return { totalCostCny: unknownModelCount + unknownToolCount > 0 ? null : knownCostCny,
-        knownCostCny, unknownModelCount, unknownToolCount };
-    };
-    return {
-      modelCalls: attributedCalls,
-      toolExecutions: attributedTools,
-      ledgerEntries: attributedLedger,
-      messages: attributedMessages,
-      costSummary: costSummary(attributedCalls, attributedTools),
-      carrierLegacy: {
-        modelCalls: legacyCalls,
-        toolExecutions: legacyTools,
-        ledgerEntries: legacyLedger,
-        messages: legacyMessages,
-        costSummary: costSummary(legacyCalls, legacyTools),
-      },
-    };
-  }
-
   public unbindAndRetire(
     bindingId: string,
     archiveRelativePath: string,
@@ -375,20 +266,6 @@ export class QianjiRepository {
   }
 
   private mapProfile(row: any): QianjiProfile {
-    const drawRow = this.db.prepare("SELECT * FROM qianji_draws WHERE qianji_id=?").get(String(row.qianji_id)) as any;
-    const imageRow = drawRow ? this.db.prepare("SELECT status,error FROM gacha_images WHERE qianji_id=?").get(String(row.qianji_id)) as any : null;
-    const draw: QianjiDraw | null = drawRow ? {
-      ...JSON.parse(String(drawRow.draw_json)), qianjiId: String(row.qianji_id),
-      requestedOrigin: drawRow.requested_origin, origin: drawRow.origin,
-      lineage: JSON.parse(String(drawRow.lineage_json)),
-      skillTags: JSON.parse(String(drawRow.skill_tags_json)),
-      lineageEvidence: JSON.parse(String(drawRow.lineage_evidence_json)), fallbackReason: drawRow.fallback_reason ?? null,
-      generationStatus: drawRow.generation_status, cardPrompt: drawRow.card_prompt ?? null,
-      promptFingerprint: drawRow.prompt_fingerprint ?? null,
-      promptNarrativeRevision: drawRow.prompt_narrative_revision == null ? null : Number(drawRow.prompt_narrative_revision),
-      imageStatus: imageRow?.status ?? "pending", imageError: imageRow?.error ?? null,
-      createdAt: Number(drawRow.created_at),
-    } : null;
     return {
       qianjiId: String(row.qianji_id),
       careerStatus: row.career_status,
@@ -397,9 +274,9 @@ export class QianjiRepository {
       createdAt: Number(row.created_at),
       retiredAt: row.retired_at == null ? null : Number(row.retired_at),
       retiredReason: row.retired_reason ?? null,
-      draw,
+      draw: null,
       birthIdentity: row.birth_identity_json ? JSON.parse(String(row.birth_identity_json)) : null,
-      legacyIdentity: !row.birth_identity_json,
+      legacyIdentity: false,
     };
   }
 

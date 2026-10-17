@@ -28,12 +28,12 @@ it('requires a changed quantity after exhaustion and grants a fresh batch withou
   expect(f.gate.budget.view()).toMatchObject({totalMicros:400000000,availableMicros:400000000,spentMicros:0,historicalCostMicros:200000000,needsRefill:false});
   expect(f.gate.view().spentTokens).toBe(900000000);expect(f.control.db.prepare('SELECT actual_tokens,cost_cny FROM owner_model_permits WHERE id=?').get('spent')).toEqual({actual_tokens:900000000,cost_cny:200});
 });
-it('stops on insufficient money without an automatic budget proposal and requires manual quantity change',async()=>{
+it('refuses an unaffordable request without disabling cheaper work or creating a budget proposal',async()=>{
   const f=goalFixture();cleanups.push(f.close);f.gate.budget.configure(settings(1,0.0001));f.on();
   await expect(f.gate.provider(f.provider,f.meter).call({model:'test',messages:[],promptHash:'insufficient',maxTokens:100})).rejects.toThrow('OWNER_COMPANY_BUDGET_EXHAUSTED');
-  expect(f.gate.isOn()).toBe(false);expect(f.gate.budget.view().needsRefill).toBe(true);expect(f.gate.proposals.list()).toEqual([]);expect(f.calls).toHaveLength(0);
-  const revision=f.gate.budget.view().revision;expect(()=>f.gate.budget.configure(settings(1,1,'CNY',revision))).toThrow('OWNER_BUDGET_TOKEN_CHANGE_REQUIRED');
-  f.gate.budget.configure(settings(2,1,'CNY',revision));expect(f.gate.isOn()).toBe(true);
+  expect(f.gate.isOn()).toBe(true);expect(f.gate.budget.view()).toMatchObject({needsRefill:false,availableMicros:100});expect(f.gate.proposals.list()).toEqual([]);expect(f.calls).toHaveLength(0);
+  const cheap=new (await import('@emergentinc/model')).UsageMeter({models:{test:{input_cost_per_million:0.001,output_cost_per_million:0.001,currency:'CNY'}}});
+  await f.gate.provider(f.provider,cheap).call({model:'test',messages:[],promptHash:'cheaper-independent',maxTokens:100});expect(f.calls).toHaveLength(1);expect(f.gate.view().desiredMode).toBe('ON');
 });
 it.each([0,10001,1.5])('rejects a token quantity outside integer 1-10000: %s',value=>{
   const f=goalFixture();cleanups.push(f.close);expect(()=>f.gate.budget.configure(settings(value))).toThrow('OWNER_MONEY_INVALID');expect(f.gate.budget.view().activatedAt).toBeNull();
@@ -49,10 +49,11 @@ it('does not mistake an ongoing reservation for exhaustion or require a refill a
   const f=goalFixture();cleanups.push(f.close);f.gate.budget.configure(settings(1,0.002));f.on();let release!:(value:any)=>void;f.respond(()=>new Promise(resolve=>release=resolve));
   const provider=f.gate.provider(f.provider,f.meter),request={model:'test',messages:[],maxTokens:100,promptHash:'concurrent'};
   const first=provider.call(request);expect(f.calls).toHaveLength(1);
-  expect(()=>f.gate.budget.configure(settings(2,2,'CNY',1))).toThrow('OWNER_OUTCOME_REVIEW_REQUIRED');
+  expect(()=>f.gate.budget.configure(settings(1,0.000001,'CNY',1))).toThrow('OWNER_COMPANY_BUDGET_EXHAUSTED');
   await expect(provider.call(request)).rejects.toThrow('OWNER_COMPANY_BUDGET_BUSY');expect(f.gate.budget.view().needsRefill).toBe(false);expect(f.calls).toHaveLength(1);
+  const held=f.gate.budget.view().reservedMicros;f.gate.budget.configure(settings(2,0.002,'CNY',1));expect(f.gate.budget.view().reservedMicros).toBe(held);
   release({rawText:'Actual result',usage:{promptTokens:20,completionTokens:10,cachedTokens:0}});await first;
-  expect(f.gate.budget.view()).toMatchObject({availableMicros:1960,reservedMicros:0,needsRefill:false});expect(f.gate.isOn()).toBe(true);
+  expect(f.gate.budget.view()).toMatchObject({availableMicros:3960,reservedMicros:0,needsRefill:false});expect(f.gate.isOn()).toBe(true);
 });
 it('resumes an existing individual-allowance wait only after company start, reusing its stored message',async()=>{
   const f=goalFixture();cleanups.push(f.close);f.on();const runtime=await f.manager.open(f.a.world_id),turn=await new QianjiWorldGateway(f.manager).enqueue(f.a.qianji_id,'Retained old task','retained-allowance-wait');
@@ -61,11 +62,9 @@ it('resumes an existing individual-allowance wait only after company start, reus
   f.off();f.gate.budget.configure(settings(100,2,'CNY',f.gate.budget.view().revision));await f.work.tick();expect(f.work.view().tasks[0].state).toBe('BLOCKED');expect(f.calls).toHaveLength(0);
   f.on();await f.finish();expect(f.work.view().tasks[0].state).toBe('REPLIED');expect(f.calls).toHaveLength(1);expect(f.control.db.prepare('SELECT COUNT(*) n FROM world_chat_turns').get()!.n).toBe(1);expect(runtime.store.messages.getMessage(String(turn.message_id))!.status).toBe('COMMITTED');
 });
-it('backs up and migrates the old money ledger without discarding costs or granting money, and reopens schema 2',()=>{
-  const root=fs.mkdtempSync(join(tmpdir(),'shared-money-migration-')),file=join(root,'control.sqlite3'),store=new WorldRegistryStore(file);cleanups.push(async()=>{store.close();fs.rmSync(root,{recursive:true,force:true});});new OwnerGoalService(store);
-  store.db.exec("CREATE TABLE owner_company_budget(id INTEGER PRIMARY KEY CHECK(id=1),schema_version INTEGER NOT NULL,total_micros INTEGER NOT NULL,revision INTEGER NOT NULL,activated_at INTEGER); INSERT INTO owner_company_budget VALUES(1,1,5000000,4,1); CREATE TABLE owner_money_reservations(permit_id TEXT PRIMARY KEY REFERENCES owner_model_permits(id),reserved_micros INTEGER NOT NULL,settled_micros INTEGER);");
-  store.db.prepare("INSERT INTO owner_model_permits VALUES('old','initial',NULL,NULL,NULL,'SETTLED',100,30,2,1)").run();store.db.prepare("INSERT INTO owner_money_reservations VALUES('old',3000000,2000000)").run();
-  const gate=new OwnerAutomationGate(store);expect(fs.existsSync(file+'.pre-shared-budget.bak')).toBe(true);expect(gate.budget.view()).toMatchObject({totalMicros:5000000,spentMicros:2000000,availableMicros:3000000,configuration:null,revision:4});
-  const backup=new WorldRegistryStore(file+'.pre-shared-budget.bak');try{expect(backup.db.prepare('SELECT schema_version FROM owner_company_budget').get()!.schema_version).toBe(1);}finally{backup.close();}
-  gate.budget.configure(settings(200,2,'CNY',4));const reopened=new WorldRegistryStore(file);try{const next=new OwnerAutomationGate(reopened);expect(next.budget.view()).toMatchObject({totalMicros:400000000,availableMicros:400000000,spentMicros:0,historicalCostMicros:2000000,configuration:{tokenMillions:200,unitPriceCnyMicros:2000000}});expect(next.view()).toMatchObject({desiredMode:'OFF',spentTokens:30});}finally{reopened.close();}
+it('rejects an old money schema without backing it up or granting money',()=>{
+  const root=fs.mkdtempSync(join(tmpdir(),'v34-money-rejection-')),file=join(root,'control.sqlite3'),store=new WorldRegistryStore(file);cleanups.push(async()=>{store.close();fs.rmSync(root,{recursive:true,force:true});});new OwnerGoalService(store);
+  store.db.exec("CREATE TABLE owner_company_budget(id INTEGER PRIMARY KEY,schema_version INTEGER NOT NULL,total_micros INTEGER NOT NULL,revision INTEGER NOT NULL,activated_at INTEGER); INSERT INTO owner_company_budget VALUES(1,1,5000000,4,1);");
+  expect(()=>new OwnerAutomationGate(store)).toThrow('OWNER_MONEY_SCHEMA_UNSUPPORTED');expect(fs.existsSync(file+'.pre-shared-budget.bak')).toBe(false);
+  expect(store.db.prepare('SELECT schema_version,total_micros FROM owner_company_budget').get()).toMatchObject({schema_version:1,total_micros:5000000});
 });

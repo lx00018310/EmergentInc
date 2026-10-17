@@ -15,14 +15,16 @@ const meter=new UsageMeter(JSON.parse(fs.readFileSync(join(project,'resources/co
 let work:OwnerWorkService;
 const manager=new WorldRuntimeManager(registry,{schema_version:1,generation:1,body_interface_version:'1',protected_paths:['genome/**'],capability_contracts:{}},{provider,usageMeter:meter,modelName:process.env.MCL_MODEL!,isMockMode:false,isModelConfigured:true,projectRoot:project,configureTools:(id,tools)=>work.registerTools(tools,id)});
 const gate=new OwnerAutomationGate(control);manager.attachAutomation(gate);work=new OwnerWorkService(manager);const scheduler=new OwnerGoalScheduler(manager,work,gate);
+work.enableWorkers({MCL_API_KEY:process.env.MCL_API_KEY,MCL_BASE_URL:process.env.MCL_BASE_URL});
+const running=()=>work.worker!.snapshots().some(a=>work.worker!.isRunning(String(a.id)));
 try{
   await manager.resumeInterrupted();await scheduler.tick();const deadline=performance.now()+300000;
   for(;;){
     await work.tick();
-    if(mode==='first'&&work.view().tasks.some(t=>t.state==='REPLIED')&&!manager.list().some(w=>w.running))break;
+    if(mode==='first'&&work.view().tasks.some(t=>t.state==='REPLIED')&&!running())break;
     if(mode!=='first')await scheduler.tick();
     const plan=gate.proposals.plans.get(goalId)!;
-    if(mode!=='first'&&plan.nodes.every(n=>n.occurrences>=(n.trigger.kind==='interval'&&mode==='timer'?2:1))&&!manager.list().some(w=>w.running))break;
+    if(mode!=='first'&&plan.nodes.every(n=>n.occurrences>=(n.trigger.kind==='interval'&&mode==='timer'?2:1))&&!running())break;
     const goal=gate.goals.get(goalId);if(['BLOCKED','FAILED','STOPPED'].includes(goal.status)||!gate.isOn())throw new Error(goal.reason??gate.view().reason??'VERIFICATION_BLOCKED');
     if(performance.now()>deadline)throw new Error('REAL_VERIFICATION_TIMEOUT');await new Promise(r=>setTimeout(r,100));
   }

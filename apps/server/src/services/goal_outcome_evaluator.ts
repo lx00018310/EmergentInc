@@ -5,6 +5,7 @@ import type { OwnerGoal,OwnerGoalEvidence } from '@emergentinc/protocol';
 import type { WorldRuntimeManager } from './world_runtime_manager.js';
 import type { OwnerGoalService } from './owner_goal_service.js';
 import type { PaymentService } from './payment_service.js';
+import { CompanyArtifactService } from './company_artifact_service.js';
 
 /** Verifies immutable tool receipts and actual file bytes. An LLM report has no completion authority. */
 export class GoalOutcomeEvaluator {
@@ -15,7 +16,7 @@ export class GoalOutcomeEvaluator {
       const r=this.payments?.db.prepare("SELECT * FROM payment_receipts WHERE id=? AND invoice_id=? AND source='chain_finalized'").get(e.id.split(':').at(-1)!,e.reference);
       if(!r||createHash('sha256').update(JSON.stringify(r)).digest('hex')!==e.sha256)throw new Error('OWNER_EVIDENCE_CHANGED');return;
     }
-    if(!e.worldId)throw new Error('OWNER_EVIDENCE_CHANGED');const parts=e.reference.split('/');
+    if(!e.worldId){new CompanyArtifactService(this.goals.store,this.manager.registry.workspace).read(e);return;}const parts=e.reference.split('/');
     if(parts[0]!=='evidence'||parts.some(p=>!p||p==='.'||p==='..'||/[\\:]/.test(p)))throw new Error('OWNER_EVIDENCE_CHANGED');
     let file=this.manager.registry.directory(e.worldId);for(const part of parts){file=path.join(file,part);if(!fs.existsSync(file)||fs.lstatSync(file).isSymbolicLink())throw new Error('OWNER_EVIDENCE_CHANGED');}
     if(!fs.statSync(file).isFile()||fs.statSync(file).size!==e.bytes||e.bytes>2000000||createHash('sha256').update(fs.readFileSync(file)).digest('hex')!==e.sha256)throw new Error('OWNER_EVIDENCE_CHANGED');
@@ -32,6 +33,8 @@ export class GoalOutcomeEvaluator {
     });
   }
   collect(goal: OwnerGoal, dispatchId: string, worldId: string, reply?: string | null) {
+    if(this.goals.store.db.prepare("SELECT 1 FROM sqlite_master WHERE name='company_legacy_runs'").get()&&this.goals.store.db.prepare('SELECT 1 FROM company_legacy_runs l JOIN company_execution_attempts a ON a.run_id=l.run_id WHERE a.dispatch_id=?').get(dispatchId))return this.collectWorker(goal,dispatchId,reply);
+    if(this.goals.store.db.prepare("SELECT 1 FROM sqlite_master WHERE name='company_worker_launches'").get()&&this.goals.store.db.prepare('SELECT 1 FROM company_execution_attempts a JOIN company_worker_launches w ON w.attempt_id=a.id WHERE a.dispatch_id=?').get(dispatchId))return this.collectWorker(goal,dispatchId,reply);
     const runtime = this.manager.peek(worldId); if (!runtime) return 0;
     const runs = this.goals.store.db.prepare('SELECT run_id FROM owner_run_permits WHERE dispatch_id=?').all(dispatchId).map(r => String(r.run_id));
     let added = 0;
@@ -59,5 +62,16 @@ export class GoalOutcomeEvaluator {
     if (added) this.goals.event(goal.id, 'evidence_collected', { count: added, dispatchId });
     if (verified && !runs.some(id=>runtime.store.runs.getCheckpoint(id)?.resume_pending) && ['READY', 'RUNNING'].includes(this.goals.get(goal.id).status)) this.goals.state(goal.id, 'WAITING_APPROVAL', 'OWNER_ARTIFACT_VERIFIED');
     return added;
+  }
+  private collectWorker(goal:OwnerGoal,dispatchId:string,reply?:string|null) {
+    const db=this.goals.store.db,attempt=db.prepare('SELECT * FROM company_execution_attempts WHERE dispatch_id=? ORDER BY fence DESC LIMIT 1').get(dispatchId);
+    if(!attempt)return 0;
+    const evidence=this.goals.detail(goal.id).evidence.filter(e=>e.kind==='artifact'&&e.specificationRevision===goal.specificationRevision);
+    for(const e of evidence)this.verify(e);
+    if(reply)db.prepare("INSERT INTO owner_goal_evidence VALUES(?,?,?,?,'','report',?,?,?,?) ON CONFLICT(id) DO NOTHING").run(`report:${dispatchId}`,goal.id,goal.specificationRevision,attempt.run_id,dispatchId,createHash('sha256').update(reply).digest('hex'),Buffer.byteLength(reply),Date.now());
+    const acceptance=goal.acceptance,accepted=acceptance.kind==='artifact'&&evidence.some(e=>e.reference.endsWith('/'+acceptance.filename)&&e.bytes>=acceptance.minBytes);
+    db.prepare('UPDATE owner_goals SET evidence_count=?,verified_count=?,updated_at=? WHERE id=? AND specification_revision=?').run(evidence.length,accepted?1:0,Date.now(),goal.id,goal.specificationRevision);
+    if(accepted&&attempt.state==='COMPLETED'&&['READY','RUNNING'].includes(this.goals.get(goal.id).status))this.goals.state(goal.id,'WAITING_APPROVAL','OWNER_ARTIFACT_VERIFIED');
+    return evidence.filter(e=>e.runId===attempt.run_id).length;
   }
 }

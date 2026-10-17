@@ -1,14 +1,18 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { GenerationState, MemoryPoint, lifeId, lifeText, memoryPoint } from "@emergentinc/protocol";
-import { BusinessStore, businessHash } from "./business_store.js";
+import { SqliteDatabase } from "./sqlite/db.js";
 import { migrateLineage } from "./migrations/lineage_schema.js";
-import { migrateWorldLife } from './migrations/world_life_schema.js';
+
 
 export type LifeRow = Record<string, any>;
-export class LineageStore extends BusinessStore {
-  readonly worldsEnabled:boolean;
-  constructor(filename = ":memory:",options:{v23?:boolean}={}) { super(filename, migrateLineage);if(options.v23)migrateWorldLife(this.db);
-    this.worldsEnabled=this.db.prepare('PRAGMA table_info(memories)').all().some(c=>c.name==='world_id'); }
+export class LineageStore {
+  readonly db: SqliteDatabase;
+  readonly worldsEnabled = true;
+  constructor(filename = ":memory:", _options: {v23?: boolean} = {}) {
+    this.db = new SqliteDatabase(filename);
+    try { migrateLineage(this.db); } catch (error) { this.db.close(); throw error; }
+  }
+  close() { this.db.close(); }
   generation(id: string): LifeRow {
     const row = this.db.prepare("SELECT * FROM generations WHERE id=?").get(id);
     if (!row) throw new Error("GENERATION_NOT_FOUND");
@@ -85,5 +89,5 @@ export class LineageStore extends BusinessStore {
     return p;
   }
   proposals() { return this.db.prepare("SELECT * FROM gene_proposals ORDER BY created_at DESC,rowid DESC LIMIT 100").all(); }
-  factHash(value: unknown) { return businessHash(value); }
+  factHash(value: unknown) { return createHash("sha256").update(JSON.stringify(value)).digest("hex"); }
 }

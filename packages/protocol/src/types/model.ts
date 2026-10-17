@@ -24,6 +24,8 @@ export interface PreparedModelRequest {
   }>;
   temperature?: number;
   maxTokens?: number;
+  /** Explicit provider JSON mode; frozen with the paid request. */
+  responseFormat?: 'json_object';
   promptHash: string;
   estimatedTokens?: number;
   pricingRevision?: string;

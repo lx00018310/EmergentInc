@@ -24,8 +24,8 @@ export class LocalWorldRuntime implements EvolutionRuntime {
     const shell=process.env.ComSpec||'cmd.exe';
     const install=process.platform==='win32'?()=>this.execute(shell,['/d','/s','/c','pnpm.cmd install --offline --frozen-lockfile --ignore-scripts'],directory,this.cleanEnv()):()=>this.execute('pnpm',['install','--offline','--frozen-lockfile','--ignore-scripts'],directory,this.cleanEnv());
     await install();
-    for(const command of ['pnpm.cmd typecheck','pnpm.cmd test --maxWorkers=2 --testTimeout=15000','pnpm.cmd build','pnpm.cmd --dir frontend build']){
-      const timeout=command==='pnpm.cmd test --maxWorkers=2 --testTimeout=15000'?900000:300000;
+    for(const command of ['pnpm.cmd typecheck','pnpm.cmd build','pnpm.cmd --dir frontend build','pnpm.cmd test --maxWorkers=1 --testTimeout=30000 --hookTimeout=30000','pnpm.cmd --dir frontend test']){
+      const timeout=command.startsWith('pnpm.cmd test ')?900000:300000;
       if(process.platform==='win32')await this.execute(shell,['/d','/s','/c',command],directory,this.cleanEnv(),timeout);
       else await this.execute('pnpm',command.replace('pnpm.cmd ','').split(' '),directory,this.cleanEnv(),timeout);
     }
@@ -56,14 +56,14 @@ export class LocalWorldRuntime implements EvolutionRuntime {
   }
   private async owner(action:string,body:unknown={}){
     await this.login();
-    const response=await fetch(this.config.appUrl+'/api/evolution/'+action,{method:'POST',headers:{cookie:this.cookie!,'Content-Type':'application/json',Connection:'close'},body:JSON.stringify(body),redirect:'error',signal:AbortSignal.timeout(180000)});
+    const response=await fetch(this.config.appUrl+'/api/maintenance/'+action,{method:'POST',headers:{cookie:this.cookie!,'Content-Type':'application/json',Connection:'close'},body:JSON.stringify(body),redirect:'error',signal:AbortSignal.timeout(180000)});
     await response.arrayBuffer();if(!response.ok)throw new Error('EVOLUTION_OWNER_ACTION_FAILED: '+action);
   }
   async quiesce(){await this.owner('quiesce');}
-  async finalDream(){await this.owner('final-dream');}
+  async finalDream(){await this.owner('checkpoint');}
   // Maintenance is temporary. The company keeps its own persisted execution authorization.
   async resume(){await this.owner('resume');}
-  async postRollbackDream(input:unknown){await this.owner('post-rollback-dream',input);}
+  async postRollbackDream(input:unknown){await this.quiesce();try{await this.owner('checkpoint',input);}finally{await this.resume();}}
   async smoke(directory:string,workspace:string,generation:string){await this.execute(process.execPath,[path.join(directory,'supervisor/candidate_harness.mjs'),'smoke',directory,workspace,generation],directory,this.cleanEnv(),30000);}
   async stop(){
     // A failed start may never open HTTP or write its lock. Stop only the child we spawned.

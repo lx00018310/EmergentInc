@@ -85,9 +85,9 @@ describe("Runtime: Decision Compiler", () => {
         runId: "run_nonchat", modelCallId: "call_nonchat_reply",
       }).applyEffects(effects);
 
-      expect(store.qianjiChat.getTurnForMessage(message.messageId)).toBeNull();
+      expect(store.db.prepare("SELECT name FROM sqlite_master WHERE name='qianji_chat_turns'").get()).toBeUndefined();
       expect(store.effects.getEffect(effects[0].effectId)?.status).toBe("FAILED");
-      expect(store.messages.listRecentMessages().some(item => item.sourceType === "system" && item.content.includes("not a valid Qianji chat turn"))).toBe(true);
+      expect(store.effects.getEffect(effects[0].effectId)?.details).toContain('OWNER_REPLY_REQUIRES_WORKER_SCOPE');
     } finally { store.close(); }
   });
 });

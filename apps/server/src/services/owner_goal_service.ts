@@ -16,16 +16,12 @@ export function ownerKey(key: unknown): asserts key is string { ownerInput(typeo
 export class OwnerGoalService {
   constructor(readonly store: WorldRegistryStore) {
     const db = store.db;
-    // VACUUM INTO includes committed WAL data. Never copy a live SQLite main file alone.
-    if (db.dbPath !== ':memory:' && !db.prepare("SELECT 1 FROM sqlite_master WHERE name='owner_goals'").get()) {
-      const backup = `${db.dbPath}.pre-v29.bak`;
-      if (!fs.existsSync(backup)) db.exec(`VACUUM INTO '${backup.replaceAll("'", "''")}'`);
-    }
     db.exec(`
       CREATE TABLE IF NOT EXISTS owner_goals(id TEXT PRIMARY KEY,revision INTEGER NOT NULL,specification_revision INTEGER NOT NULL,title TEXT NOT NULL,objective TEXT NOT NULL,acceptance TEXT NOT NULL,max_tokens INTEGER NOT NULL,status TEXT NOT NULL,next_action TEXT NOT NULL DEFAULT '',reason TEXT,verified_count INTEGER NOT NULL DEFAULT 0,evidence_count INTEGER NOT NULL DEFAULT 0,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL,last_scheduled_at INTEGER NOT NULL DEFAULT 0);
       CREATE TABLE IF NOT EXISTS owner_goal_revisions(goal_id TEXT NOT NULL REFERENCES owner_goals(id),revision INTEGER NOT NULL,snapshot TEXT NOT NULL,PRIMARY KEY(goal_id,revision));
       CREATE TABLE IF NOT EXISTS owner_goal_events(id INTEGER PRIMARY KEY,goal_id TEXT NOT NULL REFERENCES owner_goals(id),revision INTEGER NOT NULL,kind TEXT NOT NULL,payload TEXT NOT NULL,created_at INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS owner_control_requests(key TEXT PRIMARY KEY,payload_hash TEXT NOT NULL,response TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS owner_company_proposals(id TEXT PRIMARY KEY,kind TEXT NOT NULL,goal_id TEXT,goal_revision INTEGER,payload TEXT NOT NULL,hash TEXT NOT NULL,state TEXT NOT NULL,result TEXT,created_at INTEGER NOT NULL,operation_key TEXT NOT NULL UNIQUE);
       CREATE TABLE IF NOT EXISTS owner_model_permits(id TEXT PRIMARY KEY,batch_id TEXT NOT NULL,world_id TEXT,goal_id TEXT,goal_revision INTEGER,state TEXT NOT NULL,reserved_tokens INTEGER NOT NULL,actual_tokens INTEGER,cost_cny REAL,created_at INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS owner_goal_steps(id TEXT PRIMARY KEY,goal_id TEXT NOT NULL REFERENCES owner_goals(id),goal_revision INTEGER NOT NULL,step_key TEXT NOT NULL,state TEXT NOT NULL,attempts INTEGER NOT NULL DEFAULT 0,created_at INTEGER NOT NULL,UNIQUE(goal_id,goal_revision,step_key));
       CREATE TABLE IF NOT EXISTS owner_goal_recruits(request_id TEXT PRIMARY KEY,goal_id TEXT NOT NULL REFERENCES owner_goals(id),goal_revision INTEGER NOT NULL);
@@ -84,7 +80,7 @@ export class OwnerGoalService {
       const old = this.get(id); if (old.revision !== input.expectedRevision) ownerConflict();
       if (old.status === 'ARCHIVED') ownerConflict('OWNER_GOAL_ARCHIVED');
       this.store.db.prepare("UPDATE owner_goals SET revision=revision+1,specification_revision=specification_revision+1,title=?,objective=?,acceptance=?,max_tokens=?,status='READY',reason=NULL,verified_count=0,evidence_count=0,next_action='',updated_at=? WHERE id=?").run(input.title.trim(), input.objective.trim(), JSON.stringify(input.acceptance), 0, Date.now(), id);
-      const goal = this.get(id); this.snapshot(goal); this.event(id, 'edited', { previousRevision: old.specificationRevision }); return goal;
+      const goal = this.get(id); this.expireDecisions(id); this.snapshot(goal); this.event(id, 'edited', { previousRevision: old.specificationRevision }); return goal;
     });
   }
   action(id: string, input: any): OwnerGoal {
@@ -115,12 +111,25 @@ export class OwnerGoalService {
       const goal = this.get(id), t = transitions[input.action]!; if (goal.revision !== input.expectedRevision) ownerConflict();
       if (!t.from.includes(goal.status)) ownerConflict('OWNER_GOAL_TRANSITION_INVALID');
       // Unknown calls/effects cannot be cleared by merely pressing Continue.
-      if (t.to === 'READY' && this.store.db.prepare("SELECT 1 FROM owner_model_permits WHERE goal_id=? AND state='UNKNOWN'").get(id)) ownerConflict('OWNER_OUTCOME_REVIEW_REQUIRED');
+      if (t.to === 'READY' && this.hasPendingOutcome(id)) ownerConflict('OWNER_OUTCOME_REVIEW_REQUIRED');
       this.store.db.prepare('UPDATE owner_goals SET revision=revision+1,status=?,reason=NULL,next_action=?,updated_at=? WHERE id=?').run(t.to, '', Date.now(), id);
+      if(input.action==='reopen'&&this.store.db.prepare("SELECT 1 FROM sqlite_master WHERE name='owner_task_nodes'").get())this.store.db.prepare("UPDATE owner_task_nodes SET state='WAITING',next_at=?,no_progress=0 WHERE goal_id=? AND goal_revision=? AND state='BLOCKED'").run(Date.now(),id,goal.specificationRevision);
+      if(['STOPPED','ARCHIVED'].includes(t.to))this.expireDecisions(id);
       this.event(id, input.action, {}); return this.get(id);
     });
   }
+  /** Known text with a pending bill is accounting, not an unknown execution outcome. */
+  hasPendingOutcome(goalId:string,includeSent=false){
+    const db=this.store.db,receipts=Boolean(db.prepare("SELECT 1 FROM sqlite_master WHERE name='company_model_dispatches'").get());
+    const states=includeSent?"('SENT','UNKNOWN')":"('UNKNOWN')";
+    const unknown=db.prepare(`SELECT 1 FROM owner_model_permits p ${receipts?'LEFT JOIN company_model_dispatches d ON d.permit_id=p.id':''} WHERE p.goal_id=? AND p.state IN ${states} ${receipts?'AND d.response_json IS NULL':''} AND NOT EXISTS(SELECT 1 FROM control_events e WHERE e.kind='owner_model_outcome_reviewed' AND json_extract(e.payload,'$.permitId')=p.id)`).get(goalId);
+    const reviewed=Boolean(db.prepare("SELECT 1 FROM sqlite_master WHERE name='company_tool_reviews'").get());
+    const tool=db.prepare("SELECT 1 FROM sqlite_master WHERE name='company_controller_tools'").get()&&db.prepare(`SELECT 1 FROM company_controller_tools t JOIN company_execution_attempts a ON a.id=t.attempt_id WHERE a.goal_id=? AND t.state='STARTED' ${reviewed?"AND NOT EXISTS(SELECT 1 FROM company_tool_reviews r WHERE r.operation_id=t.operation_id AND r.decision='ABANDONED')":''}`).get(goalId);
+    const execution=reviewed&&db.prepare("SELECT 1 FROM company_execution_attempts a JOIN company_worker_launches w ON w.attempt_id=a.id WHERE a.goal_id=? AND a.reason IN ('CALL_OUTCOME_UNKNOWN','TOOL_OUTCOME_UNKNOWN') AND NOT EXISTS(SELECT 1 FROM company_execution_reviews r WHERE r.attempt_id=a.id)").get(goalId);
+    return Boolean(unknown||tool||execution);
+  }
   private snapshot(goal: OwnerGoal) { this.store.db.prepare('INSERT INTO owner_goal_revisions VALUES(?,?,?)').run(goal.id, goal.specificationRevision, JSON.stringify(goal)); }
+  private expireDecisions(id:string){this.store.db.prepare("UPDATE owner_company_proposals SET state='EXPIRED' WHERE goal_id=? AND state='PENDING'").run(id);}
   event(id: string, kind: string, payload: unknown) { this.store.db.prepare('INSERT INTO owner_goal_events(goal_id,revision,kind,payload,created_at) VALUES(?,?,?,?,?)').run(id, this.get(id).specificationRevision, kind, JSON.stringify(payload), Date.now()); }
   state(id: string, state: OwnerGoalStatus, reason: string | null = null) {
     const old = this.get(id); if (old.status === state && old.reason === reason) return;

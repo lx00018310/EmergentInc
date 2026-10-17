@@ -1,0 +1,40 @@
+{
+  "verifiedAt": "2026-10-16T12:22:28.657Z",
+  "workspace": "D:\\00_personalwork\\EmergentInc元胞会社\\workspace",
+  "instanceId": "1a72ec26-06ff-4800-a4af-5a906f12839b",
+  "format": 34,
+  "initializedAt": "2026-10-16T12:18:55.103Z",
+  "company": "OFF",
+  "budget": {
+    "authorized": false,
+    "totalMicros": 0,
+    "spentMicros": 0,
+    "reservedMicros": 0
+  },
+  "counts": {
+    "control.qianji_worlds": 0,
+    "control.owner_goals": 0,
+    "control.owner_work_tasks": 0,
+    "control.owner_chat_calls": 0,
+    "control.owner_model_permits": 0,
+    "control.owner_money_reservations": 0,
+    "control.orders": 0,
+    "payment.payment_invoices": 0,
+    "payment.payment_receipts": 0,
+    "payment.world_revenue_events": 0,
+    "lineage.memories": 0
+  },
+  "publishedProducts": 0,
+  "modelConfigured": true,
+  "paymentConfigured": false,
+  "activeGeneration": "G0001",
+  "releaseId": "local-initial-4c41d70e-53b5-4600-a1bf-2b4c99c426f0",
+  "deploymentConfigurationHashesPreserved": true,
+  "retiredCompiledModulesAbsent": true,
+  "mainReady": true,
+  "upgradeReady": true,
+  "screenshots": [
+    "C:/Users/ASUS/.codex/visualizations/2026/10/16/01a14358-df8b-7cc0-b72d-d5ec0138dffb/boss-v34-live-zh-1280.png",
+    "C:/Users/ASUS/.codex/visualizations/2026/10/16/01a14358-df8b-7cc0-b72d-d5ec0138dffb/boss-v34-live-zh-390.png"
+  ]
+}

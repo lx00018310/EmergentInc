@@ -102,9 +102,9 @@ export class GenerationSupervisor {
   private nextNumber() { return Number(this.lineage.db.prepare("SELECT COALESCE(MAX(generation_no),0)+1 n FROM generations").get()!.n); }
   private async inheritedPreflight(c: Record<string, any>) {
     if(!c.request.owner_release||!this.runtime.worlds)return;
-    const root=path.resolve(import.meta.dirname,path.basename(import.meta.dirname)==='dist'?'../..':'..');
-    const {checkInheritedGene}=await import(pathToFileURL(path.join(root,'scripts/inherit-approved-gene.mjs')).href);
-    checkInheritedGene(path.join(this.releases,c.request.base_release),path.dirname(this.workspace),c.directory,this.directory);
+    // V34 has no business Gene promotion. Private Skills/extensions are checked independently.
+    const format=JSON.parse(fs.readFileSync(path.join(path.dirname(this.workspace),'workspace-format.json'),'utf8'));
+    if(format.product!=='BOSS-AFK'||format.format!==34)throw new Error('V34_DESTRUCTIVE_RESET_REQUIRED');
   }
   async validate(id: string) {
     if (this.busy) throw new Error("EVOLUTION_BUSY");
@@ -461,14 +461,13 @@ export class GenerationSupervisor {
     if (createHash("sha256").update(buffer).digest("hex") !== snapshot.sha256) throw new Error("FROZEN_CURRENT_HASH_CONFLICT");
     const frozen = new DatabaseSync(snapshot.frozen_current, { readOnly: true });
     try {
-      const last = this.lineage.db.prepare("SELECT to_cursor FROM dream_runs WHERE generation_id=? AND status='COMPLETED' ORDER BY finished_at DESC LIMIT 1").get(candidate.target_generation);
-      const cursor = last ? JSON.parse(String(last.to_cursor)).current : 0;
+      const cursor = 0;
       const facts:unknown[] = frozen.prepare("SELECT sequence,kind,pixel_id,payload FROM current_events WHERE sequence>? ORDER BY sequence DESC LIMIT 40").all(cursor).reverse()
         .map(r => ({ sequence: r.sequence, kind: r.kind, pixel_id: r.pixel_id, payload: String(r.payload).slice(0, 300) }));
       for(const world of snapshot.worlds??[]){
         if(createHash('sha256').update(fs.readFileSync(world.file)).digest('hex')!==world.sha256)throw new Error('FROZEN_WORLD_HASH_CONFLICT');
         const db=new DatabaseSync(world.file,{readOnly:true});try{
-          const worldCursor=last?Number(JSON.parse(String(last.to_cursor)).worlds?.[world.worldId]??0):0;
+          const worldCursor=0;
           for(const row of db.prepare('SELECT sequence,kind,pixel_id,payload FROM current_events WHERE sequence>? ORDER BY sequence LIMIT 40').all(worldCursor))
             if(facts.length<40)facts.push({...row,payload:String(row.payload).slice(0,300),world_id:world.worldId});
         }finally{db.close();}

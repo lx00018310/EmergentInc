@@ -1,57 +1,57 @@
-# Owner Guide / Owner 使用指南 — V32
+# BOSS:/AFK · Owner guide / 老板指南
 
-## Chat and approvals / 对话与审批
+## Start / 开始
 
-Sign in at `/OWNER`. The sidebar contains only **Boss chat** and **AI company dashboard**. Start with `company budget CNY 100`; this creates a proposal. `approve company budget CNY 100` is an explicit authorization itself. Without a money authorization, the budget prompt, pause, proposal decisions and recorded status do not call a paid model.
+Open `/BOSS` and sign in. Select **EN / 中文** in the header. New companies start OFF with no authorized budget. Use **Authorize company budget** to set a CNY amount from token quantity and unit price; saving does not start the company. Then select **Start**.
 
-登录 `/OWNER`，左侧只有 **Boss 对话** 和 **AI 公司看板**。先说“公司预算 100 元”生成预算提案；“批准公司预算 100 元”本身就是明确金额授权。未授权金额时，引导、暂停、提案决定及读取记录都不调用收费模型。
+打开 `/BOSS` 登录，在顶部切换 **EN / 中文**。新公司初始 OFF、预算未授权。通过 **授权公司预算**填写 Token 数量和单价形成 CNY 金额；保存不会自动开机，然后点击 **启动**。
 
-Describe the task and its expected deliverable. AI proposes one plan containing once, ongoing, interval, daily or weekly nodes, including their dependencies and timezone. Approve once to start the workflow. The company coordinates existing executors; a secretary is optional. Missing personnel produces a recruitment proposal. A recruitment approval can be queued while the company is paused; it does not claim a person has already been created.
+## Give a goal / 下达目标
 
-交代任务及预期成果，AI 提出一份计划，组合一次性、长程、间隔、每日或每周节点，说明依赖和时区。批准一次后自动推进；公司协调现有执行者，无须先设置秘书。缺人时提出招聘申请；公司暂停期间可记录招聘批准并排队，不把批准冒充已经创建人员。
+Use the single input, for example: “Research demand for a local bookkeeping service and save a source-backed report.” The system records the goal and proposes work. Review exact plan/Worker/product decisions on the homepage. Approving a proposal grants only its stated scope; external publishing or software publication still requires its own permission.
 
-Each step saves an immutable deliverable and actual tool receipts. Subsequent dependent steps receive verified evidence. Reports, orders and drafts do not prove payments. Once steps finish, the company submits a close proposal. Only Owner acceptance closes the task and stops future triggers. Rejecting a close proposal leaves it open for follow-up.
+使用唯一输入框，例如：“调研本地记账服务需求，保存含来源依据的报告。”系统记录目标并提出工作方案。在首页核对具体计划、执行者、商品决定。批准只授权提案注明的范围；外部发布和软件发布仍需要各自权限。
 
-每步保留不可变成果与实际工具回执，后续依赖步骤读取核验后的证据。汇报、订单、草稿不能证明收款。步骤完成后提交结案提案，老板认可后才结案并停止未来触发；拒绝结案则保留任务等待跟进。
+## Read the facts / 阅读事实
 
-Use `pause company` / `resume` for company operation, or `pause task <name>`, `stop task <name>`, `resume task <name>`, `close task <name>`. With multiple possible targets, specify one. A unique pending proposal can be decided with `approve` or `reject`; otherwise name the proposal or use its two dashboard buttons. Retrying the same request key returns the previous decision.
+There are exactly three dynamic metrics and at most three visible messages. Critical recovery issues take priority; additional decisions remain available through **More important items**. Normal logs are not notifications. Missing or stale data is shown as unknown. USDT revenue and CNY costs are separate; no estimated profit or model-generated progress percentage is shown.
 
-用“暂停公司”“继续运行”控制公司，或“暂停任务 名称”“停止任务 名称”“继续任务 名称”“结案任务 名称”。存在多个对象时须指明一个。只有一份待审提案时可以直接说“批准”“拒绝”；否则指定提案或在看板点击对应两个审批按钮。相同请求键重试返回原决定。
+页面恰好显示三个动态指标、最多三条消息。严重恢复问题优先，其他决定可从 **更多重要事项**处理。普通日志不占消息位。缺失或过期数据标为未知；USDT 收入与 CNY 成本分开，不展示估算利润或模型生成的进度百分比。
 
-## Money and waiting / 金额与等待
+Approvals bind the exact hash/revision and retry key. An error or timeout is not success. A pending chat or budget change keeps its original request for retry; do not submit the same work under a new key to bypass an unknown result.
 
-One cumulative CNY authorization governs paid calls. `available = authorized − settled − reserved`, calculated with integer millionths of CNY. AI may allocate work but cannot enlarge this total. Old settled expenses remain separately visible; old token grants never become money. Unknown pre-V32 obligations must be resolved before activating the new budget.
+审批绑定具体 hash/revision 和重试键。错误、超时均不等于成功。未决对话或预算变更保留原请求供重试，不要用新键重复提交以绕过未知结果。
 
-收费调用共用一笔累计人民币授权，`可用 = 总授权 − 已结算 − 有效预留`，使用整数微元。AI 可安排工作，不能增加总额。旧结算费用单独展示，旧 Token 授信不转换成钱；V32 前的未知责任必须先核实，才能启用新预算。
+## Pause, budget, recovery / 暂停、预算、恢复
 
-Calls reserve a conservative bound before dispatch. Provably unsent calls release it; unknown calls retain it and block further spending. Insufficient funds generate an exact budget proposal for the next reservation. Approval can resume a provably unsent budget-blocked task. It cannot clear unknown outcomes or release a manual pause. Provider usage beyond its reservation stops operation for review.
+**Pause** stops further dispatch; a request already sent can still return. OFF persists across restarts and software upgrades. Funding the company does not resume work. An unknown execution blocks its step and dependent work; independent work may use the remaining budget after all unresolved reservations are deducted. A completed deliverable and its pending bill are separate facts.
 
-调用发出前保守预留，确定未发送才释放；未知调用保留预留并阻止新支出。余额不足时提出覆盖下一次预留的准确金额提案，批准可接续确定未发送的预算阻塞任务，不能清除未知结果或解除人工暂停。服务商实际用量超过预留时停止并等待核实。
+**暂停**阻止后续派工，已经发出的请求仍可能返回。OFF 跨重启和软件升级保留，追加金额不会自动恢复经营。未知执行阻塞本步骤及依赖工作；独立任务可使用扣除全部未决预留后的剩余预算。交付完成与账单未决分别记录。
 
-Waiting for a timer, evidence, approval or budget does not poll the model. Recurring nodes do not overlap; overdue periods coalesce into one batch, retaining the scheduled and actual timestamps. There is no 366-occurrence default business limit. Repeated empty or unchanged ongoing results stop after the existing no-progress guard.
+Use **Review unresolved calls** to record verified tokens and cost only from actual receipts. **Acknowledge and stop uncertain work** abandons the uncertain result without replay or an invented bill; unresolved money remains reserved. It does not start a replacement task. After reviewing the outcome, use the exact command “resume task <exact title or ID>” to reopen the task, or “stop task <exact title or ID>” to stop it. Never replay an unknown external effect by changing its key.
 
-等待时间、证据、审批或预算时不轮询模型。同一定时节点不重叠，逾期合并为一批，保留计划与实际时间；不设默认 366 次业务上限。空回复或长程节点重复相同成果由无进展保护停止。
+通过 **核验未决调用**，只依据实际回执填写已核验 Tokens 和费用。**确认并停止结果未明的工作**放弃未知结果，不重放、不填造账单，未决金额继续预留，且不会启动替代任务。核验后使用准确指令“继续任务 <准确名称或 ID>”重开，或“停止任务 <准确名称或 ID>”停止。不得更换操作键重放未知外部动作。
 
-## Dashboard and retained data / 看板与旧数据
+If a recovery response is lost, use **Retry pending recovery**. Its original fields, revision and request key remain fixed until the decision is confirmed or explicitly rejected. A bill received after an outcome was abandoned can still be recorded in this recovery window; accounting does not restart the discarded execution.
 
-The dashboard shows pending proposals, task stages, deliverables, actual people, daily settled costs, reservations, verified revenue by original asset, and decision history. It contains no operating settings. Old deep links open this dashboard. Source reports and private extensions are available as read-only details; credentials keep their existing secure delivery channel.
+核验响应丢失时，点击 **重试未确认核验**；原字段、版本号和请求键会保留，直到决定被确认或明确拒绝。放弃结果后才收到的费用回执，仍可在同一核验窗口登记；对账不会重新启动已放弃的执行。
 
-看板显示待审提案、阶段、成果、真实人员、每日结算费用、预留、原币种核验收入和审批历史，没有经营设置。旧深链接映射到看板，源码报告和私有扩展提供只读详情，凭据保留既有安全交付通道。
+## Receive payments / 收款
 
-`owner_goals` is the authoritative new company task record. Logical nodes, occurrences, dispatch attempts and model permits retain separate IDs. Existing BusinessPlans are references to their original executor, never duplicated into a second scheduler. Orders, payments, old goals, evidence and unknown calls are retained. The first V32 schema initialization creates a `control.sqlite3.pre-v32.bak` snapshot including committed WAL.
+Configure only public receive-only recipient addresses and supported mainnet rails through the homepage message. No outgoing transfer or wallet private key is required. Public customers use `/`; order links contain private random tokens. Only finalized, verified receipts enter revenue, and each receipt is recognized once.
 
-新公司任务以 `owner_goals` 为主记录，逻辑节点、触发批次、派工尝试、模型许可分别保留 ID。已有 BusinessPlan 引用原执行器，不复制到第二个调度器。订单、付款、旧目标、证据、未知调用保留；首次 V32 schema 初始化创建包含已提交 WAL 的 `control.sqlite3.pre-v32.bak`。
+通过首页消息配置公开收款地址和受支持主网通道，只收款、不转出、不需要私钥。客户访问 `/`；订单链接含私有随机令牌。收入只计入最终核验的回执，同一回执只入账一次。
 
-## Version switching / 版本切换
+## Update software / 更新软件
 
-At port 8766, select a real Git commit, wait for automatic isolated preparation and validation, then click **Approve and switch**. The exact candidate hash and current generation are bound internally. Compatible old commits follow this same process and produce a new increasing generation. Neither main/develop nor the development checkout is moved. Business data are not restored to an old snapshot to enable a switch.
+Local controlled publication runs on `http://127.0.0.1:8766`. Review the pinned source and exact candidate hash before approval. Validation, isolated smoke startup, process identity, compatibility and rollback guards remain enforced. Updates and rollback preserve V34 company data and private artifacts. They cannot undo the separate pre-V34 destructive reset.
 
-在 8766 选择真实 Git 提交，等待自动隔离准备、校验，再点 **批准并切换**。后台绑定准确候选 Hash 和当前运行代。兼容旧提交使用同一流程并生成递增新运行代，不移动 main/develop 或开发工作区，不通过恢复旧业务库来切换。
+本地受控发布入口为 `http://127.0.0.1:8766`，批准前核对固定源码与精确候选 hash。仍执行验证、隔离启动、进程身份、兼容性和回滚保护。升级和回滚保留 V34 经营数据与私有产物，不能撤销 V34 前的独立破坏性清零。
 
-Incompatible money, workflow, payment, Gene or extension protocols block the switch with a specific reason. The original manual/maintenance pause survives release changes. Durable approved runtime, config and approval records remain in `owner_private/approved-runtime`; ordinary cache cleanup must not remove them. Interrupted operations retain technical logs; controlled recovery remains available to the independent administrator CLI.
+After company-control migration, rollback requires a release supporting the persisted company worker and receipt protocols. Older incompatible releases are rejected; company records are never discarded to force a rollback. Migration snapshots remain under `workspace/system/migrations/company-control-v1/`.
 
-金额、任务、收款、Gene 或扩展协议不兼容会显示原因并阻止切换。发布保留人工及维护暂停意图。正式批准程序、配置及审批记录位于 `owner_private/approved-runtime`，普通缓存清理不得删除。中断操作保留技术日志，必要的受控恢复仍由独立管理员 CLI 提供。
+迁移到公司控制层后，回滚目标必须支持已持久化的 worker 与回执协议；系统拒绝不兼容的旧版本，不会通过删除公司记录强行回滚。迁移快照保留在 `workspace/system/migrations/company-control-v1/`。
 
-All Owner APIs retain session, Origin, exact-content and idempotency checks. Unknown provider bills or external actions require original receipt verification through the existing audited recovery APIs. A budget approval, restart, human acceptance or software release cannot manufacture a receipt or authorize external payments.
+**Inspect Company** opens current goals, acceptance rules, verified deliverables, workers, task reports, products and orders. Budget, payment and recovery settings remain accessible there after initial setup. See [reset guide / 清零指南](V34_RESET.md) and [removal inventory / 删减清单](../V34_REMOVAL_INVENTORY.md).
 
-Owner API 保留会话、Origin、准确内容及幂等校验。未知账单和外部动作须通过原回执与既有审计恢复 API 核实；预算审批、重启、人工验收或软件发布都不能制造回执或授予对外付款权限。
+**视察公司**展示当前目标、验收规则、已核验交付物、执行者、任务汇报、商品和订单。初次配置后仍可从这里进入预算、收款及恢复设置。详见上方清零指南与删减清单。

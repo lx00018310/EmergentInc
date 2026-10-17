@@ -12,10 +12,11 @@ import { OwnerAutomationGate } from '../../src/services/owner_automation_gate.js
 import { OwnerGoalScheduler } from '../../src/services/owner_goal_scheduler.js';
 import { PaymentService } from '../../src/services/payment_service.js';
 import { PaymentMonitor } from '../../src/services/payment_monitor.js';
-import { GenePromotionService } from '../../src/services/gene_promotion_service.js';
+import { PublicStore } from '../../src/services/public_store.js';
 
 export function goalFixture() {
   const root=fs.mkdtempSync(join(tmpdir(),'v29-goals-'));
+  fs.writeFileSync(join(root,'workspace-format.json'),JSON.stringify({product:'BOSS-AFK',format:34,instanceId:crypto.randomUUID(),initializedAt:new Date().toISOString()}));
   const lineage=new LineageStore(join(root,'system/lineage/lineage.sqlite3'),{v23:true});
   lineage.createGeneration({id:'G0001',number:1,geneHash:'1'.repeat(64),releaseId:'r1',state:'ACTIVE'});writeGenerationPointer(join(root,'system'),'G0001');
   const control=new WorldRegistryStore(join(root,'system/control/control.sqlite3')),registry=new WorldRegistryService(root,control,lineage,'1');
@@ -30,7 +31,8 @@ export function goalFixture() {
   const gate=new OwnerAutomationGate(control);manager.attachAutomation(gate,()=>maintenance);
   work=new OwnerWorkService(manager,()=>maintenance);
   const payments=new PaymentService(join(root,'system/payment/payment.sqlite3'),control,lineage),scheduler=new OwnerGoalScheduler(manager,work,gate,payments);
-  const worlds={manager,promotion:new GenePromotionService(manager,root,lineage),payments,monitor:new PaymentMonitor(payments),provider,meter,modelName:'test',ownerWork:work};
+  new PublicStore(control,payments).close();
+  const worlds={manager,payments,monitor:new PaymentMonitor(payments),modelName:'test',ownerWork:work};
   const on=(rounds:number|null=7,_legacyTokens=10_000_000,key=crypto.randomUUID())=>{if(gate.budget.view().activatedAt===null)gate.budget.configure({tokenMillions:1,unitPrice:(100_000_000)/1000000,priceCurrency:'CNY',expectedRevision:gate.budget.view().revision});return gate.control({desiredMode:'ON',expectedRevision:gate.view().revision,idempotencyKey:key});};
   const off=()=>gate.control({desiredMode:'OFF',expectedRevision:gate.view().revision,idempotencyKey:crypto.randomUUID()});
   const goal=(title='Research draft',kind:'artifact'|'manual'='artifact')=>gate.goals.create({title,objective:title,maxTokens:1_000_000,acceptance:kind==='artifact'?{kind,filename:'result.md',minBytes:10}:{kind,description:'Three real customers with independently verified payment evidence'},idempotencyKey:crypto.randomUUID()});

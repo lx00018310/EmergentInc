@@ -16,9 +16,9 @@ export function Checkout({ product }: { product?: Product }) {
   const [payment, setPayment] = useState<Payment>(), [error, setError] = useState(''), [busy, setBusy] = useState(false);
   // An uncertain POST is retried only with exactly the same intent and key, including after a refresh.
   const [intent, setIntent] = useState<{ key: string; body: Record<string, unknown> } | undefined>(() => {
-    const raw = sessionStorage.getItem('emergentinc.checkout-intent');
+    const raw = sessionStorage.getItem('boss.v34.checkout-intent');
     if (!raw) return undefined;
-    try { return JSON.parse(raw); } catch { sessionStorage.removeItem('emergentinc.checkout-intent'); return undefined; }
+    try { return JSON.parse(raw); } catch { sessionStorage.removeItem('boss.v34.checkout-intent'); return undefined; }
   });
   const inFlight = useRef(false);
   const [details, setDetails] = useState<Record<string, unknown>>(intent?.body ?? {});
@@ -39,13 +39,13 @@ export function Checkout({ product }: { product?: Product }) {
     inFlight.current = true; setBusy(true); setError('');
     try {
       const next = await publicApi<OrderLink>('orders', { ...body, idempotency_key: key });
-      setOrder(next); setIntent(undefined); sessionStorage.removeItem('emergentinc.checkout-intent');
+      setOrder(next); setIntent(undefined); sessionStorage.removeItem('boss.v34.checkout-intent');
       const params = new URLSearchParams({ order: next.order_id, token: next.public_order_token });
       window.history.replaceState(null, '', '/#' + params.toString());
     } catch (e) {
       setError((e as Error).message);
       if (e instanceof PublicApiError && [400,404,409].includes(e.status) && e.message !== 'ORDER_IDEMPOTENCY_CONFLICT') {
-        setIntent(undefined); sessionStorage.removeItem('emergentinc.checkout-intent');
+        setIntent(undefined); sessionStorage.removeItem('boss.v34.checkout-intent');
       }
     } finally { inFlight.current = false; setBusy(false); }
   }
@@ -67,7 +67,7 @@ export function Checkout({ product }: { product?: Product }) {
       e.preventDefault(); const form = new FormData(e.currentTarget);
       const body = { product_id: product?.product_id, customer_name: form.get('name'), customer_contact: form.get('contact'), customer_requirement: form.get('requirement'), rail_id: form.get('rail'), language: language() };
       setDetails(body);
-      const next = { key: crypto.randomUUID(), body }; setIntent(next); sessionStorage.setItem('emergentinc.checkout-intent', JSON.stringify(next));
+      const next = { key: crypto.randomUUID(), body }; setIntent(next); sessionStorage.setItem('boss.v34.checkout-intent', JSON.stringify(next));
       void submit(body, next.key);
     }}><h3>{t('Tell us what you need')}</h3>
       <label>{t('Your name')}<input name="name" required maxLength={120} autoComplete="name" defaultValue={String(details.customer_name ?? '')} /></label>

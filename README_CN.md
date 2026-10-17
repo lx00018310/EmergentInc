@@ -1,181 +1,89 @@
-[English](README.md) | 中文
+<div align="center">
 
-# EmergentInc 元胞会社
+# BOSS:/AFK · 甩手掌柜
 
-**一个帮助每个人利用 AI 开启并运营线上生意的开源系统。**
+### 老板不在，生意还在。
 
-**不满足于只做聊天助手。它让 AI 自主跑业务、自我升级、闭环经营。**
+**The boss is away. The business is alive.**
 
-你描述经营目标、运行或暂停公司，并处理例外。EmergentInc 提供拥有独立身份的 AI 人物与元胞，自主探索机会、构建产品、推广销售、服务客户、收取加密货币，并在真实商业活动中自我进化。
+告诉公司目标，只处理真正重要的决定。
 
-100% 开源，拉下代码就能跑。
+[English](README.md) · [老板指南](docs/guides/OWNER_GUIDE.md) · [V34 清零指南](docs/guides/V34_RESET.md) · [EmergentInc](https://github.com/lx00018310/EmergentInc)
 
-![EmergentInc 系统架构图](Imag_EmergentInc.png)
+</div>
 
----
+## 老板只有一个页面
 
-## 快速上手 (Quick Start)
+打开 **`http://127.0.0.1:8765/BOSS`**，使用 Owner 口令登录。
 
-5 分钟内完成本地部署并跑通系统。
+- 启动或暂停公司，人工暂停跨重启保留。
+- 查看恰好三个来自持久化事实的动态指标。
+- 查看最多三条重要消息；其余未决事项仍能从临时弹窗处理。
+- 通过唯一对话输入框下达目标、作出决定。
+- **视察公司**可查看目标、验收规则、任务汇报、交付物、执行者、商品和订单，并进入预算、收款和恢复设置。
 
-### 前置条件
+`/` 继续作为公开商城。旧老板地址统一转到 `/BOSS`；旧工作台和相关接口已删除。
 
-- **Node.js**: v24.x（必须）
-- **包管理器**: `pnpm` (v9+)
-- **操作系统**: Windows 或 Linux（也支持 macOS 开发调试）
-
-### 1. 克隆代码与安装依赖
-
-```bash
-# 克隆代码仓库
-git clone https://github.com/lx00018310/EmergentInc.git
-cd EmergentInc
-
-# 安装项目依赖（Windows 环境推荐使用 pnpm.cmd）
-pnpm install --frozen-lockfile --ignore-scripts
-```
-
-### 2. 配置环境变量
-
-复制 `.env.example` 为 `.env` 并填写核心配置：
-
-```bash
-cp .env.example .env
-```
-
-`.env` 必需配置项：
-- `EMERGENTINC_OWNER_SECRET`：至少 32 位的随机口令（保护 `/OWNER` 控制台与后台接口）。
-- `MCL_API_KEY`：大语言模型 API 密钥（兼容 OpenAI 格式）。
-- `MCL_BASE_URL`：API 基础地址（默认 `https://api.openai.com/v1`）。
-- `MCL_MODEL`：默认模型代号（如 `gpt-4o`、`gpt-4o-mini` 或其他兼容模型）。
-
-### 3. 构建与启动
-
-**Windows 环境：**
-```powershell
-.\EmergentInc_UI.bat
-```
-*(或手动执行：`pnpm.cmd --dir frontend build` 然后 `node scripts/launch-approved.mjs`)*
-
-**Linux 环境：**
-```bash
-bash ./EmergentInc_UI.sh
-```
-
-启动脚本会自动完成健康检查并在浏览器中打开 `http://127.0.0.1:8765/`。
-
-### 4. 首次使用指引
-
-1. 浏览器访问 **`http://127.0.0.1:8765/OWNER`**。
-2. 输入你在 `.env` 中设定的 `EMERGENTINC_OWNER_SECRET` 进入老板控制台。
-3. 在 **Boss 对话** 给出明确金额，例如“公司预算 100 元”，再批准预算提案。收费规划须先获得金额授权；Token 只计量，不再设置公司、目标或 Run 的 Token 授信额度。
-4. 交代任务，AI 提出有限步骤及必要的定时规则。“批准执行”启动已批准流程，“拒绝”则不执行。真实步骤产物用于后续工作，最终由老板决定结案；秘书角色可有可无。
-5. 另一个导航只有 **AI 公司看板**，汇总审批、任务、成果、人员、费用、预留、核验收入及历史。用“暂停公司”“继续运行”，或指明任务名称暂停、停止。暂停跨重启和发布保留，未知账单继续占用预留。
-6. 8766 软件升级保留双 Git 树：选择提交，自动校验，再“批准并切换”。兼容旧提交走同一流程、生成新运行代，保留业务数据和 Git 分支指针。参见 [Owner 使用指南](docs/guides/OWNER_GUIDE.md)。
-
----
-
-## 它是如何工作的 (How It Works)
-
-EmergentInc 围绕着完整的商业闭环持续运转：
-
-```
-[Owner 设立目标] ──> [AI 拆解并沙箱执行] ──> [对外独立站 / 订单与收款]
-       ▲                                                 │
-       │                                                 ▼
-[Gene 基因沉淀与升级] <── [人工审核 / 交付回执] <────────┘
-```
-
-1. **设定目标**：在 `/OWNER` 对话描述目标，既有调度器安排真实人物，使用可用 Skills 和 Gene/World 知识。默认以来源证据及人工核实验收，高级验收规则仍可用。
-2. **自主执行**：AI 人物与元胞将目标拆解为受限的 Run 轮次，在严密的 `pure-ast-json` 沙箱内生成工具、编写代码或输出交付物。
-3. **对外营商**：生成的商品直接挂载至实例集成的独立站（`/`），支持 Solana、BSC、Polygon、TRON 四大公链的 USDT 扫码结算。
-4. **决策把关**：招聘、代码发布、资金通道变更及未知结果保留既有审批和核验边界；Owner 明确授权的站内商品动作直接执行。
-5. **自我进化**：验证有效的执行技能沉淀为系统 Gene（基因），新角色自动继承；支持版本平滑升级与回退。
-
----
-
-## 控制台与系统入口
-
-| 访问路径 | 角色定位 | 功能职责 |
-| --- | --- | --- |
-| `/` | 对外面向客户的商城 | 访客浏览商品、下单购买与订单查询（无需登录）。 |
-| `/OWNER` | 老板经营控制台 | 目标管理、全局运行开关、决策收件箱与实时动态流。 |
-| `/QIAN` | 千机阁 | 人物花名册、人设故事线、对话交互与各角色营收看板。 |
-| `/YUAN?world=<id>` | 元胞工作间 | 元胞运行日志、消息交互、实时交付物与多元胞协作。 |
-| `/GENE` | 基因与资产中心 | 信任根、谱系演进、系统记忆、支付通道与独立站管理。 |
-| `http://127.0.0.1:8766/` | 独立升级服务 | 独立的版本管理面板，支持候选发布、预检与安全回退。 |
-
-*全站所有入口原生支持中英文实时切换，偏好持久化。*
-
----
-
-## 核心特性 (Key Features)
-
-- **自主经营目标驱动**：支持拆解多阶段目标，受公司累计 Token 账本与各执行片段轮数限制约束。
-- **多人物与 World 隔离**：人物拥有独立记忆与运行空间，避免跨环境数据污染。
-- **非托管 Web3 支付**：内置主流公链 USDT 监听，零私钥存储，资金安全纯靠链上终局性校验。
-- **受控 AST 沙箱**：基于 `pure-ast-json@1` 解释器执行技能，彻底杜绝恶意 `eval`、网络盗取与磁盘越权。
-- **私有扩展与资产继承 (V30)**：各 World 的计算扩展保存在本地私有目录，官方 Core 更新可无损继承已批准资产。
-- **数据与代码物理隔离**：系统代码在 Git，业务账本在 SQLite，升级主程序绝不丢失商业数据。
-
----
-
-## 数据持久化与升级 (Workspace & Upgrades)
-
-**代码可以变化，业务数据持续存在。**
-
-### 存储目录结构
+## 页面背后的真实闭环
 
 ```text
-workspace/
-  system/
-    control/control.sqlite3       # 经营目标、运行许可、人物、订单与独立站设置
-    payment/payment.sqlite3       # 支付通道、发票、收款回执与实例营收
-    lineage/lineage.sqlite3        # 进化谱系、系统记忆与经营证据
-  worlds/<world_id>/
-    ledger/v9_core.sqlite3         # 检查点、Run 记录、消息历史
-    extensions/                    # World 私有计算扩展与启用指针 (V30)
-    live/                          # 交付物、生成文件与共享资源
+老板 → 目标 → 任务 → 执行者 → 工具 / Skills → 交付物
+                ↓                              ↓
+             公司预算              商城 → 订单 → 收款
+                └──────────── 已核验事实 ────────────┘
+                                    ↓
+                                老板关注事项
 ```
 
-### 安全升级原则
+V34 保留实际执行和安全核：有界任务、工具作用域、持久化证据、绑定 hash/revision 的审批、幂等，以及未知结果的显式恢复。执行者为获准工作创建，不再抽卡或生成角色画像。
 
-- **物理隔离保护**：`workspace/` 独立于 Git 仓库源码及构建产物，拉取新代码或发布新版本绝不会覆盖业务数据。
-- **独立升级入口**：访问 `http://127.0.0.1:8766/`（或运行 `EmergentInc_Upgrade.bat`），支持准确候选哈希校验、兼容性预检与一键切换。
-- **平滑回退保障**：若新版本未能通过健康检查，系统自动安全回滚至上一稳定版本，订单、收款与数据分毫不受影响。
+公司费用统一使用 **CNY 金额预算**，收入只来自核验完成的 **USDT 回执**，两种货币分开显示。模型报告、发起转账或上架商品都不会被当作已核验收入。
 
----
+## 本地启动
 
-## 安全与能力边界 (Security)
+需要支持内置 `node:sqlite` 的 Node.js（22.13 或以上）、pnpm，以及 OpenAI 兼容模型接口。
 
-- **绝不托管私钥**：EmergentInc 不存储任何钱包私钥，不执行链上签名与资金转出，仅被动监听公开账本。
-- **Owner 鉴权保护**：`EMERGENTINC_OWNER_SECRET` 仅在服务端校验，绝不泄露至前端构建包中。
-- **沙箱安全铁律**：解释器限制单次执行步数与内存大小，禁止直接访问宿主操作系统与敏感网络。
-- **客观原则**：新实例初始为 **OFF/0**，首条可执行 Owner 指令可自动启动并授信；人工 OFF 跨重启保留。未知计费、维护暂停和未核实的外部结果继续阻断新工作，等待核验。
+```powershell
+pnpm.cmd install --frozen-lockfile --ignore-scripts
+Copy-Item .env.example .env
+```
 
----
+在 `.env` 设置至少 32 字符的随机 `EMERGENTINC_OWNER_SECRET`，填写 `MCL_API_KEY`、`MCL_BASE_URL`、`MCL_MODEL`。授权金额前核对 `resources/config/model_pricing.json` 中对应模型的 **CNY 定价**。不要公开 `.env`。
 
-## 常见问题与深入文档 (Troubleshooting & Docs)
+Windows 运行 `EmergentInc_UI.bat` 或 `EmergentInc_UI.ps1`。启动器会为全新安装构建，再运行已批准的冻结版本。也可以构建后从终端启动：
 
-### 常见问题
+```powershell
+pnpm.cmd build
+pnpm.cmd --dir frontend build
+node scripts/launch-approved.mjs --open-browser
+```
 
-- **Node 版本报错**：系统要求 Node.js 24.x，请通过 `node -v` 核查当前运行环境。
-- **Owner 密码提示过短**：`.env` 中的 `EMERGENTINC_OWNER_SECRET` 长度必须达到 32 位及以上。
-- **端口冲突**：业务系统默认占用 `8765` 端口，升级服务占用 `8766` 端口，启动前请确保端口空闲。
+全新 V34 初始为 **OFF**，**预算未授权，没有执行者、目标、任务、订单、回执或对话历史**。通过首页预算消息授权金额，然后启动公司。需要收款时配置只收款通道；不要在对话中提交钱包私钥。
 
-### 深入技术文档与历史报告
+没有 V34 标记的非空旧工作区会报 `V34_DESTRUCTIVE_RESET_REQUIRED`。正常启动、安装、拉取和升级均不会销毁数据。清零须按[独立且不可逆的重置流程](docs/guides/V34_RESET.md)执行。
 
-底层技术细节与版本演进记录已完整归档至 `docs/`：
-- [Owner 操作指南](docs/guides/OWNER_GUIDE.md)
-- [V30 Core 资产与扩展实施记录](docs/EmergentInc_V30_实施记录.md)
-- [V29 经营目标全链路实施记录](docs/EmergentInc_V29_实施记录.md)
-- [版本升级与维护入口说明](docs/版本升级入口.md)
-- [系统安全边界规范](docs/security_boundary.md)
+## 当前能力边界
 
----
+已实现：认证与中英双语老板页面、真实目标/任务执行、确定性执行者创建、产物证据、共享金额授权和结算、精确审批、恢复、公开商品/订单、只收款 USDT 核验，以及 **8766** 受控软件发布与回滚。可用收款通道取决于配置和链上最终性。
 
-## 开源许可与支持
+项目处于实验阶段。自主调研、交付质量、外部发布、获客及收入取决于模型、工具、权限和独立证据，是需要核验的结果，不是保证。公司视察展示现有经营记录；系统不提供钱包自动支出，也不承诺利润。
 
-- **开源协议**：本项目基于 [MIT License](LICENSE) 开源（以仓库 LICENSE 文件为准）。
-- **问题反馈**：欢迎通过 [GitHub Issues](https://github.com/lx00018310/EmergentInc/issues) 提交漏洞报告与需求建议。
-- **商务与定制咨询**：如需企业级定制化 Agent 部署与方案支持，请通过 `/OWNER` 控制台或项目维护者联系。
+V34 之后的软件回滚保留新经营数据，不能恢复本次清零销毁的旧实例。[删减与验证清单](docs/V34_REMOVAL_INVENTORY.md)记录实际改造范围。
+
+## 开发验证
+
+```powershell
+pnpm.cmd typecheck
+pnpm.cmd --dir frontend test
+pnpm.cmd --dir frontend build
+pnpm.cmd test --maxWorkers=1 --testTimeout=30000 --hookTimeout=30000
+git diff --check
+```
+
+真实进程集成测试在隔离工作区使用合成模型响应和链上证据；测试付款不是真实收入。
+
+## 开源
+
+基于 [EmergentInc](https://github.com/lx00018310/EmergentInc)。许可见 [LICENSE](LICENSE)。
+
+**告诉它要做什么，决定真正重要的事。**

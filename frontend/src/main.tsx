@@ -2,7 +2,7 @@ import React from 'react';
 import ReactDOM from 'react-dom/client';
 import { Entry } from './Entry';
 import { language } from './i18n';
-import './styles/index.css';
+import './styles/base.css';
 
 const rootElement = document.getElementById('root');
 if (!rootElement) {

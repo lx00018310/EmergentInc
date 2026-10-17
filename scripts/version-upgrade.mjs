@@ -3,10 +3,9 @@ import * as path from 'node:path';
 import {randomUUID} from 'node:crypto';
 import {execFileSync,spawn} from 'node:child_process';
 import {pathToFileURL} from 'node:url';
-import {freezeLocalRelease,frozenReleaseHash,ownerEnvironment} from './local-release.mjs';
+import {freezeLocalRelease,frozenReleaseHash,ownerEnvironment,bossWorkspaceFormat} from './local-release.mjs';
 import {LineageStore} from '../packages/persistence/dist/index.js';
 import {approvedWorldRelease} from './v23-approved-release.mjs';
-import {approvedGenePlan,inheritApprovedGene,checkInheritedGene} from './inherit-approved-gene.mjs';
 
 const root=path.resolve(import.meta.dirname,'..');
 export function ownerReleaseInput(version,reason,now=new Date()){
@@ -18,10 +17,11 @@ export function ownerReleaseInput(version,reason,now=new Date()){
 }
 export function upgradeConfig(projectRoot){
   const environment=ownerEnvironment(projectRoot),file=environment.EMERGENTINC_LOCAL_EVOLUTION_CONFIG;
-  if(!file)throw new Error('V23_OWNER_CONFIG_REQUIRED_USE_V23_UPGRADE_FOR_V22');
+  if(!file)throw new Error('V34_OWNER_CONFIG_REQUIRED');
   const configFile=path.resolve(projectRoot,file),config=JSON.parse(fs.readFileSync(configFile,'utf8'));
   if(!config.ownerProjectRoot)throw new Error('OWNER_PROJECT_ROOT_REQUIRED');
   for(const key of ['workspace','releases','stateDirectory','activeReleaseFile'])config[key]=path.resolve(config.ownerProjectRoot,config[key]);
+  if(!bossWorkspaceFormat(config.workspace))throw new Error('V34_WORKSPACE_INITIALIZATION_REQUIRED');
   return {configFile,config};
 }
 function generation(configFile,action,...args){return new Promise((resolve,reject)=>{
@@ -71,7 +71,7 @@ function preparePinnedCommit(shaInput){
 export async function versionUpgrade(args){
   const [action,...values]=args;
   if(!action||action==='help'){
-    console.log(`Owner software upgrade (V23-layout workspace):
+    console.log(`Owner software upgrade (V34 workspace):
   status
   prepare <version-label> <reason> [--commit <sha>]
   validate <id>
@@ -114,16 +114,13 @@ all Worlds without moving main or develop.`);return;
     try{
       const active=approvedWorldRelease(config.workspace,configFile),base=lineage.activeGeneration();if(!base||active.generation.id!==base.id)throw new Error('ACTIVE_GENERATION_REQUIRED');
       const number=Number(lineage.db.prepare('SELECT MAX(generation_no)+1 n FROM generations').get().n);
-      const inherited=approvedGenePlan(active.directory,config.workspace,sourceDirectory,config.stateDirectory);
       await freezeLocalRelease(sourceDirectory,directory,undefined,target=>{
-        inheritApprovedGene(inherited,active.directory,target);
         const file=path.join(target,'genome/manifest.json'),manifest=JSON.parse(fs.readFileSync(file,'utf8'));
         manifest.generation=number;fs.writeFileSync(file,JSON.stringify(manifest,null,2)+'\n');
       });
-      checkInheritedGene(active.directory,config.workspace,directory,config.stateDirectory);
-      const proposal=lineage.proposeGene(base.id,'owner',{point:`Owner software upgrade ${version}`,reason,effect:'All Worlds share the approved release; raw facts retained for later Dream'},`owner-version:${id}`);
+      const proposal=lineage.proposeGene(base.id,'owner',{point:`Owner software upgrade ${version}`,reason,effect:'Apply the approved software release while retaining V34 business facts and private assets'},`owner-version:${id}`);
       lineage.decideProposal(proposal.id,'APPROVED');
-      const request={id,base_generation:base.id,base_release:base.release_id,proposal_id:proposal.id,patch:[],owner_release:{label:version,reason,source_commit:sourceCommit,release_hash:frozenReleaseHash(directory),inherited_gene_count:inherited.inherited.length}};
+      const request={id,base_generation:base.id,base_release:base.release_id,proposal_id:proposal.id,patch:[],owner_release:{label:version,reason,source_commit:sourceCommit,release_hash:frozenReleaseHash(directory),inherited_gene_count:0}};
       const requestFile=path.join(config.stateDirectory,id+'.request.json');fs.writeFileSync(requestFile,JSON.stringify(request,null,2),{flag:'wx'});
       await generation(configFile,'submit-owner-release',requestFile);
       await generation(configFile,'validate',id);

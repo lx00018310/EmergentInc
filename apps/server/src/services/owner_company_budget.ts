@@ -1,4 +1,3 @@
-import * as fs from 'node:fs';
 import type { WorldRegistryStore } from '@emergentinc/persistence';
 import { ownerInput, ownerConflict } from './owner_goal_service.js';
 import { COMPANY_BUDGET_USD_CNY, type CompanyBudget } from '@emergentinc/protocol';
@@ -17,17 +16,10 @@ export function modelCostMicros(price:ModelPricing,input:number,output:number,ca
 /** Integer money is the only company spending authorization. Old token grants remain historical data. */
 export class OwnerCompanyBudget {
   constructor(readonly store: WorldRegistryStore) {
-    const db=store.db,existing=Boolean(store.db.prepare("SELECT 1 FROM sqlite_master WHERE name='owner_company_budget'").get());
-    db.exec(`CREATE TABLE IF NOT EXISTS owner_company_budget(id INTEGER PRIMARY KEY CHECK(id=1),schema_version INTEGER NOT NULL,total_micros INTEGER NOT NULL,revision INTEGER NOT NULL,activated_at INTEGER);
-      INSERT OR IGNORE INTO owner_company_budget(id,schema_version,total_micros,revision,activated_at) VALUES(1,1,0,0,NULL);
+    const db=store.db;
+    db.exec(`CREATE TABLE IF NOT EXISTS owner_company_budget(id INTEGER PRIMARY KEY CHECK(id=1),schema_version INTEGER NOT NULL,total_micros INTEGER NOT NULL,revision INTEGER NOT NULL,activated_at INTEGER,token_millions INTEGER,unit_price_cny_micros INTEGER,period_spent_micros INTEGER NOT NULL DEFAULT 0,refill_required INTEGER NOT NULL DEFAULT 0);
+      INSERT OR IGNORE INTO owner_company_budget(id,schema_version,total_micros,revision,activated_at) VALUES(1,2,0,0,NULL);
       CREATE TABLE IF NOT EXISTS owner_money_reservations(permit_id TEXT PRIMARY KEY REFERENCES owner_model_permits(id),reserved_micros INTEGER NOT NULL CHECK(reserved_micros>=0),settled_micros INTEGER);`);
-    if(db.prepare('SELECT schema_version FROM owner_company_budget').get()!.schema_version===1){
-      if(existing&&db.dbPath!==':memory:'){const backup=db.dbPath+'.pre-shared-budget.bak';if(!fs.existsSync(backup))db.exec(`VACUUM INTO '${backup.replaceAll("'","''")}'`);}
-      this.store.transaction(()=>{
-      db.exec('ALTER TABLE owner_company_budget ADD COLUMN token_millions INTEGER; ALTER TABLE owner_company_budget ADD COLUMN unit_price_cny_micros INTEGER; ALTER TABLE owner_company_budget ADD COLUMN period_spent_micros INTEGER NOT NULL DEFAULT 0; ALTER TABLE owner_company_budget ADD COLUMN refill_required INTEGER NOT NULL DEFAULT 0;');
-      db.prepare('UPDATE owner_company_budget SET schema_version=2').run();
-      });
-    }
     if(db.prepare('SELECT schema_version FROM owner_company_budget').get()!.schema_version!==2)throw new Error('OWNER_MONEY_SCHEMA_UNSUPPORTED');
   }
   view():CompanyBudget {
@@ -45,7 +37,9 @@ export class OwnerCompanyBudget {
     ownerInput(Number.isSafeInteger(rate)&&rate>0&&Number.isSafeInteger(amount),'OWNER_MONEY_INVALID');
     return this.store.transaction(()=>{
       const v=this.view();if(v.revision!==input.expectedRevision)ownerConflict();
-      if(this.store.db.prepare(`SELECT 1 FROM owner_model_permits p WHERE p.state='SENT' OR (p.state='UNKNOWN' AND NOT ${reviewedOutcomeSql})`).get())ownerConflict('OWNER_OUTCOME_REVIEW_REQUIRED');
+      // Pending bills retain their reservations across a new authorization period.
+      // Lowering the allowance cannot make already held money disappear.
+      if(amount<v.reservedMicros)ownerConflict('OWNER_COMPANY_BUDGET_EXHAUSTED');
       if(v.needsRefill&&v.configuration?.tokenMillions===input.tokenMillions)ownerConflict('OWNER_BUDGET_TOKEN_CHANGE_REQUIRED');
       const spent=Number(this.store.db.prepare("SELECT COALESCE(SUM(r.settled_micros),0) spent FROM owner_money_reservations r JOIN owner_model_permits p ON p.id=r.permit_id WHERE p.state='SETTLED'").get()!.spent);
       ownerInput(Number.isSafeInteger(spent+amount),'OWNER_MONEY_INVALID');

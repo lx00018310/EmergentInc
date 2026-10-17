@@ -1,11 +1,10 @@
 import { createHash } from 'node:crypto';
-import * as fs from 'node:fs';
-import * as path from 'node:path';
 import type { OwnerGoal } from '@emergentinc/protocol';
 import { exactKeys, ownerInput, ownerConflict, goalHash } from './owner_goal_service.js';
 import type { OwnerAutomationGate } from './owner_automation_gate.js';
 import type { PublicStore } from './public_store.js';
 import type { WorldRuntimeManager } from './world_runtime_manager.js';
+import { CompanyArtifactService } from './company_artifact_service.js';
 
 const stableKey = (key: string) => createHash('sha256').update(key).digest('hex');
 type Authority = { question: string; productId: string; createNew: boolean; price: string | null; autonomousPrice: boolean; publish: boolean; unpublish: boolean; humanCondition: boolean };
@@ -18,7 +17,7 @@ export class OwnerProductService {
       goal_id TEXT PRIMARY KEY REFERENCES owner_goals(id),goal_revision INTEGER NOT NULL,request_key TEXT NOT NULL UNIQUE,
       authority_json TEXT NOT NULL,target_hash TEXT,filename TEXT NOT NULL,state TEXT NOT NULL CHECK(state IN ('PENDING','PUBLISHED','BLOCKED','OUTCOME_UNKNOWN')),
       result_json TEXT,reason TEXT,updated_at INTEGER NOT NULL);`);
-    gate.addUnknownCheck(() => Boolean(gate.store.db.prepare("SELECT 1 FROM owner_product_intents WHERE state='OUTCOME_UNKNOWN'").get()));
+    gate.addUnknownCheck((_worldId,goalId) => Boolean(goalId&&gate.store.db.prepare("SELECT 1 FROM owner_product_intents WHERE goal_id=? AND state='OUTCOME_UNKNOWN'").get(goalId)));
   }
   catalog() { return this.store.products().items; }
   private authority(question: string, key: string, target: {productId?:unknown;createNew?:unknown}): Authority {
@@ -116,22 +115,25 @@ export class OwnerProductService {
     if(goal.status==='PAUSED'||!this.gate.isOn())return;
     const authority:Authority=JSON.parse(String(row.authority_json));
     if(authority.humanCondition && goal.status!=='COMPLETED'){block('OWNER_PRODUCT_EVIDENCE_REVIEW_REQUIRED');return;}
-    const evidence=this.gate.goals.detail(goal.id).evidence.filter(e=>e.kind==='artifact'&&e.specificationRevision===goal.specificationRevision&&e.reference.endsWith('/'+row.filename)&&e.reference.startsWith(`evidence/owner-${dispatchId}/`));
+    const artifacts=new CompanyArtifactService(this.gate.store,this.manager.registry.workspace);
+    const evidence=this.gate.goals.detail(goal.id).evidence.filter(e=>e.kind==='artifact'&&e.specificationRevision===goal.specificationRevision&&e.reference.endsWith('/'+row.filename)&&(e.worldId?e.reference.startsWith(`evidence/owner-${dispatchId}/`):artifacts.boundTo(e,dispatchId)));
     if(evidence.length!==1){block('OWNER_PRODUCT_DELIVERABLE_REQUIRED');return;}
     const e=evidence[0]!,runtime=e.worldId?this.manager.peek(e.worldId):undefined;
-    if(!runtime){block('OWNER_PRODUCT_DELIVERABLE_REQUIRED');return;}
     try {
-      let file=runtime.directory;
-      for(const part of e.reference.split('/')){ownerInput(Boolean(part)&&part!=='.'&&part!=='..'&&!/[\\:]/.test(part),'OWNER_EVIDENCE_CHANGED');file=path.join(file,part);ownerInput(fs.existsSync(file)&&!fs.lstatSync(file).isSymbolicLink(),'OWNER_EVIDENCE_CHANGED');}
-      ownerInput(fs.statSync(file).isFile()&&fs.statSync(file).size===e.bytes&&e.bytes<=50_000,'OWNER_EVIDENCE_CHANGED');
-      const bytes=fs.readFileSync(file);ownerInput(createHash('sha256').update(bytes).digest('hex')===e.sha256,'OWNER_EVIDENCE_CHANGED');
+      ownerInput(e.bytes<=50_000,'OWNER_EVIDENCE_CHANGED');const bytes=artifacts.read(e);
       const delivery=JSON.parse(bytes.toString('utf8'));exactKeys(delivery,['nameEn','nameZh','descEn','descZh','priceUsdt','enabled','sourceOperationIds','requiresHumanReview']);
       ownerInput(delivery.requiresHumanReview===false,'OWNER_PRODUCT_EVIDENCE_REVIEW_REQUIRED');
       ownerInput(delivery.enabled===true&&Array.isArray(delivery.sourceOperationIds)&&delivery.sourceOperationIds.length>0&&delivery.sourceOperationIds.length<=20,'OWNER_PRODUCT_SOURCE_REQUIRED');
       for(const id of delivery.sourceOperationIds){
-        const source=runtime.store.db.prepare("SELECT t.result FROM tool_executions t WHERE t.operation_id=? AND t.status='SUCCESS' AND t.tool IN ('webfetch','READ_GENE_ASSET','READ_WORLD_ASSET') AND t.run_id IN (SELECT run_id FROM runs)").get(id);
-        const tool=runtime.store.db.prepare('SELECT run_id FROM tool_executions WHERE operation_id=?').get(id);
-        ownerInput(source&&tool&&db.prepare('SELECT 1 FROM owner_run_permits WHERE run_id=? AND goal_id=? AND goal_revision=? AND dispatch_id=?').get(tool.run_id,goal.id,goal.specificationRevision,dispatchId),'OWNER_PRODUCT_SOURCE_REQUIRED');
+        ownerInput(typeof id==='string','OWNER_PRODUCT_SOURCE_REQUIRED');
+        if(runtime){
+          const source=runtime.store.db.prepare("SELECT t.result FROM tool_executions t WHERE t.operation_id=? AND t.status='SUCCESS' AND t.tool IN ('webfetch','READ_GENE_ASSET','READ_WORLD_ASSET') AND t.run_id IN (SELECT run_id FROM runs)").get(id);
+          const tool=runtime.store.db.prepare('SELECT run_id FROM tool_executions WHERE operation_id=?').get(id);
+          ownerInput(source&&tool&&db.prepare('SELECT 1 FROM owner_run_permits WHERE run_id=? AND goal_id=? AND goal_revision=? AND dispatch_id=?').get(tool.run_id,goal.id,goal.specificationRevision,dispatchId),'OWNER_PRODUCT_SOURCE_REQUIRED');
+        }else if(e.worldId){
+          const legacy=db.prepare("SELECT 1 FROM sqlite_master WHERE name='company_legacy_receipts'").get()&&db.prepare(`SELECT 1 FROM company_legacy_receipts r JOIN company_execution_attempts a ON a.run_id=r.run_id WHERE r.operation_id=? AND r.status='SUCCESS' AND r.tool IN ('webfetch','READ_GENE_ASSET','READ_WORLD_ASSET') AND a.goal_id=? AND a.goal_revision=? AND a.dispatch_id=? AND a.world_id=? AND a.state='COMPLETED'`).get(id,goal.id,goal.specificationRevision,dispatchId,e.worldId);
+          ownerInput(typeof id==='string'&&legacy,'OWNER_PRODUCT_SOURCE_REQUIRED');
+        }else ownerInput(typeof id==='string'&&db.prepare(`SELECT 1 FROM company_worker_receipts r JOIN company_execution_attempts a ON a.id=r.attempt_id WHERE r.applied=1 AND a.goal_id=? AND a.goal_revision=? AND a.dispatch_id=? AND a.state='COMPLETED' AND json_extract(r.payload_json,'$.kind')='tool' AND json_extract(r.payload_json,'$.payload.result.operation_id')=? AND json_extract(r.payload_json,'$.payload.result.status')='SUCCESS' AND json_extract(r.payload_json,'$.payload.result.tool') IN ('webfetch','READ_GENE_ASSET','READ_WORLD_ASSET')`).get(goal.id,goal.specificationRevision,dispatchId,id),'OWNER_PRODUCT_SOURCE_REQUIRED');
       }
       const {sourceOperationIds,requiresHumanReview,...input}=delivery;this.validate(input);
       this.gate.store.transaction(()=>{

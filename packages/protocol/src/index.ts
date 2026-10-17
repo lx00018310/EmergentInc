@@ -16,3 +16,4 @@ export * from "./types/business.js";
 export * from "./types/business_schedule.js";
 export * from "./types/life.js";
 export * from "./types/owner.js";
+export * from "./types/company_execution.js";

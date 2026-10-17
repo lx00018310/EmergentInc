@@ -1,98 +1,48 @@
 import { spawn } from 'node:child_process';
 import { createServer } from 'node:net';
-import { randomBytes } from 'node:crypto';
+import { randomBytes, randomInt } from 'node:crypto';
 import { join } from 'node:path';
 import * as fs from 'node:fs';
-import {pathToFileURL} from 'node:url';
-
 const [action, directory, workspace, generation] = process.argv.slice(2);
-function command(executable, args, env, timeout) {
-  return new Promise((resolve, reject) => {
-    const child = spawn(executable, args, { cwd: directory, env, stdio: 'ignore', shell: false });
-    const timer = setTimeout(() => child.kill('SIGKILL'), timeout);
-    child.on('error', e => { clearTimeout(timer); reject(e); });
-    child.on('exit', code => { clearTimeout(timer); code === 0 ? resolve() : reject(new Error('RELEASE_CHECK_FAILED')); });
-  });
+const cleanEnv = { PATH: process.platform === 'win32' ? process.env.PATH : '/usr/local/bin:/usr/bin:/bin', SystemRoot: process.env.SystemRoot, LANG: 'C.UTF-8', CI: '1', EMERGENTINC_CANDIDATE_MODE: '1' };
+async function command(executable, args) {
+  await new Promise((resolve, reject) => { const child = spawn(executable, args, { cwd: directory, env: cleanEnv, stdio: 'ignore', shell: false, windowsHide: true }), timer = setTimeout(() => child.kill(), 900000); child.on('error', e => { clearTimeout(timer); reject(e); }); child.on('exit', code => { clearTimeout(timer); code === 0 ? resolve() : reject(new Error('RELEASE_CHECK_FAILED')); }); });
 }
-const cleanEnv = { PATH: process.platform==='win32'?process.env.PATH:'/usr/local/bin:/usr/bin:/bin', SystemRoot:process.env.SystemRoot, LANG: 'C.UTF-8',
-  CI: '1', EMERGENTINC_CANDIDATE_MODE: '1' };
 if (action === 'build') {
-  const pnpm = process.env.EMERGENTINC_PNPM_PATH;
-  if (!pnpm?.startsWith('/')) throw new Error('PNPM_ABSOLUTE_PATH_REQUIRED');
-  await command(pnpm, ['install','--offline','--frozen-lockfile','--ignore-scripts','--store-dir', join(directory, '.build-store')], cleanEnv, 300000);
-  for (const args of [['run','typecheck'],['test','--maxWorkers=4'],['build'],['--dir','frontend','build']]) await command(pnpm, args, cleanEnv, 300000);
+  const pnpm = process.env.EMERGENTINC_PNPM_PATH; if (!pnpm?.startsWith('/')) throw new Error('PNPM_ABSOLUTE_PATH_REQUIRED');
+  await command(pnpm, ['install', '--offline', '--frozen-lockfile', '--ignore-scripts', '--store-dir', join(directory, '.build-store')]);
+  for (const args of [['run', 'typecheck'], ['build'], ['--dir', 'frontend', 'build'], ['test', '--maxWorkers=1', '--testTimeout=30000']]) await command(pnpm, args);
 } else if (action === 'smoke') {
-  const listener = createServer(); await new Promise(resolve => listener.listen(0, '127.0.0.1', resolve));
-  const port = listener.address().port; await new Promise(resolve => listener.close(resolve));
+  const format = JSON.parse(fs.readFileSync(join(workspace, 'workspace-format.json'), 'utf8'));
+  if (format.product !== 'BOSS-AFK' || format.format !== 34) throw new Error('V34_CANDIDATE_FORMAT_REQUIRED');
+  let port;
+  for(let attempt=0;attempt<20;attempt++){
+    const listener=createServer(),candidate=randomInt(49152,65536);
+    try{await new Promise((resolve,reject)=>{listener.once('error',reject);listener.listen(candidate,'127.0.0.1',resolve);});await new Promise(resolve=>listener.close(resolve));port=candidate;break;}
+    catch(error){if(error.code!=='EADDRINUSE'&&!(process.platform==='win32'&&error.code==='EACCES'))throw error;}
+  }
+  if(!port)throw new Error('CANDIDATE_HTTP_PORT_UNAVAILABLE');
   const secret = randomBytes(32).toString('hex');
-  const child = spawn(process.execPath, [join(directory, 'apps/server/dist/main.js')], { cwd: directory, shell: false,
-    env: { ...cleanEnv, EMERGENTINC_WORKSPACE_ROOT: workspace, EMERGENTINC_RUNTIME_MODE: 'business',
-      EMERGENTINC_OWNER_SECRET: secret, EMERGENTINC_SECURE_COOKIES: '0', HOST: '127.0.0.1', PORT: String(port) }, stdio: ['ignore', 'ignore', 'pipe'] });
-  let error, diagnostics = ''; child.on('error', e => { error = e; });
-  child.stderr.on('data', chunk => { diagnostics = (diagnostics + String(chunk)).slice(-4096); });
-  const base = `http://127.0.0.1:${port}`;
-  const get = async (url, cookie) => {
-    const response = await fetch(base + url, { headers: cookie ? { cookie } : {}, redirect: 'error', signal: AbortSignal.timeout(2000) });
-    if (response.status !== 200) throw new Error('CANDIDATE_SMOKE_HTTP_FAILED'); return response.json();
-  };
+  const child = spawn(process.execPath, [join(directory, 'apps/server/dist/main.js')], { cwd: directory, shell: false, windowsHide: true, env: { ...cleanEnv, EMERGENTINC_WORKSPACE_ROOT: workspace, EMERGENTINC_RUNTIME_MODE: 'business', EMERGENTINC_OWNER_SECRET: secret, EMERGENTINC_SECURE_COOKIES: '0', HOST: '127.0.0.1', PORT: String(port) }, stdio: ['ignore', 'ignore', 'pipe'] });
+  let error, diagnostics = ''; child.on('error', e => { error = e; }); child.stderr.on('data', chunk => { diagnostics = (diagnostics + String(chunk)).slice(-4096); });
+  const base = `http://127.0.0.1:${port}`, get = async (route, cookie) => { const response = await fetch(base + route, { headers: cookie ? { cookie } : {}, redirect: 'error', signal: AbortSignal.timeout(3000) }); if (response.status !== 200) throw new Error('CANDIDATE_SMOKE_HTTP_FAILED: ' + route); return response.json(); };
   try {
-    let live = false;
-    for (let i = 0; i < 100; i++) {
-      if (error || child.exitCode !== null) throw new Error('CANDIDATE_SERVER_START_FAILED: ' + diagnostics);
-      try { live = (await get('/health/live')).alive === true; if (live) break; } catch { }
-      await new Promise(resolve => setTimeout(resolve, 100));
-    }
-    if (!live) throw new Error('CANDIDATE_LIVE_FAILED');
-    const ready = await get('/health/ready'); if (ready.ready !== true || ready.generation !== generation) throw new Error('CANDIDATE_READY_FAILED');
-    if ((await fetch(base + '/api/evolution/overview')).status !== 401) throw new Error('CANDIDATE_OWNER_AUTH_FAILED');
-    const login = await fetch(base + '/api/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ secret }), signal: AbortSignal.timeout(2000) });
+    let live = false, lastFailure='';
+    for (let i = 0; i < 100; i++) { if (error || child.exitCode !== null) throw new Error('CANDIDATE_SERVER_START_FAILED: ' + diagnostics); try { live = (await get('/health/live')).alive === true; if (live) break; } catch(e) {lastFailure=String(e.cause?.message??e.message);} await new Promise(resolve => setTimeout(resolve, 100)); }
+    if (!live) throw new Error('CANDIDATE_LIVE_FAILED: '+lastFailure+' '+diagnostics);
+    const ready = await get('/health/ready'); if (ready.ready !== true || ready.generation !== generation || ready.version !== 'boss-afk-v34') throw new Error('CANDIDATE_READY_FAILED');
+    if ((await fetch(base + '/api/boss/overview')).status !== 401) throw new Error('CANDIDATE_OWNER_AUTH_FAILED');
+    const login = await fetch(base + '/api/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ secret }), signal: AbortSignal.timeout(3000) });
     const cookie = login.headers.get('set-cookie')?.split(';')[0]; if (login.status !== 200 || !cookie) throw new Error('CANDIDATE_OWNER_AUTH_FAILED');
-    const business = await get('/api/business/overview', cookie), evolution = await get('/api/evolution/overview', cookie);
-    const session=await get('/api/session',cookie);
-    const people = await get('/api/qianji', cookie), world = await get('/api/world', cookie), run = session.worldsEnabled?{running:false}:await get('/api/run/status', cookie);
-    if(session.worldsEnabled){
-      const site=await get('/api/public/site'),products=await get('/api/public/products');
-      if(typeof site.headline_en!=='string'||!Array.isArray(products.items))throw new Error('CANDIDATE_PUBLIC_STORE_FAILED');
-      if((await fetch(base+'/api/public-site')).status!==401)throw new Error('CANDIDATE_PUBLIC_OWNER_BOUNDARY_FAILED');
-      const storefront=await get('/api/public-site',cookie);
-      if(storefront.revenue.scope!=='INSTANCE'||!Array.isArray(storefront.orders))throw new Error('CANDIDATE_PUBLIC_PERSISTENCE_FAILED');
-      const worlds=(await get('/api/worlds',cookie)).items;
-      for(const item of worlds.filter(w=>w.status==='ACTIVE'&&!w.blockedReason)){const scoped=await get('/api/worlds/'+item.world_id, cookie);if(scoped.current.generation_id!==generation)throw new Error('CANDIDATE_WORLD_GENERATION_FAILED');}
-      const fixtureLayout=JSON.parse(fs.readFileSync(join(workspace,'workspace-layout.json'),'utf8'));
-      if(fixtureLayout.synthetic){const automation=await get('/api/owner/automation',cookie);if(automation.desiredMode!=='OFF'||automation.inFlight!==0)throw new Error('CANDIDATE_V29_OFF_FAILED');}
-      const candidateManifest=JSON.parse(fs.readFileSync(join(directory,'genome/manifest.json'),'utf8'));
-      if(candidateManifest.capability_contracts['extension@1']){
-        const {InstanceExtensionService}=await import(pathToFileURL(join(directory,'apps/server/dist/services/instance_extension_service.js')).href);
-        const program={schema:1,id:'compatibility-counter',version:'1.0.0',engine:'pure-ast-json@1',requiredContracts:['pure_skill@1'],dataSchemaVersion:1,source:'export default input=>({count:input.rows.length})',tests:[{input:{rows:[]},expected:{count:0}},{input:{rows:[1,2]},expected:{count:2}}]};
-        const a=new InstanceExtensionService(join(workspace,'extension-fixture-a'),'fixture_A',candidateManifest.capability_contracts),b=new InstanceExtensionService(join(workspace,'extension-fixture-b'),'fixture_B',candidateManifest.capability_contracts);
-        fs.mkdirSync(a.directory,{recursive:true});fs.mkdirSync(b.directory,{recursive:true});const saved=a.submit('0_0_0',program);
-        const active=a.action(program.id,{action:'activate',hash:saved.hash,expectedRevision:0,expectedHash:null,idempotencyKey:'candidate-extension-fixture'});
-        if(a.run(program.id,{rows:[1,2,3]}).result.count!==3||b.list().length)throw new Error('CANDIDATE_EXTENSION_ISOLATION_FAILED');
-        a.action(program.id,{action:'disable',expectedRevision:active.revision,expectedHash:active.hash,idempotencyKey:'candidate-extension-disable'});
-        if(a.describe(program.id).enabled)throw new Error('CANDIDATE_EXTENSION_DISABLE_FAILED');
-      }
-      const {readGeneCatalog,executeGeneSkill}=await import(pathToFileURL(join(directory,'apps/server/dist/services/gene_promotion_service.js')).href);
-      const catalog=readGeneCatalog(directory);
-      if(catalog.assets.length){
-        const {LineageStore,WorldRegistryStore,readGenome}=await import(pathToFileURL(join(directory,'packages/persistence/dist/index.js')).href);
-        const {WorldRegistryService}=await import(pathToFileURL(join(directory,'apps/server/dist/services/world_registry_service.js')).href);
-        const lineage=new LineageStore(join(workspace,'system/lineage/lineage.sqlite3'),{v23:true}),control=new WorldRegistryStore(join(workspace,'system/control/control.sqlite3'));
-        try{const registry=new WorldRegistryService(workspace,control,lineage,'1'),fresh=registry.create({displayName:'Candidate inheritance smoke',traits:{},behaviorProfile:[]});
-          if((await get('/api/worlds/'+fresh.world_id,cookie)).current.generation_id!==generation)throw new Error('FRESH_WORLD_BOOT_FAILED');
-          if(fs.readdirSync(join(registry.directory(fresh.world_id),'generations',generation,'body/skills')).length)throw new Error('FRESH_WORLD_MUST_NOT_COPY_PRIVATE_BODY');
-          for(const asset of catalog.assets){const content=JSON.parse(fs.readFileSync(join(directory,'genome',asset.file),'utf8'));if(['skill','code'].includes(asset.kind))for(const test of content.tests){const result=executeGeneSkill(directory,asset.id,test.input,readGenome(directory).geneHash);if(JSON.stringify(result.result)!==JSON.stringify(test.expected))throw new Error('GENE_INHERITANCE_SMOKE_FAILED');}}
-        }finally{control.close();lineage.close();}
-      }
-    }
-    if (!Array.isArray(people.items) || !Array.isArray(world.pixels) || typeof run.running !== 'boolean') throw new Error('CANDIDATE_BODY_API_FAILED');
-    if (!Array.isArray(business.plans) || business.modelConfigured !== false || evolution.current.generation_id !== generation ||
-        !Array.isArray(evolution.skills) || !Array.isArray(evolution.memories) || !Array.isArray(evolution.proposals)) throw new Error('CANDIDATE_LIFE_SCHEMA_FAILED');
-    if ((await fetch(base + '/api/business/intents', { method: 'POST', headers: { cookie, 'Content-Type': 'application/json' }, body: '{}' })).status !== 409)
-      throw new Error('CANDIDATE_SIDE_EFFECT_GATE_FAILED');
-    if ((await fetch(base + '/api/run/start', { method: 'POST', headers: { cookie, 'Content-Type': 'application/json' }, body: '{}' })).status !== 409)
-      throw new Error('CANDIDATE_BODY_SIDE_EFFECT_GATE_FAILED');
+    const boss = await get('/api/boss/overview', cookie), site = await get('/api/public/site'), products = await get('/api/public/products');
+    if (boss.instanceId !== format.instanceId || boss.modelConfigured !== false || !Array.isArray(boss.inbox) || !Array.isArray(boss.revenue) || boss.automation.desiredMode !== 'OFF' || boss.automation.inFlight !== 0 || boss.budget.activatedAt !== null) throw new Error('CANDIDATE_BOSS_OFF_FAILED');
+    if (typeof site.headline_en !== 'string' || typeof site.headline_zh !== 'string' || !Array.isArray(products.items)) throw new Error('CANDIDATE_PUBLIC_STORE_FAILED');
+    if ((await fetch(base + '/api/public-site')).status !== 401) throw new Error('CANDIDATE_PUBLIC_OWNER_BOUNDARY_FAILED');
+    for (const route of ['/api/gacha', '/api/meetings', '/api/qianji', '/api/worlds', '/api/business/overview', '/api/evolution/overview', '/api/run/status']) if ((await fetch(base + route, { headers: { cookie } })).status !== 404) throw new Error('CANDIDATE_RETIRED_API_PRESENT: ' + route);
+    const mutation = await fetch(base + '/api/owner/automation', { method: 'POST', headers: { cookie, 'Content-Type': 'application/json' }, body: JSON.stringify({ desiredMode: 'ON', expectedRevision: boss.automation.revision, idempotencyKey: 'candidate-side-effect-check' }) });
+    if (mutation.status !== 409) throw new Error('CANDIDATE_SIDE_EFFECT_GATE_FAILED');
+    for (const route of ['/', '/BOSS']) { const response = await fetch(base + route); if (!response.ok || !response.headers.get('content-type')?.includes('text/html')) throw new Error('CANDIDATE_FRONTEND_FAILED'); }
   } finally {
-    const exited = new Promise(resolve => child.once('exit', resolve));
-    if (child.exitCode === null) { child.kill('SIGTERM'); const timeout = setTimeout(() => child.kill('SIGKILL'), 5000); await exited; clearTimeout(timeout); }
+    if (child.exitCode === null) { const exited = new Promise(resolve => child.once('exit', resolve)); child.kill('SIGTERM'); const timer = setTimeout(() => child.kill('SIGKILL'), 5000); await exited; clearTimeout(timer); }
   }
 } else throw new Error('CANDIDATE_HARNESS_ACTION_INVALID');

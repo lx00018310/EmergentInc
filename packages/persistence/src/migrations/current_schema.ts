@@ -1,7 +1,7 @@
 import { SqliteDatabase } from "../sqlite/db.js";
 export function migrateCurrent(db: SqliteDatabase) {
   const version = Number(db.prepare("PRAGMA user_version").get()!.user_version);
-  if (version === 1) return;
+  if (version === 34) return;
   if (version !== 0 || db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'").all().length)
     throw new Error("UNSUPPORTED_CURRENT_SCHEMA_VERSION");
   db.transaction(() => db.exec(`
@@ -19,6 +19,6 @@ export function migrateCurrent(db: SqliteDatabase) {
       previous_id TEXT REFERENCES body_candidates(id), activated_at INTEGER, created_at INTEGER NOT NULL, body_revision INTEGER);
     CREATE TABLE current_events (sequence INTEGER PRIMARY KEY AUTOINCREMENT, pixel_id TEXT, kind TEXT NOT NULL,
       payload TEXT NOT NULL, created_at INTEGER NOT NULL);
-    PRAGMA user_version=1;
+    PRAGMA user_version=34;
   `));
 }

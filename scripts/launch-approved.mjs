@@ -4,7 +4,7 @@ import * as path from 'node:path';
 import { spawn } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
-import { approvedLocalRelease, initializeLocalRelease, ownerEnvironment } from './local-release.mjs';
+import { approvedLocalRelease, initializeLocalRelease, ownerEnvironment, bossWorkspaceFormat } from './local-release.mjs';
 
 export function applicationUrl(env) {
   const port=Number(env.PORT||8765),host=env.HOST||'127.0.0.1';
@@ -99,18 +99,23 @@ export async function launchApproved(projectRoot, args = [], {openPage=openBrows
   if (env.EMERGENTINC_ACTIVE_GENERATION_FILE || env.EMERGENTINC_CANDIDATE_MODE === '1' || env.EMERGENTINC_LOCAL_UPGRADE_TOKEN)
     throw new Error('LOCAL_LAUNCH_CONFIGURATION_CONFLICT');
   const workspace = path.resolve(env.EMERGENTINC_WORKSPACE_ROOT || path.join(projectRoot, 'workspace'));
-  if(fs.existsSync(workspace+'.v23-upgrade-pending.json'))throw new Error('V23_UPGRADE_RECOVERY_REQUIRED');
-  const existing = fs.existsSync(path.join(workspace, 'lineage/lineage.sqlite3')) || fs.existsSync(path.join(workspace, 'active-generation.json')) || fs.existsSync(path.join(workspace,'workspace-layout.json'));
-  // Fresh installations are explicit; existing lineage never falls back to an unapproved checkout.
-  let approved = existing ? (env.EMERGENTINC_LOCAL_EVOLUTION_CONFIG?approvedWorldRelease(fs.realpathSync(workspace),env.EMERGENTINC_LOCAL_EVOLUTION_CONFIG):approvedLocalRelease(fs.realpathSync(workspace))) : undefined;
+  const format=bossWorkspaceFormat(workspace);
+  let existing=false;
+  if(format){
+    if(env.EMERGENTINC_LOCAL_EVOLUTION_CONFIG){const config=JSON.parse(fs.readFileSync(path.resolve(projectRoot,env.EMERGENTINC_LOCAL_EVOLUTION_CONFIG),'utf8'));existing=fs.existsSync(path.resolve(config.ownerProjectRoot,config.activeReleaseFile));}
+    else existing=fs.existsSync(path.join(workspace,'runtime/local-upgrades'));
+  }
+  let approved = existing ? (env.EMERGENTINC_LOCAL_EVOLUTION_CONFIG?approvedWorldRelease(fs.realpathSync(workspace),path.resolve(projectRoot,env.EMERGENTINC_LOCAL_EVOLUTION_CONFIG)):approvedLocalRelease(fs.realpathSync(workspace))) : undefined;
   if (args[0] === '--check') {
     if (approved) console.log(`APPROVED_RELEASE ${approved.generation.id} ${approved.generation.release_id}`);
     else console.log('INITIAL_WORKSPACE_BUILD_REQUIRED');
     return approved ? 0 : 2;
   }
   if (!approved) approved = await initializeLocalRelease(projectRoot, workspace);
+  Object.assign(env,ownerEnvironment(projectRoot));
+  delete env.EMERGENTINC_START_PAUSED;
   const openRequested=args.includes('--open-browser'),runtimeArgs=args.filter(arg=>arg!=='--open-browser');
-  const url=openRequested?applicationUrl(env):undefined;
+  const url=openRequested?new URL('/BOSS',applicationUrl(env)).href:undefined;
   if (env.EMERGENTINC_LOCAL_EVOLUTION_CONFIG) {
     const { ensureUpgradeWeb } = await import('./upgrade-web.mjs');
     console.log('发布升级 / Publish upgrade: ' + await ensureUpgradeWeb(projectRoot));

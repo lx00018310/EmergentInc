@@ -2,11 +2,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import * as fs from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { CurrentStore, LineageStore, readGenome, SqliteDatabase } from "@emergentinc/persistence";
+import { CurrentStore, LineageStore, readGenome, SqliteDatabase, writeGenerationPointer } from "@emergentinc/persistence";
 import { LifeContext } from "../src/services/life_context.js";
-import { DreamService } from "../src/services/dream_service.js";
-import { BodyGrowthService } from "../src/services/body_growth_service.js";
-import { BodySkillSupervisor } from "../src/services/automation_supervisor.js";
 import { GenerationSupervisor } from "../../../supervisor/generation_supervisor.js";
 import { releaseHash } from "../../../supervisor/release_builder.js";
 import { classifyChange, EvolutionRuntime } from "../../../supervisor/protocol.js";
@@ -16,8 +13,8 @@ afterEach(() => { for (const fn of cleanup.splice(0).reverse()) fn(); });
 const point = { point: "改进基础接口", reason: "出现重复的边界需求", effect: "新一代继续未结束目标" };
 function fixture() {
   const directory = fs.mkdtempSync(join(tmpdir(), "generation-")); cleanup.push(() => fs.rmSync(directory, { recursive: true, force: true }));
-  const releases = join(directory, "releases"), workspace = join(directory, "workspace"), base = join(releases, "r1");
-  const manifest = { schema_version: 1 as const, generation: 1, body_interface_version: "1", protected_paths: ["genome/**", "apps/server/**"], capability_contracts: {} };
+  const releases = join(directory, "releases"), workspace = join(directory, "workspace/system"), base = join(releases, "r1");
+  const manifest = { schema_version: 1 as const, generation: 1, body_interface_version: "1", protected_paths: ["genome/**", "apps/server/**"], capability_contracts: JSON.parse(fs.readFileSync(join(process.cwd(),"genome/manifest.json"),"utf8")).capability_contracts };
   fs.mkdirSync(join(base, "genome"), { recursive: true }); fs.mkdirSync(join(base, "apps/server"), { recursive: true });
   fs.writeFileSync(join(base, "genome/manifest.json"), JSON.stringify(manifest)); fs.writeFileSync(join(base, "apps/server/core.txt"), "V21 core");
   fs.mkdirSync(join(base, "packages/runtime"), { recursive: true });
@@ -26,9 +23,14 @@ function fixture() {
   fs.writeFileSync(join(base, ".env"), "DO_NOT_COPY=secret");
   let currentRelease = base;
   const initial = readGenome(base);
-  let app: LifeContext | undefined = LifeContext.open(workspace, initial.manifest, initial.geneHash, "r1");
-  const lineage = new LineageStore(join(workspace, "lineage/lineage.sqlite3")); cleanup.push(() => lineage.close());
-  const finalDream = vi.fn(async () => { if (app) await new DreamService(app, async () => JSON.stringify({ memories: [], gene_proposals: [] })).finalDream(); });
+  const lineage = new LineageStore(join(workspace, "lineage/lineage.sqlite3"),{v23:true}); cleanup.push(() => lineage.close());
+  const initialGeneration=lineage.createGeneration({id:'G0001',number:1,geneHash:initial.geneHash,releaseId:'r1',state:'ACTIVE'});
+  fs.writeFileSync(join(workspace,'../workspace-format.json'),JSON.stringify({product:'BOSS-AFK',format:34,instanceId:crypto.randomUUID()}));
+  writeGenerationPointer(workspace,'G0001');
+  const open=(system:string,genome:any)=>{const g=lineage.generation(JSON.parse(fs.readFileSync(join(system,'active-generation.json'),'utf8')).generation_id);const current=new CurrentStore(join(system,'generations',g.id,'current.sqlite3'));if(!current.db.prepare('SELECT 1 FROM current_meta').get())current.initialize(g,genome.manifest.body_interface_version);return new LifeContext(system,genome.manifest,lineage,current);};
+  let app:LifeContext|undefined=open(workspace,initial);
+  const finalDream=vi.fn(async()=>{lineage.lifeEvent('G0001','release_checkpoint',{});});
+  fs.mkdirSync(join(base,'resources/config'),{recursive:true});fs.copyFileSync(join(process.cwd(),'resources/config/company_protocol.json'),join(base,'resources/config/company_protocol.json'));
   const runtime: EvolutionRuntime = {
     validateRelease: vi.fn(async candidate => { fs.mkdirSync(join(candidate, "apps/server/dist"), { recursive: true }); fs.writeFileSync(join(candidate, "apps/server/dist/main.js"), "trusted build output"); }),
     quiesce: vi.fn(async () => {}), finalDream,
@@ -36,22 +38,18 @@ function fixture() {
       expect(fs.readFileSync(join(release, "packages/runtime/index.ts"), "utf8")).toBe("export const runtime = true;");
       expect(candidateWorkspace).not.toBe(workspace); expect(fs.existsSync(join(candidateWorkspace, "private"))).toBe(false);
       expect(fs.existsSync(join(release, ".env"))).toBe(false);
-      const genome = readGenome(release), candidate = LifeContext.open(candidateWorkspace, genome.manifest, genome.geneHash, "candidate");
-      try {
-        expect(candidate.current.meta().generation_id).toBe(generation);
-        candidate.lineage.event(null, "candidate-only", {});
-      } finally { candidate.close(); }
+      const candidate = new CurrentStore(join(candidateWorkspace,'generations',generation,'current.sqlite3'));
+      try {expect(candidate.meta().generation_id).toBe(generation);candidate.event('candidate-only',{});}finally{candidate.close();}
     }),
-    stop: vi.fn(async () => { app?.close(); app = undefined; }),
+    stop: vi.fn(async () => { app?.current.close(); app = undefined; }),
     switchRelease: vi.fn(async release => { currentRelease = release; }),
-    start: vi.fn(async () => { const genome = readGenome(currentRelease); app = LifeContext.open(workspace, genome.manifest, genome.geneHash, currentRelease.split(/[\\/]/).at(-1)!); }),
+    start: vi.fn(async () => { const genome = readGenome(currentRelease); app = open(workspace,genome); }),
     healthy: vi.fn(async generation => { expect(app!.current.meta().generation_id).toBe(generation); }),
     resume: vi.fn(async () => {}),
-    postRollbackDream: vi.fn(async input => { await new DreamService(app!, async () => JSON.stringify({
-      memories: [{ point: "失败后经验", reason: "冻结的 Current 证据", effect: "后续避免" }], gene_proposals: [] })).postRollback(input); }),
+    postRollbackDream: vi.fn(async input => {lineage.remember(input.source_generation,'rollback_evidence',{point:'Frozen failure evidence',reason:input.sha256,effect:'Review failure'},'rollback:'+input.sha256);}),
   };
   const supervisor = new GenerationSupervisor(join(directory, "trusted"), workspace, releases, lineage, runtime, true);
-  cleanup.push(() => { app?.close(); supervisor.close(); });
+  cleanup.push(() => { app?.current.close(); supervisor.close(); });
   const prepare = async (id: string, interfaceVersion = "1") => {
     const active = lineage.activeGeneration()!, number = Number(lineage.generations()[0]!.generation_no) + 1;
     const p = lineage.proposeGene(active.id, "owner", point); lineage.decideProposal(p.id, "APPROVED");
@@ -142,38 +140,11 @@ describe("trusted Generation lifecycle (local runtime contract doubles)", () => 
     expect(f.runtime.finalDream).not.toHaveBeenCalled();
     const archived=new CurrentStore(join(f.directory,"trusted/snapshots",request.id,"current-before.sqlite3"),{readOnly:true});
     try{expect(archived.db.prepare("SELECT payload FROM current_events WHERE kind='retained_fact'").get()?.payload).toBe('{"real":true}');}finally{archived.close();}
-    expect(f.lineage.db.prepare("SELECT * FROM dream_runs WHERE status='COMPLETED'").all()).toHaveLength(0);
+    expect(f.lineage.db.prepare("SELECT name FROM sqlite_master WHERE name='dream_runs'").get()).toBeUndefined();
     expect(f.lineage.db.prepare("SELECT * FROM life_events WHERE kind='OWNER_MAINTENANCE_DREAM_DEFERRED'").all()).toHaveLength(1);
     f.runtime.checkRollback=vi.fn(()=>{throw new Error("V23_ROLLBACK_DENIED_INSTANCE_PAYMENT_FACTS");});
     await expect(f.supervisor.rollback(request.id,"unsafe")).rejects.toThrow("INSTANCE_PAYMENT_FACTS");
     expect(f.lineage.activeGeneration()?.id).toBe("G0002");expect(f.runtime.stop).toHaveBeenCalledTimes(1);
-  });
-  it("runs the complete local life cycle: grow, remember, approve exact Gene, birth, migrate and retire", async () => {
-    const f = fixture(), life = f.app();
-    life.current.setObjective("keep", "business", "继续目标", "OPEN", true); life.current.setObjective("scratch", "business", "临时目标");
-    life.current.setWorkingState("business", { stage: "alive" }, true);
-    const runner = { probe: vi.fn(async () => ({ rootless: true, seccomp: "builtin", cgroup: 2, image: `node@sha256:${"a".repeat(64)}` })),
-      recoverInterrupted: vi.fn(async () => ({ removed: 0 })), runBody: vi.fn(async (_source: string, input: any) => ({ count: input.rows.length })) };
-    const body = new BodySkillSupervisor(life.current, life.lineage, runner, join(f.workspace, "generations/G0001/body/skills"));
-    await new BodyGrowthService(life, body, async () => JSON.stringify({ skill_id: "summary", purpose: "汇总", interface_version: "1",
-      source: "export default x=>({count:x.rows.length});", tests: [{ input: { rows: [1] }, expected: { count: 1 } }] }))
-      .grow({ id: "need1", pixel_id: "business", need: "统计行数", evidence: "确有缺失" });
-    expect((await body.run("summary", { rows: [1, 2] })).result).toEqual({ count: 2 });
-    expect(life.current.meta().body_revision).toBe(1); expect(f.lineage.activeGeneration()!.id).toBe("G0001");
-    await new DreamService(life, async () => JSON.stringify({ memories: [{ point: "汇总已成功", reason: "有执行回执", effect: "后续复用" }], gene_proposals: [point] })).run();
-    const p = f.lineage.proposals()[0]!; f.lineage.decideProposal(String(p.id), "APPROVED");
-    const manifest = readGenome(join(f.releases, "r1")).manifest;
-    f.supervisor.submit({ id: "r2", base_generation: "G0001", base_release: "r1", proposal_id: String(p.id), patch: [
-      { path: "genome/manifest.json", content: JSON.stringify({ ...manifest, generation: 2 }) }, { path: "apps/server/core.txt", content: "new interface" }] });
-    const validated = await f.supervisor.validate("r2"); f.supervisor.approve("r2", validated.candidate.candidate_hash);
-    expect((await f.supervisor.birth("r2")).state).toBe("BORN");
-    expect(f.lineage.generation("G0001").state).toBe("RETIRED"); expect(f.lineage.activeGeneration()!.id).toBe("G0002");
-    expect(f.app().current.objectives("business").map(o => o.id)).toEqual(["keep"]);
-    expect(f.app().current.state("business")).toBeTruthy(); expect(f.app().current.skills()[0]!.state).toBe("ACTIVE");
-    expect(f.app().lineage.relevantMemories({ kind: "dream" })).toHaveLength(1);
-    expect(f.lineage.db.prepare("SELECT id FROM business_events WHERE kind='candidate-only'").all()).toHaveLength(0);
-    expect(f.runtime.finalDream).toHaveBeenCalledTimes(1);
-    expect((await f.supervisor.birth("r2")).state).toBe("BORN"); expect(f.runtime.switchRelease).toHaveBeenCalledTimes(1);
   });
   it("requires separate direction and exact candidate hash approval and checks immutable artifacts again at birth", async () => {
     const f = fixture(), c = await f.prepare("r2");
@@ -220,27 +191,10 @@ describe("trusted Generation lifecycle (local runtime contract doubles)", () => 
   it("rolls back a born generation without undoing memory, business cost, order or payment history", async () => {
     const f = fixture(), c = await f.prepare("r2"); f.supervisor.approve("r2", c.candidate.candidate_hash); await f.supervisor.birth("r2");
     f.lineage.remember("G0002", "experience", { point: "G2 的重要经历", reason: "实际发生", effect: "继续存在" }, "g2-fact");
-    // Seed confirmed immutable facts in the real Lineage DB, including foreign-key-linked ledger rows.
-    f.lineage.db.prepare("INSERT INTO business_plans VALUES('p','test',1,'COMPLETED',?)").run(Date.now());
-    f.lineage.db.prepare("INSERT INTO business_plan_revisions VALUES('p',1,'h','{}',?)").run(Date.now());
-    f.lineage.db.prepare("INSERT INTO business_operations VALUES('cost','draft','p','test','h','{}',0,'SETTLED',NULL,?,NULL)").run(Date.now());
-    f.lineage.db.prepare("INSERT INTO business_cost_entries VALUES('cost',123,'{}',?)").run(Date.now());
-    f.lineage.db.prepare("INSERT INTO business_orders VALUES('order','p',1,'delivery','customer',100,'CNY','confirmed','accepted',1,'evidence',?)").run(Date.now());
-    f.lineage.db.prepare("INSERT INTO business_payment_events VALUES('payment','order','provider','account','event','payment',100,'CNY',NULL,'external','owner_confirmed','evidence','h',?)").run(Date.now());
     await f.supervisor.rollback("r2", "Owner requested controlled rollback");
     expect(f.app().current.meta().generation_id).toBe("G0001"); expect(f.lineage.generation("G0002").state).toBe("ROLLED_BACK");
-    expect(f.lineage.totals().spentMicros).toBe(123); expect(f.lineage.evidence.order("order").paidMicros).toBe(100);
     expect(f.lineage.relevantMemories({ kind: "experience" })).toHaveLength(1); expect(f.lineage.generations()).toHaveLength(2);
     expect(f.runtime.finalDream).toHaveBeenCalledTimes(1); // No Dream blocks the emergency rollback.
-  });
-  it("marks inherited skills for revalidation when the Body interface changes", async () => {
-    const f = fixture(), life = f.app();
-    const source = JSON.stringify({ skill_id: "skill", purpose: "skill", source: "export default x=>x;", interface_version: "1", tests: [{ input: {}, expected: {} }] });
-    const skills = join(f.workspace, "generations/G0001/body/skills/skill"); fs.mkdirSync(skills, { recursive: true }); fs.writeFileSync(join(skills, "change.json"), source);
-    life.current.db.prepare("INSERT INTO body_candidates(id,skill_id,candidate_json,request_hash,state,created_at) VALUES('change','skill',?,'hash','ACTIVE',?)").run(source, Date.now());
-    life.current.db.prepare("INSERT INTO body_skills VALUES('skill','skill','change','1','ACTIVE',0,0,?)").run(Date.now());
-    const c = await f.prepare("r2", "2"); f.supervisor.approve("r2", c.candidate.candidate_hash); await f.supervisor.birth("r2");
-    expect(f.app().current.skills()[0]!.state).toBe("REVALIDATION_REQUIRED");
   });
   it("fails G0003 after G0002 was born, restores G0002 and later dreams from the frozen failed Current", async () => {
     const f = fixture(), second = await f.prepare("r2"); f.supervisor.approve("r2", second.candidate.candidate_hash); await f.supervisor.birth("r2");
@@ -249,8 +203,8 @@ describe("trusted Generation lifecycle (local runtime contract doubles)", () => 
     await expect(f.supervisor.birth("r3")).rejects.toThrow("G3_START_FAILED");
     expect(f.lineage.activeGeneration()!.id).toBe("G0002"); expect(f.lineage.generation("G0003").state).toBe("FAILED");
     await f.supervisor.postRollbackDream("r3"); await f.supervisor.postRollbackDream("r3");
-    expect(f.lineage.relevantMemories({ kind: "dream", generationId: "G0003" })).toHaveLength(1);
-    expect(f.lineage.db.prepare("SELECT id FROM dream_runs WHERE trigger='post_rollback' AND status='COMPLETED'").all()).toHaveLength(1);
+    expect(f.lineage.relevantMemories({ kind: "rollback_evidence", generationId: "G0003" })).toHaveLength(1);
+
   });
   it("uses its durable journal to restore after a process interruption at the release switch", async () => {
     const f = fixture(), c = await f.prepare("r2"); f.supervisor.approve("r2", c.candidate.candidate_hash); await f.supervisor.birth("r2");

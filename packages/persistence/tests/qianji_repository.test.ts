@@ -57,8 +57,8 @@ describe("Persistence: Qianji identity and events", () => {
     const reopened = new CoreStore(dbPath);
     try {
       expect(reopened.qianji.getProfile(profile.qianjiId)?.narrative.displayName).toBe("旧成员");
-      expect(reopened.db.prepare("SELECT value FROM schema_meta WHERE key = 'qianji_schema_version'").get())
-        .toEqual({ value: "3" });
+      expect(reopened.db.prepare("PRAGMA user_version").get())
+        .toEqual({ user_version: 34 });
       expect(reopened.db.prepare("SELECT COUNT(*) AS count FROM qianji_profiles").get()).toEqual({ count: 1 });
       expect(reopened.db.prepare("SELECT COUNT(*) AS count FROM world_events").get()).toEqual({ count: 1 });
     } finally {
@@ -80,12 +80,8 @@ describe("Persistence: Qianji identity and events", () => {
         INSERT INTO model_calls (call_id, run_id, pixel_id, model, prompt_tokens, completion_tokens, actual_tokens, cost_cny, tool_cost, round_num, created_at)
         VALUES ('legacy_migration_call', 'legacy_run', '0_0_0', 'test', 8, 2, 10, 0.25, 0, 0, 100);
       `);
-      initSchema(db);
-      initSchema(db);
-      const upgraded = db.prepare("SELECT binding_id, narrative_revision, cost_cny, tool_cost, round_num FROM model_calls WHERE call_id = ?")
-        .get("legacy_migration_call");
-      expect(upgraded).toEqual({ binding_id: null, narrative_revision: null, cost_cny: 0.25, tool_cost: null, round_num: null });
-      expect(db.prepare("SELECT value FROM schema_meta WHERE key = 'qianji_schema_version'").get()).toEqual({ value: "3" });
+      expect(()=>initSchema(db)).toThrow('V34_DESTRUCTIVE_RESET_REQUIRED');
+      expect(db.prepare("SELECT cost_cny FROM model_calls WHERE call_id='legacy_migration_call'").get()!.cost_cny).toBe(0.25);
     } finally { db.close(); }
   });
 
@@ -258,15 +254,9 @@ describe("Persistence: Qianji identity and events", () => {
         entry_type: "model_usage", amount: -12, balance_after: 88,
       });
 
-      const history = store.qianji.getHistory(profile.qianjiId);
-      expect(history.modelCalls.map(call => call.callId)).toEqual(["attributed_call"]);
-      expect(history.modelCalls[0].costCny).toBe(0.01);
-      expect(history.costSummary).toEqual({ totalCostCny: 0.01, knownCostCny: 0.01, unknownModelCount: 0, unknownToolCount: 0 });
-      expect(history.carrierLegacy.modelCalls.map(call => call.callId)).toEqual(["legacy_call"]);
-      expect(history.carrierLegacy.modelCalls[0].costCny).toBeNull();
-      expect(history.carrierLegacy.costSummary.totalCostCny).toBeNull();
-      expect(history.ledgerEntries.map(entry => entry.entryId)).toEqual(["attributed_ledger"]);
-      expect(history.carrierLegacy.ledgerEntries.map(entry => entry.entryId)).toEqual(["legacy_ledger"]);
+      expect(store.db.prepare('SELECT call_id FROM model_calls WHERE binding_id=?').all(binding.bindingId)).toEqual([{call_id:'attributed_call'}]);
+      expect(store.db.prepare('SELECT cost_cny FROM model_calls WHERE binding_id IS NULL').get()!.cost_cny).toBeNull();
+      expect(store.db.prepare('SELECT entry_id FROM ledger_entries WHERE binding_id=?').all(binding.bindingId)).toEqual([{entry_id:'attributed_ledger'}]);
     } finally {
       store.close();
     }

@@ -1,0 +1,758 @@
+{
+  "files": [
+    {
+      "path": "apps/server/src/routes/business_routes.ts",
+      "lines": 97
+    },
+    {
+      "path": "apps/server/src/routes/evolution_routes.ts",
+      "lines": 70
+    },
+    {
+      "path": "apps/server/src/routes/gacha_routes.ts",
+      "lines": 109
+    },
+    {
+      "path": "apps/server/src/routes/meeting_routes.ts",
+      "lines": 60
+    },
+    {
+      "path": "apps/server/src/routes/qianji_routes.ts",
+      "lines": 581
+    },
+    {
+      "path": "apps/server/src/services/automation_supervisor.ts",
+      "lines": 332
+    },
+    {
+      "path": "apps/server/src/services/body_growth_service.ts",
+      "lines": 78
+    },
+    {
+      "path": "apps/server/src/services/business_connections.ts",
+      "lines": 42
+    },
+    {
+      "path": "apps/server/src/services/business_service.ts",
+      "lines": 364
+    },
+    {
+      "path": "apps/server/src/services/dream_service.ts",
+      "lines": 197
+    },
+    {
+      "path": "apps/server/src/services/gacha_image.ts",
+      "lines": 78
+    },
+    {
+      "path": "apps/server/src/services/gacha_service.ts",
+      "lines": 395
+    },
+    {
+      "path": "apps/server/src/services/gene_promotion_service.ts",
+      "lines": 177
+    },
+    {
+      "path": "apps/server/src/services/life_overview.ts",
+      "lines": 131
+    },
+    {
+      "path": "apps/server/src/services/meeting_service.ts",
+      "lines": 128
+    },
+    {
+      "path": "apps/server/src/services/memory_gate.ts",
+      "lines": 30
+    },
+    {
+      "path": "apps/server/src/services/public_payment_migration.ts",
+      "lines": 24
+    },
+    {
+      "path": "apps/server/src/services/qianji_service.ts",
+      "lines": 68
+    },
+    {
+      "path": "apps/server/tests/automation_supervisor.test.ts",
+      "lines": 76
+    },
+    {
+      "path": "apps/server/tests/body_growth.test.ts",
+      "lines": 136
+    },
+    {
+      "path": "apps/server/tests/business.test.ts",
+      "lines": 370
+    },
+    {
+      "path": "apps/server/tests/business_connections.test.ts",
+      "lines": 109
+    },
+    {
+      "path": "apps/server/tests/gacha_service.test.ts",
+      "lines": 329
+    },
+    {
+      "path": "apps/server/tests/gene_promotion_snapshot.test.ts",
+      "lines": 87
+    },
+    {
+      "path": "apps/server/tests/life_inventory.test.ts",
+      "lines": 60
+    },
+    {
+      "path": "apps/server/tests/life_overview.test.ts",
+      "lines": 105
+    },
+    {
+      "path": "apps/server/tests/local_upgrade.test.ts",
+      "lines": 183
+    },
+    {
+      "path": "apps/server/tests/meeting_service.test.ts",
+      "lines": 43
+    },
+    {
+      "path": "apps/server/tests/migration_snapshot.test.ts",
+      "lines": 12
+    },
+    {
+      "path": "apps/server/tests/migration_snapshot_retry.test.ts",
+      "lines": 19
+    },
+    {
+      "path": "apps/server/tests/owner_actions.test.ts",
+      "lines": 26
+    },
+    {
+      "path": "apps/server/tests/owner_business_chat.test.ts",
+      "lines": 177
+    },
+    {
+      "path": "apps/server/tests/qianji_chat.test.ts",
+      "lines": 124
+    },
+    {
+      "path": "apps/server/tests/qianji_service.test.ts",
+      "lines": 114
+    },
+    {
+      "path": "apps/server/tests/server.test.ts",
+      "lines": 885
+    },
+    {
+      "path": "apps/server/tests/server_rectification.test.ts",
+      "lines": 175
+    },
+    {
+      "path": "apps/server/tests/v23_migration_dry_run.test.ts",
+      "lines": 135
+    },
+    {
+      "path": "apps/server/tests/v23_upgrade_approval.test.ts",
+      "lines": 112
+    },
+    {
+      "path": "frontend/src/api/files.ts",
+      "lines": 52
+    },
+    {
+      "path": "frontend/src/api/gacha.ts",
+      "lines": 37
+    },
+    {
+      "path": "frontend/src/api/meetings.ts",
+      "lines": 37
+    },
+    {
+      "path": "frontend/src/api/pixels.ts",
+      "lines": 82
+    },
+    {
+      "path": "frontend/src/api/prompts.ts",
+      "lines": 35
+    },
+    {
+      "path": "frontend/src/api/qianji.ts",
+      "lines": 210
+    },
+    {
+      "path": "frontend/src/api/run.ts",
+      "lines": 61
+    },
+    {
+      "path": "frontend/src/api/tools.ts",
+      "lines": 26
+    },
+    {
+      "path": "frontend/src/api/types.ts",
+      "lines": 208
+    },
+    {
+      "path": "frontend/src/api/world.ts",
+      "lines": 10
+    },
+    {
+      "path": "frontend/src/App.tsx",
+      "lines": 50
+    },
+    {
+      "path": "frontend/src/components/ErrorNotice.tsx",
+      "lines": 67
+    },
+    {
+      "path": "frontend/src/components/HelpModal.tsx",
+      "lines": 30
+    },
+    {
+      "path": "frontend/src/components/Modal.tsx",
+      "lines": 77
+    },
+    {
+      "path": "frontend/src/features/business/business.css",
+      "lines": 19
+    },
+    {
+      "path": "frontend/src/features/business/business_api.ts",
+      "lines": 47
+    },
+    {
+      "path": "frontend/src/features/business/BusinessHome.tsx",
+      "lines": 189
+    },
+    {
+      "path": "frontend/src/features/business/BusinessOutcomes.tsx",
+      "lines": 44
+    },
+    {
+      "path": "frontend/src/features/business/evolution/BodyLayer.tsx",
+      "lines": 41
+    },
+    {
+      "path": "frontend/src/features/business/evolution/EventStream.tsx",
+      "lines": 14
+    },
+    {
+      "path": "frontend/src/features/business/evolution/EvolutionLayer.tsx",
+      "lines": 58
+    },
+    {
+      "path": "frontend/src/features/business/evolution/GenomeLayer.tsx",
+      "lines": 62
+    },
+    {
+      "path": "frontend/src/features/business/evolution/LayerHeader.tsx",
+      "lines": 21
+    },
+    {
+      "path": "frontend/src/features/business/evolution/life.css",
+      "lines": 45
+    },
+    {
+      "path": "frontend/src/features/business/evolution/life_types.ts",
+      "lines": 51
+    },
+    {
+      "path": "frontend/src/features/business/evolution/LifeArchitecture.tsx",
+      "lines": 42
+    },
+    {
+      "path": "frontend/src/features/business/evolution/TrustRootLayer.tsx",
+      "lines": 26
+    },
+    {
+      "path": "frontend/src/features/business/EvolutionPanel.tsx",
+      "lines": 1
+    },
+    {
+      "path": "frontend/src/features/business/PublicSiteSettings.tsx",
+      "lines": 69
+    },
+    {
+      "path": "frontend/src/features/business/read_table.ts",
+      "lines": 40
+    },
+    {
+      "path": "frontend/src/features/business/StrategyHistory.tsx",
+      "lines": 24
+    },
+    {
+      "path": "frontend/src/features/business/UsdtPayments.tsx",
+      "lines": 24
+    },
+    {
+      "path": "frontend/src/features/business/V23Panel.tsx",
+      "lines": 31
+    },
+    {
+      "path": "frontend/src/features/engine/EngineView.tsx",
+      "lines": 405
+    },
+    {
+      "path": "frontend/src/features/engine/WorldEngine.tsx",
+      "lines": 17
+    },
+    {
+      "path": "frontend/src/features/environment/EnvironmentEditor.tsx",
+      "lines": 96
+    },
+    {
+      "path": "frontend/src/features/files/ArtifactBrowser.tsx",
+      "lines": 114
+    },
+    {
+      "path": "frontend/src/features/files/FilePreview.tsx",
+      "lines": 120
+    },
+    {
+      "path": "frontend/src/features/files/PrivateFileBrowser.tsx",
+      "lines": 162
+    },
+    {
+      "path": "frontend/src/features/gacha/GachaView.tsx",
+      "lines": 44
+    },
+    {
+      "path": "frontend/src/features/hall/ApprovalPanel.tsx",
+      "lines": 59
+    },
+    {
+      "path": "frontend/src/features/hall/QianJiHall.tsx",
+      "lines": 230
+    },
+    {
+      "path": "frontend/src/features/meetings/MeetingView.tsx",
+      "lines": 80
+    },
+    {
+      "path": "frontend/src/features/owner/owner-flow.css",
+      "lines": 93
+    },
+    {
+      "path": "frontend/src/features/owner/owner.css",
+      "lines": 523
+    },
+    {
+      "path": "frontend/src/features/owner/OwnerActionCard.tsx",
+      "lines": 31
+    },
+    {
+      "path": "frontend/src/features/owner/OwnerActivity.tsx",
+      "lines": 33
+    },
+    {
+      "path": "frontend/src/features/owner/OwnerBudget.tsx",
+      "lines": 61
+    },
+    {
+      "path": "frontend/src/features/owner/OwnerChat.tsx",
+      "lines": 152
+    },
+    {
+      "path": "frontend/src/features/owner/OwnerCompanyFlow.tsx",
+      "lines": 150
+    },
+    {
+      "path": "frontend/src/features/owner/OwnerConsole.tsx",
+      "lines": 140
+    },
+    {
+      "path": "frontend/src/features/owner/OwnerDashboard.tsx",
+      "lines": 124
+    },
+    {
+      "path": "frontend/src/features/owner/OwnerExtensions.tsx",
+      "lines": 16
+    },
+    {
+      "path": "frontend/src/features/owner/ownerFlowEvents.ts",
+      "lines": 95
+    },
+    {
+      "path": "frontend/src/features/owner/ownerFlowProjection.ts",
+      "lines": 172
+    },
+    {
+      "path": "frontend/src/features/owner/OwnerInbox.tsx",
+      "lines": 70
+    },
+    {
+      "path": "frontend/src/features/owner/OwnerStatus.tsx",
+      "lines": 15
+    },
+    {
+      "path": "frontend/src/features/owner/OwnerTaskBoard.tsx",
+      "lines": 205
+    },
+    {
+      "path": "frontend/src/features/owner/OwnerTeamsView.tsx",
+      "lines": 39
+    },
+    {
+      "path": "frontend/src/features/owner/OwnerWork.tsx",
+      "lines": 65
+    },
+    {
+      "path": "frontend/src/features/pixels/HeartbeatLightning.ts",
+      "lines": 518
+    },
+    {
+      "path": "frontend/src/features/pixels/PixelDetails.tsx",
+      "lines": 168
+    },
+    {
+      "path": "frontend/src/features/pixels/PixelHoverTooltip.tsx",
+      "lines": 39
+    },
+    {
+      "path": "frontend/src/features/pixels/PixelListPanel.tsx",
+      "lines": 63
+    },
+    {
+      "path": "frontend/src/features/pixels/PixelMapCanvas.tsx",
+      "lines": 286
+    },
+    {
+      "path": "frontend/src/features/pixels/PixelMapRenderer.ts",
+      "lines": 1303
+    },
+    {
+      "path": "frontend/src/features/pixels/PixelOperations.tsx",
+      "lines": 165
+    },
+    {
+      "path": "frontend/src/features/prompts/PromptEditor.tsx",
+      "lines": 156
+    },
+    {
+      "path": "frontend/src/features/qianji/QianjiCard.tsx",
+      "lines": 105
+    },
+    {
+      "path": "frontend/src/features/qianji/QianjiChatPanel.tsx",
+      "lines": 102
+    },
+    {
+      "path": "frontend/src/features/qianji/QianjiNarrativeEditor.tsx",
+      "lines": 139
+    },
+    {
+      "path": "frontend/src/features/qianji/QianjiProfilePanel.tsx",
+      "lines": 211
+    },
+    {
+      "path": "frontend/src/features/qianji/TechGoggleAvatar.tsx",
+      "lines": 160
+    },
+    {
+      "path": "frontend/src/features/qianji/WorldSummary.tsx",
+      "lines": 26
+    },
+    {
+      "path": "frontend/src/features/run/commandParser.ts",
+      "lines": 55
+    },
+    {
+      "path": "frontend/src/features/run/ConsolePanel.tsx",
+      "lines": 134
+    },
+    {
+      "path": "frontend/src/features/run/RecoveryOperations.tsx",
+      "lines": 581
+    },
+    {
+      "path": "frontend/src/features/run/RunControls.tsx",
+      "lines": 270
+    },
+    {
+      "path": "frontend/src/features/run/RunStatus.tsx",
+      "lines": 95
+    },
+    {
+      "path": "frontend/src/features/run/runStatusLabels.ts",
+      "lines": 35
+    },
+    {
+      "path": "frontend/src/features/tools/ToolCatalog.tsx",
+      "lines": 127
+    },
+    {
+      "path": "frontend/src/features/tools/ToolExecutionHistory.tsx",
+      "lines": 167
+    },
+    {
+      "path": "frontend/src/hooks/usePixelTips.ts",
+      "lines": 25
+    },
+    {
+      "path": "frontend/src/hooks/useQianjiPolling.ts",
+      "lines": 54
+    },
+    {
+      "path": "frontend/src/hooks/useWorldPolling.ts",
+      "lines": 123
+    },
+    {
+      "path": "frontend/src/styles/index.css",
+      "lines": 3572
+    },
+    {
+      "path": "packages/persistence/src/business_evidence.ts",
+      "lines": 94
+    },
+    {
+      "path": "packages/persistence/src/business_store.ts",
+      "lines": 523
+    },
+    {
+      "path": "packages/persistence/src/migrations/business_schema.ts",
+      "lines": 66
+    },
+    {
+      "path": "packages/persistence/src/migrations/world_life_schema.ts",
+      "lines": 18
+    },
+    {
+      "path": "packages/persistence/src/repositories/gacha_repository.ts",
+      "lines": 125
+    },
+    {
+      "path": "packages/persistence/src/repositories/qianji_chat_repository.ts",
+      "lines": 109
+    },
+    {
+      "path": "packages/persistence/tests/life.test.ts",
+      "lines": 116
+    },
+    {
+      "path": "scripts/automation-supervisor.mjs",
+      "lines": 33
+    },
+    {
+      "path": "scripts/business-maintenance.mjs",
+      "lines": 43
+    },
+    {
+      "path": "scripts/life-core-dry-run.mjs",
+      "lines": 70
+    },
+    {
+      "path": "scripts/life-inventory.mjs",
+      "lines": 86
+    },
+    {
+      "path": "scripts/life-migrate.mjs",
+      "lines": 46
+    },
+    {
+      "path": "scripts/local-upgrade.mjs",
+      "lines": 338
+    },
+    {
+      "path": "scripts/migrate-qianji.ts",
+      "lines": 251
+    },
+    {
+      "path": "scripts/v23-migration-dry-run.mjs",
+      "lines": 192
+    },
+    {
+      "path": "scripts/v23-upgrade.mjs",
+      "lines": 152
+    },
+    {
+      "path": "scripts/v23-world-migrate.mjs",
+      "lines": 66
+    },
+    {
+      "path": "frontend/tests/app_navigation.test.tsx",
+      "lines": 88
+    },
+    {
+      "path": "frontend/tests/business.test.tsx",
+      "lines": 71
+    },
+    {
+      "path": "frontend/tests/command_parser.test.ts",
+      "lines": 45
+    },
+    {
+      "path": "frontend/tests/console_panel.test.tsx",
+      "lines": 81
+    },
+    {
+      "path": "frontend/tests/engine_documents.test.tsx",
+      "lines": 34
+    },
+    {
+      "path": "frontend/tests/evolution.test.tsx",
+      "lines": 116
+    },
+    {
+      "path": "frontend/tests/file_preview.test.tsx",
+      "lines": 96
+    },
+    {
+      "path": "frontend/tests/gacha_view.test.tsx",
+      "lines": 51
+    },
+    {
+      "path": "frontend/tests/owner_budget.test.tsx",
+      "lines": 45
+    },
+    {
+      "path": "frontend/tests/owner_chat.test.tsx",
+      "lines": 94
+    },
+    {
+      "path": "frontend/tests/owner_company_flow.test.tsx",
+      "lines": 221
+    },
+    {
+      "path": "frontend/tests/owner_console.test.tsx",
+      "lines": 56
+    },
+    {
+      "path": "frontend/tests/owner_dashboard.test.tsx",
+      "lines": 272
+    },
+    {
+      "path": "frontend/tests/owner_extensions.test.tsx",
+      "lines": 10
+    },
+    {
+      "path": "frontend/tests/owner_goals.test.tsx",
+      "lines": 50
+    },
+    {
+      "path": "frontend/tests/owner_work.test.tsx",
+      "lines": 35
+    },
+    {
+      "path": "frontend/tests/pixel_api.test.ts",
+      "lines": 27
+    },
+    {
+      "path": "frontend/tests/pixel_operations.test.tsx",
+      "lines": 140
+    },
+    {
+      "path": "frontend/tests/pixel_renderer.test.ts",
+      "lines": 294
+    },
+    {
+      "path": "frontend/tests/prompt_editor.test.tsx",
+      "lines": 84
+    },
+    {
+      "path": "frontend/tests/public_checkout.test.tsx",
+      "lines": 83
+    },
+    {
+      "path": "frontend/tests/public_entry.test.tsx",
+      "lines": 60
+    },
+    {
+      "path": "frontend/tests/qianji_energy.test.tsx",
+      "lines": 32
+    },
+    {
+      "path": "frontend/tests/qianji_hall.test.tsx",
+      "lines": 202
+    },
+    {
+      "path": "frontend/tests/qianji_panels.test.tsx",
+      "lines": 151
+    },
+    {
+      "path": "frontend/tests/qianji_scope.test.tsx",
+      "lines": 49
+    },
+    {
+      "path": "frontend/tests/read_failures.test.tsx",
+      "lines": 49
+    },
+    {
+      "path": "frontend/tests/release_tool_catalog.test.tsx",
+      "lines": 19
+    },
+    {
+      "path": "frontend/tests/run_controls.test.tsx",
+      "lines": 240
+    },
+    {
+      "path": "frontend/tests/run_rectification.test.tsx",
+      "lines": 186
+    },
+    {
+      "path": "frontend/tests/run_status.test.tsx",
+      "lines": 29
+    },
+    {
+      "path": "frontend/tests/run_status_labels.test.ts",
+      "lines": 20
+    },
+    {
+      "path": "frontend/tests/usdt_payments.test.tsx",
+      "lines": 17
+    },
+    {
+      "path": "frontend/tests/use_pixel_tips.test.tsx",
+      "lines": 28
+    },
+    {
+      "path": "frontend/tests/use_world_polling.test.tsx",
+      "lines": 74
+    },
+    {
+      "path": "frontend/tests/world_engine.test.tsx",
+      "lines": 50
+    },
+    {
+      "path": "scripts/inherit-approved-gene.mjs",
+      "lines": 99
+    },
+    {
+      "path": "apps/server/src/services/public_products_migration.ts",
+      "lines": 15
+    },
+    {
+      "path": "packages/domain/src/qianji/gacha.ts",
+      "lines": 112
+    },
+    {
+      "path": "packages/domain/src/qianji/gacha_prompt.ts",
+      "lines": 60
+    },
+    {
+      "path": "packages/domain/tests/gacha.test.ts",
+      "lines": 60
+    },
+    {
+      "path": "apps/server/tests/dream.test.ts",
+      "lines": 116
+    },
+    {
+      "path": "apps/server/tests/evolution_api.test.ts",
+      "lines": 113
+    },
+    {
+      "path": "apps/server/tests/approved_gene_inheritance.test.ts",
+      "lines": 82
+    },
+    {
+      "path": "apps/server/tests/world_product_routes.test.ts",
+      "lines": 161
+    },
+    {
+      "path": "apps/server/tests/owner_chat.test.ts",
+      "lines": 111
+    },
+    {
+      "path": "apps/server/tests/owner_version_process.test.ts",
+      "lines": 54
+    }
+  ],
+  "fileCount": 188,
+  "removedLines": 26568
+}

@@ -7,18 +7,28 @@ import type { WorldRuntimeManager } from './world_runtime_manager.js';
 import type { OwnerAutomationGate } from './owner_automation_gate.js';
 import { GoalOutcomeEvaluator } from './goal_outcome_evaluator.js';
 import type { PaymentService } from './payment_service.js';
+import { CompanyGoalScheduler } from './company_goal_scheduler.js';
 
 export class OwnerGoalScheduler {
   private timer?: ReturnType<typeof setInterval>;
   private flight?: Promise<void>;
   private closed = false;
   private evaluator: GoalOutcomeEvaluator;
+  private company?:CompanyGoalScheduler;
   constructor(private manager: WorldRuntimeManager, private work: OwnerWorkService, readonly gate: OwnerAutomationGate,payments?:PaymentService) { this.evaluator = new GoalOutcomeEvaluator(manager, gate.goals,payments);gate.proposals.verifyEvidence=e=>this.evaluator.verify(e); }
-  start() { this.closed = false; this.timer = setInterval(() => { void this.tick().catch(e => this.gate.halt(e instanceof Error ? e.message : 'OWNER_SCHEDULER_FAILED')); }, 1000); this.timer.unref(); }
+  start() {
+    this.closed=false;this.gate.admission.controllerStarted();
+    this.timer=setInterval(()=>{void this.tick().catch(e=>{
+      this.closed=true;if(this.timer)clearInterval(this.timer);
+      this.gate.admission.block('scheduler','OWNER_SCHEDULER_FAILED');
+      this.gate.store.db.prepare("INSERT INTO control_events(kind,world_id,payload,created_at) VALUES('owner_scheduler_failed',NULL,?,?)").run(JSON.stringify({reason:e instanceof Error?e.message:String(e)}),Date.now());
+    });},1000);this.timer.unref();
+  }
   async close() { this.closed = true; if (this.timer) clearInterval(this.timer); await this.flight; }
   tick(): Promise<void> { if (this.flight) return this.flight; this.flight = this.run().finally(() => { this.flight = undefined; }); return this.flight; }
   private async run() {
     if (this.closed) return;
+    if(this.work.worker){this.company??=new CompanyGoalScheduler(this.work,this.gate,this.evaluator);await this.company.tick();return;}
     const db = this.gate.store.db, goals = this.gate.goals;
     for(const goal of goals.list()){this.evaluator.observePayments(goal);if(goals.get(goal.id).reason==='OWNER_PAYMENTS_VERIFIED')this.gate.proposals.closeProposal(goal.id);}
     for(const world of this.manager.list()){const runtime=this.manager.peek(world.world_id);if(runtime)this.gate.reconcileWorld(runtime.store,world.world_id);}
@@ -52,7 +62,8 @@ export class OwnerGoalScheduler {
       if (runtime?.run.getStatus().running) {if(goal.status==='READY')goals.state(goal.id,'RUNNING');continue;}
       const added = this.evaluator.collect(goal, String(d.id), String(d.world_id), task.reply as string | null);
       if (runtime?.store.runs.getCheckpoint(String(task.run_id))?.resume_pending) {
-        if(runtime.run.getStatus().stop_reason==='INFRASTRUCTURE_FAILURE'&&!String(runtime.run.getStatus().error_summary).includes('OWNER_TOKEN_LIMIT')&&goal.status!=='BLOCKED')goals.state(goal.id,'BLOCKED',runtime.run.getStatus().error_summary??'INFRASTRUCTURE_FAILURE');
+        const reason=runtime.run.getStatus().stop_reason;
+        if(['CALL_OUTCOME_UNKNOWN','TOOL_OUTCOME_UNKNOWN','PAUSED_RECOVERY_REQUIRED','INFRASTRUCTURE_FAILURE'].includes(reason)&&!String(runtime.run.getStatus().error_summary).includes('OWNER_TOKEN_LIMIT')&&goal.status!=='BLOCKED')goals.state(goal.id,'BLOCKED',reason);
         continue;
       }
       const currentPlan=this.gate.proposals.plans.get(goal.id),currentOccurrence=db.prepare("SELECT * FROM owner_task_occurrences WHERE dispatch_id=? AND state='RUNNING'").get(d.id);

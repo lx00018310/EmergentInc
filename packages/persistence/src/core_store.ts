@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { SqliteDatabase } from "./sqlite/db.js";
 import { initSchema } from "./migrations/init_schema.js";
 import { RunRepository } from "./repositories/run_repository.js";
@@ -12,9 +12,7 @@ import { LedgerRepository } from "./repositories/ledger_repository.js";
 import { QianjiRepository } from "./repositories/qianji_repository.js";
 import { WorldEventRepository } from "./repositories/world_event_repository.js";
 import { OwnerActionRepository } from "./repositories/owner_action_repository.js";
-import { QianjiChatRepository } from "./repositories/qianji_chat_repository.js";
 import { ExecutionRepository } from "./repositories/execution_repository.js";
-import { GachaRepository } from "./repositories/gacha_repository.js";
 
 /**
  * CoreStore：单一事务事实源门面
@@ -32,9 +30,7 @@ export class CoreStore {
   public readonly qianji: QianjiRepository;
   public readonly worldEvents: WorldEventRepository;
   public readonly ownerActions: OwnerActionRepository;
-  public readonly qianjiChat: QianjiChatRepository;
   public readonly executions: ExecutionRepository;
-  public readonly gacha: GachaRepository;
   private unlimitedEnergyPolicy: (pixelId: string) => boolean = () => false;
 
   constructor(dbPath: string = ":memory:", options: { readOnly?: boolean } = {}) {
@@ -52,9 +48,7 @@ export class CoreStore {
     this.worldEvents = new WorldEventRepository(this.db);
     this.qianji = new QianjiRepository(this.db, this.worldEvents);
     this.ownerActions = new OwnerActionRepository(this.db);
-    this.qianjiChat = new QianjiChatRepository(this.db, this.messages);
     this.executions = new ExecutionRepository(this.db);
-    this.gacha = new GachaRepository(this.db);
 
     // 确保全局预算记录存在
     if (!options.readOnly) this.budgets.ensureGlobalBudget();
@@ -233,13 +227,18 @@ export class CoreStore {
     reason?: string;
     actualTokens?: number;
     costCny?: number | null;
+    idempotencyKey?: string;
   }): { decisionId: string } {
     if (!params.id) throw new Error("Recovery requires an operation ID");
     if (params.costCny != null && (!Number.isFinite(params.costCny) || params.costCny < 0)) throw new Error("Invalid billed cost");
     const explicitReason = (params.reason && params.reason.trim())
       ? params.reason.trim()
       : (params.decision === "abandon" ? "操作人审批拒绝 (abandon)" : "操作人审批通过 (approved)");
+    if(params.idempotencyKey!==undefined&&(typeof params.idempotencyKey!=='string'||!/^[\w-]{8,128}$/.test(params.idempotencyKey)))throw new Error('RECOVERY_IDEMPOTENCY_INVALID');
+    const decisionId=params.idempotencyKey?'recovery_'+createHash('sha256').update(params.idempotencyKey).digest('hex'):randomUUID();
+    const fingerprint=(p:any)=>JSON.stringify([p.kind,p.id,p.decision,p.reason,p.actualTokens??null,p.costCny??null]);
     return this.db.transaction(() => {
+      if(params.idempotencyKey){const old=this.db.prepare('SELECT details FROM recovery_decisions WHERE decision_id=?').get(decisionId);if(old){if(fingerprint(JSON.parse(String(old.details)))!==fingerprint({...params,reason:explicitReason}))throw new Error('IDEMPOTENCY_CONFLICT');return {decisionId};}}
       const now = Date.now() / 1000;
       if (params.kind === "model") {
         const reservation = this.db.prepare("SELECT * FROM reservations WHERE call_id = ? AND status = 'OPEN'").get(params.id) as any;
@@ -248,7 +247,8 @@ export class CoreStore {
           ["SUCCESS", "MODEL_RESPONSE_INVALID"].includes(call.outcome) &&
           Boolean(this.db.prepare("SELECT 1 FROM reservations WHERE call_id=? AND status='SETTLED'").get(params.id));
         if (!reservation && !costOnly && call?.outcome !== "CALL_OUTCOME_UNKNOWN") throw new Error("Model operation is not unresolved");
-        const messageId = call?.messageId;
+        // A process can die after reservation/HTTP send but before its model-call row exists.
+        const messageId = call?.messageId ?? reservation?.message_id;
         if (costOnly) {
           if (!Number.isSafeInteger(params.actualTokens) || params.actualTokens !== call!.actualTokens) throw new Error("Invalid actual token count");
           if (params.costCny == null) throw new Error("Invalid billed cost");
@@ -287,6 +287,7 @@ export class CoreStore {
         const run = this.runs.getRun(params.id);
         if (!run || run.status !== "RUNNING") throw new Error("Run is not unresolved");
         this.runs.updateRunStatus(params.id, "STOPPED", "USER_STOPPED");
+        this.runs.setResumePending(params.id,false);
       } else if (params.kind === "message") {
         const msg = this.messages.getMessage(params.id);
         if (!msg || !["PROCESSING", "RESERVED", "CALLING", "CALL_OUTCOME_UNKNOWN", "AWAITING_SETTLEMENT"].includes(msg.status)) {
@@ -305,7 +306,6 @@ export class CoreStore {
       } else {
         throw new Error("Invalid recovery kind");
       }
-      const decisionId = randomUUID();
       this.db.prepare("INSERT INTO recovery_decisions (decision_id, kind, id, decision, reason, details, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
         .run(decisionId, params.kind, params.id, params.decision, explicitReason, JSON.stringify({ ...params, reason: explicitReason }), now);
       return { decisionId };

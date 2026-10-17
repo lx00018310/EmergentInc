@@ -3,18 +3,34 @@ import type { OwnerOverview, OwnerWork, OwnerWorkTask, OwnerRecruitRequest } fro
 import type { ToolRegistry } from '@emergentinc/tools';
 import type { WorldRuntimeManager } from './world_runtime_manager.js';
 import { QianjiWorldGateway } from './qianji_world_gateway.js';
-import { GachaService } from './gacha_service.js';
 import { AppCodeService } from './app_code_service.js';
 import type { OwnerChatService } from './owner_chat_service.js';
 import type { ReleaseMaintenanceClient } from './release_maintenance_client.js';
 import type { GoalRunBinding } from './owner_automation_gate.js';
 import type { OwnerProductService } from './owner_product_service.js';
+import { CompanyExecutionService } from './company_execution_service.js';
+import { CompanyArtifactService } from './company_artifact_service.js';
+import { CompanyAgentService } from './company_agent_service.js';
+import { CompanyToolService } from './company_tool_service.js';
+import { CompanyWorkerAdapter } from './company_worker_adapter.js';
+import { BUILTIN_DEFINITIONS } from '@emergentinc/tools';
+import type { PaymentService } from './payment_service.js';
+import { CompanyLegacyAdapter } from './company_legacy_adapter.js';
+import {CompanyRecoveryService} from './company_recovery_service.js';
+import {COMPANY_WORKER_MAX_OUTPUT_TOKENS} from '../execution/company_worker_protocol.js';
 
 const digest = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const text = (value: unknown, max: number): value is string => typeof value === 'string' && Boolean(value.trim()) && value.length <= max;
 const record = (value: unknown): value is Record<string, any> => Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 const only = (v: Record<string, any>, keys: string[]) => Object.keys(v).every(k => keys.includes(k));
 export class OwnerWorkService {
+  readonly execution: CompanyExecutionService;
+  readonly artifacts: CompanyArtifactService;
+  agents?:CompanyAgentService;
+  worker?:CompanyWorkerAdapter;
+  companyTools?:CompanyToolService;
+  legacy?:CompanyLegacyAdapter;
+  recovery?:CompanyRecoveryService;
   products?: OwnerProductService;
   readonly code?: AppCodeService;
   private gateway: QianjiWorldGateway;
@@ -25,6 +41,7 @@ export class OwnerWorkService {
   private requestFlights = new Map<string, Promise<any>>();
   private decisions = new Map<string, {hash:string;decision:string;promise:Promise<any>}>();
   constructor(readonly manager: WorldRuntimeManager, private quiesced: () => boolean = () => false, private upgradeOrigin?: string,private releaseMaintenance?:ReleaseMaintenanceClient) {
+    if(!manager.automation)throw new Error('OWNER_COMPANY_CONTROL_REQUIRED');
     this.gateway = new QianjiWorldGateway(manager);
     manager.registry.control.db.exec(`
       CREATE TABLE IF NOT EXISTS owner_work_tasks(id TEXT PRIMARY KEY, request_key TEXT NOT NULL, person_id TEXT NOT NULL, person_name TEXT NOT NULL, instruction TEXT NOT NULL, state TEXT NOT NULL, turn_id TEXT, run_id TEXT, reply TEXT, reason TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, UNIQUE(request_key,person_id));
@@ -33,16 +50,45 @@ export class OwnerWorkService {
       CREATE TABLE IF NOT EXISTS owner_dispatch_calls(request_key TEXT PRIMARY KEY, payload_hash TEXT NOT NULL, state TEXT NOT NULL, response_json TEXT, error TEXT, created_at INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS owner_work_run_limits(task_id TEXT PRIMARY KEY REFERENCES owner_work_tasks(id), rounds INTEGER NOT NULL CHECK(rounds BETWEEN 1 AND 20));
     `);
+    this.execution = new CompanyExecutionService(manager.automation);
+    this.artifacts = new CompanyArtifactService(manager.registry.control,manager.registry.workspace);
     if (manager.options.projectRoot) this.code = new AppCodeService(manager, manager.options.projectRoot);
   }
+  enableWorkers(environment:Record<string,string|undefined>,payments?:PaymentService) {
+    if(this.worker)throw new Error('OWNER_WORKER_ALREADY_CONFIGURED');
+    const gate=this.manager.automation!;
+    this.agents=new CompanyAgentService(gate.store,this.manager.registry.workspace);this.agents.importLegacy();
+    for(const actor of this.agents.list())if(actor.legacyWorldId)this.artifacts.importLegacy(actor.id,actor.directoryRel);
+    const code=this.manager.options.projectRoot?new AppCodeService(this.manager,this.manager.options.projectRoot,this.agents):undefined;
+    this.companyTools=new CompanyToolService({gate,agents:this.agents,artifacts:this.artifacts,recruit:this.requestRecruit.bind(this),code,payments,release:this.releaseMaintenance,projectRoot:this.manager.options.projectRoot,contracts:this.manager.genome.capability_contracts});
+    this.worker=new CompanyWorkerAdapter(this.execution,{workspace:this.manager.registry.workspace,meter:this.manager.options.usageMeter,environment,spec:command=>{
+      const actor=this.agents!.forScope(command.worldId);
+      return {schema:1,attemptId:command.attemptId,taskId:command.taskId,runId:command.runId,fence:command.fence,agent:{id:actor.id,name:actor.name,role:actor.role},instruction:command.instruction,model:this.manager.options.modelName,maxSteps:command.goal?20:command.rounds,maxOutputTokens:COMPANY_WORKER_MAX_OUTPUT_TOKENS,notSentRetries:1,responseFormat:'json_object',tools:[...BUILTIN_DEFINITIONS.filter(t=>['save_artifact','webfetch','github_repo'].includes(t.name)),...this.companyTools!.catalog()]};
+    },controllerTool:(id,key,name,args)=>this.companyTools!.execute(id,key,name,args),controllerToolReceipt:(id,key)=>this.companyTools!.receipt(key,id),artifact:(...args)=>this.artifacts.record(...args)});
+    gate.addSuspend(()=>this.worker!.disconnectAll());
+    this.recovery=new CompanyRecoveryService(gate,this.worker);
+  }
   start() { this.closed=false; const poll=()=>{void this.tick().catch(e=>{this.schedulerError=e instanceof Error?e.message:String(e);this.closed=true;if(this.timer)clearInterval(this.timer);});};this.timer=setInterval(poll,1000);this.timer.unref();poll(); }
-  async close() { this.closed=true; if(this.timer)clearInterval(this.timer); await this.ticking; }
+  async close() { this.closed=true; if(this.timer)clearInterval(this.timer); await this.ticking;await this.worker?.close(); }
   hasFailure() {return Boolean(this.schedulerError);}
   view(): OwnerWork {
     const db=this.manager.registry.control.db;
-    const goalForTask=this.manager.automation?db.prepare('SELECT goal_id FROM owner_goal_dispatches WHERE task_id=?'):undefined;
-    return {tasks:db.prepare('SELECT * FROM owner_work_tasks ORDER BY created_at DESC LIMIT 50').all().map(r=>({id:String(r.id),goalId:goalForTask?.get(r.id)?.goal_id as string|undefined??null,personId:String(r.person_id),personName:String(r.person_name),instruction:String(r.instruction),state:r.state as OwnerWorkTask['state'],turnId:r.turn_id as string|null,runId:r.run_id as string|null,reply:r.reply as string|null,reason:r.reason as string|null,createdAt:Number(r.created_at),updatedAt:Number(r.updated_at)})),
-      requests:db.prepare('SELECT * FROM owner_recruit_requests ORDER BY created_at DESC LIMIT 30').all().map(r=>({...JSON.parse(String(r.request_json)),state:r.state==='PENDING'&&db.prepare('SELECT 1 FROM owner_recruit_decisions WHERE request_id=?').get(r.id)?'APPROVED_QUEUED':r.state,personId:r.person_id})),codeReports:(this.code?.reports()??[]).map(({files,...report})=>({...report,paths:files.map(f=>f.path)})),upgradeOrigin:this.upgradeOrigin,schedulerError:this.schedulerError};
+    const goalForTask=this.manager.automation?db.prepare(`SELECT d.goal_id,d.goal_revision,d.id dispatch_id,d.state dispatch_state,
+      o.id occurrence_id,o.node_key,o.plan_revision,o.state occurrence_state,o.scheduled_at
+      FROM owner_goal_dispatches d LEFT JOIN owner_task_occurrences o ON o.dispatch_id=d.id AND o.goal_id=d.goal_id AND o.goal_revision=d.goal_revision WHERE d.task_id=?`):undefined;
+    const goalForRecruit=this.manager.automation?db.prepare(`SELECT g.goal_id,g.goal_revision,w.node_key
+      FROM owner_goal_recruits g LEFT JOIN owner_task_resource_waits w ON w.request_id=g.request_id AND w.goal_id=g.goal_id AND w.goal_revision=g.goal_revision WHERE g.request_id=?`):undefined;
+    return {tasks:db.prepare('SELECT * FROM owner_work_tasks ORDER BY created_at DESC LIMIT 50').all().map(r=>{
+      const link=goalForTask?.get(r.id);
+      return {id:String(r.id),attempt:this.execution.forTask(String(r.id)),goalId:link?String(link.goal_id):null,
+        ...(link?{goalRevision:Number(link.goal_revision),dispatchId:String(link.dispatch_id),dispatchState:String(link.dispatch_state)}:{}),
+        ...(link?.occurrence_id?{planRevision:Number(link.plan_revision),nodeKey:String(link.node_key),occurrenceId:String(link.occurrence_id),occurrenceState:String(link.occurrence_state),scheduledAt:Number(link.scheduled_at)}:{}),
+        personId:String(r.person_id),personName:String(r.person_name),instruction:String(r.instruction),state:r.state as OwnerWorkTask['state'],turnId:r.turn_id as string|null,runId:r.run_id as string|null,reply:r.reply as string|null,reason:r.reason as string|null,createdAt:Number(r.created_at),updatedAt:Number(r.updated_at)};
+    }),
+      requests:db.prepare('SELECT * FROM owner_recruit_requests ORDER BY created_at DESC LIMIT 30').all().map(r=>{
+        const link=goalForRecruit?.get(r.id);
+        return {...JSON.parse(String(r.request_json)),...(link?{goalId:String(link.goal_id),goalRevision:Number(link.goal_revision),...(link.node_key?{nodeKey:String(link.node_key)}:{})}:{}),state:r.state==='PENDING'&&db.prepare('SELECT 1 FROM owner_recruit_decisions WHERE request_id=?').get(r.id)?'APPROVED_QUEUED':r.state,personId:r.person_id};
+      }),codeReports:(this.code?.reports()??[]).map(({files,...report})=>({...report,paths:files.map(f=>f.path)})),upgradeOrigin:this.upgradeOrigin,schedulerError:this.schedulerError};
   }
   requestRecruit(input: {role:string;reason:string;instruction:string}, requester: string, key: string) {
     if (!only(input,['role','reason','instruction']) || !text(input.role,80)||!text(input.reason,1000)||!text(input.instruction,2000)) throw new Error('OWNER_RECRUIT_INVALID');
@@ -93,29 +139,17 @@ export class OwnerWorkService {
     if(this.schedulerError)throw new Error('OWNER_WORKER_FAILED');
     if (!Number.isSafeInteger(rounds)||rounds<1||rounds>20||!Array.isArray(tasks)||!tasks.length||tasks.length>5||new Set(tasks.map(t=>t?.personId)).size!==tasks.length)throw new Error('OWNER_DISPATCH_INVALID');
     // Validate the entire batch before creating any work.
-    const profiles=tasks.map(t=>{if(!record(t)||!only(t,['personId','instruction'])||!text(t.personId,100)||!text(t.instruction,binding?16384:2000))throw new Error('OWNER_DISPATCH_INVALID');const p=this.manager.registry.control.qianji.getProfile(t.personId);if(!p||p.careerStatus==='retired'||this.manager.registry.control.worldForQianji(t.personId).status!=='ACTIVE')throw new Error('OWNER_PERSON_UNAVAILABLE');return p;});
+    const profiles=tasks.map(t=>{if(!record(t)||!only(t,['personId','instruction'])||!text(t.personId,100)||!text(t.instruction,binding?16384:2000))throw new Error('OWNER_DISPATCH_INVALID');if(this.agents){const p=this.agents.get(t.personId);if(p.status!=='ACTIVE')throw new Error('OWNER_PERSON_UNAVAILABLE');return {name:p.name};}const p=this.manager.registry.control.qianji.getProfile(t.personId);if(!p||p.careerStatus==='retired'||this.manager.registry.control.worldForQianji(t.personId).status!=='ACTIVE')throw new Error('OWNER_PERSON_UNAVAILABLE');return {name:p.narrative.displayName};});
     const db=this.manager.registry.control.db;
     this.manager.registry.control.transaction(()=>tasks.forEach((t,i)=>{
       const old=db.prepare('SELECT t.instruction,COALESCE(l.rounds,20) requested_rounds FROM owner_work_tasks t LEFT JOIN owner_work_run_limits l ON l.task_id=t.id WHERE t.request_key=? AND t.person_id=?').get(key,t.personId);
       if(old){if(old.instruction!==t.instruction||old.requested_rounds!==rounds)throw new Error('IDEMPOTENCY_CONFLICT');return;}
       const now=Date.now(),id=`task_${randomUUID().replaceAll('-','')}`;
-      db.prepare("INSERT INTO owner_work_tasks VALUES(?,?,?,?,?,'QUEUED',NULL,NULL,NULL,NULL,?,?)").run(id,key,t.personId,profiles[i]!.narrative.displayName,t.instruction,now,now);
+      db.prepare("INSERT INTO owner_work_tasks VALUES(?,?,?,?,?,'QUEUED',NULL,NULL,NULL,NULL,?,?)").run(id,key,t.personId,profiles[i]!.name,t.instruction,now,now);
       db.prepare('INSERT INTO owner_work_run_limits VALUES(?,?)').run(id,rounds);
       if(binding)db.prepare('UPDATE owner_goal_dispatches SET task_id=? WHERE id=? AND goal_id=? AND goal_revision=?').run(id,binding.dispatchId,binding.goalId,binding.specificationRevision);
     }));
     if(!this.ticking)await this.tick(binding?.dispatchId); return this.view().tasks.filter(t=>tasks.some(a=>a.personId===t.personId)&&db.prepare('SELECT request_key FROM owner_work_tasks WHERE id=?').get(t.id)?.request_key===key);
-  }
-  async energy(personId:string,refill:boolean,infinite:boolean|undefined,key:string) {
-    if(this.manager.automation)throw new Error('OWNER_USE_COMPANY_BUDGET_SETTINGS');
-    const profile=this.manager.registry.control.qianji.getProfile(personId),world=this.manager.registry.control.worldForQianji(personId);
-    if(!profile||profile.careerStatus==='retired'||world.status!=='ACTIVE')throw new Error('OWNER_PERSON_UNAVAILABLE');
-    const runtime=await this.manager.open(world.world_id),pixelId=world.gateway_pixel_id;
-    const account=pixelId?runtime.store.pixels.getPixelAccount(pixelId):null;
-    if(!pixelId||!account?.active||account.refundDeficitTokens>0)throw new Error('OWNER_GATEWAY_UNAVAILABLE');
-    if(typeof infinite==='boolean')this.manager.registry.control.setGatewayInfiniteEnergy(world.world_id,infinite);
-    const amount=refill?Math.max(0,100000-account.energy):0;
-    if(amount)runtime.store.applyExternalReward({pixelId,amount,idempotencyKey:`owner-chat-energy:${key}`,source:'owner_chat',reason:'Owner explicitly requested gateway energy refill'});
-    return {personId,name:profile.narrative.displayName,pixelId,energy:runtime.store.pixels.getPixelAccount(pixelId)!.energy,infiniteEnergy:this.manager.registry.control.gatewayInfiniteEnergy(world.world_id),running:runtime.run.getStatus().running};
   }
   async decide(id:string,hash:string,decision:'approve'|'reject',defer=false) {
     if(defer)return this.decideOnce(id,hash,decision,true);
@@ -134,9 +168,15 @@ export class OwnerWorkService {
     if(linked){const goal=this.manager.automation!.goals.get(String(linked.goal_id));if(goal.specificationRevision!==linked.goal_revision||['STOPPED','ARCHIVED','COMPLETED'].includes(goal.status))throw new Error('OWNER_GOAL_PERMISSION_CHANGED');}
     if(row.state==='PENDING'&&decision==='approve'&&this.manager.automation){db.prepare("INSERT OR IGNORE INTO owner_recruit_decisions VALUES(?,?,'approve')").run(id,hash);if(defer||!this.manager.automation.isOn())return {...this.view(),queuedDecision:{requestId:id,decision}};}
     if(decision==='reject'){db.prepare("UPDATE owner_recruit_requests SET state='REJECTED' WHERE id=? AND state='PENDING'").run(id);if(linked){const goal=this.manager.automation!.goals.get(String(linked.goal_id)),wait=db.prepare('SELECT * FROM owner_task_resource_waits WHERE request_id=?').get(id);if(wait)db.prepare("UPDATE owner_task_nodes SET state='BLOCKED',next_at=NULL WHERE goal_id=? AND goal_revision=? AND node_key=?").run(goal.id,goal.specificationRevision,wait.node_key);const plan=this.manager.automation!.proposals.plans.get(goal.id),other=wait&&plan?.nodes.some(n=>n.key!==wait.node_key&&n.state!=='BLOCKED'&&n.state!=='WAITING_RESOURCE'&&n.state!=='COMPLETED');this.manager.automation!.goals.state(goal.id,goal.status==='PAUSED'?'PAUSED':other?'READY':'BLOCKED','OWNER_RESOURCE_REJECTED');}return this.view();}
-    const m=this.manager,service=new GachaService({store:m.registry.control,workspaceRoot:m.registry.workspace,provider:m.options.isModelConfigured?(m.automation?m.automation.provider(m.options.provider,m.options.usageMeter,undefined,'gacha',linked?{goalId:String(linked.goal_id),specificationRevision:Number(linked.goal_revision),dispatchId:`recruit_${id}`,resourceApprovalId:id}:undefined):m.options.provider):undefined,usageMeter:m.options.usageMeter,modelName:m.options.modelName,
-      createWorld:(narrative,birth)=>m.registry.create({...narrative,roleLabel:request.role,behaviorProfile:[`职责：${request.role}`,`Owner 批准的初始任务：${request.instruction}`]}, {birthIdentity:birth}).qianji_id});
-    const profile=await service.recruit(`owner-recruit:${id}`);
+    // Stable identity makes a crash after creation replay the same approved Worker.
+    const identity=digest({requestId:id,hash:request.hash}),personId=`worker_${identity.slice(0,32)}`;
+    if(this.agents){
+      this.manager.registry.control.transaction(()=>{this.agents!.create({id:personId,name:request.role,role:request.role,instruction:request.instruction});db.prepare("UPDATE owner_recruit_requests SET state='APPROVED',person_id=? WHERE id=? AND state='PENDING'").run(personId,id);});
+      return this.finishRecruitment(id,request,personId,linked);
+    }
+    let profile=this.manager.registry.control.qianji.getProfile(personId);
+    if(!profile){this.manager.registry.create({displayName:request.role,title:null,roleLabel:request.role,traits:{},behaviorProfile:[request.instruction],flaw:null,shortBio:null,appearanceSpec:null,portraitAsset:null,contentRevision:null},{qianjiId:personId,worldId:`work_${identity.slice(0,32)}`});profile=this.manager.registry.control.qianji.getProfile(personId)!;}
+    if(profile.narrative.roleLabel!==request.role||profile.narrative.behaviorProfile[0]!==request.instruction)throw new Error('OWNER_REQUEST_CHANGED');
     db.prepare("UPDATE owner_recruit_requests SET state='APPROVED',person_id=? WHERE id=? AND state='PENDING'").run(profile.qianjiId,id);
     return this.finishRecruitment(id,request,profile.qianjiId,linked);
   }
@@ -162,21 +202,20 @@ export class OwnerWorkService {
   async ask(key:string,question:string,history:{role:'user'|'assistant';content:string}[],language:'en'|'zh-CN',data:OwnerOverview,chat:OwnerChatService,forced?:{personId:string;instruction:string}[],hire?:{id:string;hash:string;decision:'approve'|'reject'}) {
     const payloadHash=digest({question,history,language}),db=this.manager.registry.control.db,old=db.prepare('SELECT * FROM owner_dispatch_calls WHERE request_key=?').get(key);
     const checkpoint=old?this.routed(key):undefined;
-    if(old){if(old.payload_hash!==payloadHash)throw new Error('IDEMPOTENCY_CONFLICT');if(old.response_json)return JSON.parse(String(old.response_json));if(this.requestFlights.has(key))return this.requestFlights.get(key)!;if(!['create_task','revise_task','create_goal','configure_product','dispatch'].includes(checkpoint?.intent?.kind))throw new Error(String(old.error??'OWNER_REQUEST_IN_PROGRESS'));}
+    if(old){if(old.payload_hash!==payloadHash)throw new Error('IDEMPOTENCY_CONFLICT');if(old.response_json)return JSON.parse(String(old.response_json));if(this.requestFlights.has(key))return this.requestFlights.get(key)!;if(!['create_task','revise_task','create_goal','configure_product','dispatch','answer','clarify','recruit','recruit_decision'].includes(checkpoint?.intent?.kind))throw new Error(String(old.error??'OWNER_REQUEST_IN_PROGRESS'));}
     else db.prepare("INSERT INTO owner_dispatch_calls(request_key,payload_hash,state,created_at) VALUES(?,?,'IN_FLIGHT',?)").run(key,payloadHash,Date.now());
     const run=async()=>{
       try {
         const routed=checkpoint??(hire?{intent:{kind:'recruit_decision',...hire},usage:{tokens:0,cost_cny:0}}:forced?{intent:{kind:'dispatch',tasks:forced},usage:{tokens:0,cost_cny:0}}:await chat.route(question,history,data,language,this.products?.catalog()));
         const i=routed.intent, say=(zh:string,en:string)=>language==='en'?en:zh;
         if(!record(i)||typeof i.kind!=='string')throw new Error('OWNER_DISPATCH_INVALID');
+        if(i.kind==='dispatch'&&!forced)throw new Error('OWNER_DISPATCH_INVALID');
         const reviseRevision=checkpoint?.reviseRevision??(i.kind==='revise_task'?data.goals?.find(g=>g.id===i.goalId)?.revision:undefined);
         if(i.kind==='create_goal'&&!checkpoint&&this.manager.automation){i.kind='create_task';i.plan={summary:i.objective,nodes:[{key:'deliver',title:i.title,instruction:i.objective,dependsOn:[],trigger:{kind:'once'},filename:i.filename??'result.md'}]};}
-        if(this.manager.automation&&['create_task','revise_task','create_goal','configure_product','dispatch'].includes(i.kind)&&!checkpoint)this.manager.automation.goals.request(`chat_route_${digest(key)}`,{payloadHash},()=>({...routed,...(i.kind==='revise_task'?{reviseRevision}:{} )}));
+        if(this.manager.automation&&['create_task','revise_task','create_goal','configure_product','dispatch','answer','clarify','recruit','recruit_decision'].includes(i.kind)&&!checkpoint)this.manager.automation.goals.request(`chat_route_${digest(key)}`,{payloadHash},()=>({...routed,...(i.kind==='revise_task'?{reviseRevision}:{} )}));
         let answer:string,extra:Record<string,unknown>={};
-        if(i.kind==='answer'&&only(i,['kind'])){
-          const response=await chat.ask(question,history,language);response.usage.tokens=response.usage.tokens!==null&&routed.usage.tokens!==null?response.usage.tokens+routed.usage.tokens:null;response.usage.cost_cny=response.usage.cost_cny!==null&&routed.usage.cost_cny!==null?response.usage.cost_cny+routed.usage.cost_cny:null;
-          db.prepare("UPDATE owner_dispatch_calls SET state='DONE',response_json=? WHERE request_key=?").run(JSON.stringify(response),key);return response;
-        } else if(hire&&i.kind==='recruit_decision'){
+        if(i.kind==='answer'&&only(i,['kind','answer'])&&text(i.answer,8000))answer=i.answer;
+        else if(hire&&i.kind==='recruit_decision'){
           await this.decide(hire.id,hire.hash,hire.decision,true);answer=hire.decision==='approve'?say('招聘已批准并排队，实际创建和工作结果会随后汇报。','Recruitment is approved and queued. Actual creation and work will be reported after execution.'):say('招聘申请已拒绝，未创建人物。','Recruitment was rejected. No person was created.');
         } else if(i.kind==='clarify'&&only(i,['kind','answer'])&&text(i.answer,2000))answer=i.answer;
         else if(['create_task','revise_task'].includes(i.kind)&&only(i,['kind','goalId','title','objective','plan','publication','filename'])&&text(i.title,160)&&text(i.objective,1200)){
@@ -227,11 +266,7 @@ export class OwnerWorkService {
           });extra.createdGoal=result.goal;extra.companyProposal=result.proposal;answer=say('任务计划已生成，批准后自动执行并汇报。','The task plan is ready; approval starts execution and reporting.');
           }
         }
-        else if(i.kind==='energy'&&only(i,['kind','personId','refill','infinite'])&&typeof i.personId==='string'&&(i.refill===undefined||typeof i.refill==='boolean')&&(i.infinite===undefined||typeof i.infinite==='boolean')&&(i.refill===true||typeof i.infinite==='boolean')){
-          if(this.manager.automation)answer=say('所有人物和任务共享公司金额预算，无需分别补能量。请在公司看板设置 Token 数量和单价。','All people and tasks share the company money allowance; no individual energy refill is needed. Set the token quantity and unit price on the company dashboard.');
-          else {const result=await this.energy(i.personId,i.refill===true,i.infinite,key);extra.energy=result;answer=say(`${result.name}：当前入口元胞 ${result.pixelId} 的能量为 ${result.energy}，无限能量${result.infiniteEnergy?'已开启':'已关闭'}。补能量不会自动启动任务；需要继续执行时，请在运行面板明确确认。其他元胞是否获能仍由入口自主决定，执行授权和实际计费继续有效。`,`${result.name}: gateway ${result.pixelId} has ${result.energy} energy; automatic replenishment is ${result.infiniteEnergy?'enabled':'disabled'}. Funding energy does not start a task; confirm execution separately in the Run panel. The gateway decides whether to supply other cells. Execution authorization and actual billing remain in effect.`);}
-
-        } else if(i.kind==='recruit'&&only(i,['kind','role','reason','instruction'])){extra.request=this.requestRecruit({role:i.role,reason:i.reason,instruction:i.instruction},say('老板窗口助手','Owner assistant'),`dispatch:${key}`);answer=say('已提出招聘申请。请在待办中查看职责、理由和初始任务；批准后才创建人物并派发任务。','A recruitment request was created. Review the role, reason and initial task in Inbox. Approval creates the person and dispatches the task.');}
+        else if(i.kind==='recruit'&&only(i,['kind','role','reason','instruction'])){if(!/^(?:(?:请|帮我|给我|我要|我希望|我需要)\s*)*(?:招聘|招募|新建执行者)|^(?:please\s+)?(?:recruit|hire|create a worker)\b/i.test(question.trim()))throw new Error('OWNER_GOAL_AUTH_REQUIRED');extra.request=this.requestRecruit({role:i.role,reason:i.reason,instruction:i.instruction},say('老板窗口助手','Owner assistant'),`dispatch:${key}`);answer=say('已提出资源申请。批准后才创建执行者；工作仍受公司运行状态与预算约束。','A resource request was created. Approval creates the worker; execution remains subject to company control and budget.');}
         else throw new Error('OWNER_DISPATCH_INVALID');
         const response={answer,...extra,sources:['Owner dispatch / actual World runs / owner_work_tasks'],as_of:new Date().toISOString(),usage:routed.usage};db.prepare("UPDATE owner_dispatch_calls SET state='DONE',response_json=? WHERE request_key=?").run(JSON.stringify(response),key);return response;
       } catch(e){db.prepare("UPDATE owner_dispatch_calls SET state='FAILED',error=? WHERE request_key=?").run(e instanceof Error?e.message:String(e),key);throw e;}
@@ -240,7 +275,7 @@ export class OwnerWorkService {
   }
   tick(goalDispatchId?:string):Promise<void> {
     if(this.ticking)return goalDispatchId?this.ticking.then(()=>this.tick(goalDispatchId)):this.ticking;
-    this.ticking=this.runTick(goalDispatchId).finally(()=>{this.ticking=undefined;});return this.ticking;
+    this.ticking=Promise.resolve().then(()=>this.runTick(goalDispatchId)).finally(()=>{this.ticking=undefined;});return this.ticking;
   }
   private async runTick(goalDispatchId?:string) {
     if(this.closed||this.quiesced())return;
@@ -251,6 +286,7 @@ export class OwnerWorkService {
       if(goal&&(goal.specificationRevision!==linked!.goal_revision||['STOPPED','ARCHIVED','COMPLETED'].includes(goal.status))){db.prepare("UPDATE owner_recruit_requests SET state='CANCELLED' WHERE id=? AND state='PENDING'").run(row.request_id);db.prepare('DELETE FROM owner_recruit_decisions WHERE request_id=?').run(row.request_id);continue;}
       await this.decide(String(row.request_id),String(row.hash),'approve');
     }
+    if(this.worker){await this.runWorkerTick(goalDispatchId);return;}
     for(const row of db.prepare("SELECT t.*,COALESCE(l.rounds,20) requested_rounds FROM owner_work_tasks t LEFT JOIN owner_work_run_limits l ON l.task_id=t.id WHERE t.state IN ('QUEUED','RUNNING') OR (t.state='BLOCKED' AND t.reason IN ('WAITING_PIXEL_BUDGET','WAITING_RUN_BUDGET','WAITING_EXECUTION_BUDGET','RUN_BUDGET_EXHAUSTED','EXECUTION_BUDGET_EXHAUSTED','OWNER_COMPANY_BUDGET_REQUIRED','OWNER_COMPANY_BUDGET_EXHAUSTED','OWNER_TOKEN_LIMIT')) ORDER BY t.created_at").all()) {
       if(this.closed||this.quiesced())return;
       try {
@@ -269,22 +305,38 @@ export class OwnerWorkService {
         if(binding){const goal=this.manager.automation!.goals.get(binding.goalId);if(goal.specificationRevision!==binding.specificationRevision||!['READY','RUNNING'].includes(goal.status))continue;}
         if(!turnId){if(this.manager.automation&&!this.manager.automation.isOn())continue;const turn=await this.gateway.enqueue(personId,String(row.instruction),String(row.id));turnId=String(turn.turn_id);db.prepare('UPDATE owner_work_tasks SET turn_id=? WHERE id=?').run(turnId,row.id);}
         const turn=(await this.gateway.turns(personId)).find(t=>t.turnId===turnId);
-        if(turn?.status==='replied'){db.prepare("UPDATE owner_work_tasks SET state='REPLIED',reply=?,reason=NULL,updated_at=? WHERE id=?").run(turn.reply,Date.now(),row.id);continue;}
-        if(turn?.status==='no_reply'||turn?.status==='failed'){db.prepare("UPDATE owner_work_tasks SET state=?,reason=?,updated_at=? WHERE id=?").run(turn.status==='failed'?'FAILED':'NO_REPLY',turn.blockReason??'Run ended without an Owner reply',Date.now(),row.id);continue;}
+        if(turn?.status==='replied'){this.execution.observe(String(row.run_id),'completed',undefined,String(turn.reply??''));db.prepare("UPDATE owner_work_tasks SET state='REPLIED',reply=?,reason=NULL,updated_at=? WHERE id=?").run(turn.reply,Date.now(),row.id);continue;}
+        if(turn?.status==='no_reply'||turn?.status==='failed'){this.execution.observe(String(row.run_id),turn.status==='failed'?'failed':'blocked',turn.blockReason??'OWNER_NO_REPLY');db.prepare("UPDATE owner_work_tasks SET state=?,reason=?,updated_at=? WHERE id=?").run(turn.status==='failed'?'FAILED':'NO_REPLY',turn.blockReason??'Run ended without an Owner reply',Date.now(),row.id);continue;}
         if(row.run_id&&runtime.run.getStatus().running&&runtime.run.getStatus().run_id===row.run_id&&row.state!=='RUNNING')db.prepare("UPDATE owner_work_tasks SET state='RUNNING',reason=NULL,updated_at=? WHERE id=?").run(Date.now(),row.id);
         if(!row.run_id&&!runtime.run.getStatus().running){
           if(this.closed||this.quiesced())return;
           if(this.manager.automation&&!this.manager.automation.isOn())continue;
           if(this.manager.automation&&this.manager.list().some(w=>w.running))continue;
-          await runtime.run.start({rounds:Number(row.requested_rounds),...(this.manager.automation?{}:{runBudgetTokens:100000}),goalBinding:binding,onRunCreated:runId=>{db.prepare("UPDATE owner_work_tasks SET state='RUNNING',run_id=?,updated_at=? WHERE id=?").run(runId,Date.now(),row.id);db.prepare('UPDATE world_chat_turns SET run_id=? WHERE turn_id=?').run(runId,turnId);if(binding)db.prepare('UPDATE owner_goal_dispatches SET run_id=? WHERE id=?').run(runId,binding.dispatchId);}});
+          const command=this.execution.claim(String(row.id),world.world_id,runtime.run.getWorldRound()+1,Number(row.requested_rounds),binding);
+          if(!this.execution.takeDispatch(command.attemptId))continue;
+          await runtime.run.start({preparedRunId:command.runId,rounds:Number(row.requested_rounds),goalBinding:binding,onRunCreated:runId=>{this.execution.observe(runId,'started');db.prepare('UPDATE world_chat_turns SET run_id=? WHERE turn_id=?').run(runId,turnId);}});
           if(binding)db.prepare('UPDATE owner_goals SET last_scheduled_at=? WHERE id=?').run(Date.now(),binding.goalId);
         } else if(row.run_id&&!runtime.run.getStatus().running) {
           const checkpoint=runtime.store.runs.getCheckpoint(String(row.run_id));
-          if(checkpoint?.resume_pending){if(this.manager.automation?.isOn()&&(runtime.run.getStatus().stop_reason==='SERVICE_SHUTDOWN'||String(runtime.run.getStatus().error_summary).includes('OWNER_TOKEN_LIMIT')))await runtime.run.resumeInterrupted();else if(runtime.run.getStatus().stop_reason==='INFRASTRUCTURE_FAILURE'&&!String(runtime.run.getStatus().error_summary).includes('OWNER_TOKEN_LIMIT'))db.prepare("UPDATE owner_work_tasks SET state='BLOCKED',reason=?,updated_at=? WHERE id=?").run(runtime.run.getStatus().error_summary??'INFRASTRUCTURE_FAILURE',Date.now(),row.id);continue;}
+          if(checkpoint?.resume_pending){
+            const status=runtime.run.getStatus();
+            if(this.manager.automation?.isOn()&&(status.stop_reason==='SERVICE_SHUTDOWN'||String(status.error_summary).includes('OWNER_TOKEN_LIMIT')))await runtime.run.resumeInterrupted();
+            else if(['CALL_OUTCOME_UNKNOWN','TOOL_OUTCOME_UNKNOWN','PAUSED_RECOVERY_REQUIRED','INFRASTRUCTURE_FAILURE'].includes(status.stop_reason)){
+              this.execution.observe(String(row.run_id),'blocked',status.stop_reason);
+              db.prepare("UPDATE owner_work_tasks SET state='BLOCKED',reason=?,updated_at=? WHERE id=?").run(status.stop_reason,Date.now(),row.id);
+            }
+            continue;
+          }
           const blocked=turn?.status==='blocked'||turn?.status==='queued'||turn?.status==='processing';
+          this.execution.observe(String(row.run_id),'blocked',turn?.blockReason??runtime.run.getStatus().stop_reason??'OWNER_NO_REPLY');
           db.prepare('UPDATE owner_work_tasks SET state=?,reason=?,updated_at=? WHERE id=?').run(blocked?'BLOCKED':'NO_REPLY',turn?.blockReason??runtime.run.getStatus().stop_reason??'No owner reply',Date.now(),row.id);
         }
-      } catch(e){db.prepare("UPDATE owner_work_tasks SET state='BLOCKED',reason=?,updated_at=? WHERE id=?").run(e instanceof Error?e.message:String(e),Date.now(),row.id);}
+      } catch(e){
+        const reason=e instanceof Error?e.message:String(e);
+        if(['OWNER_ATTEMPT_STALE','OWNER_ATTEMPT_ALREADY_CLAIMED','OWNER_AUTOMATION_BUSY'].includes(reason))continue;
+        const attempt=this.execution.forTask(String(row.id));if(attempt){this.execution.observe(attempt.runId,'blocked',reason);const runtime=this.manager.peek(attempt.worldId);if(runtime&&!runtime.store.runs.getCheckpoint(attempt.runId))this.manager.automation!.cancelRun(attempt.runId);}
+        db.prepare("UPDATE owner_work_tasks SET state='BLOCKED',reason=?,updated_at=? WHERE id=?").run(reason,Date.now(),row.id);
+      }
     }
     // A separately resumed run can later produce the real reply.
     for(const row of db.prepare("SELECT * FROM owner_work_tasks WHERE state IN ('BLOCKED','NO_REPLY') AND turn_id IS NOT NULL").all()) {
@@ -297,6 +349,37 @@ export class OwnerWorkService {
             db.prepare("UPDATE owner_work_tasks SET state='RUNNING',reason=NULL,updated_at=? WHERE id=?").run(Date.now(),row.id);
         }
       }catch{/* Keep the recorded blocker until there is verified new evidence. */}
+    }
+  }
+  private async runWorkerTick(goalDispatchId?:string) {
+    const worker=this.worker!,gate=this.manager.automation!,db=gate.store.db;
+    await this.legacy?.tick();
+    await worker.poll();
+    if(gate.isOn())for(const task of db.prepare("SELECT * FROM owner_work_tasks WHERE state='BLOCKED' AND run_id IS NULL AND reason IN ('OWNER_COMPANY_BUDGET_REQUIRED','OWNER_COMPANY_BUDGET_EXHAUSTED','OWNER_COMPANY_BUDGET_BUSY')").all()){
+      if(!worker.canStart(String(task.id)))continue;
+      const d=db.prepare('SELECT * FROM owner_goal_dispatches WHERE task_id=?').get(task.id),goal=d?gate.goals.get(String(d.goal_id)):null;
+      if(goal&&(goal.specificationRevision!==d!.goal_revision||['PAUSED','STOPPED','ARCHIVED','COMPLETED'].includes(goal.status)||goal.status==='BLOCKED'&&goal.reason!==task.reason))continue;
+      db.prepare("UPDATE owner_work_tasks SET state='QUEUED',reason=NULL,updated_at=? WHERE id=?").run(Date.now(),task.id);
+      if(d){db.prepare("UPDATE owner_goal_dispatches SET state='QUEUED',reason=NULL WHERE id=?").run(d.id);db.prepare("UPDATE owner_goal_steps SET state='QUEUED' WHERE id=?").run(d.id);if(goal?.status==='BLOCKED')gate.goals.state(goal.id,'READY');}
+    }
+    for(const a of worker.snapshots()){
+      const goal=a.goal_id?gate.goals.get(String(a.goal_id)):null;
+      if(worker.isRunning(String(a.id))&&(gate.view().desiredMode==='OFF'||goal&&(goal.specificationRevision!==a.goal_revision||['PAUSED','STOPPED','ARCHIVED'].includes(goal.status))))worker.disconnect(String(a.id));
+      if(['SUSPENDED','DISPATCH_PENDING'].includes(String(a.state))&&['READY','SUSPENDED'].includes(String(a.worker_state))&&gate.view().desiredMode==='ON'&&!worker.isRunning(String(a.id))&&(!goal||goal.specificationRevision===a.goal_revision&&!['PAUSED','STOPPED','ARCHIVED','COMPLETED'].includes(goal.status))){
+        if(db.prepare("SELECT 1 FROM company_execution_attempts WHERE world_id=? AND id!=? AND state IN ('RUNNING','DISPATCH_PENDING')").get(a.world_id,a.id))continue;
+        try{await worker.start(String(a.id));}catch(e){if(!['OWNER_PREVIOUS_WORKER_STILL_ALIVE','OWNER_AUTOMATION_OFF','OWNER_GOAL_PAUSED','EVOLUTION_QUIESCED','OWNER_COMPANY_BUDGET_REQUIRED','OWNER_COMPANY_BUDGET_EXHAUSTED','OWNER_COMPANY_BUDGET_BUSY'].includes((e as Error).message))throw e;}
+      }
+    }
+    if(!gate.isOn())return;
+    for(const task of db.prepare("SELECT t.*,COALESCE(l.rounds,20) requested_rounds FROM owner_work_tasks t LEFT JOIN owner_work_run_limits l ON l.task_id=t.id WHERE t.state='QUEUED' AND t.run_id IS NULL AND t.turn_id IS NULL ORDER BY t.created_at,t.id").all()){
+      const d=db.prepare('SELECT * FROM owner_goal_dispatches WHERE task_id=?').get(task.id);
+      if(d&&d.id!==goalDispatchId)continue;
+      const binding=d?{goalId:String(d.goal_id),specificationRevision:Number(d.goal_revision),dispatchId:String(d.id)}:undefined;
+      if(binding){const goal=gate.goals.get(binding.goalId);if(goal.specificationRevision!==binding.specificationRevision||!['READY','RUNNING'].includes(goal.status))continue;}
+      const actor=this.agents!.get(String(task.person_id)),scope=this.agents!.scopeId(actor.id);
+      if(db.prepare("SELECT 1 FROM company_execution_attempts WHERE world_id=? AND state IN ('RUNNING','DISPATCH_PENDING')").get(scope))continue;
+      try{const command=worker.create(String(task.id),scope,Number(task.requested_rounds),binding);await worker.start(command.attemptId);}
+      catch(e){const reason=e instanceof Error?e.message:String(e);if(['OWNER_AUTOMATION_BUSY','OWNER_ATTEMPT_ALREADY_CLAIMED'].includes(reason))continue;db.prepare("UPDATE owner_work_tasks SET state='BLOCKED',reason=?,updated_at=? WHERE id=?").run(reason,Date.now(),task.id);if(binding&&['READY','RUNNING'].includes(gate.goals.get(binding.goalId).status))gate.goals.state(binding.goalId,'BLOCKED',reason);}
     }
   }
 }

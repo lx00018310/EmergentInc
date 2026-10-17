@@ -1,7 +1,6 @@
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import type { WorldRegistryStore } from '@emergentinc/persistence';
 import { PaymentService, type Invoice } from './payment_service.js';
-import {migratePublicProducts} from './public_products_migration.js';
 import { quotedAmount, tokenAmount } from './payment_assets.js';
 
 export class PublicError extends Error {
@@ -32,7 +31,6 @@ export class PublicStore {
       .run(invoice.paid_at, invoice.order_id, invoice.invoice_id);
   };
   constructor(readonly control: WorldRegistryStore, readonly payments: PaymentService) {
-    migratePublicProducts(control.db);
     control.db.transaction(() => {
       control.db.exec(`CREATE TABLE IF NOT EXISTS public_site_config(id INTEGER PRIMARY KEY CHECK(id=1),config_json TEXT NOT NULL,updated_at INTEGER NOT NULL);
         CREATE TABLE IF NOT EXISTS public_products(product_id TEXT PRIMARY KEY,product_enabled INTEGER NOT NULL CHECK(product_enabled IN (0,1)),

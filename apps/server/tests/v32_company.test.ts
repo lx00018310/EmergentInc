@@ -17,6 +17,13 @@ const cleanups:(()=>Promise<void>)[]=[];afterEach(async()=>{for(const fn of clea
 const hash=(v:unknown)=>createHash('sha256').update(JSON.stringify(v)).digest('hex');
 const plan={summary:'First research, then deliver a source-backed summary',nodes:[{key:'research',title:'Research',instruction:'Retain FIRST_VERIFIED_FACT',dependsOn:[],trigger:{kind:'once'},filename:'first.md'},{key:'summary',title:'Summary',instruction:'Use the actual first result',dependsOn:['research'],trigger:{kind:'once'},filename:'second.md'}]};
 describe('V32 company money, proposals and task loop',()=>{
+  it('rejects the observed misplaced publication field without creating a goal or executing work',async()=>{
+    const f=goalFixture();cleanups.push(f.close);f.on();const route=vi.fn(async()=>({intent:{kind:'create_task',title:'Business proposal',objective:'Research business ideas',plan:{...plan,nodes:[{...plan.nodes[0],publication:{createNew:true}}]}},usage:{tokens:10,cost_cny:0.001}}));
+    const ask=()=>f.work.ask('invalid-publication','Research a business proposal',[],'en',{} as any,{route} as any);
+    await expect(ask()).rejects.toThrow('OWNER_TASK_PLAN_INVALID');await expect(ask()).rejects.toThrow('OWNER_TASK_PLAN_INVALID');expect(route).toHaveBeenCalledOnce();expect(f.gate.goals.list()).toHaveLength(0);expect(f.gate.proposals.list()).toHaveLength(0);expect(f.work.view().tasks).toHaveLength(0);
+    const result=await f.work.ask('corrected-plan','Research a business proposal',[],'en',{} as any,{route:async()=>({intent:{kind:'create_task',title:'Business proposal',objective:'Research business ideas',plan},usage:{tokens:10,cost_cny:0.001}})} as any);
+    expect(result.companyProposal.state).toBe('PENDING');expect(result.createdGoal.status).toBe('DRAFT');await f.scheduler.tick();expect(f.calls).toHaveLength(0);
+  });
   it('uses the configured cached-token price and keeps fractional micro-costs consistent in the company ledger',async()=>{
     const f=goalFixture();cleanups.push(f.close);f.on();const meter=new UsageMeter(JSON.parse(fs.readFileSync(resolve('resources/config/model_pricing.json'),'utf8')));
     f.respond(async()=>({rawText:'Actual priced fixture response',usage:{promptTokens:20,completionTokens:10,cachedTokens:10}}));await f.gate.provider(f.provider,meter).call({model:'gpt-4o-mini',messages:[],maxTokens:100,promptHash:'configured-cache-price'});
@@ -44,7 +51,7 @@ describe('V32 company money, proposals and task loop',()=>{
     }finally{otherStore.close();}
   });
   it('keeps unknown money reserved, records provably not-sent at zero, and does not repeat a dispatched call',async()=>{
-    const f=goalFixture();cleanups.push(f.close);f.on();const request={model:'test',messages:[],maxTokens:100,promptHash:'unknown'};
+    const f=goalFixture();cleanups.push(f.close);f.on();const request={model:'test',messages:[],maxTokens:100,promptHash:'unknown',auditCallId:'stable-uncertain-operation'};
     f.respond(async()=>{throw new InfrastructureFailureError('PROVABLY_NOT_SENT');});await expect(f.gate.provider(f.provider,f.meter).call(request)).rejects.toThrow();expect(f.gate.budget.view()).toMatchObject({spentMicros:0,reservedMicros:0});
     f.respond(async()=>{throw new OutcomeUnknownError('DISPATCHED');});await expect(f.gate.provider(f.provider,f.meter).call(request)).rejects.toThrow();
     expect(f.gate.budget.view()).toMatchObject({reservedMicros:1226,unknownCalls:1});
@@ -115,8 +122,9 @@ describe('V32 company money, proposals and task loop',()=>{
   it('continues beyond old token ceilings using money and produces an unapproved proposal before an unaffordable call',async()=>{
     const f=goalFixture();cleanups.push(f.close);f.on();f.control.db.prepare("INSERT INTO owner_model_permits VALUES('historical-usage','initial',NULL,NULL,NULL,'SETTLED',0,2000000000,0,0)").run();
     await f.gate.provider(f.provider,f.meter).call({model:'test',messages:[],promptHash:'over-old-token-ceiling',maxTokens:100});expect(f.gate.isOn()).toBe(true);expect(f.gate.view().spentTokens).toBe(2000000030);
-    f.control.db.prepare('UPDATE owner_company_budget SET total_micros=100').run();await expect(f.gate.provider(f.provider,f.meter).call({model:'test',messages:[],promptHash:'unaffordable',maxTokens:100})).rejects.toBeInstanceOf(InfrastructureFailureError);
-    expect(f.calls).toHaveLength(1);expect(f.gate.modelCalls()).toHaveLength(0);expect(f.gate.budget.view().needsRefill).toBe(true);expect(f.gate.proposals.list()).toHaveLength(0);
+    f.control.db.prepare('UPDATE owner_company_budget SET total_micros=1200').run();await expect(f.gate.provider(f.provider,f.meter).call({model:'test',messages:[],promptHash:'unaffordable',maxTokens:100})).rejects.toBeInstanceOf(InfrastructureFailureError);
+    expect(f.calls).toHaveLength(1);expect(f.gate.modelCalls()).toHaveLength(0);expect(f.gate.budget.view().needsRefill).toBe(false);expect(f.gate.proposals.list()).toHaveLength(0);
+    await f.gate.provider(f.provider,f.meter).call({model:'test',messages:[],promptHash:'independent-cheaper-call',maxTokens:10});expect(f.calls).toHaveLength(2);expect(f.gate.isOn()).toBe(true);
   });
   it('records node completion once when a second connection settles the occurrence before the first observer enters its transaction',()=>{
     const f=goalFixture();cleanups.push(f.close);const goal=f.goal('Concurrent completion','manual');f.gate.proposals.plans.install(goal.id,plan,true);f.gate.proposals.plans.claim(goal.id,'research','concurrent-completion');const store=new WorldRegistryStore(f.control.db.dbPath),other=new OwnerAutomationGate(store),transaction=f.control.transaction.bind(f.control);
@@ -141,6 +149,7 @@ describe('V32 company money, proposals and task loop',()=>{
   it('handles budget, pause, status and proposal decisions without a model',async()=>{
     const f=goalFixture();cleanups.push(f.close);const app=await createServer({workspaceRoot:f.root,worlds:f.worlds});
     cleanups.push(()=>app.close());
+    const inspection=await app.inject('/api/boss/company');expect(inspection.statusCode).toBe(200);expect(inspection.json().people).toHaveLength(2);expect(inspection.json().work.tasks).toEqual([]);
     const chat=(question:string)=>app.inject({method:'POST',url:'/api/owner/chat',payload:{question,history:[],language:'zh-CN',requestKey:crypto.randomUUID()}});
     const needed=await chat('帮我做一次研究');expect(needed.json().answer).toContain('预算');expect(f.calls).toHaveLength(0);
     const budget=await chat('公司预算 1 元');expect(budget.json().companyProposal).toBeUndefined();expect(budget.json().answer).toContain('公司金额预算');
@@ -168,13 +177,13 @@ describe('V32 company money, proposals and task loop',()=>{
     await f.scheduler.tick();await f.finish();expect(f.gate.goals.get(goal.id).status).toBe('WAITING_APPROVAL');expect(f.calls).toHaveLength(4);expect(f.work.view().tasks.some(t=>t.instruction.length>4000)).toBe(true);
   });
   it('resumes a maintenance pause from an explicit free chat command and never replays an old resume over a newer pause',async()=>{
-    const f=goalFixture();cleanups.push(f.close);let paused=true,resumes=0;const app=await createServer({workspaceRoot:f.root,worlds:f.worlds,evolution:{quiesced:()=>paused,switching:()=>false,resume:async()=>{paused=false;resumes++;}} as any});cleanups.push(()=>app.close());
+    const f=goalFixture();cleanups.push(f.close);let paused=true,resumes=0;const app=await createServer({workspaceRoot:f.root,worlds:f.worlds,maintenance:{quiesced:()=>paused,switching:()=>false,resume:async()=>{paused=false;resumes++;}} as any});cleanups.push(()=>app.close());
     const chat=(question:string,requestKey=crypto.randomUUID())=>app.inject({method:'POST',url:'/api/owner/chat',payload:{question,history:[],language:'zh-CN',requestKey}});
     expect((await app.inject({method:'POST',url:'/api/owner/budget',payload:{tokenMillions:1,unitPrice:1,priceCurrency:'CNY',expectedRevision:0,idempotencyKey:'paused-settings'}})).statusCode).toBe(200);expect(paused).toBe(true);expect((await chat('继续运行','maintenance-resume')).statusCode).toBe(200);expect(paused).toBe(false);expect(resumes).toBe(1);expect(f.gate.view().desiredMode).toBe('ON');expect(f.calls).toHaveLength(0);
     await chat('暂停公司');paused=true;await chat('继续运行','maintenance-resume');expect(paused).toBe(true);expect(f.gate.view().desiredMode).toBe('OFF');expect(resumes).toBe(1);
   });
   it('keeps pause and recorded status usable during a software switch while preventing new approvals from racing its snapshots',async()=>{
-    const f=goalFixture();cleanups.push(f.close);const app=await createServer({workspaceRoot:f.root,worlds:f.worlds,evolution:{quiesced:()=>true,switching:()=>true} as any});cleanups.push(()=>app.close());
+    const f=goalFixture();cleanups.push(f.close);const app=await createServer({workspaceRoot:f.root,worlds:f.worlds,maintenance:{quiesced:()=>true,switching:()=>true} as any});cleanups.push(()=>app.close());
     const chat=(question:string)=>app.inject({method:'POST',url:'/api/owner/chat',payload:{question,history:[],language:'zh-CN',requestKey:crypto.randomUUID()}});
     expect((await chat('公司状态')).statusCode).toBe(200);expect((await chat('暂停公司')).statusCode).toBe(200);expect((await app.inject({method:'POST',url:'/api/owner/budget',payload:{tokenMillions:1,unitPrice:1,priceCurrency:'CNY',expectedRevision:0,idempotencyKey:'switch-settings'}})).statusCode).toBe(409);expect(f.gate.proposals.list()).toHaveLength(0);expect(f.gate.budget.view().activatedAt).toBeNull();expect(f.calls).toHaveLength(0);
   });

@@ -13,7 +13,7 @@ export function appCodePath(value: unknown): string {
   if (typeof value !== 'string' || !/^[a-zA-Z0-9_./\-]+$/.test(value) || value.split('/').some(p => !p || p === '.' || p === '..' || /^(?:con|prn|aux|nul|com\d|lpt\d)(?:\.|$)/i.test(p))) throw new Error('APP_CODE_PATH_DENIED');
   if(['packages/tools/src/business/pure_skill.ts','packages/tools/src/context.ts'].includes(value))throw new Error('APP_CODE_PATH_DENIED');
   // Case-sensitive canonical names also prevent Windows case aliases of protected files.
-  const server = value.startsWith('apps/server/src/') && value.endsWith('.ts') && !protectedServer.has(value.slice('apps/server/src/'.length));
+  const server = value.startsWith('apps/server/src/') && value.endsWith('.ts') && !protectedServer.has(value.slice('apps/server/src/'.length))&&!value.toLowerCase().startsWith('apps/server/src/services/company_')&&!value.toLowerCase().startsWith('apps/server/src/execution/');
   const frontend = /^frontend\/(?:src|tests)\/.+\.(?:ts|tsx|css|svg)$/.test(value);
   const runtime = /^packages\/(?:model|domain|runtime|tools)\/(?:src|tests)\/.+\.ts$/.test(value);
   const tests = /^apps\/server\/tests\/.+\.test\.ts$/.test(value) && !/(?:upgrade|generation|supervisor|migration|release)/i.test(value);

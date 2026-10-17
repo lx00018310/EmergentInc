@@ -42,7 +42,7 @@ export class OwnerProposalService {
           const detail=this.gate.goals.detail(p.goalId!);if(detail.goal.status!=='WAITING_APPROVAL')ownerConflict('OWNER_PROPOSAL_CHANGED');if(!p.payload.evidence.every((s:any)=>detail.evidence.some(e=>e.id===s.id&&e.sha256===s.sha256&&e.specificationRevision===p.goalRevision)))ownerConflict('OWNER_EVIDENCE_CHANGED');
           const latest=detail.evidence.filter(e=>e.specificationRevision===p.goalRevision).map(e=>({id:e.id,sha256:e.sha256})).sort((a,b)=>a.id.localeCompare(b.id));if(digest(latest)!==digest(p.payload.evidence))ownerConflict('OWNER_PROPOSAL_CHANGED');
           const active=this.gate.store.db.prepare("SELECT 1 FROM owner_goal_dispatches WHERE goal_id=? AND state IN ('QUEUED','RUNNING')").get(p.goalId);if(active)ownerConflict('OWNER_TASK_STILL_RUNNING');
-          if(this.gate.store.db.prepare("SELECT 1 FROM owner_model_permits WHERE goal_id=? AND state IN ('SENT','UNKNOWN')").get(p.goalId))ownerConflict('OWNER_TASK_STILL_RUNNING');
+          if(this.gate.goals.hasPendingOutcome(p.goalId!,true))ownerConflict('OWNER_TASK_STILL_RUNNING');
           if(!this.verifyEvidence)ownerConflict('OWNER_EVIDENCE_CHANGED');for(const s of p.payload.evidence)this.verifyEvidence(detail.evidence.find(e=>e.id===s.id)!);
           this.gate.store.db.prepare('UPDATE owner_goals SET revision=revision+1 WHERE id=?').run(p.goalId);this.gate.goals.state(p.goalId!,'COMPLETED','OWNER_RESULT_VERIFIED');this.gate.goals.event(p.goalId!,'owner_verified',{proposalId:p.id,evidence:p.payload.evidence,basis:'EXPLICIT_OWNER_ACCEPTANCE_NOT_PAYMENT_PROOF'});result=this.gate.goals.get(p.goalId!);
         }

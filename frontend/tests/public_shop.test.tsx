@@ -6,7 +6,7 @@ import {setLanguage} from '../src/i18n';
 
 const products=['custom-service','product-2'].map(product_id=>({product_id,product_enabled:0,product_name_en:'',product_name_zh:'',product_description_en:'',product_description_zh:'',product_price:null,product_currency:'USDT'}));
 const site={site_name:'EmergentInc',headline_en:'Store',headline_zh:'商城',description_en:'Our shared store',description_zh:'我们的共同商城',github_url:'',contact_text_en:'Contact',contact_text_zh:'联系'};
-const response=(body:unknown,status=200)=>({ok:status<400,status,json:async()=>body}) as Response;
+const response=(body:unknown,status=200)=>new Response(JSON.stringify(body),{status,headers:{'Content-Type':'application/json'}});
 beforeEach(()=>{setLanguage('en');window.history.replaceState(null,'','/');Object.defineProperty(Element.prototype,'scrollIntoView',{value:vi.fn(),configurable:true});});
 afterEach(()=>{cleanup();vi.restoreAllMocks();sessionStorage.clear();window.history.replaceState(null,'','/');});
 it('shows two empty product cards in both languages, with details and disabled purchase',async()=>{

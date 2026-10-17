@@ -6,7 +6,8 @@ import {createHash} from 'node:crypto';
 import {PaymentChain,USDT_CHAINS,TRANSFER_TOPIC,TRON_GENESIS,recipientAddress,tronHex} from './payment_assets.js';
 import {verifyTokenPayment,rpcInteger,rpcHex} from './token_payment.js';
 import {PaymentRpc,MultiChainRpc} from './payment_rpc.js';
-export {PaymentRpc,MultiChainRpc as SolanaRpc} from './payment_rpc.js';
+export type {PaymentRpc} from './payment_rpc.js';
+export {MultiChainRpc as SolanaRpc} from './payment_rpc.js';
 type Scope={chain:PaymentChain;network:'mainnet';mint:string;decimals:number;recipient_address:string;start_block:number;created_at:number;rail_id:string};
 /** Reference subscriptions are a hint; paginated RPC backfill and finalized reads remain authoritative. */
 export class PaymentMonitor {

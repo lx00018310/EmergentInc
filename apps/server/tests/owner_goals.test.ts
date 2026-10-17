@@ -8,7 +8,7 @@ import { createServer } from '../src/app.js';
 const cleanups:(()=>Promise<void>)[]=[];afterEach(async()=>{for(const fn of cleanups.splice(0).reverse())await fn();});
 describe('V29 durable Owner goal management',()=>{
   it('persists revisions, immutable snapshots and soft archives without touching previous task tables',async()=>{
-    const f=goalFixture();cleanups.push(f.close);const goal=f.goal();expect(fs.existsSync(f.control.db.dbPath+'.pre-v29.bak')).toBe(true);
+    const f=goalFixture();cleanups.push(f.close);const goal=f.goal();expect(fs.existsSync(f.control.db.dbPath+'.pre-v29.bak')).toBe(false);
     const edit={title:'Revised',objective:'Inspect a real draft',acceptance:{kind:'artifact',filename:'revised.md',minBytes:12},maxTokens:999999,expectedRevision:goal.revision,idempotencyKey:crypto.randomUUID()};
     const changed=f.gate.goals.edit(goal.id,edit);expect(f.gate.goals.edit(goal.id,edit)).toEqual(changed);
     expect(()=>f.gate.goals.edit(goal.id,{...edit,idempotencyKey:crypto.randomUUID()})).toThrow('OWNER_REVISION_CONFLICT');
@@ -38,6 +38,6 @@ describe('V29 durable Owner goal management',()=>{
     expect((await app.inject({method:'POST',url:'/api/owner/goals',headers:{cookie},payload:input})).json()).toEqual(first.json());
     const id=first.json().id;expect((await app.inject({method:'PATCH',url:`/api/owner/goals/${id}`,headers:{cookie},payload:{...input,expectedRevision:0,idempotencyKey:crypto.randomUUID()}})).statusCode).toBe(409);
     expect((await app.inject({method:'POST',url:'/api/owner/automation',headers:{cookie,origin:'http://evil.test'},payload:{desiredMode:'OFF',expectedRevision:0,idempotencyKey:crypto.randomUUID()}})).statusCode).toBe(403);
-    expect((await app.inject({url:'/api/owner/overview',headers:{cookie}})).json().goals).toHaveLength(1);
+    expect((await app.inject({url:'/api/boss/overview',headers:{cookie}})).json().goals).toHaveLength(1);
   });
 });
