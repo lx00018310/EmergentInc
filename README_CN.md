@@ -62,6 +62,23 @@ node scripts/launch-approved.mjs --open-browser
 
 没有 V34 标记的非空旧工作区会报 `V34_DESTRUCTIVE_RESET_REQUIRED`。正常启动、安装、拉取和升级均不会销毁数据。清零须按[独立且不可逆的重置流程](docs/guides/V34_RESET.md)执行。
 
+## 用 AI Agent 安装
+
+仓库自带 [AGENTS.md](AGENTS.md)，Claude Code、OpenAI Codex、ZCode、Cursor、Windsurf 等编码 Agent 会自动读取它，因此整套安装可以直接交给 Agent 完成。
+
+前置条件：git、支持内置 `node:sqlite` 的 Node.js（22.13 或以上）、pnpm。
+
+```bash
+git clone https://github.com/lx00018310/EmergentInc.git
+cd EmergentInc
+```
+
+在该目录中启动你的 Agent——例如 `claude`（Claude Code）、`codex`（OpenAI Codex CLI），或在 Cursor / Windsurf 中打开该目录——然后给它一句指令：
+
+> 按照 AGENTS.md 和 README_CN.md 的"本地启动"章节：用 pnpm 安装依赖、从 `.env.example` 创建 `.env`、生成随机 Owner 口令写入其中、构建并启动。需要填模型 API Key 时提醒我在 `.env` 里填写。
+
+成功的标志是能访问 `http://127.0.0.1:8765/BOSS` 老板页面。机密只放在 `.env` 里：可以让 Agent 把随机 Owner 口令写进文件，但模型 API Key 请自己粘贴进 `.env`，不要发到对话里。批准每条命令前先看一眼内容，任何对话中都不要粘贴钱包私钥。
+
 ## 当前能力边界
 
 已实现：认证与中英双语老板页面、真实目标/任务执行、确定性执行者创建、产物证据、共享金额授权和结算、精确审批、恢复、公开商品/订单、只收款 USDT 核验，以及 **8766** 受控软件发布与回滚。可用收款通道取决于配置和链上最终性。
