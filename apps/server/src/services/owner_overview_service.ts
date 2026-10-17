@@ -19,7 +19,8 @@ export class OwnerOverviewService {
       const reviewed=attempt&&control.db.prepare("SELECT 1 FROM company_execution_reviews WHERE attempt_id=? AND decision='ABANDONED'").get(attempt.id);
       const terminalGoal=task?.goalId&&(!goals?.some(g=>g.id===task.goalId)||goals.some(g=>g.id===task.goalId&&['STOPPED','ARCHIVED','COMPLETED'].includes(g.status)));
       const pendingOutcome=task?.reason==='CALL_OUTCOME_UNKNOWN'?Boolean(task.goalId&&gate?.goals.hasPendingOutcome(task.goalId)):task?.reason==='TOOL_OUTCOME_UNKNOWN'&&!reviewed;
-      const dismissed=terminalGoal&&!pendingOutcome||reviewed&&!task?.goalId;
+      // An explicitly abandoned attempt keeps its bill as history but no longer needs the owner.
+      const dismissed=terminalGoal&&!pendingOutcome||reviewed&&!task?.goalId||Boolean(reviewed&&!pendingOutcome&&task?.reason);
       if(task&&!dismissed&&['FAILED','BLOCKED','NO_REPLY'].includes(task.state)&&attempt?.state!=='SUSPENDED')alerts.push({id:task.goalId?`goal:${task.goalId}`:`assignment:${task.id}`,kind:'task',severity:'critical',title:'Task needs attention',summary:task.goalId?goals?.find(g=>g.id===task.goalId)?.title??'':task.instruction,reasonKey:task.reason??'OWNER_WORKER_FAILED',goalId:task.goalId??undefined,taskId:task.id,runId:task.runId??undefined,attemptId:attempt?.id,worldId:scope,createdAt:task.updatedAt,source:'company execution',href:'/BOSS'});
       return {id:person.id,name:person.name,role:person.role,behaviorProfile:person.behaviorProfile,worldId:scope,status:person.status,running,runStatus:attempt?.state??'IDLE'};
     }) : manager.list().map(row => {

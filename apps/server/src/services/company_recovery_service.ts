@@ -15,20 +15,37 @@ export class CompanyRecoveryService {
     const facts={id:a.id,taskId:a.taskId,goalId:a.goalId,fence:a.fence,revision:a.revision,state:a.state,reason:a.reason,tools,permits};return {...facts,hash:companyFactHash(facts)};
   }
   view(){
-    const db=this.gate.store.db,attempts=db.prepare("SELECT a.id FROM company_execution_attempts a JOIN company_worker_launches w ON w.attempt_id=a.id WHERE a.state='BLOCKED' AND a.reason IN ('CALL_OUTCOME_UNKNOWN','TOOL_OUTCOME_UNKNOWN') AND NOT EXISTS(SELECT 1 FROM company_execution_reviews r WHERE r.attempt_id=a.id)").all().map(r=>this.attempt(String(r.id)));
+    const db=this.gate.store.db;
+    // Legacy migrated attempts have no worker launch row; their unknown outcome is still a
+    // real pending owner fact and must stay reviewable instead of becoming a dead end.
+    const attempts=db.prepare("SELECT a.id FROM company_execution_attempts a WHERE a.state='BLOCKED' AND a.reason IN ('CALL_OUTCOME_UNKNOWN','TOOL_OUTCOME_UNKNOWN') AND NOT EXISTS(SELECT 1 FROM company_execution_reviews r WHERE r.attempt_id=a.id) ORDER BY a.created_at").all().map(r=>this.attempt(String(r.id)));
     const holds=db.prepare("SELECT b.*,c.payload_json FROM company_admission_blocks b LEFT JOIN company_admission_context c USING(id) WHERE b.id='safety'").all().map(r=>{const context=r.payload_json?JSON.parse(String(r.payload_json)):{},permit=context.permitId?db.prepare('SELECT p.id,p.state,p.actual_tokens,p.cost_cny,r.reserved_micros,r.settled_micros FROM owner_model_permits p LEFT JOIN owner_money_reservations r ON r.permit_id=p.id WHERE p.id=?').get(context.permitId):null,facts={id:String(r.id),reason:String(r.reason),updatedAt:Number(r.updated_at),permit:permit??null};return {...facts,canAcknowledge:r.reason==='OWNER_PROVIDER_USAGE_EXCEEDED_RESERVATION'&&permit?.state==='SETTLED',hash:companyFactHash(facts)};});
     return {attempts,holds};
   }
   async abandon(id:string,input:any){
     exactKeys(input,['hash','reason','idempotencyKey']);ownerInput(typeof input.hash==='string'&&typeof input.reason==='string'&&input.reason.trim().length>=8&&input.reason.length<=1000,'OWNER_RECOVERY_INVALID');
     const request={abandonAttempt:id,input},old=this.gate.store.db.prepare('SELECT 1 FROM owner_control_requests WHERE key=?').get(input.idempotencyKey);if(old)return this.gate.goals.request(input.idempotencyKey,request,()=>{throw new Error('IDEMPOTENCY_CONFLICT');});
-    if(this.worker.isRunning(id)||!await this.worker.recover(id))ownerConflict('OWNER_PREVIOUS_WORKER_STILL_ALIVE');
+    // A legacy migrated attempt never launched a worker process; only launched ones need proof of exit.
+    const launched=Boolean(this.gate.store.db.prepare('SELECT 1 FROM company_worker_launches WHERE attempt_id=?').get(id));
+    if(launched&&(this.worker.isRunning(id)||!await this.worker.recover(id)))ownerConflict('OWNER_PREVIOUS_WORKER_STILL_ALIVE');
     return this.gate.goals.request(input.idempotencyKey,request,()=>{
       const facts=this.attempt(id),a=this.gate.execution!.get(id),db=this.gate.store.db;
       if(facts.hash!==input.hash||this.gate.execution!.forTask(a.taskId)?.id!==id||a.state!=='BLOCKED'||!['CALL_OUTCOME_UNKNOWN','TOOL_OUTCOME_UNKNOWN'].includes(a.reason??''))ownerConflict('OWNER_RECOVERY_CHANGED');
       db.prepare("INSERT INTO company_execution_reviews VALUES(?,?,'ABANDONED',?,?)").run(id,input.hash,input.reason,Date.now());
       for(const tool of facts.tools)db.prepare("INSERT INTO company_tool_reviews VALUES(?,?,'ABANDONED',?,?)").run(tool.operation_id,id,input.reason,Date.now());
       for(const permit of facts.permits)if(permit.state==='UNKNOWN')db.prepare("INSERT INTO control_events(kind,world_id,payload,created_at) VALUES('owner_model_outcome_reviewed',NULL,?,?)").run(JSON.stringify({permitId:permit.id,attemptId:id,decision:'abandon',reason:input.reason}),Date.now());
+      // The unknown outcome is now explicitly owned. A launched worker may have produced real
+      // side effects, so its goal stays blocked until an explicit reopen. A legacy migrated
+      // attempt never ran a worker: releasing the task lets the company find another way.
+      if(!launched){
+        db.prepare("UPDATE owner_work_tasks SET state='QUEUED',run_id=NULL,turn_id=NULL,reply=NULL,reason=NULL,updated_at=? WHERE id=? AND state IN ('FAILED','BLOCKED','NO_REPLY')").run(Date.now(),a.taskId);
+        const dispatch=db.prepare('SELECT * FROM owner_goal_dispatches WHERE task_id=?').get(a.taskId);
+        if(dispatch){
+          db.prepare("UPDATE owner_goal_dispatches SET state='QUEUED',reason=NULL WHERE id=?").run(String(dispatch.id));
+          db.prepare("UPDATE owner_goal_steps SET state='QUEUED' WHERE id=?").run(String(dispatch.id));
+        }
+        if(a.goalId&&this.gate.goals.get(a.goalId).status==='BLOCKED'&&this.gate.goals.get(a.goalId).reason===a.reason)this.gate.goals.state(a.goalId,'READY');
+      }
       db.prepare("INSERT INTO control_events(kind,world_id,payload,created_at) VALUES('company_execution_abandoned',NULL,?,?)").run(JSON.stringify({attemptId:id,hash:input.hash,reason:input.reason}),Date.now());
       return {attemptId:id,decision:'ABANDONED',reservationRetained:true,replayed:false};
     });

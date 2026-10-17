@@ -13,13 +13,26 @@ interface ExecutionRecovery {attempts:{id:string;hash:string;reason:string}[];ho
  * approve (settle with the suggested verified values), reject (stop the uncertain work),
  * or rework (opens the instruction input). Free-form fields never gate the first two.
  */
-export function VerifiedSettlement({ review, revision, onDone }: { review: Review; revision: number; onDone: () => void }) {
+export function VerifiedSettlement({ review: initial, revision, onDone }: { review: Review; revision: number; onDone: () => void }) {
   const [busy, setBusy] = useState(false), [error, setError] = useState(''), [rework, setRework] = useState(false), [note, setNote] = useState('');
   const pending = useRef<{path:string;body:Record<string,unknown>}>(), flight = useRef(false);
+  const [review, setReview] = useState(initial);
   const [awaiting,setAwaiting]=useState(false);
   const model = !review.kind || review.kind === 'model';
   const suggestedTokens = review.suggestedTokens ?? review.tokens ?? 0;
   const suggestedCost = review.suggestedCost ?? (review.reservedMicros != null ? review.reservedMicros / 1000000 : 0);
+  // Attempt and safety decisions bind to a server fact hash the alert card does not carry;
+  // fetch it from the recovery projection before the first submit instead of failing later.
+  useEffect(() => {
+    if (!initial.kind || (initial.kind !== 'attempt' && initial.kind !== 'safety') || initial.hash) return;
+    let alive = true;
+    void ownerGoalRequest<{attempts:Review[];holds:Review[]}>('execution-recovery').then(data => {
+      if (!alive) return;
+      const found = [...(data.attempts ?? []), ...(data.holds ?? [])].find(item => item.id === initial.id);
+      if (found?.hash) setReview(current => ({ ...current, hash: found.hash, reservedMicros: found.reservedMicros, suggestedTokens: found.suggestedTokens, suggestedCost: found.suggestedCost }));
+    }).catch(() => undefined);
+    return () => { alive = false; };
+  }, [initial.kind, initial.id, initial.hash]);
   const build = (decision:'approve'|'reject'|'rework', reason:string):{path:string;body:Record<string,unknown>} => {
     const idempotencyKey = pending.current ? String(pending.current.body.idempotencyKey) : crypto.randomUUID();
     if(review.kind==='attempt')return {path:`execution-recovery/${encodeURIComponent(review.id)}/abandon`,body:{hash:review.hash,reason,idempotencyKey}};
@@ -30,6 +43,7 @@ export function VerifiedSettlement({ review, revision, onDone }: { review: Revie
   async function decide(decision:'approve'|'reject'|'rework') {
     if (flight.current) return;
     if (decision === 'rework') { if (note.trim().length < 8) { setRework(true); return; } }
+    if ((review.kind === 'attempt' || review.kind === 'safety') && !review.hash) { setError(t('The recovery decision is not confirmed. Retry its original fields and key.')); return; }
     flight.current = true; setBusy(true); setError('');
     const reason = decision === 'approve' ? t('Approved the suggested verified settlement for this exact record.')
       : decision === 'reject' ? t('Rejected this uncertain result; its charges and records stay reserved for review.')

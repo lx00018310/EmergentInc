@@ -53,6 +53,36 @@ describe('explicit old-state recovery adapter',()=>{
     expect(f.gate.budget.view().reservedMicros).toBe(held);expect(f.gate.goals.hasPendingOutcome(f.goal.id)).toBe(false);expect(f.calls).toHaveLength(0);
     expect((await new OwnerOverviewService(f.worlds,f.work).bossOverview()).alerts.filter(a=>a.goalId===f.goal.id)).toHaveLength(0);
   },20000);
+  it('keeps a migrated settled unknown attempt reviewable in recovery and clears the blocked goal after abandonment',async()=>{
+    // The production dead end: the legacy call kept its core model_call row with an unknown
+    // outcome, the bill was settled through the old world recovery path, yet the company
+    // ledger still carried CALL_OUTCOME_UNKNOWN and the recovery projection skipped
+    // attempts without a worker launch.
+    const f=await fixture('unknown');f.legacy.migrate();const attempt=f.work.execution.forRun(f.saved.runId)!;expect(attempt.reason).toBe('CALL_OUTCOME_UNKNOWN');
+    const runtime=await f.manager.open(f.saved.worldId),callId=String(f.gate.modelCalls(true)[0].source_id);
+    const reservation=runtime.store.db.prepare('SELECT run_id,pixel_id,message_id FROM reservations WHERE call_id=?').get(callId)!;
+    runtime.store.db.prepare(`INSERT INTO model_calls(call_id,run_id,pixel_id,message_id,model,prompt_tokens,completion_tokens,actual_tokens,cost_cny,outcome,created_at) VALUES(?,?,?,?,?,?,?,?,?, 'CALL_OUTCOME_UNKNOWN',?)`)
+      .run(callId,String(reservation.run_id),String(reservation.pixel_id),reservation.message_id,'test',20,10,null,null,Date.now()/1000);
+    runtime.store.resolveRecoveryOperation({kind:'model',id:callId,decision:'settle_billed',reason:'Owner approved the suggested verified settlement values.',actualTokens:0,costCny:0.00004});
+    f.gate.reconcileWorld(runtime.store,f.saved.worldId);
+    expect(f.gate.modelCalls()).toHaveLength(0);expect(f.gate.goals.get(f.goal.id)).toMatchObject({status:'BLOCKED',reason:'CALL_OUTCOME_UNKNOWN'});
+    const attemptId=f.work.execution.forRun(f.saved.runId)!.id;expect(f.control.db.prepare('SELECT 1 FROM company_worker_launches WHERE attempt_id=?').get(attemptId)).toBeUndefined();
+    const recovery=f.work.recovery!.view();expect(recovery.attempts.map(a=>a.id)).toContain(attemptId);
+    const facts=recovery.attempts.find(a=>a.id===attemptId)!;
+    await expect(f.work.recovery!.abandon(attemptId,{hash:'f'.repeat(64),reason:'A changed fact hash cannot abandon the attempt',idempotencyKey:'legacy-abandon-stale'})).rejects.toThrow('OWNER_RECOVERY_CHANGED');
+    const app=await (await import('../src/app.js')).createServer({workspaceRoot:f.root,worlds:f.worlds});try{
+      const result=await app.inject({method:'POST',url:`/api/owner/execution-recovery/${attemptId}/abandon`,payload:{hash:facts.hash,reason:'Owner abandons the settled unknown result and keeps the bill',idempotencyKey:'legacy-abandon-settled'}});
+      expect(result.statusCode,result.body).toBe(200);expect(result.json()).toMatchObject({decision:'ABANDONED',reservationRetained:true});
+    }finally{await app.close();}
+    expect(f.control.db.prepare("SELECT decision FROM company_execution_reviews WHERE attempt_id=?").get(attemptId)).toMatchObject({decision:'ABANDONED'});
+    expect(f.work.recovery!.view().attempts).toHaveLength(0);
+    expect(f.work.view().tasks.find(t=>t.goalId===f.goal.id)!.reason).toBeNull();
+    // The running company converges the abandoned dispatch itself; the goal alert must clear.
+    await f.scheduler.tick();
+    const overview=await new OwnerOverviewService(f.worlds,f.work).bossOverview();
+    expect(overview.alerts.filter(a=>a.goalId===f.goal.id)).toHaveLength(0);
+    expect(['READY','RUNNING','WAITING_RESOURCE','WAITING_APPROVAL']).toContain(f.gate.goals.get(f.goal.id).status);
+  },20000);
   it.each(['on','off'] as const)('reuses a legacy paid response/tool receipt after migration and respects explicit %s',async mode=>{
     const f=await fixture(mode),file=join(f.registry.directory(f.saved.worldId),'ledger/v9_core.sqlite3'),core=new SqliteDatabase(file,{readOnly:true});let before:unknown;
     try{before=core.prepare("SELECT result FROM tool_executions WHERE tool='save_artifact'").all();}finally{core.close();}
