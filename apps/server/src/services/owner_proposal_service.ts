@@ -28,7 +28,8 @@ export class OwnerProposalService {
     return this.propose('close_task',{evidence:snapshot,title:goal.title,...(reason?{reason}:{})},'close:'+goalId+':'+goal.specificationRevision+':'+digest(snapshot),goalId);
   }
   decide(id:string,input:any){
-    exactKeys(input,['decision','hash','idempotencyKey']);ownerInput(['approve','reject'].includes(input.decision),'OWNER_PROPOSAL_INVALID');
+    exactKeys(input,['decision','hash','idempotencyKey','reworkNote']);ownerInput(['approve','reject','rework'].includes(input.decision),'OWNER_PROPOSAL_INVALID');
+    if(input.decision==='rework')ownerInput(typeof input.reworkNote==='string'&&input.reworkNote.trim().length>=8&&input.reworkNote.length<=1000,'OWNER_PROPOSAL_INVALID');
     return this.gate.goals.request(input.idempotencyKey,{proposal:id,input},()=>{
       const p=this.list().find(p=>p.id===id);if(!p||p.hash!==input.hash)ownerConflict('OWNER_PROPOSAL_CHANGED');
       if(p.state==='EXECUTED'&&input.decision==='approve'||p.state==='REJECTED'&&input.decision==='reject')return p;
@@ -47,8 +48,21 @@ export class OwnerProposalService {
           this.gate.store.db.prepare('UPDATE owner_goals SET revision=revision+1 WHERE id=?').run(p.goalId);this.gate.goals.state(p.goalId!,'COMPLETED','OWNER_RESULT_VERIFIED');this.gate.goals.event(p.goalId!,'owner_verified',{proposalId:p.id,evidence:p.payload.evidence,basis:'EXPLICIT_OWNER_ACCEPTANCE_NOT_PAYMENT_PROOF'});result=this.gate.goals.get(p.goalId!);
         }
       }
-      this.gate.store.db.prepare('UPDATE owner_company_proposals SET state=?,result=? WHERE id=?').run(input.decision==='approve'?'EXECUTED':'REJECTED',JSON.stringify(result),id);
-      this.gate.store.db.prepare("INSERT INTO control_events(kind,world_id,payload,created_at) VALUES('owner_company_proposal_decided',NULL,?,?)").run(JSON.stringify({proposalId:p.id,goalId:p.goalId,goalRevision:p.goalRevision,decision:input.decision,hash:p.hash}),Date.now());
+      // Rework keeps the goal alive: the note is recorded, the proposal closes as REJECTED,
+      // and the goal returns to READY so the agent adjusts and submits a fresh proposal.
+      if(input.decision==='rework'&&p.goalId){
+        const goal=this.gate.goals.get(p.goalId);
+        if(p.kind==='close_task'){
+          this.gate.store.db.prepare("UPDATE owner_goals SET revision=revision+1,status='RUNNING',reason=NULL,next_action=?,updated_at=? WHERE id=? AND status='WAITING_APPROVAL'").run(input.reworkNote,Date.now(),p.goalId);
+          this.gate.goals.event(p.goalId,'owner_rework',{proposalId:p.id,kind:p.kind,note:input.reworkNote,basis:'EXPLICIT_OWNER_REWORK_REQUEST'});
+        }else {
+          this.gate.store.db.prepare("UPDATE owner_goals SET revision=revision+1,reason=NULL,next_action=?,updated_at=? WHERE id=?").run(input.reworkNote,Date.now(),p.goalId);
+          this.gate.goals.event(p.goalId,'owner_rework',{proposalId:p.id,kind:p.kind,note:input.reworkNote,basis:'EXPLICIT_OWNER_REWORK_REQUEST'});
+        }
+        result={rework:true,note:input.reworkNote,goalStatus:this.gate.goals.get(p.goalId).status};
+      }
+      this.gate.store.db.prepare('UPDATE owner_company_proposals SET state=?,result=? WHERE id=?').run(input.decision==='approve'?'EXECUTED':input.decision==='rework'?'REJECTED':'REJECTED',JSON.stringify(result),id);
+      this.gate.store.db.prepare("INSERT INTO control_events(kind,world_id,payload,created_at) VALUES('owner_company_proposal_decided',NULL,?,?)").run(JSON.stringify({proposalId:p.id,goalId:p.goalId,goalRevision:p.goalRevision,decision:input.decision,...(input.decision==='rework'?{reworkNote:input.reworkNote}:{}),hash:p.hash}),Date.now());
       return this.list().find(p=>p.id===id)!;
     });
   }

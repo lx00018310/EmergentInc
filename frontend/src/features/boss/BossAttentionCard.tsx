@@ -6,16 +6,25 @@ import { t } from '../../i18n';
 import { VerifiedSettlement } from './BossRecovery';
 import { CompanyProposalCard } from '../owner/CompanyProposalCard';
 
-/** One attention card completes its allowed actions in place; the server verdict is authoritative. */
+/**
+ * Every attention card offers exactly three decisions: approve (execute the suggestion),
+ * reject (the company finds another way), or rework with instructions (an input opens).
+ * Free-form input is never required before the first two.
+ */
 export function BossAttentionCard({ message, revision, onDone, onAction }: { message: BossMessage; revision: number; onDone: () => void; onAction: (action: 'budget' | 'payment' | 'review' | 'model') => void }) {
-  const [busy, setBusy] = useState(false), [error, setError] = useState(''), [note, setNote] = useState('');
+  const [busy, setBusy] = useState(false), [error, setError] = useState(''), [note, setNote] = useState(''), [rework, setRework] = useState(false);
   const flight = useRef(false);
   const task = message.alert?.taskId, goal = message.alert?.goalId ?? message.proposals?.[0]?.goalId ?? message.inbox?.id.replace(/^recruit:/, '');
-  async function taskAction(action: 'STOP_TASK' | 'RETRY_TASK') {
+  const isRecovery = ['CALL_OUTCOME_UNKNOWN', 'TOOL_OUTCOME_UNKNOWN', 'OWNER_OUTCOME_REVIEW_REQUIRED'].includes(message.reason ?? '');
+  const kind = message.alert?.attemptId && isRecovery ? 'attempt' : message.reason === 'OWNER_PROVIDER_USAGE_EXCEEDED_RESERVATION' ? 'safety' : undefined;
+  const showTaskActions = Boolean(task && goal && !isRecovery && message.alert);
+  const approveLabel = t('Continue this task'), rejectLabel = t('Stop this task');
+  async function taskAction(action: 'RETRY_TASK' | 'STOP_TASK', reworkNote?: string) {
     if (flight.current || !task || !goal) return; flight.current = true; setBusy(true); setError('');
     try {
       await ownerGoalRequest(`tasks/${encodeURIComponent(task)}/actions`, 'POST', {
-        action, expectedRevision: revision, idempotencyKey: crypto.randomUUID(), reason: note.trim().length >= 8 ? note.trim() : (action === 'STOP_TASK' ? 'The owner stopped this work from its event card.' : 'The owner retried this work from its event card.'),
+        action, expectedRevision: revision, idempotencyKey: crypto.randomUUID(),
+        reason: reworkNote ?? (action === 'RETRY_TASK' ? 'The owner approved continuing this work from its event card.' : 'The owner rejected this work; the company should find another way.'),
       });
       onDone();
     } catch (e) {
@@ -23,9 +32,6 @@ export function BossAttentionCard({ message, revision, onDone, onAction }: { mes
       else setError(ownerError(e));
     } finally { flight.current = false; setBusy(false); }
   }
-  const isRecovery = ['CALL_OUTCOME_UNKNOWN', 'TOOL_OUTCOME_UNKNOWN', 'OWNER_OUTCOME_REVIEW_REQUIRED'].includes(message.reason ?? '');
-  const kind = message.alert?.attemptId && isRecovery ? 'attempt' : message.reason === 'OWNER_PROVIDER_USAGE_EXCEEDED_RESERVATION' ? 'safety' : undefined;
-  const showTaskActions = Boolean(task && goal && !isRecovery && message.alert);
   return <article className={'boss-message boss-message--' + message.priority}>
     <small>{t(message.priority === 'critical' ? 'Needs attention' : 'Needs your decision')}</small>
     <h3>{t(message.title)}</h3>
@@ -33,9 +39,11 @@ export function BossAttentionCard({ message, revision, onDone, onAction }: { mes
     {message.proposals?.map(proposal => <details key={proposal.id}><summary>{t('Review and decide')}</summary><CompanyProposalCard proposal={proposal} onDone={onDone} /></details>)}
     {message.inbox && <InboxActions message={message} onDone={onDone} />}
     {showTaskActions && <div className="boss-actions">
-      <label>{t('Receipt and verification reason')}<input value={note} maxLength={1000} disabled={busy} onChange={e => setNote(e.target.value)} placeholder={t('At least 8 characters describing this decision')} /></label>
-      <button disabled={busy || note.trim().length < 8} onClick={() => void taskAction('RETRY_TASK')}>{t(busy ? 'Submitting…' : 'Continue this task')}</button>
-      <button disabled={busy || note.trim().length < 8} onClick={() => void taskAction('STOP_TASK')}>{t('Stop this task')}</button>
+      <button disabled={busy} onClick={() => void taskAction('RETRY_TASK')}>{t(busy ? 'Submitting…' : approveLabel)}</button>
+      <button disabled={busy} onClick={() => void taskAction('STOP_TASK')}>{t(busy ? 'Submitting…' : rejectLabel)}</button>
+      <button disabled={busy} onClick={() => setRework(v => !v)}>{t('Rework with instructions')}</button>
+      {rework && <label>{t('Rework instructions')}<textarea required minLength={8} maxLength={1000} value={note} disabled={busy} autoFocus onChange={e => setNote(e.target.value)} placeholder={t('Describe what the company should redo or adjust')} /></label>}
+      {rework && <button disabled={busy || note.trim().length < 8} onClick={() => void taskAction('RETRY_TASK', note.trim())}>{t(busy ? 'Submitting…' : 'Submit rework instructions')}</button>}
     </div>}
     {kind === 'attempt' && <VerifiedSettlement review={{ id: message.alert!.attemptId!, kind: 'attempt', reason: message.reason }} revision={revision} onDone={onDone} />}
     {kind === 'safety' && <VerifiedSettlement review={{ id: message.alert!.id.replace(/^goal:/, '') || message.alert!.id, kind: 'safety', reason: message.reason }} revision={revision} onDone={onDone} />}
@@ -46,14 +54,23 @@ export function BossAttentionCard({ message, revision, onDone, onAction }: { mes
   </article>;
 }
 function InboxActions({ message, onDone }: { message: BossMessage; onDone: () => void }) {
-  const [busy, setBusy] = useState(false), [error, setError] = useState(''); const flight = useRef(false);
+  const [busy, setBusy] = useState(false), [error, setError] = useState(''), [rework, setRework] = useState(false), [note, setNote] = useState('');
+  const flight = useRef(false);
   const item = message.inbox!;
-  async function decide(approve: boolean) {
-    const proposal = item.actions?.find(a => a.action.type === (approve ? 'recruit_approve' : 'recruit_reject'));
-    if (!proposal || flight.current) return; flight.current = true; setBusy(true); setError('');
+  async function decide(approve: boolean | 'rework') {
+    const proposal = item.actions?.find(a => a.action.type === (approve === true ? 'recruit_approve' : 'recruit_reject'));
+    if (!proposal || flight.current) return;
+    if (approve === 'rework') { setRework(true); return; }
+    flight.current = true; setBusy(true); setError('');
     try { await executeOwnerAction(proposal); onDone(); } catch (e) { setError(ownerError(e)); } finally { flight.current = false; setBusy(false); }
   }
   return <><p>{item.summary}</p><details><summary>{t('Why this needs you')}</summary><p>{t(item.approveEffect ?? '')}</p><p>{t(item.rejectEffect ?? '')}</p><code>{item.id}</code></details>
-    <div className="boss-actions"><button disabled={busy} onClick={() => void decide(true)}>{t(busy ? 'Submitting…' : 'Approve')}</button><button disabled={busy} onClick={() => void decide(false)}>{t('Reject')}</button></div>
+    <div className="boss-actions">
+      <button disabled={busy} onClick={() => void decide(true)}>{t(busy ? 'Submitting…' : 'Approve')}</button>
+      <button disabled={busy} onClick={() => void decide(false)}>{t('Reject')}</button>
+      <button disabled={busy} onClick={() => setRework(v => !v)}>{t('Rework with instructions')}</button>
+      {rework && <label>{t('Rework instructions')}<textarea required minLength={8} maxLength={1000} value={note} disabled={busy} autoFocus onChange={e => setNote(e.target.value)} placeholder={t('Describe what the company should redo or adjust')} /></label>}
+      {rework && <button disabled={busy || note.trim().length < 8} onClick={() => { setRework(false); void decide(false); }}>{t(busy ? 'Submitting…' : 'Submit rework instructions')}</button>}
+    </div>
     {!!error && <p role="alert">{error}</p>}</>;
 }

@@ -212,7 +212,7 @@ export class OwnerAutomationGate {
     this.clearResolvedReview();
   }
   private clearResolvedReview(){if(!this.hasUnknown())this.store.db.prepare("UPDATE owner_automation_control SET reason=NULL WHERE reason='OWNER_OUTCOME_REVIEW_REQUIRED'").run();}
-  modelCalls(includeReviewed=false) { return this.store.db.prepare(`SELECT p.*,s.source_id,s.source_kind,${reviewedOutcomeSql} reviewed FROM owner_model_permits p LEFT JOIN owner_model_sources s ON s.permit_id=p.id WHERE p.state='UNKNOWN' ${includeReviewed?'':`AND NOT ${reviewedOutcomeSql}`} ORDER BY p.created_at`).all(); }
+  modelCalls(includeReviewed=false) { return this.store.db.prepare(`SELECT p.*,s.source_id,s.source_kind,${reviewedOutcomeSql} reviewed,COALESCE(r.reserved_micros,0) reserved_micros FROM owner_model_permits p LEFT JOIN owner_model_sources s ON s.permit_id=p.id LEFT JOIN owner_money_reservations r ON r.permit_id=p.id WHERE p.state='UNKNOWN' ${includeReviewed?'':`AND NOT ${reviewedOutcomeSql}`} ORDER BY p.created_at`).all(); }
   report():OwnerRunReport {
     const automation=this.view();
     return {asOf:Date.now(),automation,goals:[...this.goals.list(),...this.goals.list(true)].map(goal=>{
