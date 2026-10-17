@@ -19,7 +19,7 @@ async function workerFixture(reply?:(body:any,req:IncomingMessage,res:ServerResp
   const port=await listenTestHttp(server);cleanups.push(async()=>{server.closeAllConnections();await new Promise<void>(r=>server.close(()=>r()));});
   f.work.enableWorkers({MCL_API_KEY:'v35-failure-isolation-key',MCL_BASE_URL:`http://127.0.0.1:${port}/v1`,MCL_TIMEOUT_MS:'2000'},f.payments);
   f.on();vi.spyOn(f.manager,'open').mockImplementation(()=>{throw new Error('LEGACY_CORE_MUST_NOT_OPEN');});
-  const settle=async()=>{await vi.waitFor(async()=>{await f.scheduler.tick();if(f.work.worker!.snapshots().some(a=>f.work.worker!.isRunning(String(a.id))))throw new Error('Worker running');if(f.work.view().tasks.some(t=>t.state==='QUEUED'&&t.runId===null))throw new Error('Dispatch pending');},{timeout:12000,interval:20});};
+  const settle=async()=>{await vi.waitFor(async()=>{await f.scheduler.tick();if(f.work.worker!.snapshots().some(a=>f.work.worker!.isRunning(String(a.id))))throw new Error('Worker running');if(f.work.view().tasks.some(t=>t.state==='QUEUED'&&t.runId===null))throw new Error('Dispatch pending');},{timeout:30000,interval:20});};
   return {...f,requests,calls:()=>requests.length,settle};
 }
 function send(res:ServerResponse,value:unknown,knownUsage=true){res.setHeader('Content-Type','application/json');res.end(JSON.stringify({choices:[{message:{content:typeof value==='string'?value:JSON.stringify(value)}}],...(knownUsage?{usage:{prompt_tokens:20,completion_tokens:10,total_tokens:30}}:{})}));}

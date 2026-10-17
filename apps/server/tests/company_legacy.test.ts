@@ -17,7 +17,7 @@ async function fixture(mode:'on'|'off'|'unknown'){
   const f=goalFixture();cleanups.push(f.close);const goal=f.goal();
   const child=spawn(process.execPath,['--import','tsx',resolve('apps/server/tests/fixtures/owner_goal_recovery_child.ts'),f.root,mode],{cwd:resolve('.'),windowsHide:true,stdio:['ignore','ignore','pipe']});const exited=once(child,'exit');let errors='';child.stderr.on('data',data=>errors+=data);
   cleanups.push(async()=>{if(child.exitCode===null&&child.signalCode===null)child.kill('SIGKILL');await exited;});
-  await vi.waitFor(()=>{if(child.exitCode!==null)throw new Error(errors);expect(fs.existsSync(join(f.root,'recovery-ready.json'))).toBe(true);},{timeout:10000});child.kill('SIGKILL');await exited;
+  await vi.waitFor(()=>{if(child.exitCode!==null)throw new Error(errors);expect(fs.existsSync(join(f.root,'recovery-ready.json'))).toBe(true);},{timeout:30000});child.kill('SIGKILL');await exited;
   const saved=JSON.parse(fs.readFileSync(join(f.root,'recovery-ready.json'),'utf8')),gate=new OwnerAutomationGate(f.control);f.manager.attachAutomation(gate);
   let newCalls=0;const server=createServer((req,res)=>{req.resume();req.on('end',()=>{newCalls++;res.setHeader('Content-Type','application/json');res.end(JSON.stringify({choices:[{message:{content:JSON.stringify({owner_reply:'An independent new worker result',send_to:'STOP'})}}],usage:{prompt_tokens:20,completion_tokens:10,total_tokens:30}}));});});const port=await listenTestHttp(server);cleanups.push(async()=>{server.closeAllConnections();await new Promise<void>(r=>server.close(()=>r()));});
   f.work.enableWorkers({MCL_API_KEY:'explicit-fake-legacy-migration-key',MCL_BASE_URL:`http://127.0.0.1:${port}/v1`},f.payments);

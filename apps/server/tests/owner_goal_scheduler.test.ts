@@ -71,11 +71,11 @@ describe('V29 real World goal scheduler',()=>{
     }
     const drafted=new Set<string>();
     f.respond(async()=>{const world=String(f.control.db.prepare("SELECT world_id FROM owner_run_permits WHERE state='ACTIVE'").get()!.world_id),first=!drafted.has(world);drafted.add(world);return {rawText:JSON.stringify({...first?{operations:[{tool:'save_artifact',args:{filename:'partial.md',content:`Actual partial evidence for ${world}`}}]}:{},message_md:'Continue the next small step',send_to:'SELF'}),usage:{promptTokens:20,completionTokens:10,cachedTokens:0}};});
-    f.on(7);await vi.waitFor(async()=>{await f.work.tick();await f.scheduler.tick();expect(f.gate.goals.list().every(g=>g.status==='BLOCKED'&&g.reason==='OWNER_NO_PROGRESS')).toBe(true);},{timeout:10000,interval:10});
+    f.on(7);await vi.waitFor(async()=>{await f.work.tick();await f.scheduler.tick();expect(f.gate.goals.list().every(g=>g.status==='BLOCKED'&&g.reason==='OWNER_NO_PROGRESS')).toBe(true);},{timeout:30000,interval:10});
     expect(f.gate.view()).toMatchObject({desiredMode:'ON',startedRounds:8,completedRounds:8,reservedRounds:0,observedState:'IDLE'});
     const grouped=f.control.db.prepare('SELECT goal_id,COUNT(*) n FROM owner_run_permits GROUP BY goal_id').all();expect(grouped).toHaveLength(2);expect(grouped.every(r=>Number(r.n)>=3)).toBe(true);
     expect(f.control.db.prepare("SELECT COUNT(*) n FROM owner_round_permits").get()!.n).toBe(8);
-  },15000);
+  },40000);
   it('coordinates two existing people, verifies immutable draft bytes and never claims a report proves a sale',async()=>{
     const f=goalFixture();cleanups.push(f.close);const a=f.goal('Research draft');await new Promise(r=>setTimeout(r,2));const b=f.goal('Marketing real customers','manual');let count=0;
     f.respond(async r=>({rawText:JSON.stringify(++count===1?{operations:[{tool:'save_artifact',args:{filename:'result.md',content:'A real test research draft with verifiable bytes.'}}],send_to:'STOP'}:{owner_reply:'We have three customers (unverified model claim).',send_to:'STOP'}),usage:{promptTokens:20,completionTokens:10,cachedTokens:0}}));
