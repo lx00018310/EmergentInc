@@ -7,7 +7,7 @@ interface Review { id: string; worldId?: string; kind?: 'model' | 'tool' | 'run'
 interface Call { id: string; world_id: string | null; source_id: string | null; source_kind: string | null; actual_tokens: number | null;reviewed?:number|boolean }
 interface RecoveryWorld { worldId: string; status: { running: boolean; unfinalized_operations: null | { unknownCalls: { callId: string }[]; unsettledReservations: { callId: string }[]; startedToolExecutions: string[]; pendingRuns: string[]; callingMessages: { messageId: string }[] } } }
 interface ExecutionRecovery {attempts:{id:string;hash:string;reason:string}[];holds:{id:string;hash:string;reason:string;canAcknowledge:boolean}[]}
-function VerifiedSettlement({ review, revision, onDone }: { review: Review; revision: number; onDone: () => void }) {
+export function VerifiedSettlement({ review, revision, onDone }: { review: Review; revision: number; onDone: () => void }) {
   const [tokens, setTokens] = useState<number | ''>(review.tokens ?? ''), [cost, setCost] = useState<number | ''>(''), [reason, setReason] = useState(''), [busy, setBusy] = useState(false), [error, setError] = useState('');
   const pending = useRef<{path:string;body:Record<string,unknown>}>(), flight = useRef(false);
   const [awaiting,setAwaiting]=useState(false);

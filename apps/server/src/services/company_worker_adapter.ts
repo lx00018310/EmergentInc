@@ -164,29 +164,42 @@ export class CompanyWorkerAdapter {
     const lock=containedPath(this.directory(id),'runtime','instance.lock');
     if(fs.existsSync(lock)){const owner=JSON.parse(fs.readFileSync(lock,'utf8'));if(owner.schema!==1||owner.attemptId!==id||owner.fence!==this.execution.get(id).fence)ownerConflict('OWNER_WORKER_IDENTITY_CONFLICT');if(await this.alive(owner.pid,owner.birth))return false;}
     this.execution.adoptAfterExit(this.execution.get(id).runId);
-    const file=path.join(this.directory(id),'journal.sqlite3');let suspendedReason:string|undefined,checkpointSafe=false,unknownTool=false;
-    if(fs.existsSync(file)){
-      const journal=new SqliteDatabase(file,{readOnly:true});try{
-        const identity=journal.prepare('SELECT * FROM worker_identity WHERE id=1').get();if(identity?.schema!==1||identity.spec_hash!==this.journalSpecHash(id))ownerConflict('OWNER_WORKER_IDENTITY_CONFLICT');
-        for(const e of journal.prepare('SELECT * FROM worker_events ORDER BY sequence').all()){
-          const event:CompanyWorkerEvent={id:String(e.id),attemptId:id,fence:this.execution.get(id).fence,sequence:Number(e.sequence),kind:e.kind as CompanyWorkerEvent['kind'],payload:JSON.parse(String(e.payload_json))};
-          this.receipt(event);if(event.kind==='checkpoint'&&event.payload.suspended)suspendedReason=String(event.payload.reason);
-        }
-        for(const model of journal.prepare('SELECT * FROM worker_models').all())if(model.permit_id&&!model.response_json)this.execution.gate.models.failure(String(model.permit_id),model.state==='NOT_SENT');
-        for(const model of journal.prepare("SELECT * FROM worker_models WHERE state='PREPARED' AND permit_id IS NULL").all())for(const grant of this.db().prepare('SELECT g.permit_id,d.request_hash FROM company_worker_grants g JOIN company_model_dispatches d ON d.permit_id=g.permit_id WHERE g.attempt_id=? AND g.operation_id=?').all(id,model.operation_id)){
-          if(digest(JSON.parse(String(model.request_json)))!==grant.request_hash)ownerConflict('OWNER_WORKER_OPERATION_CONFLICT');this.execution.gate.models.failure(String(grant.permit_id),true);
-        }
-        for(const tool of journal.prepare("SELECT operation_id,tool FROM worker_tools WHERE state='STARTED'").all())if(tool.tool!=='save_artifact'){
-          const receipt=this.options.controllerToolReceipt?.(id,String(tool.operation_id));if(!receipt||receipt.operation_id!==tool.operation_id||receipt.tool!==tool.tool)unknownTool=true;
-        }
-        checkpointSafe=journal.prepare('SELECT terminal_json FROM worker_checkpoint WHERE id=1').get()?.terminal_json===null;
-      }finally{journal.close();}
+    const file=path.join(this.directory(id),'journal.sqlite3');let suspendedReason:string|undefined,checkpointSafe=false,unknownTool=false,journalFresh=false;
+    // A process killed inside journal creation can leave a file that a read-only connection
+    // cannot open on Windows. That is missing evidence, not a controller fault: converge with
+    // what the company ledger knows instead of failing the whole poll loop.
+    try{
+      if(fs.existsSync(file)){
+        const journal=new SqliteDatabase(file,{readOnly:true});try{
+          const identity=journal.prepare('SELECT * FROM worker_identity WHERE id=1').get();
+          if(!identity){journalFresh=true;}
+          else if(identity?.schema!==1||identity.spec_hash!==this.journalSpecHash(id))ownerConflict('OWNER_WORKER_IDENTITY_CONFLICT');
+          else for(const e of journal.prepare('SELECT * FROM worker_events ORDER BY sequence').all()){
+            const event:CompanyWorkerEvent={id:String(e.id),attemptId:id,fence:this.execution.get(id).fence,sequence:Number(e.sequence),kind:e.kind as CompanyWorkerEvent['kind'],payload:JSON.parse(String(e.payload_json))};
+            this.receipt(event);if(event.kind==='checkpoint'&&event.payload.suspended)suspendedReason=String(event.payload.reason);
+          }
+          for(const model of journal.prepare('SELECT * FROM worker_models').all())if(model.permit_id&&!model.response_json)this.execution.gate.models.failure(String(model.permit_id),model.state==='NOT_SENT');
+          for(const model of journal.prepare("SELECT * FROM worker_models WHERE state='PREPARED' AND permit_id IS NULL").all())for(const grant of this.db().prepare('SELECT g.permit_id,d.request_hash FROM company_worker_grants g JOIN company_model_dispatches d ON d.permit_id=g.permit_id WHERE g.attempt_id=? AND g.operation_id=?').all(id,model.operation_id)){
+            if(digest(JSON.parse(String(model.request_json)))!==grant.request_hash)ownerConflict('OWNER_WORKER_OPERATION_CONFLICT');this.execution.gate.models.failure(String(grant.permit_id),true);
+          }
+          for(const tool of journal.prepare("SELECT operation_id,tool FROM worker_tools WHERE state='STARTED'").all())if(tool.tool!=='save_artifact'){
+            const receipt=this.options.controllerToolReceipt?.(id,String(tool.operation_id));if(!receipt||receipt.operation_id!==tool.operation_id||receipt.tool!==tool.tool)unknownTool=true;
+          }
+          checkpointSafe=Boolean(journal.prepare('SELECT terminal_json FROM worker_checkpoint WHERE id=1').get()?.terminal_json===null);
+        }finally{journal.close();}
+      }else journalFresh=true;
+    }catch(e){
+      if(e instanceof Error&&['OWNER_WORKER_IDENTITY_CONFLICT','OWNER_WORKER_OPERATION_CONFLICT'].includes(e.message))throw e;
+      if(e instanceof Error&&['OWNER_ATTEMPT_TERMINAL','OWNER_RECEIPT_CONFLICT','OWNER_ATTEMPT_STALE'].includes(e.message))throw e;
+      journalFresh=true;unknownTool=false;checkpointSafe=false;
     }
     const a=this.execution.get(id),firstGranted=this.db().prepare('SELECT 1 FROM company_worker_grants WHERE permit_id=?').get(row.first_permit);
     if(!firstGranted)this.execution.gate.models.failure(String(row.first_permit),true);
     if(!terminal.has(a.state)){
       const unknown=this.db().prepare("SELECT 1 FROM company_attempt_permits x JOIN owner_model_permits p ON p.id=x.permit_id LEFT JOIN company_model_dispatches d ON d.permit_id=p.id WHERE x.attempt_id=? AND p.state IN ('SENT','UNKNOWN') AND d.response_json IS NULL").get(id);
-      if(unknown)this.execution.observe(a.runId,'blocked','CALL_OUTCOME_UNKNOWN',undefined,`worker-stop:${id}:${row.epoch}`);
+      // A worker killed before writing its identity proves no call or tool left the process.
+      if(journalFresh&&!firstGranted&&!unknownTool&&!unknown)this.execution.observe(a.runId,'failed','OWNER_WORKER_DIED_BEFORE_START',undefined,`worker-stop:${id}:${row.epoch}`);
+      else if(unknown)this.execution.observe(a.runId,'blocked','CALL_OUTCOME_UNKNOWN',undefined,`worker-stop:${id}:${row.epoch}`);
       else if(unknownTool)this.execution.observe(a.runId,'blocked','TOOL_OUTCOME_UNKNOWN',undefined,`worker-stop:${id}:${row.epoch}`);
       else if(row.reason&&!firstGranted&&!fs.existsSync(file))this.execution.observe(a.runId,'failed',String(row.reason),undefined,`worker-stop:${id}:${row.epoch}`);
       else if(!firstGranted&&!fs.existsSync(file)||suspendedReason&&suspendReasons.has(suspendedReason)||checkpointSafe)this.execution.observe(a.runId,'suspended',suspendedReason??'OWNER_CONTROLLER_DISCONNECTED',undefined,`worker-stop:${id}:${row.epoch}`);

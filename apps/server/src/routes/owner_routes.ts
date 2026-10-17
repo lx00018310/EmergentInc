@@ -58,6 +58,15 @@ export function registerOwnerRoutes(app:FastifyInstance, overview:OwnerOverviewS
     app.post<{Params:{id:string}}>('/owner/execution-recovery/:id/abandon',req=>work.recovery!.abandon(req.params.id,req.body));
     app.post<{Params:{id:string}}>('/owner/safety-holds/:id/acknowledge',req=>work.recovery!.acknowledge(req.params.id,req.body));
   }
+  if(work?.attention){
+    app.get<{Params:{id:string}}>('/owner/tasks/:id/actions',req=>work.attention!.actions(req.params.id));
+    app.post<{Params:{id:string}}>('/owner/tasks/:id/actions',req=>{
+      const b=req.body as any,action=String(b?.action??'');
+      if(action==='STOP_TASK')return work.attention!.stopTask(req.params.id,b);
+      if(action==='RETRY_TASK')return work.attention!.retryTask(req.params.id,b);
+      throw Object.assign(new Error('OWNER_ATTENTION_ACTION_UNKNOWN'),{statusCode:400});
+    });
+  }
   app.post('/owner/chat',async(req,reply)=>{
     const b=req.body as any;
     if(typeof b?.question!=='string'||!b.question.trim()||b.question.length>2000||!Array.isArray(b.history)||b.history.length>12||b.history.some((t:any)=>!t||!['user','assistant'].includes(t.role)||typeof t.content!=='string'||t.content.length>4000)||!['en','zh-CN'].includes(b.language))

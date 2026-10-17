@@ -1,40 +1,17 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { BossOverview, OwnerAutomation } from '../../../../packages/protocol/src/types/owner';
 import { apiRequest } from '../../api/client';
-import { executeOwnerAction, ownerError, ownerGoalRequest } from '../../api/owner';
+import { ownerError, ownerGoalRequest } from '../../api/owner';
 import { LanguageSwitch, t, useLanguage } from '../../i18n';
-import { CompanyProposalCard } from '../owner/CompanyProposalCard';
 import { ownerTime } from '../owner/ownerPresentation';
 import { BossChat, clearLegacyBossStorage } from './BossChat';
 import { BossBudget } from './BossBudget';
 import { BossPayment } from './BossPayment';
 import { BossRecovery } from './BossRecovery';
 import { BossCompany } from './BossCompany';
-import { projectBossAttention, sumUsdt, type BossAttentionSnapshot, type BossMessage, type BossMetric } from './bossAttention';
+import { BossAttentionCard } from './BossAttentionCard';
+import { projectBossAttention, sumUsdt, type BossAttentionSnapshot, type BossMetric } from './bossAttention';
 import './boss.css';
-
-function AttentionMessage({ message, onDone, onAction }: { message: BossMessage; onDone: () => void; onAction: (action: 'budget' | 'payment' | 'review' | 'model') => void }) {
-  const [busy, setBusy] = useState(false), [error, setError] = useState(''); const flight = useRef(false);
-  const item = message.inbox;
-  async function decide(approve: boolean) {
-    const proposal = item?.actions?.find(a => a.action.type === (approve ? 'recruit_approve' : 'recruit_reject'));
-    if (!proposal || flight.current) return; flight.current = true; setBusy(true); setError('');
-    try { await executeOwnerAction(proposal); onDone(); } catch (e) { setError(ownerError(e)); } finally { flight.current = false; setBusy(false); }
-  }
-  return <article className={'boss-message boss-message--' + message.priority}>
-    <small>{t(message.priority === 'critical' ? 'Needs attention' : message.priority === 'decision' ? 'Needs your decision' : 'Just completed')}</small>
-    <h3>{t(message.title)}</h3>
-    {message.reason && <p>{t(message.reason)}</p>}
-    {message.proposals?.map(proposal => <details key={proposal.id}><summary>{t('Review and decide')}</summary><CompanyProposalCard proposal={proposal} onDone={onDone} /></details>)}
-    {item && <><p>{item.summary}</p><details><summary>{t('Why this needs you')}</summary><p>{t(item.approveEffect ?? '')}</p><p>{t(item.rejectEffect ?? '')}</p><code>{item.id}</code></details>
-      <div className="boss-actions"><button disabled={busy} onClick={() => void decide(true)}>{t(busy ? 'Submitting…' : 'Approve')}</button><button disabled={busy} onClick={() => void decide(false)}>{t('Reject')}</button></div></>}
-    {message.action && <button onClick={() => onAction(message.action!)}>{t(message.action === 'budget' ? 'Authorize company budget' : message.action === 'payment' ? 'Configure payments' : 'Configure a model')}</button>}
-    {message.alert && <details><summary>{t('View details')}</summary><p>{message.alert.summary}</p><p>{t(message.alert.reasonKey ?? '')}</p><code>{message.alert.id}</code>
-      {message.priority === 'critical' && <button onClick={() => onAction('review')}>{t('Review unresolved calls')}</button>}</details>}
-    {message.reference && <details><summary>{t('Evidence reference')}</summary><code>{message.reference}</code></details>}
-    {!!error && <p role="alert">{error}</p>}
-  </article>;
-}
 
 export function BossConsole() {
   useLanguage();
@@ -95,7 +72,7 @@ export function BossConsole() {
       {attention?.view === 'critical' && <p className="boss-muted">{t('Critical incident view')} · {t('Verified revenue')}: {data ? sumUsdt(data.revenue) : '—'} USDT</p>}
     </section>
     <section className="boss-attention" aria-label={t('What needs your attention')}><h2>{t('What needs your attention')}</h2>
-      {attention?.messages.map(message => <AttentionMessage key={message.entityId} message={message} onDone={() => void refresh(true)} onAction={setModal} />)}
+      {attention?.messages.map(message => <BossAttentionCard key={message.entityId} message={message} revision={automation?.revision ?? 0} onDone={() => void refresh(true)} onAction={setModal} />)}
       {attention && !attention.messages.length && <p className="boss-quiet">{t(data?.automation?.desiredMode === 'ON' ? 'Nothing needs your attention. The company is following its goals.' : 'Nothing needs your attention. The company is paused.')}</p>}
       {!!attention?.overflowCount && <button className="boss-overflow" onClick={() => setModal('overflow')}>{t('{0} more items need attention', [attention.overflowCount])}</button>}
     </section>
@@ -107,7 +84,7 @@ export function BossConsole() {
       {modal === 'payment' && <><h2>{t('Configure receive-only payments')}</h2><BossPayment onDone={() => { setModal(undefined); void refresh(true); }} /></>}
       {modal === 'model' && <><h2>{t('Configure a model')}</h2><p>{t('Configure provider credentials, the model and its CNY pricing in deployment settings, then restart the approved service. Never paste credentials into chat.')}</p><p>{t('No provider call is sent while the company is paused.')}</p></>}
       {modal === 'review' && automation && <><h2>{t('Review unresolved calls')}</h2><BossRecovery revision={automation.revision} onDone={() => void refresh(true)} /></>}
-      {modal === 'overflow' && attention?.overflow.map(message => <AttentionMessage key={message.id} message={message} onDone={() => void refresh(true)} onAction={setModal} />)}
+      {modal === 'overflow' && attention?.overflow.map(message => <BossAttentionCard key={message.id} message={message} revision={automation?.revision ?? 0} onDone={() => void refresh(true)} onAction={setModal} />)}
       {typeof modal === 'object' && <><h2>{t('Boss metric: ' + modal.id)}</h2><p>{modal.value} {modal.unit}</p><p>{t(modal.reason)}</p>{modal.references.map(reference => <p key={reference}><code>{reference}</code></p>)}{modal.id === 'budget' && <button onClick={() => setModal('budget')}>{t('Authorize company budget')}</button>}</>}
     </section></div>}
   </main>;

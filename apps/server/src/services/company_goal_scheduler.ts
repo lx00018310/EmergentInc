@@ -38,6 +38,9 @@ export class CompanyGoalScheduler {
         this.finish(String(d.id),'CANCELLED','OWNER_GOAL_PERMISSION_CHANGED');continue;
       }
       if(goal.status==='PAUSED'||!task)continue;
+      // A task reset to QUEUED by an owner retry waits for a fresh attempt; the previous
+      // terminal attempt is history and must not converge the dispatch again.
+      if(task.state==='QUEUED'&&(!a||['FAILED','BLOCKED','INTERRUPTED'].includes(a.state)))continue;
       if(!a){if(task.state==='BLOCKED'){this.finish(String(d.id));goals.state(goal.id,'BLOCKED',String(task.reason));}continue;}
       if(['DISPATCH_PENDING','RUNNING'].includes(a.state)){if(goal.status==='READY')goals.state(goal.id,'RUNNING');continue;}
       if(a.state==='SUSPENDED')continue;

@@ -17,6 +17,7 @@ import { BUILTIN_DEFINITIONS } from '@emergentinc/tools';
 import type { PaymentService } from './payment_service.js';
 import { CompanyLegacyAdapter } from './company_legacy_adapter.js';
 import {CompanyRecoveryService} from './company_recovery_service.js';
+import {CompanyAttentionService} from './company_attention_service.js';
 import {COMPANY_WORKER_MAX_OUTPUT_TOKENS} from '../execution/company_worker_protocol.js';
 
 const digest = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
@@ -31,6 +32,7 @@ export class OwnerWorkService {
   companyTools?:CompanyToolService;
   legacy?:CompanyLegacyAdapter;
   recovery?:CompanyRecoveryService;
+  attention?:CompanyAttentionService;
   products?: OwnerProductService;
   readonly code?: AppCodeService;
   private gateway: QianjiWorldGateway;
@@ -67,6 +69,7 @@ export class OwnerWorkService {
     },controllerTool:(id,key,name,args)=>this.companyTools!.execute(id,key,name,args),controllerToolReceipt:(id,key)=>this.companyTools!.receipt(key,id),artifact:(...args)=>this.artifacts.record(...args)});
     gate.addSuspend(()=>this.worker!.disconnectAll());
     this.recovery=new CompanyRecoveryService(gate,this.worker);
+    this.attention=new CompanyAttentionService(gate,this,this.worker);
   }
   start() { this.closed=false; const poll=()=>{void this.tick().catch(e=>{this.schedulerError=e instanceof Error?e.message:String(e);this.closed=true;if(this.timer)clearInterval(this.timer);});};this.timer=setInterval(poll,1000);this.timer.unref();poll(); }
   async close() { this.closed=true; if(this.timer)clearInterval(this.timer); await this.ticking;await this.worker?.close(); }

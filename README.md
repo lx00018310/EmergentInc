@@ -18,7 +18,7 @@ Open **`http://127.0.0.1:8765/BOSS`** and sign in with the Owner secret.
 
 - Start or pause the company. A manual pause survives restarts.
 - See exactly three metrics selected from persisted company facts.
-- Review at most three important messages; further pending decisions remain accessible in a temporary dialog.
+- Review at most three important messages, ranked by a deterministic fact score (blocking, risk, urgency, impact, wait); each card completes its own decision in place - approve, verify charges, stop or safely retry one task - without touching unrelated work.
 - Give goals and decisions through one conversation input.
 - **Inspect Company** shows goals, acceptance rules, task reports, deliverables, workers, products and orders, with access to budget, payment and recovery settings.
 

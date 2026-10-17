@@ -19,6 +19,48 @@ export function sumUsdt(rows: BossOverview['revenue']): string {
   return (atomic / 1000000000000000000n).toString() + (atomic % 1000000000000000000n ? '.' + (atomic % 1000000000000000000n).toString().padStart(18, '0').replace(/0+$/, '') : '');
 }
 const rank = { critical: 0, decision: 1, milestone: 2 };
+
+/**
+ * V35 attention priority (0-100) from verified server facts only, per
+ * BOSS_INTERACTIVE_ATTENTION_CHANGE_SPEC.md §4. B blocks 35 + R risk 25 + U urgency 20 +
+ * I impact 15 + W wait 5. No model scoring; missing deadlines never become 1970.
+ */
+export function attentionPriority(message: Pick<BossMessage, 'priority' | 'alert' | 'inbox' | 'action' | 'proposals' | 'at'>, now: number): { score: number; unknownTime: boolean } {
+  const reason = message.alert?.reasonKey ?? '';
+  const blockingCompany = message.action === 'budget' || reason === 'OWNER_COMPANY_BUDGET_REQUIRED' || reason === 'OWNER_COMPANY_BUDGET_EXHAUSTED'
+    || reason === 'OWNER_OUTCOME_REVIEW_REQUIRED' || reason === 'OWNER_SCHEDULER_FAILED' || reason === 'OWNER_PROVIDER_USAGE_EXCEEDED_RESERVATION';
+  const paidOrderAtRisk = message.alert?.kind === 'product' || reason === 'OWNER_PUBLICATION_OUTCOME_UNKNOWN';
+  const externalUnknown = reason === 'TOOL_OUTCOME_UNKNOWN' || reason === 'OWNER_PUBLICATION_OUTCOME_UNKNOWN';
+  const chargeUnknown = reason === 'CALL_OUTCOME_UNKNOWN' || message.alert?.kind === 'run';
+  let B = 0;
+  if (blockingCompany) B = 35;
+  else if (paidOrderAtRisk || message.priority === 'critical') B = 25;
+  else if (message.inbox || message.proposals || message.action === 'payment' || message.action === 'model') B = 15;
+  let R = 0;
+  if (reason === 'OWNER_PROVIDER_USAGE_EXCEEDED_RESERVATION') R = 25;
+  else if (externalUnknown) R = 15;
+  else if (chargeUnknown) R = 8;
+  // First-needs-attention time: the alert row when present, else the candidate time. Zero stays unknown.
+  const firstAt = Number(message.alert?.createdAt ?? message.at ?? 0) > 0 ? Number(message.alert?.createdAt ?? message.at) : Number(message.at ?? 0);
+  const unknownTime = !(firstAt > 0);
+  const age = unknownTime ? 0 : Math.max(0, now - firstAt);
+  // Urgency only counts a verified business deadline; this projection carries none, so U stays 0
+  // rather than inventing one from the event age. Unknown time never becomes 1970.
+  const U = 0;
+  let I = 0;
+  const affectedGoals = new Set<string>([
+    ...(message.alert?.goalId ? [message.alert.goalId] : []),
+    ...message.proposals?.map(p => p.goalId).filter((g): g is string => Boolean(g)) ?? [],
+    ...(message.inbox?.id.startsWith('recruit:') ? [message.inbox.id] : []),
+  ]);
+  if (blockingCompany) I = 15;
+  else if (affectedGoals.size >= 3) I = 10;
+  else if (affectedGoals.size === 2) I = 6;
+  else if (affectedGoals.size) I = 3;
+  const W = unknownTime ? 0 : Math.min(5, Math.floor(age / (6 * 60 * 60 * 1000)));
+  return { score: Math.min(100, B + R + U + I + W), unknownTime };
+}
+
 /** Pure facts-to-attention projection. Refreshes cannot manufacture progress or dismiss decisions. */
 export function projectBossAttention(data: BossOverview, previous?: BossAttentionSnapshot): BossAttentionSnapshot {
   const candidates: BossMessage[] = [];
@@ -30,9 +72,12 @@ export function projectBossAttention(data: BossOverview, previous?: BossAttentio
   if (!data.modelConfigured) candidates.push({ id: 'model:configure', entityId: 'model', priority: 'decision', at: 0, title: 'Configure a model', action: 'model' });
   const pending = new Set(candidates.map(m => m.entityId));
   for (const event of data.events.filter(e => data.asOf - e.at < 24 * 60 * 60 * 1000)) if (!pending.has(event.reference)) candidates.push({ id: event.id, entityId: event.reference, priority: 'milestone', at: event.at, title: event.kind === 'payment' ? 'Verified payment received' : event.kind === 'product' ? 'Verified product published' : 'Verified goal completed', reference: event.reference });
-  candidates.sort((a, b) => rank[a.priority] - rank[b.priority] || (a.proposals ? -1 : 0) - (b.proposals ? -1 : 0) || a.at - b.at || a.id.localeCompare(b.id));
+  // Decisions and blockers outrank milestones for the three seats; milestones still render when seats are free.
+  const ranked = candidates.filter(m => m.priority !== 'milestone').map(m => ({ message: m, ...attentionPriority(m, data.asOf) }));
+  for (const milestone of candidates.filter(m => m.priority === 'milestone')) ranked.push({ message: milestone, score: 0, unknownTime: true });
+  ranked.sort((a, b) => rank[a.message.priority] - rank[b.message.priority] || b.score - a.score || a.message.at - b.message.at || a.message.id.localeCompare(b.message.id));
   const entities = new Map<string, BossMessage>();
-  for (const candidate of candidates) {
+  for (const { message: candidate } of ranked) {
     const current = entities.get(candidate.entityId);
     if (!current) entities.set(candidate.entityId, { ...candidate });
     else if (candidate.proposals) current.proposals = [...new Map([...(current.proposals ?? []), ...candidate.proposals].map(p => [p.id, p])).values()];
