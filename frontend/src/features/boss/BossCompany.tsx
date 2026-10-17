@@ -19,6 +19,11 @@ export function BossCompany({ onAction }: { onAction: (action: 'budget' | 'payme
   }
   return <>
     <h2>{t('Inspect Company')}</h2>
+    <nav className="boss-entries" aria-label={t('Company entrances')}>
+      <a href="/" target="_blank" rel="noopener noreferrer">{t('Storefront')}</a>
+      <a href="/#orders" target="_blank" rel="noopener noreferrer">{t('Order lookup')}</a>
+      <a href="/#support" target="_blank" rel="noopener noreferrer">{t('Support')}</a>
+    </nav>
     <div className="boss-actions">
       <button onClick={() => onAction('budget')}>{t('Authorize company budget')}</button>
       <button onClick={() => onAction('payment')}>{t('Configure payments')}</button>
