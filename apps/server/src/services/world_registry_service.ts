@@ -5,6 +5,17 @@ import { WorldRegistryStore, CoreStore, CurrentStore, LineageStore } from '@emer
 import { QianjiNarrativeSpec, lifeId } from '@emergentinc/protocol';
 import { containedPath } from './safe_path.js';
 
+/** Windows directory renames fail transiently with EPERM while antivirus/indexers hold the fresh handle. */
+function renameDirectoryWithRetry(from: string, to: string) {
+  for (let attempt = 0; ; attempt++) {
+    try { fs.renameSync(from, to); return; }
+    catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'EPERM' || attempt >= 5) throw error;
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 50 * (attempt + 1));
+    }
+  }
+}
+
 export class WorldRegistryService {
   constructor(readonly workspace: string, readonly control: WorldRegistryStore, readonly lineage: LineageStore, readonly interfaceVersion: string,readonly activePointer=path.join(workspace,"system/active-generation.json")) {}
   directory(id: string) { lifeId(id); const row = this.control.world(id); return containedPath(this.workspace,...row.workspace_relpath.split('/')); }
@@ -45,7 +56,7 @@ export class WorldRegistryService {
       current=new CurrentStore(path.join(temporary,'generations',String(generation.id),'current.sqlite3')); current.initialize(generation,this.interfaceVersion); current.close();current=undefined;
       fs.mkdirSync(path.join(temporary,'generations',String(generation.id),'body/skills'),{recursive:true});
       fs.writeFileSync(path.join(temporary,'world.json'),JSON.stringify({world_id:worldId,qianji_id:qianjiId,created_generation:generation.id})); core.close();core=undefined;
-      fs.renameSync(temporary,directory);
+      renameDirectoryWithRetry(temporary,directory);
       this.control.transaction(()=>{
         if(!options.existingProfile) this.control.qianji.createProfile({qianjiId,narrative,careerStatus:'active',birthIdentity:options.birthIdentity});
         this.control.insertWorld({world_id:worldId,qianji_id:qianjiId,status:'ACTIVE',workspace_relpath:`worlds/${worldId}`,gateway_pixel_id:pixelId,created_at:Date.now(),archived_at:null});
