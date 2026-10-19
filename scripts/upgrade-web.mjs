@@ -230,7 +230,7 @@ export async function createUpgradeWeb({ root, config, secret, runCommand = runU
     const activeSource=state=>state.candidates.find(c=>c.id===state.active?.release_id)?.request.owner_release?.source_commit;
     if(body.action==='switch'){
       if(body.expectedActive!==current.active?.id)return reply.status(409).send({detail:'UPGRADE_CANDIDATE_CONFLICT'});
-      try{switchPlan=inspectSwitch(root,body.sourceCommit,body.expectedMain,body.mode);}catch(error){recordPipelineFailure(body.sourceCommit,'merge',error.message);return reply.status(409).send({detail:error.message});}
+      try{switchPlan=inspectSwitch(root,body.sourceCommit,body.expectedMain,body.mode);}catch(error){recordPipelineResult(body.sourceCommit,'merge',error.message);return reply.status(409).send({detail:error.message});}
       if(switchPlan.mode==='merge'&&activeSource(current)===switchPlan.main&&isAncestor(root,switchPlan.sourceCommit,switchPlan.main))return reply.status(409).send({detail:'GIT_ALREADY_INCLUDED'});
     }else if(body.action==='delete-branch'){
       if(body.expectedActive!==current.active?.id||body.expectedMain!==git(root,['rev-parse','refs/heads/main']))return reply.status(409).send({detail:'UPGRADE_CANDIDATE_CONFLICT'});
