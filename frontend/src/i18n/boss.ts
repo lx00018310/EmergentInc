@@ -135,7 +135,13 @@ const entries: [string, string, string?][] = [
   ['Payment chain','收款链'], ['Mainnet recipient address','主网收款地址'], ['Enable receive-only payments','启用只收款'], ['Payment settings saved.','收款设置已保存。'], ['Confirm verified usage','确认已核验用量'], ['Verified tokens','已核验 Tokens'], ['Verified cost (CNY)','已核验费用（人民币）'], ['Receipt and verification reason','回执与核验依据'], ['Record verified settlement','记录已核验结算'], ['Acknowledge and stop uncertain work','确认并停止结果未明的工作'], ['No unresolved calls remain.','目前没有未决调用。'], ['This records verified usage; it does not prove delivery or retry an external operation.','这里只记录已核验用量，不代表已交付，也不会重试外部操作。'], ['No provider call is sent while the company is paused.','公司暂停时不会发起模型调用。'], ['Verification data unavailable. Retry before deciding.','暂时无法读取核验数据，请重试后再决定。'],
   ['Automatic window ends at {0}','本轮自动执行截止：{0}'],
   ['The automatic window starts with execution.','自动执行时限从实际执行时开始。'],
-  ['Company entrances','公司入口'], ['Storefront','门店前台']
+  ['Company entrances','公司入口'], ['Storefront','门店前台'],
+  ['Company cards','公司卡片'], ['Waiting for the boss to develop cards.','等待老板开发卡片。'],
+  ['Open details','打开详情'], ['Back to cards','返回卡片'], ['Hide card','隐藏卡片'], ['Show card','显示卡片'], ['Rollback card','回滚卡片'],
+  ['Hidden card library','隐藏卡片库'], ['PLUGIN_CARD_UNAVAILABLE','卡片暂不可用。','This card is unavailable.'],
+  ['PLUGIN_CARD_INCOMPATIBLE','当前主程序与此卡片版本不兼容，卡片已停用；代码和数据保留。','The current host is incompatible with this card version. The card is disabled; its code and data are retained.'],
+  ['UNSUPPORTED_BRIDGE_REQUEST','该桥接请求不受支持。','This bridge request is not supported.'],
+  ['Company card 001','卡片 001','Card 001']
 ];
 export const bossEnglish: Record<string,string> = Object.fromEntries(entries.map(([key,,en]) => [key,en ?? key]));
 export const bossChinese: Record<string,string> = Object.fromEntries(entries.map(([key,zh]) => [key,zh]));

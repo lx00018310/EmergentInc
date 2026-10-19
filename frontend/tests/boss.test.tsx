@@ -109,13 +109,13 @@ it.each(['en','zh-CN'] as const)('inspects actual company records and keeps sett
 });
 it.each(['en','zh-CN'] as const)('distinguishes delivery and retained accounting reservations in %s',async language=>{
   setLanguage(language);const task=flowWork({state:'REPLIED',reply:'Actual delivery',attempt:{id:'attempt-a',taskId:'work-a',worldId:'world-a',goalId:'goal-a',goalRevision:1,dispatchId:'dispatch-a',runId:'run-a',fence:1,revision:3,state:'COMPLETED',accountingState:'PENDING',leaseOwner:'controller',leaseExpiresAt:20,lastSequence:2,reason:null,createdAt:10,updatedAt:20}});
-  vi.spyOn(globalThis,'fetch').mockResolvedValue(response(flowOverview({work:{tasks:[task],requests:[],codeReports:[]}})));render(<BossCompany onAction={()=>{}}/>);
+  vi.spyOn(globalThis,'fetch').mockImplementation(async url=>String(url).includes('plugins/cards')?response({items:[]}):response(flowOverview({work:{tasks:[task],requests:[],codeReports:[]}})));render(<BossCompany onAction={()=>{}}/>);
   await screen.findByText(language==='en'?'Execution result: Completed · Cost accounting: Pending verification; reservation retained':'执行结果: 执行完成 · 费用结算: 费用待核实，预留保留');
   expect(screen.getByText('Actual delivery')).toBeTruthy();
 });
 it.each(['en','zh-CN'] as const)('shows a suspended worker and retained progress in %s',async language=>{
   setLanguage(language);const task=flowWork({state:'BLOCKED',reason:'OWNER_GOAL_PAUSED',attempt:{id:'attempt-paused',taskId:'work-a',worldId:'agent-a',goalId:'goal-a',goalRevision:1,dispatchId:'dispatch-a',runId:'run-a',fence:1,revision:3,state:'SUSPENDED',accountingState:'SETTLED',leaseOwner:'controller',leaseExpiresAt:20,lastSequence:2,reason:'OWNER_GOAL_PAUSED',createdAt:10,updatedAt:20}});
-  vi.spyOn(globalThis,'fetch').mockResolvedValue(response(flowOverview({work:{tasks:[task],requests:[],codeReports:[]}})));render(<BossCompany onAction={()=>{}}/>);
+  vi.spyOn(globalThis,'fetch').mockImplementation(async url=>String(url).includes('plugins/cards')?response({items:[]}):response(flowOverview({work:{tasks:[task],requests:[],codeReports:[]}})));render(<BossCompany onAction={()=>{}}/>);
   await screen.findByText(language==='en'?'Execution result: Suspended; progress retained · Cost accounting: Settled':'执行结果: 执行已暂停，保留进度 · 费用结算: 已结算');
   expect(screen.getByText(language==='en'?'This goal is paused; execution progress is retained.':'该目标已暂停，执行进度已保留。')).toBeTruthy();
 });

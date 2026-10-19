@@ -6,6 +6,7 @@ import { language, t, useLanguage } from '../../i18n';
 import { OwnerMarkdown } from '../owner/OwnerMarkdown';
 import { ownerStatusLabel } from '../owner/ownerPresentation';
 import {BossNodeProgress} from './BossNodeProgress';
+import { BossPluginCards } from './BossPluginCards';
 
 export function BossCompany({ onAction }: { onAction: (action: 'budget' | 'payment' | 'review' | 'model') => void }) {
   useLanguage();
@@ -31,6 +32,7 @@ export function BossCompany({ onAction }: { onAction: (action: 'budget' | 'payme
       <button onClick={() => onAction('review')}>{t('Review unresolved calls')}</button>
       <button onClick={() => onAction('model')}>{t('Configure a model')}</button>
     </div>
+    <BossPluginCards />
     {!!error && <p role="alert">{error} <button onClick={() => void refresh()}>{t('Retry')}</button></p>}
     {!data && !error && <p>{t('Waiting for verified data')}</p>}
     {data && <>

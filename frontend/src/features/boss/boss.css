@@ -42,3 +42,9 @@
 .boss-stage textarea { min-height: 5rem; }
 .boss-stage label.boss-stage-check { display: flex; align-items: baseline; }
 .boss-stage-check input[type=checkbox] { width: auto; }
+/* V36 公司插件卡片:响应式网格 + 沙箱 iframe + 隐藏库入口,390px 宽度无横向溢出 */
+.boss-plugin-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:14px;margin:12px 0}
+.boss-plugin-card{border:1px solid #e5e5e5;border-radius:10px;padding:12px;min-width:0;display:flex;flex-direction:column;gap:8px}
+.boss-plugin-card header{font-size:14px}.boss-plugin-card footer{display:flex;gap:8px;flex-wrap:wrap}
+.boss-plugin-frame{width:100%;height:260px;border:1px solid #eee;border-radius:8px;background:#fff}
+@media(max-width:700px){.boss-plugin-grid{grid-template-columns:1fr}.boss-plugin-frame{height:220px}}

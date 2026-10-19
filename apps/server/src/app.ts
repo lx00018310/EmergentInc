@@ -10,6 +10,8 @@ import { registerPublicRoutes } from './routes/public_routes.js';
 import { OwnerOverviewService } from './services/owner_overview_service.js';
 import { OwnerChatService } from './services/owner_chat_service.js';
 import { registerOwnerRoutes } from './routes/owner_routes.js';
+import { registerPluginRoutes } from './routes/plugin_routes.js';
+import { CompanyPluginService } from './services/company_plugin_service.js';
 import { OwnerWorkService } from './services/owner_work_service.js';
 import { OwnerAutomationGate } from './services/owner_automation_gate.js';
 import { OwnerGoalScheduler } from './services/owner_goal_scheduler.js';
@@ -55,6 +57,7 @@ export async function createServer(options: CreateServerOptions): Promise<Fastif
   await app.register(async api => {
     await registerWorldRoutes(api, {...options.worlds,ownerWork:work});
     registerOwnerRoutes(api, overview, chat, work, gate, options.maintenance);
+    registerPluginRoutes(api, new CompanyPluginService(manager.registry.control, options.workspaceRoot));
     if (options.maintenance) {
       api.post('/maintenance/quiesce', async () => { await options.maintenance!.quiesce(); return { quiesced: true }; });
       api.post('/maintenance/resume', async () => { await options.maintenance!.resume(); return { quiesced: false }; });
