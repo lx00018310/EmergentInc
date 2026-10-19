@@ -9,8 +9,9 @@ import type { OwnerAutomationGate } from '../services/owner_automation_gate.js';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { createHash } from 'node:crypto';
+import type { CompanyPluginService } from '../services/company_plugin_service.js';
 
-export function registerOwnerRoutes(app:FastifyInstance, overview:OwnerOverviewService, chat?:OwnerChatService, work?:OwnerWorkService, gate?:OwnerAutomationGate, maintenance?:{quiesced?:()=>boolean;switching?:()=>boolean;resume?:()=>Promise<void>}){
+export function registerOwnerRoutes(app:FastifyInstance, overview:OwnerOverviewService, chat?:OwnerChatService, work?:OwnerWorkService, gate?:OwnerAutomationGate, maintenance?:{quiesced?:()=>boolean;switching?:()=>boolean;resume?:()=>Promise<void>}, plugins?:CompanyPluginService){
   const assertModelReady=()=>{
     if(!work)return;
     if(!work.manager.options.isModelConfigured)throw Object.assign(new Error('MODEL_NOT_CONFIGURED'),{statusCode:409});
@@ -124,6 +125,18 @@ export function registerOwnerRoutes(app:FastifyInstance, overview:OwnerOverviewS
         const updated=gate.goals.action(goal.id,{action,expectedRevision:goal.revision,idempotencyKey:controlKey});return response(say('任务状态已更新。','The task state is updated.'),{createdGoal:updated});
       }
       const budget=gate.budget.view(),automation=gate.view();
+      // Deterministic card-management commands: exact verb + strict card id only; never guesses by title.
+      if(plugins&&b.requestKey){
+        const card=command.match(/^(?:显示|恢复|移除|隐藏|回滚)\s*(?:卡片\s*)?(\d{3,})(?:\s*卡片)?$|^(?:show|restore|remove|hide|rollback)\s+card\s+(\d{3,})$/i);
+        if(card){const id=card[1]??card[2]!,verb=/^(?:显示|恢复|show|restore)/i.test(card[0]!)?'show':/^(?:移除|隐藏|remove|hide)/i.test(card[0]!)?'hide':'rollback';
+          const target=plugins.cards().find(c=>c.id===id);
+          if(!target)return response(say(`没有编号为 ${id} 的卡片。`,'No card numbered '+id+' exists.'));
+          const updated=plugins.action(id,{action:verb,expectedRevision:target.revision,idempotencyKey:`chat_${controlKey}`});
+          const message=verb==='hide'?say(`卡片 ${id} 已隐藏；代码与后台工作不受影响。`,'Card '+id+' is hidden; its code and background work are unaffected.'):
+            verb==='show'?say(`卡片 ${id} 已显示。`,'Card '+id+' is visible again.'):
+            say(`卡片 ${id} 已回滚到上一个已验证版本 ${updated.activeHash?.slice(0,8)??''}。`,`Card ${id} rolled back to the last verified version ${updated.activeHash?.slice(0,8)??''}.`);
+          return response(message,{card:updated});}
+      }
       if(/^(?:公司状态|任务进度|查看任务|查看预算|company status|task status|show budget)$/i.test(command)||budget.availableMicros===0||budget.needsRefill||automation.reason==='OWNER_OUTCOME_REVIEW_REQUIRED'){
         const goals=gate.goals.list(),active=goals.filter(g=>!['COMPLETED','PARTIALLY_COMPLETED','STOPPED','ARCHIVED'].includes(g.status));
         const statuses:Record<string,[string,string]>={DRAFT:['待批准','Awaiting approval'],READY:['待执行','Queued'],RUNNING:['执行中','Running'],WAITING_APPROVAL:['待验收','Awaiting acceptance'],WAITING_RESOURCE:['等待条件','Waiting for a condition'],PAUSED:['已暂停','Paused'],BLOCKED:['需要跟进','Needs follow-up'],FAILED:['需要跟进','Needs follow-up']};

@@ -20,7 +20,13 @@ Open **`http://127.0.0.1:8765/BOSS`** and sign in with the Owner secret.
 - See exactly three metrics selected from persisted company facts.
 - Review at most three important messages, ranked by a deterministic fact score (blocking, risk, urgency, impact, wait); each card completes its own decision in place - approve, verify charges, stop or safely retry one task - without touching unrelated work.
 - Give goals and decisions through one conversation input.
-- **Inspect Company** shows goals, acceptance rules, task reports, deliverables, workers, products and orders, with access to budget, payment and recovery settings.
+- **Inspect Company** shows the numbered AI-developed card grid (empty until the boss asks for one), plus goals, task reports, deliverables, workers, products and orders, with access to budget, payment and recovery settings.
+
+## Company cards (V36)
+
+Cards are AI-developed, individually numbered views (`001`, `002`, …) hosted by the company, not a marketplace. Say "develop a marketing card and show it in Inspect Company" in the boss chat: the request goes through the existing Goal → Plan → Task → Worker path, the worker saves verified artifacts, and the `SUBMIT_PLUGIN_CANDIDATE` tool registers an immutable, hash-addressed plugin version. A card activates automatically only when this exact owner request authorized a read-only build; anything else stays a hidden candidate awaiting approval.
+
+Card commands in chat are deterministic and never call the model: `移除 001 卡片` / `hide card 001` (UI only; background work continues), `显示 001` / `show card 001`, `回滚 001` / `rollback card 001` (switches to the last verified version). Card pages run in sandboxed iframes (`allow-scripts` only) and read data exclusively through a host bridge that enforces per-plugin, owner-granted read scopes (`company.summary@1`, `goals.summary@1`, `tasks.summary@1`); no credentials, raw overview, SQL, files or network access ever reach a card. Versions live under `workspace/assets/plugins/<pluginId>/versions/<sha256>/` with the registry in the company control database, and both survive upgrades and compatible rollbacks.
 
 The public storefront remains at `/`. Retired owner URLs redirect to `/BOSS`; the old workbenches and APIs have been removed.
 

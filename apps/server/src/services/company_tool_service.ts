@@ -10,12 +10,13 @@ import { listSkills, readSkill, parseSkillMarkdown } from './skill_library.js';
 import { exactKeys, ownerConflict, ownerInput } from './owner_goal_service.js';
 import { companyFactHash } from './company_fact_hash.js';
 import { readGeneCatalog,loadGeneAsset } from './gene_catalog.js';
+import type { CompanyPluginService } from './company_plugin_service.js';
 
 interface Dependencies {
   gate:OwnerAutomationGate;agents:CompanyAgentService;artifacts:CompanyArtifactService;
   recruit:(input:{role:string;reason:string;instruction:string},requester:string,key:string)=>OwnerRecruitRequest;
   code?:AppCodeService;payments?:PaymentService;release?:ReleaseMaintenanceClient;
-  projectRoot?:string;contracts:Record<string,unknown>;
+  projectRoot?:string;contracts:Record<string,unknown>;plugins?:CompanyPluginService;
 }
 /** Typed company commands with durable receipts. Workers cannot mutate company tables directly. */
 export class CompanyToolService {
@@ -88,12 +89,44 @@ export class CompanyToolService {
       register('SUBMIT_APP_CODE','Submit a private candidate and Owner report; no publication / 提交私有候选与老板报告，不发布。','write',{title:{type:'string'},summary:{type:'string'},files:{type:'array',items:{type:'object',properties:{path:{type:'string'},content:{type:['string','null']},baseHash:{type:['string','null']}},required:['path','content','baseHash'],additionalProperties:false}}},['title','summary','files'],(actor,_id,key,args)=>dependencies.code!.submit(actor,'0_0_0',args,key));
     }
     if(dependencies.payments)register('LIST_PAYMENT_RAILS','List configured receive-only USDT rails / 列出已配置的 USDT 只收款通道。','read',{},[],()=>dependencies.payments!.rails().filter(r=>r.status==='ENABLED').map(r=>({rail_id:r.rail_id,chain:r.chain,asset:r.asset,mint:r.mint,decimals:r.decimals,recipient_address:r.recipient_address})));
+    if(dependencies.plugins)register('SUBMIT_PLUGIN_CANDIDATE','Submit verified card artifacts as an exact plugin version; activation requires this goal to carry the owner plugin-build intent / 提交已核验卡片产物为准确插件版本；激活要求本目标携带老板的插件构建授权。','write',
+      {pluginId:{type:'string'},version:{type:'string'},title:{type:'string'},titleZh:{type:'string'},viewKey:{type:'string'},cardTitle:{type:'string'},cardTitleZh:{type:'string'},
+       files:{type:'array',items:{type:'object',properties:{name:{type:'string'},artifact:{type:'string'}},required:['name','artifact'],additionalProperties:false}},activate:{type:'boolean'},expectedRevision:{type:'integer'}},
+      ['pluginId','version','title','titleZh','viewKey','cardTitle','cardTitleZh','files','activate'],(actor,id,key,args)=>this.submitPluginCandidate(actor,id,key,args));
     if(dependencies.release){
       register('LIST_RELEASE_VERSIONS','Read release metadata; no maintenance authority / 读取版本信息，不授予维护权限。','read',{},[],()=>dependencies.release!.list());
       for(const name of ['ROLLBACK_RELEASE','DELETE_RELEASE'])register(name,'Separate exact Owner maintenance approval is required / 必须由老板单独批准准确维护操作。','write',{},[],()=>ownerConflict('OWNER_MAINTENANCE_APPROVAL_REQUIRED'));
     }
   }
   catalog(){return [...this.definitions.values()];}
+  /** Verifies Attempt→Goal→owner plugin-build intent, copies verified artifacts only, then installs via the plugin host. */
+  private submitPluginCandidate(actor:string,attemptId:string,key:string,args:any) {
+    const {gate,artifacts,plugins}=this.dependencies,a=gate.execution!.get(attemptId),db=gate.store.db;
+    if(!plugins)ownerConflict('PLUGIN_HOST_UNAVAILABLE');
+    if(!a.goalId||!a.goalRevision)ownerConflict('PLUGIN_BUILD_NOT_AUTHORIZED');
+    const goal=gate.goals.get(a.goalId);
+    if(goal.specificationRevision!==a.goalRevision||['STOPPED','ARCHIVED'].includes(goal.status))ownerConflict('OWNER_GOAL_PERMISSION_CHANGED');
+    const plan=gate.proposals.plans.get(a.goalId);
+    // Unapproved goals may not submit anything; approved goals without the exact owner intent may only store a hidden candidate.
+    const authorized=Boolean(plan?.approved)&&db.prepare("SELECT 1 FROM owner_goal_events WHERE goal_id=? AND revision=? AND kind='plugin_build_intent'").get(a.goalId,a.goalRevision);
+    if(!plan?.approved)ownerConflict('PLUGIN_BUILD_NOT_AUTHORIZED');
+    ownerInput(typeof args.pluginId==='string'&&typeof args.version==='string'&&typeof args.title==='string'&&typeof args.titleZh==='string'&&
+      typeof args.viewKey==='string'&&typeof args.cardTitle==='string'&&typeof args.cardTitleZh==='string'&&Array.isArray(args.files)&&args.files.length>0&&
+      args.files.length<=16&&typeof args.activate==='boolean','OWNER_TOOL_INPUT_INVALID');
+    const files:Record<string,Buffer>={};
+    // Every file must reference a verified artifact of this attempt; agent-reported local paths are never trusted.
+    for(const entry of args.files) {
+      ownerInput(entry&&typeof entry==='object'&&typeof entry.name==='string'&&typeof entry.artifact==='string','OWNER_TOOL_INPUT_INVALID');
+      const saved=artifacts.forAgent(actor,entry.artifact);
+      files[entry.name]=Buffer.from(saved.content,'utf8');
+    }
+    const intent=Boolean(authorized);
+    // Only a goal carrying the exact owner plugin-build intent may auto-activate; all others stay hidden candidates.
+    const result=plugins.install({pluginId:args.pluginId,manifest:{schema:1,pluginId:args.pluginId,version:args.version,title:args.title,titleZh:args.titleZh,
+      cards:[{viewKey:args.viewKey,title:args.cardTitle,titleZh:args.cardTitleZh,resources:[]}]},files,goalId:a.goalId,attemptId:attemptId,
+      activate:Boolean(intent&&args.activate),expectedRevision:args.activate?args.expectedRevision:undefined,idempotencyKey:key});
+    return {...result,authorized:intent,displayed:Boolean(intent&&args.activate),candidateOnly:!intent};
+  }
   private skillContext(actor:string){return {workspaceRoot:this.dependencies.agents.directory(actor),pixelId:'0_0_0',runId:'',messageId:'',operationId:''};}
   private extensions(actor:string){return new InstanceExtensionService(this.dependencies.agents.directory(actor),this.dependencies.agents.scopeId(actor),this.dependencies.contracts);}
   receipt(operationId:string,attemptId?:string){const r=this.dependencies.gate.store.db.prepare("SELECT result_json FROM company_controller_tools WHERE operation_id=? AND state='DONE' AND (? IS NULL OR attempt_id=?)").get(operationId,attemptId??null,attemptId??null);return r?.result_json?JSON.parse(String(r.result_json)) as ToolResult:null;}

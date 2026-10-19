@@ -34,6 +34,7 @@ export async function createServer(options: CreateServerOptions): Promise<Fastif
   const { manager, payments } = options.worlds, gate = manager.automation ?? new OwnerAutomationGate(manager.registry.control);
   manager.attachAutomation(gate, () => Boolean(options.maintenance?.quiesced()));
   const work = options.worlds.ownerWork ?? new OwnerWorkService(manager, () => Boolean(options.maintenance?.quiesced()));
+  const plugins = work.plugins ?? new CompanyPluginService(manager.registry.control, options.workspaceRoot); work.plugins = plugins;
   const store = new PublicStore(payments.control, payments); registerPublicRoutes(app, store);
   work.products = new OwnerProductService(store, gate, manager);
   const scheduler = new OwnerGoalScheduler(manager, work, gate, payments);
@@ -56,8 +57,8 @@ export async function createServer(options: CreateServerOptions): Promise<Fastif
   app.addHook('onSend', async (_req, reply) => { reply.header('X-Content-Type-Options', 'nosniff').header('Referrer-Policy', 'no-referrer').header('Cache-Control', 'no-store').header('Content-Security-Policy', "frame-ancestors 'none'; object-src 'none'; base-uri 'self'"); });
   await app.register(async api => {
     await registerWorldRoutes(api, {...options.worlds,ownerWork:work});
-    registerOwnerRoutes(api, overview, chat, work, gate, options.maintenance);
-    registerPluginRoutes(api, new CompanyPluginService(manager.registry.control, options.workspaceRoot));
+    registerOwnerRoutes(api, overview, chat, work, gate, options.maintenance, plugins);
+    registerPluginRoutes(api, plugins);
     if (options.maintenance) {
       api.post('/maintenance/quiesce', async () => { await options.maintenance!.quiesce(); return { quiesced: true }; });
       api.post('/maintenance/resume', async () => { await options.maintenance!.resume(); return { quiesced: false }; });

@@ -19,11 +19,14 @@ import { CompanyLegacyAdapter } from './company_legacy_adapter.js';
 import {CompanyRecoveryService} from './company_recovery_service.js';
 import {CompanyAttentionService} from './company_attention_service.js';
 import {COMPANY_WORKER_MAX_OUTPUT_TOKENS} from '../execution/company_worker_protocol.js';
+import type {CompanyPluginService} from './company_plugin_service.js';
 
 const digest = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const text = (value: unknown, max: number): value is string => typeof value === 'string' && Boolean(value.trim()) && value.length <= max;
 const record = (value: unknown): value is Record<string, any> => Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 const only = (v: Record<string, any>, keys: string[]) => Object.keys(v).every(k => keys.includes(k));
+/** Only this message's explicit card/plugin development request counts as the plugin-build intent. */
+const pluginCommand = (question: string) => /(?:卡片|插件|card|plugin)/i.test(question.replace(/[“”「」"']/g, ' '));
 export class OwnerWorkService {
   readonly execution: CompanyExecutionService;
   readonly artifacts: CompanyArtifactService;
@@ -35,6 +38,7 @@ export class OwnerWorkService {
   attention?:CompanyAttentionService;
   products?: OwnerProductService;
   readonly code?: AppCodeService;
+  plugins?: CompanyPluginService;
   private gateway: QianjiWorldGateway;
   private timer?: ReturnType<typeof setInterval>;
   private ticking?: Promise<void>;
@@ -62,7 +66,7 @@ export class OwnerWorkService {
     this.agents=new CompanyAgentService(gate.store,this.manager.registry.workspace);this.agents.importLegacy();
     for(const actor of this.agents.list())if(actor.legacyWorldId)this.artifacts.importLegacy(actor.id,actor.directoryRel);
     const code=this.manager.options.projectRoot?new AppCodeService(this.manager,this.manager.options.projectRoot,this.agents):undefined;
-    this.companyTools=new CompanyToolService({gate,agents:this.agents,artifacts:this.artifacts,recruit:this.requestRecruit.bind(this),code,payments,release:this.releaseMaintenance,projectRoot:this.manager.options.projectRoot,contracts:this.manager.genome.capability_contracts});
+    this.companyTools=new CompanyToolService({gate,agents:this.agents,artifacts:this.artifacts,recruit:this.requestRecruit.bind(this),code,payments,release:this.releaseMaintenance,projectRoot:this.manager.options.projectRoot,contracts:this.manager.genome.capability_contracts,plugins:this.plugins});
     this.worker=new CompanyWorkerAdapter(this.execution,{workspace:this.manager.registry.workspace,meter:this.manager.options.usageMeter,environment,spec:command=>{
       const actor=this.agents!.forScope(command.worldId);
       const plans=gate.proposals.plans;
@@ -233,9 +237,11 @@ export class OwnerWorkService {
           const result=gate.goals.request(`chat_task_${digest(key)}`,{payloadHash},()=>{
             const plan=gate.proposals.plans.validate(i.plan);
             const acceptance={kind:'manual',description:'Owner reviews the actual task deliverables / 老板核对真实任务成果后结案'};
-            if(i.kind==='revise_task'&&!Number.isSafeInteger(reviseRevision))throw new Error('OWNER_GOAL_PERMISSION_CHANGED');
-            const goal=i.kind==='revise_task'?gate.goals.edit(i.goalId,{title:i.title,objective:i.objective,acceptance,expectedRevision:reviseRevision,idempotencyKey:`chat_goal_${digest(key)}`}):gate.goals.create({title:i.title,objective:i.objective,acceptance,idempotencyKey:`chat_goal_${digest(key)}`});
-            if(i.publication!==undefined){if(!this.products)throw new Error('OWNER_PRODUCTS_UNAVAILABLE');this.products.bind(goal,key,question,i.publication,i.filename??'product.json');}
+          if(i.kind==='revise_task'&&!Number.isSafeInteger(reviseRevision))throw new Error('OWNER_GOAL_PERMISSION_CHANGED');
+          const goal=i.kind==='revise_task'?gate.goals.edit(i.goalId,{title:i.title,objective:i.objective,acceptance,expectedRevision:reviseRevision,idempotencyKey:`chat_goal_${digest(key)}`}):gate.goals.create({title:i.title,objective:i.objective,acceptance,idempotencyKey:`chat_goal_${digest(key)}`});
+          // Only this owner message's explicit card/plugin request authorizes plugin build and optional display (P3: read-only scope only).
+          if(this.plugins&&pluginCommand(question)){gate.goals.event(goal.id,'plugin_build_intent',{requestKey:key,visibilityIntent:/显示|show|出现在|appear/i.test(question),goalRevision:goal.specificationRevision});}
+          if(i.publication!==undefined){if(!this.products)throw new Error('OWNER_PRODUCTS_UNAVAILABLE');this.products.bind(goal,key,question,i.publication,i.filename??'product.json');}
             const view=gate.proposals.plans.install(goal.id,plan,false);
             const proposal=gate.proposals.propose('task_plan',{title:goal.title,planHash:digest(view),plan},`task-plan:${goal.id}:${goal.specificationRevision}`,goal.id);
             return {goal:gate.goals.get(goal.id),proposal};
