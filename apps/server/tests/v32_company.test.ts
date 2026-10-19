@@ -71,7 +71,8 @@ describe('V32 company money, proposals and task loop',()=>{
     const artifact=f.gate.goals.detail(goal.id).evidence.find(e=>e.kind==='artifact')!,file=join(f.registry.directory(artifact.worldId!),artifact.reference),original=fs.readFileSync(file);fs.writeFileSync(file,'Changed after review');
     expect(()=>f.gate.proposals.decide(close.id,{decision:'approve',hash:close.hash,idempotencyKey:'changed-evidence-approval'})).toThrow('OWNER_EVIDENCE_CHANGED');fs.writeFileSync(file,original);
     f.gate.proposals.decide(close.id,{decision:'approve',hash:close.hash,idempotencyKey:crypto.randomUUID()});
-    expect(f.gate.goals.get(goal.id).status).toBe('COMPLETED');await f.scheduler.tick();expect(f.calls).toHaveLength(4);
+    expect(f.gate.goals.get(goal.id)).toMatchObject({status:'COMPLETED',reason:'OWNER_RESULT_VERIFIED',verifiedCount:1});await f.scheduler.tick();expect(f.calls).toHaveLength(4);
+    expect(f.gate.goals.get(goal.id).verifiedCount).toBe(1);
     expect(f.payments.db.prepare('SELECT COUNT(*) n FROM world_revenue_events').get()!.n).toBe(0);
   });
   it('rejects dependency cycles and preserves running and completed nodes on AI replanning',()=>{

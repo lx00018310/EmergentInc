@@ -107,6 +107,6 @@ describe('stage recovery through real owner routes',()=>{
     const close=f.gate.proposals.list().find(p=>p.kind==='close_task'&&p.state==='PENDING')!;
     expect(close.payload.completionKind).toBe('partial');
     f.gate.proposals.decide(close.id,{decision:'approve',hash:close.hash,idempotencyKey:'accept-skipped-partial'});
-    expect(f.gate.goals.get(goal.id).status).toBe('PARTIALLY_COMPLETED');
+    expect(f.gate.goals.get(goal.id)).toMatchObject({status:'PARTIALLY_COMPLETED',verifiedCount:0});
   });
 });

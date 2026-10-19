@@ -60,7 +60,7 @@ export class OwnerProposalService {
           if(!this.verifyEvidence)ownerConflict('OWNER_EVIDENCE_CHANGED');for(const s of p.payload.evidence)this.verifyEvidence(detail.evidence.find(e=>e.id===s.id)!);
           const partial=p.payload.completionKind==='partial';
           if(!partial&&!detail.evidence.some(e=>e.kind!=='report'&&e.specificationRevision===p.goalRevision))ownerConflict('OWNER_EVIDENCE_CHANGED');
-          this.gate.store.db.prepare('UPDATE owner_goals SET revision=revision+1 WHERE id=?').run(p.goalId);this.gate.goals.state(p.goalId!,partial?'PARTIALLY_COMPLETED':'COMPLETED',partial?'OWNER_PARTIAL_RESULT_ACCEPTED':'OWNER_RESULT_VERIFIED');this.gate.goals.event(p.goalId!,partial?'owner_partial_accepted':'owner_verified',{proposalId:p.id,evidence:p.payload.evidence,gaps:p.payload.gaps??[],basis:'EXPLICIT_OWNER_ACCEPTANCE_NOT_PAYMENT_PROOF'});result=this.gate.goals.get(p.goalId!);
+          this.gate.store.db.prepare('UPDATE owner_goals SET revision=revision+1,verified_count=CASE WHEN ? THEN 1 ELSE verified_count END WHERE id=?').run(!partial&&detail.goal.acceptance.kind==='manual'?1:0,p.goalId);this.gate.goals.state(p.goalId!,partial?'PARTIALLY_COMPLETED':'COMPLETED',partial?'OWNER_PARTIAL_RESULT_ACCEPTED':'OWNER_RESULT_VERIFIED');this.gate.goals.event(p.goalId!,partial?'owner_partial_accepted':'owner_verified',{proposalId:p.id,evidence:p.payload.evidence,gaps:p.payload.gaps??[],basis:'EXPLICIT_OWNER_ACCEPTANCE_NOT_PAYMENT_PROOF'});result=this.gate.goals.get(p.goalId!);
         }
       }
       // Rework keeps the goal alive: the note is recorded, the proposal closes as REJECTED,
