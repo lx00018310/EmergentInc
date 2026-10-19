@@ -115,4 +115,26 @@ describe('owner chat to plugin closed loop', () => {
     expect(again.json().answer).toBe(hide.json().answer);
     expect(f.calls).toHaveLength(0);
   });
+
+  it('serves real company facts through the granted projection and hides a card without touching tasks', async () => {
+    const f = fixture({ bound: true, approved: true, intent: true });
+    const card = f.saveArtifact('card.html', CARD_HTML), detail = f.saveArtifact('detail.html', DETAIL_HTML);
+    await f.execute('SUBMIT_PLUGIN_CANDIDATE', { ...SUBMIT_FIELDS, files: [{ name: 'cards/marketing-summary/card.html', artifact: card }, { name: 'cards/marketing-summary/detail.html', artifact: detail }], expectedRevision: 0 });
+    f.plugins.grant('marketing', 'company.summary@1');
+    const before = f.plugins.project('marketing', 'company.summary@1', {}) as any;
+    expect(before.summary).toMatchObject({ activeGoals: 1, paidOrders: 0, publishedProducts: 0 });
+    // A real business fact changes the projection; the card never writes back.
+    const goal = f.gate.goals.create({ title: 'Second real goal', objective: 'Real objective', acceptance: { kind: 'manual', description: 'Real acceptance' }, idempotencyKey: 'second-goal-key-1' });
+    f.control.db.prepare("INSERT INTO public_products VALUES('real-product',1,'Real','真实','Real description','真实描述','19.9','USDT')").run();
+    const after = f.plugins.project('marketing', 'company.summary@1', {}) as any;
+    expect(after.summary).toMatchObject({ activeGoals: 2, publishedProducts: 1 });
+    expect(Number(after.asOf) >= Number(before.asOf)).toBe(true);
+    expect(f.gate.goals.get(goal.id).status).toBe('READY');
+    // Hiding the card stops nothing: the goal stays READY and the version stays installed.
+    f.plugins.action('001', { action: 'hide', expectedRevision: f.plugins.cards()[0]!.revision, idempotencyKey: 'hide-real-data-1' });
+    expect(f.plugins.cards(true)).toEqual([]);
+    expect(f.gate.goals.get(goal.id).status).toBe('READY');
+    expect(f.plugins.grants('marketing')).toEqual(['company.summary@1']);
+    expect(f.plugins.asset('marketing', f.plugins.cards()[0]!.activeHash!, 'cards/marketing-summary/card.html')).toBeTruthy();
+  });
 });
