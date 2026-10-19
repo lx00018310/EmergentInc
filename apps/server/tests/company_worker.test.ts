@@ -50,6 +50,13 @@ async function fixture(respond?:(call:number,res:import('node:http').ServerRespo
 }
 
 describe('independent company worker on the current OS',()=>{
+  it.each(['model','tool'] as const)('does not record an unsent %s operation as unknown when its window expires after authorization',async operation=>{
+    const f=await fixture(),workerSpec={...spec(),progress:{schema:1 as const,scopeId:'bounded-scope',deadlineAt:Date.now()+60_000}};let calls=0;
+    const result=await executeCompanyWorker(f.root,workerSpec,{async call(){calls++;return {rawText:JSON.stringify({operations:[{tool:'save_artifact',args:{filename:'result.md',content:'Actual content that must not be written after expiry.'}}],owner_reply:'A result',send_to:'STOP'}),usage:{promptTokens:20,completionTokens:10}};}},{async authorizeModel(){return {permitId:'expired-window-permit',deadlineAt:operation==='model'?Date.now()-1:Date.now()+60_000};},async authorizeTool(){return {deadlineAt:Date.now()-1};},async controllerTool(){throw new Error('Unexpected controller operation');},async controllerToolReceipt(){return null;},async receipt(){}});
+    expect(result).toMatchObject({kind:'blocked',reason:'OWNER_PROGRESS_TIME_LIMIT'});expect(calls).toBe(operation==='model'?0:1);
+    const journal=new CompanyWorkerJournal(f.root,workerSpec);
+    try{if(operation==='model')expect(journal.db.prepare('SELECT state FROM worker_models').get()!.state).toBe('PREPARED');else expect(journal.db.prepare('SELECT state FROM worker_tools').get()!.state).toBe('PREPARED');}finally{journal.close();}
+  });
   it('accepts one JSON transport fence and continues a SELF progress reply until the actual final result',async()=>{
     const f=await fixture(),events:CompanyWorkerEvent[]=[];let calls=0;
     const result=await executeCompanyWorker(f.root,spec(),{async call(){calls++;return {rawText:calls===1?'```json\n'+JSON.stringify({operations:[{tool:'save_artifact',args:{filename:'result.md',content:'Actual retained content before the final report.'}}],owner_reply:'Progress only; inspect the actual receipt next',send_to:'SELF'})+'\n```':JSON.stringify({owner_reply:'Final actual result retained',send_to:'STOP'}),usage:{promptTokens:20,completionTokens:10,cachedTokens:0}};}},{async authorizeModel(){return {permitId:'permit-'+calls};},async authorizeTool(){},async controllerTool(){throw new Error('Unexpected command');},async controllerToolReceipt(){return null;},async receipt(e){events.push(e);}});

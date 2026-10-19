@@ -23,7 +23,7 @@ export class GoalOutcomeEvaluator {
   }
   observePayments(goal:OwnerGoal) {
     const acceptance=goal.acceptance;
-    if(acceptance.kind!=='confirmed_payments'||!this.payments||['ARCHIVED','STOPPED','COMPLETED'].includes(goal.status))return;
+    if(acceptance.kind!=='confirmed_payments'||!this.payments||['ARCHIVED','STOPPED','COMPLETED','PARTIALLY_COMPLETED'].includes(goal.status))return;
     const receipts=this.payments.db.prepare(`SELECT r.* FROM payment_receipts r JOIN payment_invoices i ON i.invoice_id=r.invoice_id JOIN world_revenue_events v ON v.receipt_id=r.id WHERE r.source='chain_finalized' AND i.status='FINALIZED' AND r.invoice_id IN (${acceptance.invoiceIds.map(()=>'?').join(',')})`).all(...acceptance.invoiceIds);
     this.goals.store.transaction(()=>{
       for(const receipt of receipts){const content=JSON.stringify(receipt),sha=createHash('sha256').update(content).digest('hex');this.goals.store.db.prepare("INSERT OR IGNORE INTO owner_goal_evidence VALUES(?,?,?,'',?,'payment',?,?,?,?)").run(`payment:${goal.id}:${goal.specificationRevision}:${receipt.id}`,goal.id,goal.specificationRevision,String(receipt.world_id??''),String(receipt.invoice_id),sha,Buffer.byteLength(content),Date.now());}

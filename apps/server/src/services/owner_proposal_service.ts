@@ -22,43 +22,54 @@ export class OwnerProposalService {
   }
   closeProposal(goalId:string,reason?:string){
     const goal=this.gate.goals.get(goalId),evidence=this.gate.goals.detail(goalId).evidence.filter(e=>e.specificationRevision===goal.specificationRevision);
-    if(!evidence.some(e=>e.kind!=='report'))return null;
+    const plan=this.plans.get(goalId),gaps=this.plans.progress.gaps(goalId).filter(g=>!g.superseded&&g.status!=='RESOLVED');
+    // A rework instruction is not a new delivery. Keep its decided proposal until
+    // the controller observes a new outcome or the owner explicitly requests closure.
+    if(plan&&!reason&&goal.status!=='WAITING_APPROVAL'&&this.plans.hasProgress(plan)){
+      const reworked=this.list().reverse().find(p=>p.kind==='close_task'&&p.goalId===goalId&&p.goalRevision===goal.specificationRevision&&p.state==='REJECTED'&&p.result?.rework);
+      if(reworked)return reworked;
+    }
+    const completionKind=plan&&(plan.nodes.some(n=>['PARTIAL','DEFERRED','SKIPPED','BLOCKED'].includes(n.state)||n.trigger.kind==='once'&&n.state!=='COMPLETED'||n.progress&&['PARTIAL','DEFERRED','SKIPPED'].includes(n.progress.state))||gaps.length)?'partial':'full';
+    if(!evidence.some(e=>e.kind!=='report')&&completionKind!=='partial')return null;
     const snapshot=evidence.map(e=>({id:e.id,sha256:e.sha256})).sort((a,b)=>a.id.localeCompare(b.id));
-    const previous=this.list().find(p=>p.kind==='close_task'&&p.goalId===goalId&&p.goalRevision===goal.specificationRevision&&digest(p.payload.evidence)===digest(snapshot));if(previous)return previous;
-    return this.propose('close_task',{evidence:snapshot,title:goal.title,...(reason?{reason}:{})},'close:'+goalId+':'+goal.specificationRevision+':'+digest(snapshot),goalId);
+    const planRevision=plan?.planRevision??0,gapSnapshot=gaps.map(g=>({id:g.id,status:g.status,attempts:g.attempts.length,description:g.description}));
+    const identity=digest({snapshot,planRevision,gapSnapshot,completionKind});
+    const previous=this.list().find(p=>p.kind==='close_task'&&p.goalId===goalId&&p.goalRevision===goal.specificationRevision&&p.payload.closeIdentity===identity);if(previous)return previous;
+    this.gate.store.db.prepare("UPDATE owner_company_proposals SET state='EXPIRED' WHERE goal_id=? AND kind='close_task' AND state='PENDING'").run(goalId);
+    return this.propose('close_task',{evidence:snapshot,title:goal.title,planRevision,completionKind,gaps:gapSnapshot,closeIdentity:identity,reworkNodes:plan?.nodes.map(n=>({key:n.key,title:n.title}))??[],...(reason?{reason}:{})},'close:'+goalId+':'+goal.specificationRevision+':'+identity,goalId);
   }
   decide(id:string,input:any){
-    exactKeys(input,['decision','hash','idempotencyKey','reworkNote']);ownerInput(['approve','reject','rework'].includes(input.decision),'OWNER_PROPOSAL_INVALID');
+    exactKeys(input,['decision','hash','idempotencyKey','reworkNote','nodeKey']);ownerInput(['approve','reject','rework'].includes(input.decision),'OWNER_PROPOSAL_INVALID');
     if(input.decision==='rework')ownerInput(typeof input.reworkNote==='string'&&input.reworkNote.trim().length>=8&&input.reworkNote.length<=1000,'OWNER_PROPOSAL_INVALID');
     return this.gate.goals.request(input.idempotencyKey,{proposal:id,input},()=>{
       const p=this.list().find(p=>p.id===id);if(!p||p.hash!==input.hash)ownerConflict('OWNER_PROPOSAL_CHANGED');
       if(p.state==='EXECUTED'&&input.decision==='approve'||p.state==='REJECTED'&&input.decision==='reject')return p;
       if(p.state!=='PENDING')ownerConflict('OWNER_PROPOSAL_ALREADY_DECIDED');
-      if(p.goalId){const goal=this.gate.goals.get(p.goalId);if(goal.specificationRevision!==p.goalRevision||['STOPPED','ARCHIVED','COMPLETED'].includes(goal.status))ownerConflict('OWNER_GOAL_PERMISSION_CHANGED');}
+      if(p.goalId){const goal=this.gate.goals.get(p.goalId);if(goal.specificationRevision!==p.goalRevision||['STOPPED','ARCHIVED','COMPLETED','PARTIALLY_COMPLETED'].includes(goal.status))ownerConflict('OWNER_GOAL_PERMISSION_CHANGED');}
       let result:unknown=null;
       if(input.decision==='approve'){
         if(p.kind==='budget')ownerConflict('OWNER_USE_COMPANY_BUDGET_SETTINGS');
         else if(p.kind==='task_plan'){const plan=this.plans.get(p.goalId!);if(!plan||digest(plan)!==p.payload.planHash)ownerConflict('OWNER_PROPOSAL_CHANGED');this.plans.approve(p.goalId!);result=this.gate.goals.get(p.goalId!);}
         else {
           const detail=this.gate.goals.detail(p.goalId!);if(detail.goal.status!=='WAITING_APPROVAL')ownerConflict('OWNER_PROPOSAL_CHANGED');if(!p.payload.evidence.every((s:any)=>detail.evidence.some(e=>e.id===s.id&&e.sha256===s.sha256&&e.specificationRevision===p.goalRevision)))ownerConflict('OWNER_EVIDENCE_CHANGED');
+          if(p.payload.planRevision!==undefined&&p.payload.planRevision!==(this.plans.get(p.goalId!)?.planRevision??0))ownerConflict('OWNER_PROPOSAL_CHANGED');
+          if(p.payload.closeIdentity){const gaps=this.plans.progress.gaps(p.goalId!).filter(g=>!g.superseded&&g.status!=='RESOLVED').map(g=>({id:g.id,status:g.status,attempts:g.attempts.length,description:g.description}));if(digest(gaps)!==digest(p.payload.gaps))ownerConflict('OWNER_PROPOSAL_CHANGED');}
           const latest=detail.evidence.filter(e=>e.specificationRevision===p.goalRevision).map(e=>({id:e.id,sha256:e.sha256})).sort((a,b)=>a.id.localeCompare(b.id));if(digest(latest)!==digest(p.payload.evidence))ownerConflict('OWNER_PROPOSAL_CHANGED');
           const active=this.gate.store.db.prepare("SELECT 1 FROM owner_goal_dispatches WHERE goal_id=? AND state IN ('QUEUED','RUNNING')").get(p.goalId);if(active)ownerConflict('OWNER_TASK_STILL_RUNNING');
           if(this.gate.goals.hasPendingOutcome(p.goalId!,true))ownerConflict('OWNER_TASK_STILL_RUNNING');
           if(!this.verifyEvidence)ownerConflict('OWNER_EVIDENCE_CHANGED');for(const s of p.payload.evidence)this.verifyEvidence(detail.evidence.find(e=>e.id===s.id)!);
-          this.gate.store.db.prepare('UPDATE owner_goals SET revision=revision+1 WHERE id=?').run(p.goalId);this.gate.goals.state(p.goalId!,'COMPLETED','OWNER_RESULT_VERIFIED');this.gate.goals.event(p.goalId!,'owner_verified',{proposalId:p.id,evidence:p.payload.evidence,basis:'EXPLICIT_OWNER_ACCEPTANCE_NOT_PAYMENT_PROOF'});result=this.gate.goals.get(p.goalId!);
+          const partial=p.payload.completionKind==='partial';
+          if(!partial&&!detail.evidence.some(e=>e.kind!=='report'&&e.specificationRevision===p.goalRevision))ownerConflict('OWNER_EVIDENCE_CHANGED');
+          this.gate.store.db.prepare('UPDATE owner_goals SET revision=revision+1 WHERE id=?').run(p.goalId);this.gate.goals.state(p.goalId!,partial?'PARTIALLY_COMPLETED':'COMPLETED',partial?'OWNER_PARTIAL_RESULT_ACCEPTED':'OWNER_RESULT_VERIFIED');this.gate.goals.event(p.goalId!,partial?'owner_partial_accepted':'owner_verified',{proposalId:p.id,evidence:p.payload.evidence,gaps:p.payload.gaps??[],basis:'EXPLICIT_OWNER_ACCEPTANCE_NOT_PAYMENT_PROOF'});result=this.gate.goals.get(p.goalId!);
         }
       }
       // Rework keeps the goal alive: the note is recorded, the proposal closes as REJECTED,
       // and the goal returns to READY so the agent adjusts and submits a fresh proposal.
       if(input.decision==='rework'&&p.goalId){
-        const goal=this.gate.goals.get(p.goalId);
-        if(p.kind==='close_task'){
-          this.gate.store.db.prepare("UPDATE owner_goals SET revision=revision+1,status='RUNNING',reason=NULL,next_action=?,updated_at=? WHERE id=? AND status='WAITING_APPROVAL'").run(input.reworkNote,Date.now(),p.goalId);
-          this.gate.goals.event(p.goalId,'owner_rework',{proposalId:p.id,kind:p.kind,note:input.reworkNote,basis:'EXPLICIT_OWNER_REWORK_REQUEST'});
-        }else {
-          this.gate.store.db.prepare("UPDATE owner_goals SET revision=revision+1,reason=NULL,next_action=?,updated_at=? WHERE id=?").run(input.reworkNote,Date.now(),p.goalId);
-          this.gate.goals.event(p.goalId,'owner_rework',{proposalId:p.id,kind:p.kind,note:input.reworkNote,basis:'EXPLICIT_OWNER_REWORK_REQUEST'});
-        }
+        const revised=this.plans.rework(p.goalId,input.reworkNote,input.nodeKey);
+        this.gate.store.db.prepare('UPDATE owner_goals SET revision=revision+1,next_action=?,updated_at=? WHERE id=?').run(input.reworkNote,Date.now(),p.goalId);
+        if(p.kind==='task_plan')this.propose('task_plan',{title:this.gate.goals.get(p.goalId).title,plan:revised.body,planHash:digest(revised.view)},`task-plan-rework:${p.id}:${revised.view.planRevision}`,p.goalId);
+        this.gate.goals.event(p.goalId,'owner_rework',{proposalId:p.id,kind:p.kind,note:input.reworkNote,basis:'EXPLICIT_OWNER_REWORK_REQUEST'});
         result={rework:true,note:input.reworkNote,goalStatus:this.gate.goals.get(p.goalId).status};
       }
       this.gate.store.db.prepare('UPDATE owner_company_proposals SET state=?,result=? WHERE id=?').run(input.decision==='approve'?'EXECUTED':input.decision==='rework'?'REJECTED':'REJECTED',JSON.stringify(result),id);

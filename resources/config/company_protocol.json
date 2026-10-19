@@ -3,6 +3,7 @@
   "workspace_format": 34,
   "company_money": 2,
   "task_workflow": 1,
+  "task_progress": 1,
   "company_execution": 1,
   "scoped_admission": 1,
   "company_workers": 3,

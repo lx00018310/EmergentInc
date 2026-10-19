@@ -36,3 +36,9 @@
 .boss-actions label,.owner-decision label{flex-basis:100%;display:flex;flex-direction:column;gap:4px;margin:8px 0 0}
 .boss-actions textarea,.owner-decision textarea,.boss-budget textarea{display:block;width:100%;border:1px solid #ddd;border-radius:6px;padding:8px;font:inherit;resize:vertical}
 @media(prefers-reduced-motion:reduce){.boss-shell *{animation:none!important;transition:none!important;scroll-behavior:auto!important}}
+.boss-stage { margin-block: .7rem; overflow-wrap: anywhere; }
+.boss-stage label { display: grid; gap: .35rem; margin-block: .6rem; }
+.boss-stage input, .boss-stage select, .boss-stage textarea { box-sizing: border-box; width: 100%; max-width: 100%; }
+.boss-stage textarea { min-height: 5rem; }
+.boss-stage label.boss-stage-check { display: flex; align-items: baseline; }
+.boss-stage-check input[type=checkbox] { width: auto; }

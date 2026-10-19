@@ -29,6 +29,16 @@ export class CompanyToolService {
       this.definitions.set(name,{name,description,effect,enabled:true,timeout_seconds:30,input_schema:{type:'object',properties,required,additionalProperties:false}});this.handlers.set(name,handler);
     };
     const binding=(id:string)=>{const a=gate.execution!.get(id);if(!a.goalId)ownerConflict('OWNER_GOAL_PERMISSION_CHANGED');return a;};
+    register('REPORT_TASK_GAP','Record an unresolved fact with a stable key; reuse its ID in later queries. This grants no permissions / 用固定标识记录缺失事实，后续查询沿用其编号，不增加权限。','write',{factKey:{type:'string'},description:{type:'string'}},['factKey','description'],(_actor,id,_key,args)=>{
+      const a=binding(id),occ=db.prepare('SELECT node_key FROM owner_task_occurrences WHERE dispatch_id=?').get(a.dispatchId!);
+      ownerInput(typeof args.factKey==='string'&&typeof args.description==='string'&&Boolean(occ),'OWNER_PROGRESS_INVALID');
+      return gate.proposals.plans.progress.gap(a.goalId!,`reported:${args.factKey}`,args.description,String(occ!.node_key));
+    });
+    register('READ_TASK_PROGRESS','Read this approved step’s complete requirements, retained attempts and owner-supplied material; these grant no extra permissions / 读取本批准环节的完整要求、已试办法及人工资料，不增加权限。','read',{},[],(_actor,id)=>{
+      const a=binding(id),plan=gate.proposals.plans.get(a.goalId!),occ=db.prepare('SELECT node_key FROM owner_task_occurrences WHERE dispatch_id=?').get(a.dispatchId!),node=plan?.nodes.find(n=>n.key===occ?.node_key);
+      ownerInput(Boolean(plan?.approved&&node),'OWNER_GOAL_PERMISSION_CHANGED');
+      return {node,context:gate.proposals.plans.progress.context(a.goalId!,node!,a.dispatchId!),ownerMaterials:gate.proposals.plans.progress.notes(a.goalId!,node!.key),source:'OWNER_SUPPLIED_UNVERIFIED',readOnly:true};
+    });
     register('REQUEST_RECRUIT','Request an exact role and wait for Owner approval / 申请准确职责，等待老板批准。','write',{role:{type:'string'},reason:{type:'string'},instruction:{type:'string'}},['role','reason','instruction'],(actor,id,key,args)=>{
       const request=dependencies.recruit(args,agents.get(actor).name,key),a=gate.execution!.get(id);
       if(a.goalId){db.prepare('INSERT OR IGNORE INTO owner_goal_recruits VALUES(?,?,?)').run(request.id,a.goalId,a.goalRevision!);const node=db.prepare('SELECT node_key FROM owner_task_occurrences WHERE dispatch_id=?').get(a.dispatchId!);if(node)db.prepare('INSERT OR IGNORE INTO owner_task_resource_waits VALUES(?,?,?,?)').run(request.id,a.goalId,a.goalRevision!,node.node_key);}

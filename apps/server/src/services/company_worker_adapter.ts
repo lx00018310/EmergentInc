@@ -112,8 +112,10 @@ export class CompanyWorkerAdapter {
     this.db().prepare('UPDATE company_execution_attempts SET lease_expires_at=? WHERE id=?').run(Date.now()+30_000,id);
     const spec=this.spec(id),operationId=String(args[0]);
     if(method==='authorizeModel'){
+      return this.execution.gate.store.transaction(()=>{
       const request=args[1] as PreparedModelRequest;
       if(request.auditCallId!==operationId||!operationId.startsWith(`${id}:model:`)||request.model!==spec.model||request.maxTokens!==spec.maxOutputTokens)ownerConflict('OWNER_WORKER_OPERATION_CONFLICT');
+      if(a.dispatchId)this.execution.gate.proposals.plans.progress.beforeModel(a.dispatchId,id,operationId,args[2]??1);
       const original=companyWorkerRequest(spec,0);let permitId:string;
       const first=this.db().prepare('SELECT state FROM owner_model_permits WHERE id=?').get(row.first_permit)!;
       if(operationId===original.auditCallId&&['SENT','UNKNOWN'].includes(String(first.state))&&!this.db().prepare('SELECT 1 FROM company_worker_grants WHERE permit_id=?').get(row.first_permit)){
@@ -124,10 +126,16 @@ export class CompanyWorkerAdapter {
       this.db().prepare('DELETE FROM company_worker_waits WHERE subject_id=?').run(id);
       this.db().prepare('INSERT INTO company_worker_grants VALUES(?,?,?,?)').run(permitId,id,operationId,epoch);
       this.db().prepare("UPDATE owner_round_permits SET state='STARTED' WHERE run_id=? AND round_no=(SELECT MIN(round_no) FROM owner_round_permits WHERE run_id=?) AND state='RESERVED'").run(a.runId,a.runId);
-      return {permitId};
+      const progress=a.dispatchId?this.execution.gate.proposals.plans.progress.startWindow(a.dispatchId):undefined;
+      return {permitId,...(progress?{deadlineAt:progress.deadlineAt}:{})};
+      });
     }
     const tool=String(args[1]);if(!spec.tools.some(t=>t.name===tool&&t.enabled)||!operationId.startsWith(`${id}:tool:`))ownerConflict('OWNER_EXTERNAL_APPROVAL_REQUIRED');
-    if(method==='authorizeTool')return;
+    if(method==='authorizeTool')return this.execution.gate.store.transaction(()=>{
+      if(a.dispatchId)this.execution.gate.proposals.plans.progress.beforeTool(a.dispatchId,operationId,args[3],digest({tool,args:args[2]}));
+      const progress=a.dispatchId?this.execution.gate.proposals.plans.progress.startWindow(a.dispatchId):undefined;
+      return progress?{deadlineAt:progress.deadlineAt}:undefined;
+    });
     if(method==='controllerTool'&&this.options.controllerTool)return this.options.controllerTool(id,operationId,tool,args[2]);
     ownerConflict('OWNER_EXTERNAL_APPROVAL_REQUIRED');
   }
@@ -154,6 +162,7 @@ export class CompanyWorkerAdapter {
       if(p.response)this.execution.gate.models.response(p.permitId,p.response);else this.execution.gate.models.failure(p.permitId,p.notSent===true);
     }else if(event.kind==='tool'){
       if(p.result?.tool==='save_artifact'&&p.result.status==='SUCCESS')this.options.artifact?.(id,p.operationId,p.result,this.directory(id));
+      if(a.dispatchId)this.execution.gate.proposals.plans.progress.recordTool(a.dispatchId,p.operationId,p.result);
     }else if(['completed','blocked','failed','interrupted'].includes(event.kind)){
       this.execution.observe(a.runId,event.kind as 'completed'|'blocked'|'failed'|'interrupted',p.reason,p.reply,`worker-event:${event.id}`);
       if(event.kind==='completed')this.db().prepare("UPDATE owner_round_permits SET state='COMPLETED' WHERE run_id=? AND state='STARTED'").run(a.runId);

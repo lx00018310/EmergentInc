@@ -16,8 +16,8 @@ export class OwnerOverviewService {
     const people = this.work?.agents ? this.work.agents.list().map(person=>{
       const scope=this.work!.agents!.scopeId(person.id),task=work?.tasks.find(t=>t.personId===person.id),attempt=task?.attempt;
       const running=Boolean(attempt&&this.work!.worker!.isRunning(attempt.id));
-      const reviewed=attempt&&control.db.prepare("SELECT 1 FROM company_execution_reviews WHERE attempt_id=? AND decision='ABANDONED'").get(attempt.id);
-      const terminalGoal=task?.goalId&&(!goals?.some(g=>g.id===task.goalId)||goals.some(g=>g.id===task.goalId&&['STOPPED','ARCHIVED','COMPLETED'].includes(g.status)));
+      const reviewed=this.work?.recovery&&attempt&&control.db.prepare("SELECT 1 FROM company_execution_reviews WHERE attempt_id=? AND decision='ABANDONED'").get(attempt.id);
+      const terminalGoal=task?.goalId&&(!goals?.some(g=>g.id===task.goalId)||goals.some(g=>g.id===task.goalId&&['STOPPED','ARCHIVED','COMPLETED','PARTIALLY_COMPLETED'].includes(g.status)));
       const pendingOutcome=task?.reason==='CALL_OUTCOME_UNKNOWN'?Boolean(task.goalId&&gate?.goals.hasPendingOutcome(task.goalId)):task?.reason==='TOOL_OUTCOME_UNKNOWN'&&!reviewed;
       // An explicitly abandoned attempt keeps its bill as history but no longer needs the owner.
       const dismissed=terminalGoal&&!pendingOutcome||reviewed&&!task?.goalId||Boolean(reviewed&&!pendingOutcome&&task?.reason);
@@ -38,12 +38,14 @@ export class OwnerOverviewService {
     }
     if (automation && (['BLOCKED', 'ERROR'].includes(automation.observedState)||gate?.admission.reason()) && automation.reason !== 'EVOLUTION_QUIESCED') alerts.push({ id: 'automation:review', kind: 'automation', severity: 'critical', title: 'Company automation needs review', summary: '', reasonKey: automation.reason ?? 'OWNER_OUTCOME_REVIEW_REQUIRED', createdAt: automation.updatedAt, source: 'company_admission_blocks', href: '/BOSS' });
     for (const goal of goals ?? []) {
-      const blockedNode=gate?.proposals.plans.get(goal.id)?.nodes.some(n=>n.state==='BLOCKED')&&!['PAUSED','STOPPED','ARCHIVED','COMPLETED'].includes(goal.status);
-      if ((['BLOCKED', 'FAILED'].includes(goal.status)||blockedNode) && goal.reason !== 'OWNER_WAITING_PAYMENT'&&!alerts.some(a=>a.goalId===goal.id)) alerts.push({ id: `goal:${goal.id}`, goalId:goal.id,kind: 'goal', severity: 'critical', title: 'Goal needs attention', summary: goal.title, reasonKey: goal.reason ?? work?.tasks.find(t=>t.goalId===goal.id&&t.reason)?.reason??'OWNER_NO_PROGRESS', createdAt: goal.updatedAt, source: 'owner_goals', href: '/BOSS' });
+      const blockedNode=gate?.proposals.plans.get(goal.id)?.nodes.some(n=>n.state==='BLOCKED')&&!['PAUSED','STOPPED','ARCHIVED','COMPLETED','PARTIALLY_COMPLETED'].includes(goal.status);
+      const task=work?.tasks.find(t=>t.goalId===goal.id&&t.reason),reviewed=this.work?.recovery&&task?.attempt&&control.db.prepare("SELECT 1 FROM company_execution_reviews WHERE attempt_id=? AND decision='ABANDONED'").get(task.attempt.id);
+      const reason=reviewed&&!gate?.goals.hasPendingOutcome(goal.id,true)?'OWNER_EXECUTION_REVIEWED':goal.reason??task?.reason??'OWNER_NO_PROGRESS';
+      if ((['BLOCKED', 'FAILED'].includes(goal.status)||blockedNode) && goal.reason !== 'OWNER_WAITING_PAYMENT'&&!alerts.some(a=>a.goalId===goal.id)) alerts.push({ id: `goal:${goal.id}`, goalId:goal.id,taskId:task?.id,kind: 'goal', severity: 'critical', title: 'Goal needs attention', summary: goal.title, reasonKey:reason, createdAt: goal.updatedAt, source: 'owner_goals', href: '/BOSS' });
       if (goal.status === 'COMPLETED' && goal.evidenceCount > 0) activity.push({ id: `goal:${goal.id}:${goal.specificationRevision}`, type: 'goal', summary: goal.title, createdAt: goal.updatedAt, source: 'owner_goals', href: `goal:${goal.id}` });
     }
     if (this.work?.products) for (const row of control.db.prepare("SELECT * FROM owner_product_intents WHERE state IN ('BLOCKED','OUTCOME_UNKNOWN')").all()) {
-      const goal=gate!.goals.get(String(row.goal_id));if(row.state==='BLOCKED'&&['STOPPED','ARCHIVED','COMPLETED'].includes(goal.status))continue;
+      const goal=gate!.goals.get(String(row.goal_id));if(row.state==='BLOCKED'&&['STOPPED','ARCHIVED','COMPLETED','PARTIALLY_COMPLETED'].includes(goal.status))continue;
       alerts.push({ id: `product-intent:${row.goal_id}`,goalId:goal.id, kind: 'product', severity: row.state === 'OUTCOME_UNKNOWN' ? 'critical' : 'normal', title: 'Product publication needs attention', summary: goal.title, reasonKey: String(row.reason ?? 'OWNER_OUTCOME_REVIEW_REQUIRED'), createdAt: Number(row.updated_at), source: 'owner_product_intents', href: '/BOSS' });
     }
     const storefront = this.publicStore ? { products: this.publicStore.products().items.map(p => ({ id: String(p.product_id), nameEn: String(p.product_name_en), nameZh: String(p.product_name_zh), enabled: Boolean(p.product_enabled), price: p.product_price as string | null, currency: String(p.product_currency) })), orders: control.db.prepare('SELECT order_id,product_name_snapshot,amount,currency,status,created_at FROM orders ORDER BY created_at DESC LIMIT 200').all().map(o => ({ id: String(o.order_id), product: String(o.product_name_snapshot), amount: String(o.amount), currency: String(o.currency), status: String(o.status), at: Number(o.created_at) })) } : undefined;
