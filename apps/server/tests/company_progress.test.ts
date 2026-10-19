@@ -17,6 +17,14 @@ function fixture(){
   attach('dispatch-one');return {...f,goal,plans,progress:plans.progress,attach};
 }
 describe('durable bounded progress',()=>{
+  it('treats an omitted incomplete-input list as strict without changing the submitted plan or accepting malformed permissions',()=>{
+    const f=fixture(),policy={requirements:[{id:'size',description:'Actual file size',minBytes:600}],passPercent:100};
+    const input={summary:'One real draft',nodes:[{key:'draft',title:'Draft',instruction:'Retain actual facts',filename:'result.md',trigger:{kind:'once'},dependsOn:[],progressPolicy:policy}]};
+    expect(f.plans.validate(input).nodes[0]!.progressPolicy).toEqual({...policy,allowIncompleteFrom:[]});
+    expect(policy).not.toHaveProperty('allowIncompleteFrom');
+    for(const value of [null,'',false,['unapproved']])expect(()=>f.plans.validate({...input,nodes:[{...input.nodes[0],progressPolicy:{...policy,allowIncompleteFrom:value}}]})).toThrow('OWNER_PROGRESS_INVALID');
+    expect(()=>f.plans.validate({...input,nodes:[{...input.nodes[0],progressPolicy:{...policy,passPercent:0}}]})).toThrow('OWNER_PROGRESS_INVALID');
+  });
   it('counts transport attempts once, shares limits across dispatches and restores them on restart',()=>{
     const f=fixture();f.progress.startWindow('dispatch-one');
     f.progress.beforeModel('dispatch-one','attempt-one','request-one',1);

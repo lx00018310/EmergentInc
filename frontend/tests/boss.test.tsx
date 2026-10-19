@@ -1,5 +1,5 @@
 import {afterEach,beforeEach,expect,it,vi} from 'vitest';
-import {cleanup,fireEvent,render,screen,waitFor,within} from '@testing-library/react';
+import {act,cleanup,fireEvent,render,screen,waitFor,within} from '@testing-library/react';
 import {BossConsole} from '../src/features/boss/BossConsole';
 import {BossChat} from '../src/features/boss/BossChat';
 import {BossBudget} from '../src/features/boss/BossBudget';
@@ -14,6 +14,15 @@ import {bossFixture,planProposal} from './fixtures/boss';
 const response=(body:unknown,status=200)=>new Response(JSON.stringify(body),{status,headers:{'Content-Type':'application/json'}});
 beforeEach(()=>setLanguage('en'));
 afterEach(()=>{cleanup();vi.restoreAllMocks();localStorage.clear();sessionStorage.clear();setLanguage('en');});
+it('keeps a rejected chat draft and translates its error when the owner changes language',async()=>{
+  setLanguage('zh-CN');const fetcher=vi.spyOn(globalThis,'fetch').mockResolvedValue(response({detail:'OWNER_PROGRESS_INVALID'},400));
+  render(<BossChat instanceId="language-error" onDone={()=>{}}/>);
+  fireEvent.change(screen.getByRole('textbox'),{target:{value:'创建内部客户验证草案'}});fireEvent.submit(screen.getByRole('textbox').closest('form')!);
+  expect((await screen.findByRole('alert')).textContent).toBe('环节资料、要求或额度不符合允许范围。');
+  act(()=>setLanguage('en'));
+  expect(screen.getByRole('alert').textContent).toBe('Stage material, requirements or allowances are outside the allowed limits.');
+  expect((screen.getByRole('textbox') as HTMLTextAreaElement).value).toBe('创建内部客户验证草案');expect(fetcher).toHaveBeenCalledOnce();
+});
 it('projects exactly three real startup values without synthetic progress',()=>{
   const data=bossFixture({budget:{...bossFixture().budget!,activatedAt:null,totalMicros:0,availableMicros:0},paymentConfigured:false,modelConfigured:false});
   const projection=projectBossAttention(data);

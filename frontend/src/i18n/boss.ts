@@ -69,7 +69,7 @@ const entries: [string, string, string?][] = [
   ['Attempt state: SUSPENDED','执行已暂停，保留进度','Suspended; progress retained'],
   ['Attempt state: DISPATCH_PENDING','等待派工','Awaiting dispatch'], ['Attempt state: RUNNING','执行中','Running'], ['Attempt state: COMPLETED','执行完成','Completed'], ['Attempt state: FAILED','执行失败','Failed'], ['Attempt state: BLOCKED','执行阻塞','Blocked'], ['Attempt state: INTERRUPTED','执行已中断','Interrupted'],
   ['Accounting state: NOT_STARTED','尚未调用','No calls yet'], ['Accounting state: PENDING','费用待核实，预留保留','Pending verification; reservation retained'], ['Accounting state: SETTLED','已结算','Settled'],
-  ['CALL_OUTCOME_UNKNOWN','本任务的模型调用结果未知，费用预留保留；独立任务可按剩余预算继续。','This task has an unknown model outcome. Its reservation is retained; independent tasks may use the remaining budget.'],
+  ['CALL_OUTCOME_UNKNOWN','本次模型调用结果尚未确认，请先核验结果；费用以账本记录为准，独立任务可按剩余预算继续。','This model outcome is unconfirmed. Verify its result and refer to the recorded charges; independent tasks may use the remaining budget.'],
   ['TOOL_OUTCOME_UNKNOWN','本任务的工具操作结果未知，核实前不会重放；独立任务可以继续。','This task has an unknown tool outcome. It will not be replayed before verification; independent tasks may continue.'],
   ['PAUSED_RECOVERY_REQUIRED','本任务需要核验执行回执后恢复。','Verify this task’s execution receipts before resuming it.'],
   ['OWNER_SCHEDULER_FAILED','公司调度控制层发生错误，已阻止新派工。老板的运行意图保持不变；请查看控制层日志。','The company scheduler failed and new dispatch is blocked. The Owner’s run intent is preserved; inspect the controller logs.'],

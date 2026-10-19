@@ -43,6 +43,11 @@ export class CompanyRecoveryService {
         if(dispatch){
           db.prepare("UPDATE owner_goal_dispatches SET state='QUEUED',reason=NULL WHERE id=?").run(String(dispatch.id));
           db.prepare("UPDATE owner_goal_steps SET state='QUEUED' WHERE id=?").run(String(dispatch.id));
+          const occurrence=db.prepare("SELECT * FROM owner_task_occurrences WHERE dispatch_id=? AND state IN ('BLOCKED','CANCELLED','NO_PROGRESS')").get(dispatch.id);
+          if(occurrence){
+            db.prepare("UPDATE owner_task_occurrences SET state='RUNNING' WHERE id=?").run(occurrence.id);
+            db.prepare("UPDATE owner_task_nodes SET state='RUNNING',next_at=NULL WHERE goal_id=? AND goal_revision=? AND node_key=?").run(occurrence.goal_id,occurrence.goal_revision,occurrence.node_key);
+          }
         }
         if(a.goalId&&this.gate.goals.get(a.goalId).status==='BLOCKED'&&this.gate.goals.get(a.goalId).reason===a.reason)this.gate.goals.state(a.goalId,'READY');
       }

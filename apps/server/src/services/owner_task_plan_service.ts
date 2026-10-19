@@ -48,13 +48,14 @@ export class OwnerTaskPlanService {
       if(t.kind==='weekly')ownerInput(Array.isArray(t.weekdays)&&t.weekdays.length>0&&t.weekdays.length<=7&&t.weekdays.every(d=>Number.isInteger(d)&&d>=0&&d<=6)&&new Set(t.weekdays).size===t.weekdays.length,'OWNER_TASK_SCHEDULE_INVALID');
       if(n.progressPolicy!==undefined){
         const p=n.progressPolicy;taskKeys(p,['requirements','passPercent','allowIncompleteFrom'],'OWNER_PROGRESS_INVALID');
-        ownerInput([70,80,100].includes(p.passPercent)&&Array.isArray(p.requirements)&&p.requirements.length>0&&p.requirements.length<=20&&Array.isArray(p.allowIncompleteFrom)&&p.allowIncompleteFrom.every(k=>n.dependsOn.includes(k))&&new Set(p.allowIncompleteFrom).size===p.allowIncompleteFrom.length,'OWNER_PROGRESS_INVALID');
+        const incomplete=p.allowIncompleteFrom===undefined?[]:p.allowIncompleteFrom;
+        ownerInput([70,80,100].includes(p.passPercent)&&Array.isArray(p.requirements)&&p.requirements.length>0&&p.requirements.length<=20&&Array.isArray(incomplete)&&incomplete.every(k=>n.dependsOn.includes(k))&&new Set(incomplete).size===incomplete.length,'OWNER_PROGRESS_INVALID');
         for(const r of p.requirements){taskKeys(r,['id','description','contains','minBytes'],'OWNER_PROGRESS_INVALID');ownerInput(typeof r.id==='string'&&/^[\w-]{1,64}$/.test(r.id)&&typeof r.description==='string'&&r.description.trim().length>0&&r.description.length<=300&&(r.contains===undefined||typeof r.contains==='string'&&r.contains.trim().length>0&&r.contains.length<=500)&&(r.minBytes===undefined||Number.isSafeInteger(r.minBytes)&&r.minBytes>0&&r.minBytes<=1000000)&&(r.contains!==undefined||r.minBytes!==undefined),'OWNER_PROGRESS_INVALID');}
         ownerInput(new Set(p.requirements.map(r=>r.id)).size===p.requirements.length,'OWNER_PROGRESS_INVALID');
       }
     }
     const visited=new Set<string>(),visiting=new Set<string>();const walk=(key:string)=>{if(visiting.has(key))ownerInput(false,'OWNER_TASK_PLAN_CYCLE');if(visited.has(key))return;visiting.add(key);for(const d of nodes.find(n=>n.key===key)!.dependsOn)walk(d);visiting.delete(key);visited.add(key);};nodes.forEach(n=>walk(n.key));
-    return JSON.parse(JSON.stringify(value));
+    return JSON.parse(JSON.stringify({...value,nodes:nodes.map(n=>n.progressPolicy?{...n,progressPolicy:{...n.progressPolicy,allowIncompleteFrom:n.progressPolicy.allowIncompleteFrom??[]}}:n)}));
   }
   install(goalId:string,value:unknown,approved=false){
     const plan=this.validate(value),goal=this.goals.get(goalId),db=this.goals.store.db;

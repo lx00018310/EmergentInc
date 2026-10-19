@@ -126,7 +126,7 @@ export class CompanyAttentionService {
     const actions:string[]=[];
     if(allowed&&!active){
       actions.push('SUPPLEMENT','ADJUST_REQUIREMENTS');
-      if(latest)actions.push('EXTEND_LIMITS');
+      if(latest&&plans.progress.forDispatch(String(latest.dispatch_id)))actions.push('EXTEND_LIMITS');
       if(node!.progressPolicy&&!['COMPLETED','SKIPPED'].includes(node!.state)&&!goals.hasPendingOutcome(goalId,true))actions.push('SKIP_NODE');
       if(['BLOCKED','DEFERRED','PARTIAL','SKIPPED'].includes(node!.state)&&!goals.hasPendingOutcome(goalId,true)&&(!latest||!plans.progress.retryAllowed(String(latest.dispatch_id))))actions.push('CONTINUE_NODE');
     }

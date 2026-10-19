@@ -63,7 +63,7 @@ export function readUpgradeStatus(root, config) {
   const outcomes = fs.existsSync(file) ? (() => {
     try {
       return Object.fromEntries(readDb(file,
-        "SELECT candidate_id,kind,payload,created_at FROM events WHERE kind IN ('gene_validation_failed','gene_candidate_validated','gene_candidate_validated_reused','owner_exact_candidate_approved','generation_born','generation_restored','generation_abandoned_before_switch') ORDER BY sequence").reverse()
+        "SELECT candidate_id,kind,payload,created_at FROM events WHERE kind IN ('gene_validation_failed','gene_candidate_validated','gene_candidate_validated_reused','owner_exact_candidate_approved','generation_born','generation_restored','generation_abandoned_before_switch') ORDER BY sequence")
         .map(row => [row.candidate_id, { kind: row.kind, at: Number(row.created_at), reason: row.kind === 'gene_validation_failed' ? (JSON.parse(row.payload).reason ?? null) : null }]));
     } catch { return {}; }
   })() : {};
@@ -165,13 +165,12 @@ export async function createUpgradeWeb({ root, config, secret, runCommand = runU
   checkRunning = generation => new LocalWorldRuntime({ ...config, ownerEnvironment: { EMERGENTINC_OWNER_SECRET: secret } }).checkRunning(generation) }) {
   const app = fastify({ logger: false, bodyLimit: 8192 });
   const jobFile = path.join(config.stateDirectory, 'upgrade-web-job.json');
-  // Persistent per-commit record of pipeline attempts that fail before any candidate row exists
-  // (merge conflict, dirty worktree, preflight denial). Keyed by commit sha, latest attempt wins.
+  // Retain per-commit failure stages and confirmed Git sync across later jobs/restarts.
   const pipelineFile = path.join(config.stateDirectory, 'commit-pipeline.json');
   const readPipeline = () => { try { return JSON.parse(fs.readFileSync(pipelineFile, 'utf8')); } catch { return {}; } };
-  const recordPipelineFailure = (commit, step, reason) => {
+  const recordPipelineResult = (commit, step, reason, state='fail') => {
     if (!GIT_SHA_PATTERN.test(commit ?? '')) return;
-    const record = readPipeline(); record[commit] = { step, reason, at: Date.now() };
+    const record = readPipeline(); record[commit] = { step, state, reason, at: Date.now() };
     try { fs.writeFileSync(pipelineFile, JSON.stringify(record, null, 2)); } catch {}
   };
   let job = fs.existsSync(jobFile) ? JSON.parse(fs.readFileSync(jobFile, 'utf8')) : null;
@@ -313,12 +312,12 @@ export async function createUpgradeWeb({ root, config, secret, runCommand = runU
           if(recoveryGit&&activeSource(status(root,config))===recoveryGit.commit){phase('sync');syncSwitch(root,recoveryGit);}
         }
         job.state = 'succeeded';
-        if(body.action==='switch'&&job.git?.commit){const record=readPipeline();delete record[job.git.commit];try{fs.writeFileSync(pipelineFile,JSON.stringify(record,null,2));}catch{}}
+        if(job.git?.commit)recordPipelineResult(job.git.commit,'sync',null,'done');
       } catch (error) {
         const published=job.phase==='publish'&&job.git?.commit&&activeSource(status(root,config))===job.git.commit;
         job.state = job.phase==='sync'||published?'needs_git_sync':'failed';job.error=error.message;if(error.conflicts)job.conflicts=error.conflicts;
         // Persist which pipeline step failed for this commit, latest attempt wins.
-        if(body.action==='switch'&&job.git?.commit)recordPipelineFailure(job.git.commit,job.phase??
+        if(job.git?.commit)recordPipelineResult(job.git.commit,job.phase??
           (String(error.message).startsWith('GIT_MERGE_CONFLICT')?'merge':String(error.message)),error.message);
       }
       finally { job.finishedAt = Date.now(); busy = false; save(); }

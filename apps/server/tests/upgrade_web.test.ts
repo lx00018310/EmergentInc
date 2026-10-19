@@ -1,7 +1,7 @@
 import {describe,expect,it,vi} from 'vitest';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import {cleanups,fixture} from './fixtures/upgrade_web.js';
+import {cleanups,fixture,gitRepo,switchFixture} from './fixtures/upgrade_web.js';
 import {DatabaseSync} from 'node:sqlite';
 import {pixelReleaseToken} from '../src/services/release_maintenance_client.js';
 // @ts-ignore Standalone maintenance script.
@@ -103,14 +103,26 @@ describe("Owner web upgrade",()=>{
     expect(f.run).not.toHaveBeenCalled();
     expect(ownerReleaseInput('', ' Changes ',new Date('2026-10-08T06:00:00Z'))).toEqual({label:'release-20261008T060000Z',reason:'Changes'});
   });
-  it('reads the active display label independently from its internal release ID',async()=>{
+  it('reads the active display label and latest candidate outcome independently from its internal release ID',async()=>{
     const f=await fixture(),workspace=path.join(f.directory,'workspace'),lineageFile=path.join(workspace,'system/lineage/lineage.sqlite3');
     fs.mkdirSync(path.dirname(lineageFile),{recursive:true});
     const lineage=new DatabaseSync(lineageFile);lineage.exec("CREATE TABLE generations(id TEXT,generation_no INTEGER,parent_id TEXT,release_id TEXT,state TEXT); INSERT INTO generations VALUES('G0014',14,'G0013','local-safe-id','ACTIVE')");lineage.close();
-    const evolution=new DatabaseSync(path.join(f.directory,'evolution.sqlite3'));evolution.exec('CREATE TABLE candidates(id TEXT,state TEXT,phase TEXT,failure_reason TEXT,created_at INTEGER,target_generation TEXT,request_hash TEXT,candidate_json TEXT,request_json TEXT); CREATE TABLE events(sequence INTEGER,kind TEXT,payload TEXT)');
+    const evolution=new DatabaseSync(path.join(f.directory,'evolution.sqlite3'));evolution.exec('CREATE TABLE candidates(id TEXT,state TEXT,phase TEXT,failure_reason TEXT,created_at INTEGER,target_generation TEXT,request_hash TEXT,candidate_json TEXT,request_json TEXT); CREATE TABLE events(sequence INTEGER,candidate_id TEXT,kind TEXT,payload TEXT,created_at INTEGER)');
     const request={base_generation:'G0013',owner_release:{label:'统一浅灰背景 / 🚀',reason:'Changes'}};
-    evolution.prepare('INSERT INTO candidates VALUES(?,?,?,?,?,?,?,?,?)').run('local-safe-id','BORN','DONE',null,1,'G0014','hash',null,JSON.stringify(request));evolution.close();
-    expect(readUpgradeStatus(path.resolve('.'),{workspace,stateDirectory:f.directory,appUrl:f.data.appUrl}).active).toMatchObject({release_id:'local-safe-id',label:'统一浅灰背景 / 🚀'});
+    evolution.prepare('INSERT INTO candidates VALUES(?,?,?,?,?,?,?,?,?)').run('local-safe-id','BORN','DONE',null,1,'G0014','hash',null,JSON.stringify(request));
+    evolution.prepare('INSERT INTO events VALUES(?,?,?,?,?)').run(1,'local-safe-id','gene_candidate_validated','{}',10);
+    evolution.prepare('INSERT INTO events VALUES(?,?,?,?,?)').run(2,'local-safe-id','generation_born','{}',20);evolution.close();
+    const result=readUpgradeStatus(path.resolve('.'),{workspace,stateDirectory:f.directory,appUrl:f.data.appUrl});
+    expect(result.active).toMatchObject({release_id:'local-safe-id',label:'统一浅灰背景 / 🚀'});
+    expect(result.candidates[0].outcome).toMatchObject({kind:'generation_born',at:20});
+  });
+  it('retains confirmed Git sync after a later maintenance job',async()=>{
+    const f=await switchFixture(gitRepo());expect((await f.select()).statusCode).toBe(202);await f.done();
+    const commit=f.run.mock.calls.find(call=>call[1][0]==='prepare')![1].at(-1);
+    expect(JSON.parse(fs.readFileSync(path.join(f.directory,'commit-pipeline.json'),'utf8'))[commit]).toMatchObject({step:'sync',state:'done',reason:null});
+    expect((await f.request({action:'prepare',version:'Later maintenance attempt',reason:'Keep earlier receipts'})).statusCode).toBe(202);await f.done();
+    const status=(await f.app.inject({url:'/api/upgrades',headers:{cookie:f.cookie}})).json();
+    expect(status.commitPipeline[commit]).toMatchObject({step:'sync',state:'done',reason:null});
   });
   it('derives rollback and deletion eligibility from actual generation order and retained restore history',async()=>{
     const f=await fixture(),workspace=path.join(f.directory,'workspace'),releases=path.join(f.directory,'releases'),file=path.join(workspace,'system/lineage/lineage.sqlite3');fs.mkdirSync(path.dirname(file),{recursive:true});

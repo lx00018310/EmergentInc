@@ -127,7 +127,10 @@ export class OwnerGoalService {
     const unknown=db.prepare(`SELECT 1 FROM owner_model_permits p ${receipts?'LEFT JOIN company_model_dispatches d ON d.permit_id=p.id':''} WHERE p.goal_id=? AND p.state IN ${states} ${receipts?'AND d.response_json IS NULL':''} AND NOT EXISTS(SELECT 1 FROM control_events e WHERE e.kind='owner_model_outcome_reviewed' AND json_extract(e.payload,'$.permitId')=p.id)`).get(goalId);
     const reviewed=Boolean(db.prepare("SELECT 1 FROM sqlite_master WHERE name='company_tool_reviews'").get());
     const tool=db.prepare("SELECT 1 FROM sqlite_master WHERE name='company_controller_tools'").get()&&db.prepare(`SELECT 1 FROM company_controller_tools t JOIN company_execution_attempts a ON a.id=t.attempt_id WHERE a.goal_id=? AND t.state='STARTED' ${reviewed?"AND NOT EXISTS(SELECT 1 FROM company_tool_reviews r WHERE r.operation_id=t.operation_id AND r.decision='ABANDONED')":''}`).get(goalId);
-    const execution=reviewed&&db.prepare("SELECT 1 FROM company_execution_attempts a JOIN company_worker_launches w ON w.attempt_id=a.id WHERE a.goal_id=? AND a.reason IN ('CALL_OUTCOME_UNKNOWN','TOOL_OUTCOME_UNKNOWN') AND NOT EXISTS(SELECT 1 FROM company_execution_reviews r WHERE r.attempt_id=a.id)").get(goalId);
+    // A legacy Core abandonment already has a canonical outcome receipt. Honor it;
+    // the permit query above still holds every other unreviewed call and its money.
+    const legacyReview=db.prepare("SELECT 1 FROM sqlite_master WHERE name='company_legacy_runs'").get()?`AND NOT (a.reason='CALL_OUTCOME_UNKNOWN' AND EXISTS(SELECT 1 FROM company_legacy_runs l WHERE l.run_id=a.run_id) AND EXISTS(SELECT 1 FROM company_attempt_permits x JOIN control_events e ON e.kind='owner_model_outcome_reviewed' AND json_extract(e.payload,'$.permitId')=x.permit_id WHERE x.attempt_id=a.id))`:'';
+    const execution=reviewed&&db.prepare(`SELECT 1 FROM company_execution_attempts a WHERE a.goal_id=? AND a.reason IN ('CALL_OUTCOME_UNKNOWN','TOOL_OUTCOME_UNKNOWN') AND NOT EXISTS(SELECT 1 FROM company_execution_reviews r WHERE r.attempt_id=a.id) ${legacyReview}`).get(goalId);
     return Boolean(unknown||tool||execution);
   }
   private snapshot(goal: OwnerGoal) { this.store.db.prepare('INSERT INTO owner_goal_revisions VALUES(?,?,?)').run(goal.id, goal.specificationRevision, JSON.stringify(goal)); }

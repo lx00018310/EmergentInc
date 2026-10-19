@@ -115,7 +115,7 @@ describe("Commit pipeline progress and instant rollback",()=>{
     expect(failedNode!.querySelectorAll('i.done')).toHaveLength(2); // merge + freeze passed
     expect(failedNode!.querySelectorAll('i.fail')).toHaveLength(1); // validate failed
     const bornNode=doc.querySelector(`button[data-sha="${born}"] .pipeline`);
-    expect(bornNode!.querySelectorAll('i.done')).toHaveLength(6);
+    expect(bornNode!.querySelectorAll('i.done')).toHaveLength(5); // publication alone does not prove Git sync
     const conflictSha=graph.commits[2].sha;
     const conflictCommit=doc.querySelector(`button[data-sha="${conflictSha}"]`);
     const conflictNode=conflictCommit?.querySelector('.pipeline')??null;
@@ -127,6 +127,30 @@ describe("Commit pipeline progress and instant rollback",()=>{
     expect(doc.getElementById('selected-pipeline').querySelectorAll('.pipeline-step')).toHaveLength(6);
     expect(doc.getElementById('pipeline-reason').hidden).toBe(false);
     expect(doc.getElementById('pipeline-reason').textContent).toContain(lang==='en'?'Candidate validation failed':'候选校验失败');
+    expect(f.run).not.toHaveBeenCalled();
+  },30000);
+  it.each(['zh-CN','en'])('shows only confirmed stages, refreshes live attempts and really hides stale cells (%s)',async lang=>{
+    const f=await fixture(),graph=linearGraphPage(0),target=graph.commits[1].sha,untouched=graph.commits[2].sha;
+    const data:any={...f.data,active:{...f.data.active,release_id:'base'},busy:false,job:null,commitPipeline:{},candidates:[{id:'base',state:'BORN',request:{owner_release:{source_commit:graph.mainHead}}},{id:'current',state:'VALIDATED',created_at:10,request:{owner_release:{source_commit:target}},outcome:{kind:'gene_candidate_validated',at:20}}]};
+    const {dom,doc,poll}=await page(f,lang,'',{'/api/upgrades':data,'/api/git-graph?limit=20&page=0':graph});
+    const stages=()=>Array.from(doc.querySelectorAll(`button[data-sha="${target}"] .pipeline i`),(cell:any)=>cell.className);
+    expect(stages()).toEqual(['done','done','done','','','']);
+    data.candidates[1].outcome={kind:'owner_exact_candidate_approved',at:30};await poll();
+    expect(stages()).toEqual(['done','done','done','done','','']);
+    data.candidates[1].outcome={kind:'generation_born',at:40};await poll();
+    expect(stages()).toEqual(['done','done','done','done','done','']);
+    data.commitPipeline[target]={step:'sync',state:'done',at:50,reason:null};await poll();expect(stages().filter(s=>s==='done')).toHaveLength(6);
+    data.job={action:'switch',state:'running',phase:'validate',startedAt:60,git:{commit:target}};data.busy=true;await poll();
+    expect(stages()).toEqual(['done','running','','','','']); // a new freeze must not reuse the old candidate
+    data.candidates.push({id:'retry',created_at:70,state:'SUBMITTED',request:{owner_release:{source_commit:target}}});await poll();
+    expect(stages()).toEqual(['done','done','running','','','']);
+    data.job.phase='publish';await poll();expect(stages()).toEqual(['done','done','done','done','running','']);
+    data.busy=false;data.job=null;await poll();
+    doc.querySelector(`button[data-sha="${target}"]`).click();await vi.waitFor(()=>expect(doc.getElementById('selected-pipeline').hidden).toBe(false));
+    expect(doc.getElementById('selected-pipeline').querySelector('[aria-label]')).not.toBeNull();
+    doc.querySelector(`button[data-sha="${untouched}"]`).click();await vi.waitFor(()=>expect(doc.getElementById('selected-pipeline').hidden).toBe(true));
+    expect(dom.window.getComputedStyle(doc.getElementById('selected-pipeline')).display).toBe('none');
+    data.versions=[];await poll();expect(dom.window.getComputedStyle(doc.getElementById('rollback-row')).display).toBe('none');
     expect(f.run).not.toHaveBeenCalled();
   },30000);
   it.each(['zh-CN','en'])('offers instant rollback to eligible history with a confirmation dialog (%s)',async lang=>{

@@ -29,6 +29,29 @@ function failedTask(f: ReturnType<typeof fixture>) {
 }
 
 describe('stage recovery through real owner routes',()=>{
+  it('requires review for an unlaunched historical attempt and gives its explicitly resumed work a bounded scope',async()=>{
+    const f=fixture(),{goal,taskId,command}=failedTask(f),db=f.control.db,plans=f.gate.proposals.plans;
+    db.exec('DELETE FROM company_progress_gaps; DELETE FROM company_progress_scopes;');
+    // Match a migrated snapshot: the old Core run has ended, while its outcome remains unknown.
+    db.prepare("UPDATE owner_run_permits SET state='FINISHED' WHERE run_id=?").run(command.runId);
+    db.prepare("UPDATE owner_round_permits SET state='RELEASED' WHERE run_id=? AND state='RESERVED'").run(command.runId);
+    db.prepare("UPDATE company_execution_attempts SET state='BLOCKED',reason='CALL_OUTCOME_UNKNOWN' WHERE id=?").run(command.attemptId);
+    db.prepare("UPDATE owner_work_tasks SET state='BLOCKED',reason='CALL_OUTCOME_UNKNOWN' WHERE id=?").run(taskId);
+    f.gate.goals.state(goal.id,'BLOCKED','CALL_OUTCOME_UNKNOWN');f.off();
+    const app=await createServer({workspaceRoot:f.root,worlds:f.worlds});cleanups.push(()=>app.close());
+    const facts=(await app.inject(`/api/owner/goals/${goal.id}/nodes/draft/actions`)).json();
+    expect(facts.scope).toBeNull();expect(facts.actions).not.toContain('CONTINUE_NODE');expect(facts.actions).not.toContain('EXTEND_LIMITS');
+    expect(()=>f.gate.goals.action(goal.id,{action:'reopen',expectedRevision:goal.revision,idempotencyKey:'unreviewed-history-reopen'})).toThrow('OWNER_OUTCOME_REVIEW_REQUIRED');
+    const review=f.work.recovery!.view().attempts.find(a=>a.id===command.attemptId)!;
+    const response=await app.inject({method:'POST',url:`/api/owner/execution-recovery/${review.id}/abandon`,payload:{hash:review.hash,reason:'Owner reviewed and releases only this historical unknown execution',idempotencyKey:'review-historical-once'}});
+    expect(response.statusCode,response.body).toBe(200);expect(f.gate.view().desiredMode).toBe('OFF');
+    expect(plans.get(goal.id)!.nodes[0]).toMatchObject({state:'RUNNING',occurrences:0});
+    const dispatch=db.prepare('SELECT id FROM owner_goal_dispatches WHERE task_id=?').get(taskId)!;
+    f.on();const fresh=f.work.worker!.create(taskId,f.work.agents!.scopeId(f.a.qianji_id),1,{goalId:goal.id,specificationRevision:1,dispatchId:String(dispatch.id)});
+    const spec=JSON.parse(String(db.prepare('SELECT spec_json FROM company_worker_launches WHERE attempt_id=?').get(fresh.attemptId)!.spec_json));
+    expect(spec.progress).toMatchObject({schema:1});expect(plans.progress.forDispatch(String(dispatch.id))).toMatchObject({maxModelCalls:60,maxToolCalls:120,modelCalls:0});
+    expect(f.work.execution.get(command.attemptId).state).toBe('BLOCKED');expect(f.calls).toHaveLength(0);
+  });
   it('routes retry and stop without accepting unrelated request fields',async()=>{
     const f=fixture(), first=failedTask(f), app=await createServer({workspaceRoot:f.root,worlds:f.worlds}); cleanups.push(()=>app.close());
     const body={action:'RETRY_TASK',expectedRevision:first.goal.revision,idempotencyKey:crypto.randomUUID(),reason:'The owner requests another bounded attempt'};

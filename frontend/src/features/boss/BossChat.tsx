@@ -19,12 +19,12 @@ export function BossChat({ instanceId, onDone, canDiscardPending = false }: { in
     try { const row = JSON.parse(read('pending') || 'null'); if (row && typeof row.question === 'string' && row.question.length <= 2000 && /^[a-zA-Z0-9_-]{1,128}$/.test(row.key) && ['en', 'zh-CN'].includes(row.language) && Array.isArray(row.history) && row.history.length <= 12 && row.history.every((turn: OwnerChatTurn) => ['user', 'assistant'].includes(turn.role) && typeof turn.content === 'string' && turn.content.length <= 4000)) pending.current = row; } catch { /* Invalid local data grants no authority. */ }
     return pending.current?.question ?? read('draft') ?? '';
   });
-  const [busy, setBusy] = useState(false), [error, setError] = useState(''); const flight = useRef(false);
+  const [busy, setBusy] = useState(false), [error, setError] = useState<unknown>(); const flight = useRef(false);
   useEffect(() => save('draft', draft), [draft]);
   async function send() {
     const question = draft.trim(); if (!question || flight.current) return;
-    if (pending.current && pending.current.question !== question) { setError(t('Resolve the pending request before sending a different command.')); return; }
-    flight.current = true; setBusy(true); setError('');
+    if (pending.current && pending.current.question !== question) { setError(new Error('Resolve the pending request before sending a different command.')); return; }
+    flight.current = true; setBusy(true); setError(undefined);
     pending.current ??= { question, history: history.slice(-12).map(turn => ({ ...turn, content: turn.content.slice(0, 4000) })), key: crypto.randomUUID(), language: language() };
     save('pending', pending.current);
     try {
@@ -33,7 +33,7 @@ export function BossChat({ instanceId, onDone, canDiscardPending = false }: { in
       setHistory(next); save('history', next); pending.current = undefined; save('pending', undefined); setDraft(''); onDone();
     } catch (e) {
       if (e instanceof ApiError && (e.status === 400 || ['OWNER_DISPATCH_INVALID', 'OWNER_DISPATCH_EMPTY', 'OWNER_DISPATCH_OUTPUT_LIMIT', 'OWNER_GOAL_AUTH_REQUIRED', 'OWNER_COMPANY_BUDGET_REQUIRED', 'OWNER_COMPANY_BUDGET_EXHAUSTED', 'MODEL_NOT_CONFIGURED'].includes(e.detail))) { pending.current = undefined; save('pending', undefined); }
-      setError(ownerError(e)); onDone();
+      setError(e); onDone();
     } finally { flight.current = false; setBusy(false); }
   }
   return <section className="boss-chat" aria-label={t('Talk to your company')}>
@@ -44,7 +44,7 @@ export function BossChat({ instanceId, onDone, canDiscardPending = false }: { in
         onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing && e.keyCode !== 229) { e.preventDefault(); void send(); } }} />
       <button type="submit" disabled={busy || !draft.trim()} aria-label={t(busy ? 'Submitting…' : 'Send')}>{busy ? '…' : '↑'}</button>
     </form>
-    {!!error && <p role="alert">{error}</p>}
-    {!!pending.current && canDiscardPending && !busy && <button onClick={() => { pending.current=undefined;save('pending',undefined);setError(''); }}>{t('Discard local retry; this does not cancel server work')}</button>}
+    {!!error && <p role="alert">{ownerError(error)}</p>}
+    {!!pending.current && canDiscardPending && !busy && <button onClick={() => { pending.current=undefined;save('pending',undefined);setError(undefined); }}>{t('Discard local retry; this does not cancel server work')}</button>}
   </section>;
 }

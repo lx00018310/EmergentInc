@@ -65,9 +65,11 @@ export class OwnerWorkService {
     this.companyTools=new CompanyToolService({gate,agents:this.agents,artifacts:this.artifacts,recruit:this.requestRecruit.bind(this),code,payments,release:this.releaseMaintenance,projectRoot:this.manager.options.projectRoot,contracts:this.manager.genome.capability_contracts});
     this.worker=new CompanyWorkerAdapter(this.execution,{workspace:this.manager.registry.workspace,meter:this.manager.options.usageMeter,environment,spec:command=>{
       const actor=this.agents!.forScope(command.worldId);
-      const plans=gate.proposals.plans,progress=command.goal?plans.progress.startWindow(command.goal.dispatchId):undefined;
-      const occurrence=command.goal?gate.store.db.prepare('SELECT node_key FROM owner_task_occurrences WHERE dispatch_id=?').get(command.goal.dispatchId):undefined;
-      const recovery=command.goal&&plans.get(command.goal.goalId)?.nodes.find(n=>n.key===occurrence?.node_key)?.progressPolicy;
+      const plans=gate.proposals.plans;
+      const occurrence=command.goal?gate.store.db.prepare('SELECT node_key,scheduled_at FROM owner_task_occurrences WHERE dispatch_id=?').get(command.goal.dispatchId):undefined;
+      const plan=command.goal?plans.get(command.goal.goalId):null,node=plan?.nodes.find(n=>n.key===occurrence?.node_key);
+      if(command.goal&&occurrence&&node&&!plans.progress.forDispatch(command.goal.dispatchId))plans.progress.attach(command.goal.goalId,node,command.goal.dispatchId,Number(occurrence.scheduled_at),plan!);
+      const progress=command.goal?plans.progress.startWindow(command.goal.dispatchId):undefined,recovery=node?.progressPolicy;
       return {schema:1,attemptId:command.attemptId,taskId:command.taskId,runId:command.runId,fence:command.fence,agent:{id:actor.id,name:actor.name,role:actor.role},instruction:command.instruction,model:this.manager.options.modelName,maxSteps:command.goal?20:command.rounds,maxOutputTokens:COMPANY_WORKER_MAX_OUTPUT_TOKENS,notSentRetries:1,responseFormat:'json_object',...(progress?{progress}:{}),formatCorrections:recovery?1:0,tools:[...BUILTIN_DEFINITIONS.filter(t=>['save_artifact','webfetch','github_repo'].includes(t.name)),...this.companyTools!.catalog()]};
     },controllerTool:(id,key,name,args)=>this.companyTools!.execute(id,key,name,args),controllerToolReceipt:(id,key)=>this.companyTools!.receipt(key,id),artifact:(...args)=>this.artifacts.record(...args)});
     gate.addSuspend(()=>this.worker!.disconnectAll());
