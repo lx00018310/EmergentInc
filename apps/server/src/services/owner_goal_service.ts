@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import * as fs from 'node:fs';
 import type { WorldRegistryStore } from '@emergentinc/persistence';
 import type { OwnerGoal, OwnerGoalAcceptance, OwnerGoalDetail, OwnerGoalStatus } from '@emergentinc/protocol';
+import type {CompanyProgressService} from './company_progress_service.js';
 
 export const goalHash = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 export function ownerInput(condition: unknown, code = 'OWNER_GOAL_INPUT_INVALID'): asserts condition {
@@ -14,6 +15,7 @@ export function exactKeys(input: unknown, keys: string[]): asserts input is Reco
 export function ownerKey(key: unknown): asserts key is string { ownerInput(typeof key === 'string' && /^[\w-]{8,128}$/.test(key)); }
 
 export class OwnerGoalService {
+  progress?:CompanyProgressService;
   constructor(readonly store: WorldRegistryStore) {
     const db = store.db;
     db.exec(`
@@ -50,7 +52,7 @@ export class OwnerGoalService {
     return this.parse(row);
   }
   detail(id: string): OwnerGoalDetail {
-    return { goal: this.get(id), events: this.store.db.prepare('SELECT * FROM owner_goal_events WHERE goal_id=? ORDER BY id DESC LIMIT 200').all(id).map(r => ({ id: Number(r.id), goalId: String(r.goal_id), revision: Number(r.revision), kind: String(r.kind), payload: JSON.parse(String(r.payload)), createdAt: Number(r.created_at) })),
+    return { goal: this.get(id), ...(this.progress?{progress:this.progress.view(id)}:{}), events: this.store.db.prepare('SELECT * FROM owner_goal_events WHERE goal_id=? ORDER BY id DESC LIMIT 200').all(id).map(r => ({ id: Number(r.id), goalId: String(r.goal_id), revision: Number(r.revision), kind: String(r.kind), payload: JSON.parse(String(r.payload)), createdAt: Number(r.created_at) })),
       evidence: this.store.db.prepare('SELECT * FROM owner_goal_evidence WHERE goal_id=? ORDER BY created_at DESC,rowid DESC').all(id).map(r => ({ id: String(r.id), goalId: id, specificationRevision: Number(r.specification_revision), runId: r.run_id?String(r.run_id):null, worldId: r.world_id?String(r.world_id):null, kind: r.kind as 'artifact' | 'report' | 'payment', reference: String(r.reference), sha256: String(r.sha256), bytes: Number(r.bytes), createdAt: Number(r.created_at) })),
       dispatches: this.store.db.prepare('SELECT * FROM owner_goal_dispatches WHERE goal_id=? ORDER BY rowid DESC').all(id).map(r => ({ id: String(r.id), taskId: r.task_id as string | null, runId: r.run_id as string | null, worldId: String(r.world_id), state: String(r.state), reason: r.reason as string | null })) };
   }
@@ -102,8 +104,8 @@ export class OwnerGoalService {
       pause: { from: ['READY', 'RUNNING', 'WAITING_APPROVAL', 'WAITING_RESOURCE', 'BLOCKED'], to: 'PAUSED' },
       resume: { from: ['PAUSED', 'WAITING_RESOURCE'], to: 'READY' },
       stop: { from: ['DRAFT', 'READY', 'RUNNING', 'WAITING_APPROVAL', 'WAITING_RESOURCE', 'PAUSED', 'BLOCKED', 'FAILED'], to: 'STOPPED' },
-      reopen: { from: ['STOPPED', 'COMPLETED', 'FAILED', 'BLOCKED', 'WAITING_APPROVAL'], to: 'READY' },
-      archive: { from: ['DRAFT', 'READY', 'RUNNING', 'WAITING_APPROVAL', 'WAITING_RESOURCE', 'PAUSED', 'BLOCKED', 'FAILED', 'COMPLETED', 'STOPPED'], to: 'ARCHIVED' },
+      reopen: { from: ['STOPPED', 'COMPLETED', 'PARTIALLY_COMPLETED', 'FAILED', 'BLOCKED', 'WAITING_APPROVAL'], to: 'READY' },
+      archive: { from: ['DRAFT', 'READY', 'RUNNING', 'WAITING_APPROVAL', 'WAITING_RESOURCE', 'PAUSED', 'BLOCKED', 'FAILED', 'COMPLETED', 'PARTIALLY_COMPLETED', 'STOPPED'], to: 'ARCHIVED' },
       restore: { from: ['ARCHIVED'], to: 'PAUSED' },
     };
     ownerInput(typeof input.action === 'string' && transitions[input.action]);
@@ -113,7 +115,7 @@ export class OwnerGoalService {
       // Unknown calls/effects cannot be cleared by merely pressing Continue.
       if (t.to === 'READY' && this.hasPendingOutcome(id)) ownerConflict('OWNER_OUTCOME_REVIEW_REQUIRED');
       this.store.db.prepare('UPDATE owner_goals SET revision=revision+1,status=?,reason=NULL,next_action=?,updated_at=? WHERE id=?').run(t.to, '', Date.now(), id);
-      if(input.action==='reopen'&&this.store.db.prepare("SELECT 1 FROM sqlite_master WHERE name='owner_task_nodes'").get())this.store.db.prepare("UPDATE owner_task_nodes SET state='WAITING',next_at=?,no_progress=0 WHERE goal_id=? AND goal_revision=? AND state='BLOCKED'").run(Date.now(),id,goal.specificationRevision);
+      if(input.action==='reopen'&&this.store.db.prepare("SELECT 1 FROM sqlite_master WHERE name='owner_task_nodes'").get())this.store.db.prepare("UPDATE owner_task_nodes SET state='WAITING',next_at=? WHERE goal_id=? AND goal_revision=? AND state IN ('BLOCKED','PARTIAL','DEFERRED','SKIPPED')").run(Date.now(),id,goal.specificationRevision);
       if(['STOPPED','ARCHIVED'].includes(t.to))this.expireDecisions(id);
       this.event(id, input.action, {}); return this.get(id);
     });

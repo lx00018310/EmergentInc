@@ -5,6 +5,7 @@ import { apiRequest } from '../../api/client';
 import { language, t, useLanguage } from '../../i18n';
 import { OwnerMarkdown } from '../owner/OwnerMarkdown';
 import { ownerStatusLabel } from '../owner/ownerPresentation';
+import {BossNodeProgress} from './BossNodeProgress';
 
 export function BossCompany({ onAction }: { onAction: (action: 'budget' | 'payment' | 'review' | 'model') => void }) {
   useLanguage();
@@ -38,6 +39,8 @@ export function BossCompany({ onAction }: { onAction: (action: 'budget' | 'payme
       {data.goals?.map(goal => <p key={goal.id}><button onClick={() => void inspect(goal.id)}>{goal.title}</button> · {ownerStatusLabel(goal.status, 'Goal status: ')}</p>)}
       {detail && <article><h3>{detail.goal.title}</h3><OwnerMarkdown content={detail.goal.objective} />
         <p>{t('Acceptance rule')}: {detail.goal.acceptance.kind === 'manual' ? detail.goal.acceptance.description : detail.goal.acceptance.kind === 'artifact' ? detail.goal.acceptance.filename : `${detail.goal.acceptance.targetCount} ${t('Confirmed paid orders')}`}</p>
+        <h4>{t('Stage progress and continuation')}</h4>
+        {data.taskPlans?.find(p=>p.goalId===detail.goal.id)?.nodes.map(n=><BossNodeProgress key={`${detail.goal.id}:${n.key}`} goalId={detail.goal.id} nodeKey={n.key} onDone={()=>{void refresh();void inspect(detail.goal.id);}}/>)}
         <h4>{t('View task deliverables')}</h4>
         {!detail.evidence.length && <p>{t('No verified deliverables yet.')}</p>}
         {detail.evidence.filter(e => e.kind === 'artifact').map(e => <p key={e.id}><a href={`/api/owner/goals/${encodeURIComponent(detail.goal.id)}/evidence/${encodeURIComponent(e.id)}`} target="_blank" rel="noopener noreferrer">{e.reference.split('/').at(-1)}</a> · {e.bytes} B</p>)}

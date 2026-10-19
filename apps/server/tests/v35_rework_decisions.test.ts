@@ -42,6 +42,11 @@ describe('V35 three-decision proposals (approve / reject / rework)',()=>{
     expect(['RUNNING','READY','WAITING_APPROVAL']).toContain(f.gate.goals.get(goal.id).status);
     // The decided proposal can never flip back to PENDING through its original key.
     expect(f.gate.proposals.closeProposal(goal.id)?.state).toBe('REJECTED');
+    await f.scheduler.tick();await f.settle();
+    expect(f.requests.at(-1).messages[1].content).toContain('replace the second section with verified pricing sources');
+    const fresh=f.gate.proposals.list().find(p=>p.kind==='close_task'&&p.goalId===goal.id&&p.state==='PENDING')!;
+    expect(fresh.id).not.toBe(proposal.id);expect(fresh.hash).not.toBe(proposal.hash);
+    expect(f.gate.proposals.list().find(p=>p.id===proposal.id)?.state).toBe('REJECTED');
   },20000);
 
   it('rejects a task_plan so the goal finds another way; rework records instructions and keeps the goal open',async()=>{

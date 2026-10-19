@@ -71,7 +71,7 @@ export interface BossOverview extends Pick<OwnerOverview, 'asOf' | 'automation' 
   events: { id: string; kind: 'product' | 'payment' | 'goal'; title: string; at: number; reference: string }[];
 }
 
-export type OwnerGoalStatus = 'DRAFT' | 'READY' | 'RUNNING' | 'WAITING_APPROVAL' | 'WAITING_RESOURCE' | 'PAUSED' | 'BLOCKED' | 'FAILED' | 'COMPLETED' | 'STOPPED' | 'ARCHIVED';
+export type OwnerGoalStatus = 'DRAFT' | 'READY' | 'RUNNING' | 'WAITING_APPROVAL' | 'WAITING_RESOURCE' | 'PAUSED' | 'BLOCKED' | 'FAILED' | 'COMPLETED' | 'PARTIALLY_COMPLETED' | 'STOPPED' | 'ARCHIVED';
 /** Only an artifact hash can satisfy artifact acceptance; reports are never business evidence. */
 export type OwnerGoalAcceptance = { kind: 'artifact'; filename: string; minBytes: number } | { kind: 'manual'; description: string } | {kind:'confirmed_payments';invoiceIds:string[];targetCount:number};
 export interface OwnerGoal {
@@ -82,7 +82,7 @@ export interface OwnerGoal {
 }
 export interface OwnerGoalEvent { id: number; goalId: string; revision: number; kind: string; payload: unknown; createdAt: number }
 export interface OwnerGoalEvidence { id: string; goalId: string; specificationRevision: number; runId: string | null; worldId: string | null; kind: 'artifact' | 'report' | 'payment'; reference: string; sha256: string; bytes: number; createdAt: number }
-export interface OwnerGoalDetail { goal: OwnerGoal; events: OwnerGoalEvent[]; evidence: OwnerGoalEvidence[]; dispatches: { id: string; taskId: string | null; runId: string | null; worldId: string; state: string; reason: string | null }[] }
+export interface OwnerGoalDetail { goal: OwnerGoal; events: OwnerGoalEvent[]; evidence: OwnerGoalEvidence[]; progress?:CompanyProgressView; dispatches: { id: string; taskId: string | null; runId: string | null; worldId: string; state: string; reason: string | null }[] }
 export interface OwnerAutomation {
   desiredMode: 'OFF' | 'ON'; runMode: 'CONTINUOUS' | 'BOUNDED'; requestedRounds: number | null;
   startedRounds: number; completedRounds: number; reservedRounds: number;
@@ -98,7 +98,20 @@ export const COMPANY_BUDGET_USD_CNY = 7;
 export interface CompanyBudget { configuration?:{tokenMillions:number;unitPriceCnyMicros:number}|null;needsRefill?:boolean;currency:'CNY'; totalMicros:number; spentMicros:number; reservedMicros:number; availableMicros:number; revision:number; activatedAt:number|null; unknownCalls:number; historicalCostMicros?:number }
 export interface CompanyProposal { id:string; kind:'budget'|'task_plan'|'close_task'; goalId:string|null; goalRevision:number|null; hash:string; payload:any; state:'PENDING'|'APPROVED'|'REJECTED'|'EXECUTED'|'EXPIRED'; createdAt:number; result:any }
 export type TaskTrigger = {kind:'once'} | {kind:'continuous'} | {kind:'interval';everyMinutes:number} | {kind:'daily'|'weekly';time:string;timezone:string;weekdays?:number[]};
-export interface CompanyTaskNode { key:string; title:string; instruction:string; dependsOn:string[]; trigger:TaskTrigger; filename:string; personId?:string }
-export interface CompanyTaskPlan { summary:string; nodes:CompanyTaskNode[] }
-export interface CompanyTaskNodeView extends CompanyTaskNode { state:string; nextAt:number|null; latestEvidence:string[]; occurrences:number }
-export interface CompanyTaskPlanView { goalId:string; goalRevision:number; planRevision:number; approved:boolean; summary:string; nodes:CompanyTaskNodeView[] }
+export interface CompanyProgressRequirement { id:string; description:string; contains?:string; minBytes?:number }
+export interface CompanyProgressPolicy { requirements:CompanyProgressRequirement[]; passPercent:70|80|100; allowIncompleteFrom:string[] }
+export interface CompanyProgressGap {
+  id:string; factKey:string; description:string; nodeKeys:string[]; status:'OPEN'|'RESOLVED'|'DEFERRED'; limit:number;
+  superseded?:boolean;
+  attempts:{key:string;method:string;methodKey?:string;result?:string;fingerprint?:string;createdAt:number}[];
+}
+export interface CompanyProgressScope {
+  id:string; goalId:string; key:string; revision:number; dispatchIds:string[]; modelCalls:number; toolCalls:number;
+  maxModelCalls:number; maxToolCalls:number; startedAt:number|null; deadlineAt:number|null;
+}
+export interface CompanyProgressView { scopes:CompanyProgressScope[]; gaps:CompanyProgressGap[] }
+export interface CompanyNodeProgress {state:string;checked:string[];missing:string[];evidenceIds:string[];reason:string|null;scopeId:string}
+export interface CompanyTaskNode { key:string; title:string; instruction:string; dependsOn:string[]; trigger:TaskTrigger; filename:string; personId?:string; progressPolicy?:CompanyProgressPolicy }
+export interface CompanyTaskPlan { summary:string; nodes:CompanyTaskNode[]; ownerInstructions?:string }
+export interface CompanyTaskNodeView extends CompanyTaskNode { state:string; nextAt:number|null; latestEvidence:string[]; occurrences:number; progress?:CompanyNodeProgress }
+export interface CompanyTaskPlanView { goalId:string; goalRevision:number; planRevision:number; approved:boolean; summary:string; nodes:CompanyTaskNodeView[]; ownerInstructions?:string }

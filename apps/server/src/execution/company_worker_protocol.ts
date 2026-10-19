@@ -8,6 +8,8 @@ export interface CompanyWorkerSpec {
   model: string; maxSteps: number; maxOutputTokens: number; notSentRetries: 0 | 1; tools: ToolDefinition[];
   systemPrompt?: string;
   responseFormat?:'json_object';
+  progress?:{schema:1;scopeId:string;deadlineAt:number};
+  formatCorrections?:0|1;
 }
 export interface CompanyWorkerEvent {
   id: string; attemptId: string; fence: number; sequence: number;
@@ -15,8 +17,8 @@ export interface CompanyWorkerEvent {
   payload: Record<string, any>;
 }
 export interface CompanyWorkerBroker {
-  authorizeModel(operationId: string, request: PreparedModelRequest): Promise<{permitId: string}>;
-  authorizeTool(operationId: string, tool: string, args: Record<string, any>): Promise<void>;
+  authorizeModel(operationId: string, request: PreparedModelRequest, transportAttempt?:number): Promise<{permitId: string;deadlineAt?:number}>;
+  authorizeTool(operationId: string, tool: string, args: Record<string, any>, progress?:{gapId:string;method:string}): Promise<void|{deadlineAt:number}>;
   controllerTool(operationId: string, tool: string, args: Record<string, any>): Promise<ToolResult>;
   controllerToolReceipt(operationId:string):Promise<ToolResult|null>;
   receipt(event: CompanyWorkerEvent): Promise<void>;

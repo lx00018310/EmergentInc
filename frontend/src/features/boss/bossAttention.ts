@@ -86,7 +86,7 @@ export function projectBossAttention(data: BossOverview, previous?: BossAttentio
   const critical = messages.some(m => m.priority === 'critical');
   const paidOrders = data.storefront?.orders.filter(o => ['PAID', 'DELIVERED', 'FULFILLED'].includes(o.status)) ?? [];
   const products = data.storefront?.products.filter(p => p.enabled) ?? [];
-  const revenue = sumUsdt(data.revenue), activeGoals = data.goals?.filter(g => !['STOPPED', 'ARCHIVED', 'COMPLETED'].includes(g.status));
+  const revenue = sumUsdt(data.revenue), activeGoals = data.goals?.filter(g => !['STOPPED', 'ARCHIVED', 'COMPLETED','PARTIALLY_COMPLETED'].includes(g.status));
   const requested = critical ? 'critical' : data.paidOrderCount > 0 ? 'growth' : products.length || revenue !== '0' && revenue !== '—' ? 'normal' : 'startup';
   const keep = previous && previous.instanceId === data.instanceId && !critical && previous.view !== 'critical' && data.asOf >= previous.selectedAt && data.asOf - previous.selectedAt < 60000;
   const view = keep && previous ? previous.view : requested;

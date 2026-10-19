@@ -59,11 +59,15 @@ export function registerOwnerRoutes(app:FastifyInstance, overview:OwnerOverviewS
     app.post<{Params:{id:string}}>('/owner/safety-holds/:id/acknowledge',req=>work.recovery!.acknowledge(req.params.id,req.body));
   }
   if(work?.attention){
+    app.get<{Params:{id:string;key:string}}>('/owner/goals/:id/nodes/:key/actions',req=>work.attention!.nodeActions(req.params.id,req.params.key));
+    app.post<{Params:{id:string;key:string}}>('/owner/goals/:id/nodes/:key/actions',req=>work.attention!.nodeAction(req.params.id,req.params.key,req.body));
     app.get<{Params:{id:string}}>('/owner/tasks/:id/actions',req=>work.attention!.actions(req.params.id));
     app.post<{Params:{id:string}}>('/owner/tasks/:id/actions',req=>{
-      const b=req.body as any,action=String(b?.action??'');
+      const input=req.body as any;exactKeys(input,['action','expectedRevision','idempotencyKey','reason','instructions','hash']);
+      const {action,...b}=input;
       if(action==='STOP_TASK')return work.attention!.stopTask(req.params.id,b);
       if(action==='RETRY_TASK')return work.attention!.retryTask(req.params.id,b);
+      if(action==='REWORK_TASK')return work.attention!.reworkTask(req.params.id,b);
       throw Object.assign(new Error('OWNER_ATTENTION_ACTION_UNKNOWN'),{statusCode:400});
     });
   }
@@ -92,7 +96,7 @@ export function registerOwnerRoutes(app:FastifyInstance, overview:OwnerOverviewS
       return {answer,sources:['owner_company_budget','owner_goals','runtime recovery'],as_of:new Date(facts.asOf).toISOString(),usage:{tokens:0,cost_cny:0}};
     }
     if (gate && b.requestKey && /^(?:先|请)?(?:暂停|暂停公司|停止运行|暂停自动经营)$|^(?:please )?(?:pause|pause company|stop running)$/i.test(command)) {
-      if(/^(?:先|请)?暂停$|^(?:please )?pause$/i.test(command)&&gate.goals.list().filter(g=>!['COMPLETED','STOPPED','ARCHIVED'].includes(g.status)).length>1)return {answer:b.language==='en'?'Specify the task name, or say “pause company”.':'请说明要暂停的任务名称，或明确说“暂停公司”。',usage:{tokens:0,cost_cny:0},sources:['owner_goals'],as_of:new Date().toISOString()};
+      if(/^(?:先|请)?暂停$|^(?:please )?pause$/i.test(command)&&gate.goals.list().filter(g=>!['COMPLETED','PARTIALLY_COMPLETED','STOPPED','ARCHIVED'].includes(g.status)).length>1)return {answer:b.language==='en'?'Specify the task name, or say “pause company”.':'请说明要暂停的任务名称，或明确说“暂停公司”。',usage:{tokens:0,cost_cny:0},sources:['owner_goals'],as_of:new Date().toISOString()};
       return gate.goals.request(controlKey,controlPayload,()=>{
         const automation=gate.control({desiredMode:'OFF',expectedRevision:gate.view().revision,idempotencyKey:`pause_${controlKey}`});
         return {answer:b.language==='en'?'Automatic operation is paused. Usage and work are retained.':'自动经营已暂停；用量和工作状态保留。',automation,sources:['owner_automation_control'],as_of:new Date().toISOString(),usage:{tokens:0,cost_cny:0}};
@@ -114,14 +118,14 @@ export function registerOwnerRoutes(app:FastifyInstance, overview:OwnerOverviewS
         const p=matches[0]!,decided=gate.proposals.decide(p.id,{decision:/拒绝|reject/i.test(decision[1]!)?'reject':'approve',hash:p.hash,idempotencyKey:'decision_'+controlKey});return response(say('提案决定已记录，实际结果见公司看板。','The decision is recorded. Actual execution results appear on the company dashboard.'),{companyProposal:decided});
       });return result;}
       const task=command.match(/^(暂停|停止|继续|结案|pause|stop|resume|close)\s*(?:任务|task)\s*(.*)$/i);
-      if(task){const matches=gate.goals.list().filter(g=>task[2]?g.id===task[2]||g.title===task[2]:!['COMPLETED','STOPPED'].includes(g.status));if(matches.length!==1)return response(say('请说明要操作的任务名称或 ID。','Specify the task name or ID.'));
+      if(task){const matches=gate.goals.list().filter(g=>task[2]?g.id===task[2]||g.title===task[2]:!['COMPLETED','PARTIALLY_COMPLETED','STOPPED'].includes(g.status));if(matches.length!==1)return response(say('请说明要操作的任务名称或 ID。','Specify the task name or ID.'));
         const goal=matches[0]!;if(/结案|close/i.test(task[1]!)){if(gate.store.db.prepare("SELECT 1 FROM owner_goal_dispatches WHERE goal_id=? AND state IN ('QUEUED','RUNNING')").get(goal.id))return response(say('该任务仍在执行，请等待当前动作结束后再结案。','Wait for the active task action to finish before closing.'));const p=gate.proposals.closeProposal(goal.id);if(p)gate.goals.state(goal.id,'WAITING_APPROVAL','OWNER_GOAL_NEEDS_VERIFICATION');return response(p?say('结案提案已生成，请核对成果后批准。','The close proposal is ready; review the deliverables before approval.'):say('尚无可核对的成果，不能结案。','There are no verifiable deliverables to close yet.'),p?{companyProposal:p}:{});}
         const action=/暂停|pause/i.test(task[1]!)?'pause':/停止|stop/i.test(task[1]!)?'stop':['PAUSED','WAITING_RESOURCE'].includes(goal.status)?'resume':'reopen';
         const updated=gate.goals.action(goal.id,{action,expectedRevision:goal.revision,idempotencyKey:controlKey});return response(say('任务状态已更新。','The task state is updated.'),{createdGoal:updated});
       }
       const budget=gate.budget.view(),automation=gate.view();
       if(/^(?:公司状态|任务进度|查看任务|查看预算|company status|task status|show budget)$/i.test(command)||budget.availableMicros===0||budget.needsRefill||automation.reason==='OWNER_OUTCOME_REVIEW_REQUIRED'){
-        const goals=gate.goals.list(),active=goals.filter(g=>!['COMPLETED','STOPPED','ARCHIVED'].includes(g.status));
+        const goals=gate.goals.list(),active=goals.filter(g=>!['COMPLETED','PARTIALLY_COMPLETED','STOPPED','ARCHIVED'].includes(g.status));
         const statuses:Record<string,[string,string]>={DRAFT:['待批准','Awaiting approval'],READY:['待执行','Queued'],RUNNING:['执行中','Running'],WAITING_APPROVAL:['待验收','Awaiting acceptance'],WAITING_RESOURCE:['等待条件','Waiting for a condition'],PAUSED:['已暂停','Paused'],BLOCKED:['需要跟进','Needs follow-up'],FAILED:['需要跟进','Needs follow-up']};
         const money=(n:number)=>(n/1000000/(b.language==='en'?COMPANY_BUDGET_USD_CNY:1)).toFixed(6),lines=active.slice(-10).map(g=>`- ${g.title}: ${say(...statuses[g.status]!)}`);
         const unknown=gate.modelCalls().length;
