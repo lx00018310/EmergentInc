@@ -58,6 +58,15 @@ export function readUpgradeStatus(root, config) {
   const records = fs.existsSync(file) ? readDb(file, 'SELECT id,state,phase,failure_reason,created_at,target_generation,request_hash,candidate_json,request_json FROM candidates ORDER BY created_at DESC')
     .map(row => ({ ...row, candidate: row.candidate_json ? JSON.parse(row.candidate_json) : null, request: JSON.parse(row.request_json) }))
     : [];
+  // Latest outcome event per candidate, so the UI can show WHY a SUBMITTED candidate never advanced.
+  // Guarded: an older/foreign evolution database may lack the events columns entirely.
+  const outcomes = fs.existsSync(file) ? (() => {
+    try {
+      return Object.fromEntries(readDb(file,
+        "SELECT candidate_id,kind,payload,created_at FROM events WHERE kind IN ('gene_validation_failed','gene_candidate_validated','gene_candidate_validated_reused','owner_exact_candidate_approved','generation_born','generation_restored','generation_abandoned_before_switch') ORDER BY sequence").reverse()
+        .map(row => [row.candidate_id, { kind: row.kind, at: Number(row.created_at), reason: row.kind === 'gene_validation_failed' ? (JSON.parse(row.payload).reason ?? null) : null }]));
+    } catch { return {}; }
+  })() : {};
   const candidates=records.filter(row=>row.request.owner_release||row.request.app_code_report).map(({candidate_json,request_json,...row})=>{
     let versionNumber=generations.find(g=>g.id===row.target_generation)?.generation_no;
     if(versionNumber===undefined&&!['DELETED','DELETING'].includes(row.state)&&config.releases&&/^[a-zA-Z0-9_-]+$/.test(row.id)){
@@ -65,6 +74,7 @@ export function readUpgradeStatus(root, config) {
     }
     return {...row,versionNumber,identity:row.candidate?.candidate_hash??row.request_hash,
       canDelete:Boolean(active&&canDeleteRelease(row.state,row.id,versionNumber,active,afterRollback)),
+      outcome:outcomes[row.id]??null,
       validationLog:/^[a-zA-Z0-9_-]+$/.test(row.id)?logTail(path.join(config.stateDirectory,'validation-'+row.id+'.log')):''};
   });
   const versions=generations.map(g=>{
@@ -155,6 +165,15 @@ export async function createUpgradeWeb({ root, config, secret, runCommand = runU
   checkRunning = generation => new LocalWorldRuntime({ ...config, ownerEnvironment: { EMERGENTINC_OWNER_SECRET: secret } }).checkRunning(generation) }) {
   const app = fastify({ logger: false, bodyLimit: 8192 });
   const jobFile = path.join(config.stateDirectory, 'upgrade-web-job.json');
+  // Persistent per-commit record of pipeline attempts that fail before any candidate row exists
+  // (merge conflict, dirty worktree, preflight denial). Keyed by commit sha, latest attempt wins.
+  const pipelineFile = path.join(config.stateDirectory, 'commit-pipeline.json');
+  const readPipeline = () => { try { return JSON.parse(fs.readFileSync(pipelineFile, 'utf8')); } catch { return {}; } };
+  const recordPipelineFailure = (commit, step, reason) => {
+    if (!GIT_SHA_PATTERN.test(commit ?? '')) return;
+    const record = readPipeline(); record[commit] = { step, reason, at: Date.now() };
+    try { fs.writeFileSync(pipelineFile, JSON.stringify(record, null, 2)); } catch {}
+  };
   let job = fs.existsSync(jobFile) ? JSON.parse(fs.readFileSync(jobFile, 'utf8')) : null;
   if (job?.state === 'running') job = { ...job, state: 'interrupted', error: 'UPGRADE_INTERRUPTED_CHECK_RECOVERY' };
   let busy = false;
@@ -183,7 +202,7 @@ export async function createUpgradeWeb({ root, config, secret, runCommand = runU
         sourceCommit: row.request?.owner_release?.source_commit ?? row.candidate?.source_commit ?? null,
         hash: row.candidate?.candidate_hash ?? null, baseGeneration: row.candidate?.base_generation ?? null })) };
   });
-  app.get('/api/upgrades', async () => ({ ...status(root, config), job, busy: busy || operatorBusy(config) }));
+  app.get('/api/upgrades', async () => ({ ...status(root, config), job, busy: busy || operatorBusy(config), commitPipeline: readPipeline() }));
   // Read-only Git DAG projections for the dual-tree view. Login required; never accepts paths.
   app.get('/api/git-graph', async (req,reply) => {
     try{const graph=readGitGraph(root,req.query?.limit,req.query?.page);reply.send(graph);}catch(error){return reply.status(500).send({detail:error.message});}
@@ -212,7 +231,7 @@ export async function createUpgradeWeb({ root, config, secret, runCommand = runU
     const activeSource=state=>state.candidates.find(c=>c.id===state.active?.release_id)?.request.owner_release?.source_commit;
     if(body.action==='switch'){
       if(body.expectedActive!==current.active?.id)return reply.status(409).send({detail:'UPGRADE_CANDIDATE_CONFLICT'});
-      try{switchPlan=inspectSwitch(root,body.sourceCommit,body.expectedMain,body.mode);}catch(error){return reply.status(409).send({detail:error.message});}
+      try{switchPlan=inspectSwitch(root,body.sourceCommit,body.expectedMain,body.mode);}catch(error){recordPipelineFailure(body.sourceCommit,'merge',error.message);return reply.status(409).send({detail:error.message});}
       if(switchPlan.mode==='merge'&&activeSource(current)===switchPlan.main&&isAncestor(root,switchPlan.sourceCommit,switchPlan.main))return reply.status(409).send({detail:'GIT_ALREADY_INCLUDED'});
     }else if(body.action==='delete-branch'){
       if(body.expectedActive!==current.active?.id||body.expectedMain!==git(root,['rev-parse','refs/heads/main']))return reply.status(409).send({detail:'UPGRADE_CANDIDATE_CONFLICT'});
@@ -294,9 +313,13 @@ export async function createUpgradeWeb({ root, config, secret, runCommand = runU
           if(recoveryGit&&activeSource(status(root,config))===recoveryGit.commit){phase('sync');syncSwitch(root,recoveryGit);}
         }
         job.state = 'succeeded';
+        if(body.action==='switch'&&job.git?.commit){const record=readPipeline();delete record[job.git.commit];try{fs.writeFileSync(pipelineFile,JSON.stringify(record,null,2));}catch{}}
       } catch (error) {
         const published=job.phase==='publish'&&job.git?.commit&&activeSource(status(root,config))===job.git.commit;
         job.state = job.phase==='sync'||published?'needs_git_sync':'failed';job.error=error.message;if(error.conflicts)job.conflicts=error.conflicts;
+        // Persist which pipeline step failed for this commit, latest attempt wins.
+        if(body.action==='switch'&&job.git?.commit)recordPipelineFailure(job.git.commit,job.phase??
+          (String(error.message).startsWith('GIT_MERGE_CONFLICT')?'merge':String(error.message)),error.message);
       }
       finally { job.finishedAt = Date.now(); busy = false; save(); }
     };

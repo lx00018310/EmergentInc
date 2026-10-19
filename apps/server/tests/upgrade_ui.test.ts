@@ -95,3 +95,58 @@ describe("Owner web upgrade",()=>{
     expect(message).toContain(lang==='en'?'The candidate is retained':'候选版本保留');expect(f.run).not.toHaveBeenCalled();
   });
 });
+
+describe("Commit pipeline progress and instant rollback",()=>{
+  it.each(['zh-CN','en'])('renders per-commit pipeline cells from persistent records and selection details (%s)',async lang=>{
+    const f=await fixture(),graph=linearGraphPage(0),failed=graph.commits[1].sha,born=graph.commits[0].sha;
+    f.data.active.release_id='base-release';
+    f.data.candidates=[
+      {id:'base-release',state:'BORN',request:{owner_release:{source_commit:graph.mainHead}}},
+      {id:'local-failed',state:'SUBMITTED',created_at:200,failure_reason:'UPGRADE_VALIDATION_FAILED',request:{owner_release:{source_commit:failed}},outcome:{kind:'gene_validation_failed',at:200,reason:'UPGRADE_VALIDATION_FAILED'}},
+      {id:'local-born',state:'BORN',created_at:100,request:{owner_release:{source_commit:born}},outcome:{kind:'generation_born',at:100,reason:null}}];
+    // /api/upgrades is served by the real app, so the persistent record must be written to disk.
+    fs.writeFileSync(path.join(f.directory,'commit-pipeline.json'),JSON.stringify({[graph.commits[2].sha]:{step:'merge',reason:'GIT_MERGE_CONFLICT',at:300}}));
+    const {doc,poll}=await page(f,lang,'',{'/api/git-graph?limit=20&page=0':graph});
+    await poll();
+    const failedNode=doc.querySelector(`button[data-sha="${failed}"] .pipeline`);
+    expect(failedNode).not.toBeNull();
+    const failedCells=failedNode!.querySelectorAll('i');
+    expect(failedCells).toHaveLength(6);
+    expect(failedNode!.querySelectorAll('i.done')).toHaveLength(2); // merge + freeze passed
+    expect(failedNode!.querySelectorAll('i.fail')).toHaveLength(1); // validate failed
+    const bornNode=doc.querySelector(`button[data-sha="${born}"] .pipeline`);
+    expect(bornNode!.querySelectorAll('i.done')).toHaveLength(6);
+    const conflictSha=graph.commits[2].sha;
+    const conflictCommit=doc.querySelector(`button[data-sha="${conflictSha}"]`);
+    const conflictNode=conflictCommit?.querySelector('.pipeline')??null;
+    expect(conflictNode,`commit ${conflictSha} rendered=${Boolean(conflictCommit)}`).not.toBeNull();
+    expect(conflictNode!.querySelectorAll('i.fail')).toHaveLength(1); // merge conflict, step 1 red
+    // Selecting the failed commit shows the labelled six-step grid and the failure reason.
+    doc.querySelector(`button[data-sha="${failed}"]`).click();
+    await vi.waitFor(()=>expect(doc.getElementById('selected-pipeline').hidden).toBe(false),{timeout:5000});
+    expect(doc.getElementById('selected-pipeline').querySelectorAll('.pipeline-step')).toHaveLength(6);
+    expect(doc.getElementById('pipeline-reason').hidden).toBe(false);
+    expect(doc.getElementById('pipeline-reason').textContent).toContain(lang==='en'?'Candidate validation failed':'候选校验失败');
+    expect(f.run).not.toHaveBeenCalled();
+  },30000);
+  it.each(['zh-CN','en'])('offers instant rollback to eligible history with a confirmation dialog (%s)',async lang=>{
+    const f=await fixture(),graph=linearGraphPage(0);
+    f.data.active.release_id='base-release';
+    f.data.versions=[{id:'G0007',generation_no:7,release_id:'older',label:'Older published version',available:true,canRollback:true}];
+    const confirm=vi.fn(()=>true);
+    const {dom,doc,poll}=await page(f,lang,'',{'/api/git-graph?limit=20&page=0':graph});
+    dom.window.confirm=confirm as any;
+    await poll();
+    expect(doc.getElementById('rollback-row').hidden).toBe(false);
+    expect(doc.getElementById('rollback-select').value).toBe('G0007');
+    doc.getElementById('rollback').click();
+    await vi.waitFor(()=>expect(confirm).toHaveBeenCalled());
+    expect(String(confirm.mock.calls[0][0])).toContain('G0007');
+    if(lang==='en')expect(String(confirm.mock.calls[0][0])).toContain('Roll the running software back');
+    else expect(String(confirm.mock.calls[0][0])).toContain('回退到 G0007');
+    await vi.waitFor(()=>expect(f.run).toHaveBeenCalledOnce());
+    expect(f.run.mock.calls[0][1][0]).toBe('rollback-to');
+    expect(f.run.mock.calls[0][1][1]).toBe('G0007');
+    expect(f.checkRunning).toHaveBeenCalledWith('G0008');
+  },30000);
+});

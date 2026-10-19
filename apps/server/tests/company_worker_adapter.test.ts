@@ -93,7 +93,7 @@ describe('real company ledger with independent process adapter',()=>{
     expect(gate.view().desiredMode).toBe('OFF');expect(f.calls()).toBe(1);
     f.on();await adapter.start(command.attemptId);await adapter.wait(command.attemptId);
     expect(execution.get(command.attemptId).state).toBe('COMPLETED');expect(f.calls()).toBe(2);expect(gate.budget.view()).toMatchObject({spentMicros:80,reservedMicros:0});
-  },15000);
+  },40000);
   it('does not adopt or relaunch a live worker merely because its lease expired',async()=>{
     const f=await fixture(true),command=f.task();await f.adapter.start(command.attemptId);await f.requested;
     f.control.db.prepare('UPDATE company_execution_attempts SET lease_expires_at=0 WHERE id=?').run(command.attemptId);

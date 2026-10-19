@@ -276,4 +276,27 @@ describe("trusted Generation lifecycle (local runtime contract doubles)", () => 
     expect(vi.mocked(f.runtime.validateRelease).mock.calls[2][1]?.skipTests).toBeFalsy();
     expect(third.candidate.source_release_hash).not.toBe(second.candidate.source_release_hash);
   });
+  it("reuses validation across a different base generation when the source bytes are identical", async () => {
+    // The git graph restore path: publish v2, then prepare a byte-identical restore candidate
+    // based on the NEW generation. Identical source bytes ⇒ same test outcome, no re-run.
+    const f = fixture(), base = join(f.releases, "r1");
+    const makeOwner = (id: string, source: string, generation: number, baseGeneration: string, baseRelease: string) => {
+      const directory = join(f.releases, id);
+      fs.cpSync(base, directory, { recursive: true }); fs.unlinkSync(join(directory, ".env"));
+      fs.writeFileSync(join(directory, "genome/manifest.json"), JSON.stringify({ ...readGenome(base).manifest, generation }));
+      fs.writeFileSync(join(directory, "apps/server/core.txt"), source);
+      const proposal = f.lineage.proposeGene(baseGeneration, "owner", point); f.lineage.decideProposal(proposal.id, "APPROVED");
+      f.supervisor.submitOwnerRelease({ id, base_generation: baseGeneration, base_release: baseRelease, proposal_id: proposal.id, patch: [],
+        owner_release: { label: id, reason: "Explicit Owner maintenance", source_commit: "a".repeat(40), release_hash: releaseHash(directory) } });
+      return id;
+    };
+    const first = await f.supervisor.validate(makeOwner("owner-v2", "V2 core", 2, "G0001", "r1"));
+    expect(vi.mocked(f.runtime.validateRelease).mock.calls.at(-1)![1]?.skipTests).toBeFalsy();
+    f.supervisor.approve("owner-v2", first.candidate.candidate_hash); await f.supervisor.birth("owner-v2");
+    // Same source bytes, but based on the newly born G0002 with generation number 3.
+    const second = await f.supervisor.validate(makeOwner("owner-v3", "V2 core", 3, "G0002", "owner-v2"));
+    expect(vi.mocked(f.runtime.validateRelease).mock.calls.at(-1)![1]?.skipTests).toBe(true);
+    const trusted = new SqliteDatabase(join(f.directory, "trusted/evolution.sqlite3"));
+    try { expect(trusted.prepare("SELECT COUNT(*) n FROM events WHERE kind='gene_validation_reused' AND candidate_id='owner-v3'").get()!.n).toBe(1); } finally { trusted.close(); }
+  });
 });

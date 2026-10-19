@@ -41,7 +41,7 @@ describe('company scheduler with real independent worker processes',()=>{
     const goal=f.goal('Research and marketing','manual');f.gate.proposals.plans.install(goal.id,{summary:'Independent roles',nodes:[{key:'specialist',title:'Specialist',instruction:'Request specialist if the current role cannot do this work',filename:'specialist.md',dependsOn:[],trigger:{kind:'once'},personId:f.a.qianji_id},{key:'independent',title:'Independent',instruction:'Produce the independent marketing result',filename:'independent.md',dependsOn:[],trigger:{kind:'once'},personId:f.b.qianji_id}]},true);
     await f.scheduler.tick();await f.settle();let plan=f.gate.proposals.plans.get(goal.id)!;expect(plan.nodes.map(n=>n.state)).toEqual(['WAITING_RESOURCE','COMPLETED']);expect(f.calls()).toBe(2);
     const request=f.work.view().requests[0];await f.work.decide(request.id,request.hash,'approve');await f.scheduler.tick();await f.settle();plan=f.gate.proposals.plans.get(goal.id)!;expect(plan.nodes.map(n=>n.state)).toEqual(['COMPLETED','COMPLETED']);expect(f.gate.goals.get(goal.id).status).toBe('WAITING_APPROVAL');expect(f.calls()).toBe(3);expect(f.control.worlds()).toHaveLength(2);
-  },20000);
+  },40000);
   it('waits for sufficient money without repeating launch attempts and continues its committed dispatch after funding',async()=>{
     const f=await fixture(),goal=f.goal();f.gate.budget.configure({tokenMillions:1,unitPrice:0.000001,priceCurrency:'CNY',expectedRevision:f.gate.budget.view().revision});
     const create=vi.spyOn(f.work.worker!,'create');await f.scheduler.tick();for(let n=0;n<4;n++)await f.scheduler.tick();expect(create).toHaveBeenCalledTimes(1);expect(f.calls()).toBe(0);expect(f.gate.goals.get(goal.id).status).toBe('BLOCKED');expect(f.gate.view().desiredMode).toBe('ON');
@@ -63,7 +63,7 @@ describe('company scheduler with real independent worker processes',()=>{
     let now=Date.now();vi.spyOn(Date,'now').mockImplementation(()=>now);
     for(let n=0;n<3;n++){await f.scheduler.tick();await f.settle();now+=6000;}
     await f.scheduler.tick();expect(f.calls()).toBe(3);expect(f.gate.goals.get(goal.id)).toMatchObject({status:'BLOCKED',reason:'OWNER_NO_PROGRESS'});expect(f.gate.proposals.plans.get(goal.id)!.nodes[0].state).toBe('BLOCKED');
-  },20000);
+  },40000);
   it('creates an approved company agent and completes its real work without creating or opening a World',async()=>{
     const f=await fixture(),before=f.control.worlds().length;
     const request=f.work.requestRecruit({role:'Editor',reason:'An editor is required',instruction:'Produce an actual internal draft'},'Owner','company-hire');

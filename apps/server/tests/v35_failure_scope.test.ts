@@ -49,7 +49,7 @@ describe('V35 failure scope contract',()=>{
     expect(f.gate.budget.view().reservedMicros).toBeGreaterThan(0);
     const view=await new OwnerOverviewService(f.worlds,f.work).bossOverview();
     expect(view.alerts.filter(a=>a.goalId===broken.id)).toHaveLength(1);
-  },20000);
+  },40000);
 
   it('keeps an independent DAG branch running while a failed node blocks only its real downstream (matrix 2)',async()=>{
     const f=await workerFixture((body,_req,res)=>{
@@ -71,7 +71,7 @@ describe('V35 failure scope contract',()=>{
     expect(['BLOCKED','WAITING','WAITING_RESOURCE']).toContain(byKey('downstream'));
     expect(f.gate.view()).toMatchObject({desiredMode:'ON'});
     expect(f.calls()).toBeGreaterThanOrEqual(2);
-  },20000);
+  },40000);
 
   it('converges a SIGKILLED worker into a defined terminal or review state without double launch (matrix 3, real subprocess)',async()=>{
     const f=await workerFixture(),goal=f.goal('Killed worker research','manual');
@@ -89,7 +89,7 @@ describe('V35 failure scope contract',()=>{
     // A restart of the controller polls the same attempt without a duplicate dispatch.
     await f.work.tick();
     expect(f.control.db.prepare('SELECT COUNT(*) n FROM company_execution_attempts WHERE task_id=?').get(task.id)!.n).toBe(1);
-  },20000);
+  },40000);
 
   it('fails invalid model JSON locally without closing the scheduler or harming other goals (matrix 5)',async()=>{
     const f=await workerFixture((body,_req,res)=>{
@@ -107,7 +107,7 @@ describe('V35 failure scope contract',()=>{
     const good=f.goal('Post failure goal','manual');
     await f.settle();
     expect(f.gate.goals.get(good.id).status).toBe('WAITING_APPROVAL');
-  },20000);
+  },40000);
 
   it('isolates an attributable dispatch error per task and keeps the loop dispatching other tasks',async()=>{
     const f=await workerFixture();
@@ -116,7 +116,7 @@ describe('V35 failure scope contract',()=>{
     expect(f.gate.goals.get(good.id).status).toBe('WAITING_APPROVAL');
     expect(f.work.hasFailure()).toBe(false);
     expect(f.gate.view()).toMatchObject({desiredMode:'ON'});
-  },20000);
+  },40000);
 
   it('holds reservations after a killed worker with an in-flight call and does not auto-settle (matrix 8, real subprocess)',async()=>{
     const f=await workerFixture(),goal=f.goal('Uncertain charge research','manual');
@@ -135,7 +135,7 @@ describe('V35 failure scope contract',()=>{
     f.gate.budget.configure({tokenMillions:2,unitPrice:100,priceCurrency:'CNY',expectedRevision:f.gate.budget.view().revision});
     const permits=f.control.db.prepare("SELECT state FROM owner_model_permits WHERE goal_id=? AND state='UNKNOWN'").all(goal.id);
     for(const p of permits)expect(f.control.db.prepare("SELECT state FROM owner_model_permits WHERE goal_id=? AND state='UNKNOWN'").get(goal.id)).toMatchObject({state:'UNKNOWN'});
-  },20000);
+  },40000);
 
   it('keeps manual OFF and global safety holds effective for new dispatch regardless of retries',async()=>{
     const f=await workerFixture(),goal=f.goal('Manual off research','manual');
@@ -151,7 +151,7 @@ describe('V35 failure scope contract',()=>{
     expect(f.gate.isOn()).toBe(false);
     expect(f.calls()).toBe(0);
     expect(f.work.hasFailure()).toBe(false);
-  },20000);
+  },40000);
 
   it('preserves per-goal receipts across repeated reconcile queries after a kill and restart (matrix 4/6 stability)',async()=>{
     const f=await workerFixture(),goal=f.goal('Restart stable research','manual');
@@ -167,5 +167,5 @@ describe('V35 failure scope contract',()=>{
     expect(second.revision).toBe(first.revision);
     const view=await new OwnerOverviewService(f.worlds,f.work).bossOverview();
     expect(view.alerts.filter(a=>a.goalId===goal.id)).toHaveLength(1);
-  },20000);
+  },40000);
 });

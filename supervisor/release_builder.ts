@@ -24,7 +24,10 @@ export function releaseHash(root: string) {
   };
   walk(""); return hash.digest("hex");
 }
-/** Source identity across release directories: excludes installed dependencies, which --frozen-lockfile reproduces. */
+/** Source identity across release directories: excludes installed dependencies and compiled
+ *  outputs (dist), both of which --frozen-lockfile and the build deterministically reproduce.
+ *  The manifest generation display number is normalized the same way readGenome's stable hash
+ *  does, so a byte-identical restore of an older tree keeps its source identity. */
 export function sourceReleaseHash(root: string) {
   const hash = createHash("sha256"), absoluteRoot = fs.realpathSync(root);
   const walk = (relative: string) => {
@@ -34,9 +37,17 @@ export function sourceReleaseHash(root: string) {
       if (inside.startsWith("..") || path.isAbsolute(inside)) throw new Error("RELEASE_EXTERNAL_SYMLINK_FORBIDDEN");
       hash.update(relative).update("\0link\0").update(fs.readlinkSync(absolute)).update("\0");
     } else if (stat.isDirectory()) {
-      if (relative.split("/").includes("node_modules")) return;
+      const segments = relative.split("/");
+      if (segments.includes("node_modules") || (segments.at(-1) === "dist" && segments.length >= 2)) return;
       for (const name of fs.readdirSync(absolute).sort()) walk(relative ? `${relative}/${name}` : name);
-    } else if (stat.isFile()) hash.update(relative).update("\0file\0").update(fs.readFileSync(absolute)).update("\0");
+    } else if (stat.isFile()) {
+      let content = fs.readFileSync(absolute);
+      if (relative === "genome/manifest.json") {
+        try { const { generation: _generation, ...inherited } = JSON.parse(content.toString("utf8"));
+          content = Buffer.from(JSON.stringify(inherited)); } catch {}
+      }
+      hash.update(relative).update("\0file\0").update(content).update("\0");
+    }
     else throw new Error("RELEASE_SPECIAL_FILE_FORBIDDEN");
   };
   walk(""); return hash.digest("hex");

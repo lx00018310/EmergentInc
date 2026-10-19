@@ -115,17 +115,23 @@ export class GenerationSupervisor {
     this.busy = true;
     try {
       // A release whose source bytes (excluding reproduced dependencies) already passed the full trusted
-      // validation against this exact base may skip re-running typecheck/build/tests. checked() still
-      // re-verifies candidate_release_hash before every approval and publication, so trust never bypasses bytes.
+      // validation may skip re-running typecheck/build/tests, regardless of which base generation the
+      // prior was validated against: identical source bytes produce identical test outcomes. The prior
+      // release's own frozen bytes are re-verified first, and checked() still re-verifies
+      // candidate_release_hash before every approval and publication, so trust never bypasses bytes.
       const currentSourceHash = sourceReleaseHash(c.directory);
       const prior = this.db.prepare(`SELECT id FROM candidates WHERE id<>? AND candidate_json IS NOT NULL
-        AND json_extract(candidate_json,'$.base_generation')=? AND json_extract(candidate_json,'$.source_release_hash')=?
+        AND json_extract(candidate_json,'$.source_release_hash')=?
         AND json_extract(candidate_json,'$.release_id')=id AND state IN ('VALIDATED','APPROVED','BORN') ORDER BY created_at DESC LIMIT 1`)
-        .get(id, c.request.base_generation, currentSourceHash) as {id:string}|undefined;
+        .get(id, currentSourceHash) as {id:string}|undefined;
       let reused = false, compatibility:unknown=undefined;
       if (prior) {
-        try { this.checked(this.get(prior.id)); reused = true; }
-        catch { reused = false; } // The prior release bytes changed on disk; fall back to a full validation.
+        try {
+          const priorRecord = this.get(prior.id), priorCandidate = this.checked(priorRecord);
+          // Cross-base reuse additionally proves the prior release bytes themselves are intact
+          // (its stored candidate_release_hash must match the frozen directory on disk).
+          if (releaseHash(priorCandidate.directory) === priorCandidate.candidate_release_hash) reused = true;
+        } catch { reused = false; } // The prior release bytes changed on disk; fall back to a full validation.
       }
       // Every candidate still needs install+build artifacts; only the test suite is skipped on reuse.
       await this.runtime.validateRelease(c.directory, { skipTests: reused });

@@ -15,6 +15,9 @@ afterEach(async()=>{for(const close of cleanups.splice(0).reverse())await close(
 it('returns saved money settings independently of later scheduler failure',async()=>{
   const f=goalFixture();cleanups.push(f.close);
   const tick=vi.spyOn(OwnerGoalScheduler.prototype,'tick').mockRejectedValue(new Error('ISOLATED_SCHEDULER_FAILED'));
+  // The real server's onReady starts a 1s timer; the mocked tick would trip the scheduler
+  // safety block one second into the test. Stop the timer and drive ticks manually.
+  await f.scheduler.close();
   const resume=vi.spyOn(f.manager,'resumeInterrupted').mockRejectedValue(new Error('ISOLATED_RESUME_FAILED'));
   const app=await createServer({workspaceRoot:f.root,worlds:f.worlds});cleanups.push(()=>app.close());
   const result=await app.inject({method:'POST',url:'/api/owner/budget',payload:{tokenMillions:1,unitPrice:1,priceCurrency:'CNY',expectedRevision:0,idempotencyKey:'separate-budget'}});
