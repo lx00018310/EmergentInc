@@ -150,28 +150,9 @@ describe("Commit pipeline progress and instant rollback",()=>{
     expect(doc.getElementById('selected-pipeline').querySelector('[aria-label]')).not.toBeNull();
     doc.querySelector(`button[data-sha="${untouched}"]`).click();await vi.waitFor(()=>expect(doc.getElementById('selected-pipeline').hidden).toBe(true));
     expect(dom.window.getComputedStyle(doc.getElementById('selected-pipeline')).display).toBe('none');
-    data.versions=[];await poll();expect(dom.window.getComputedStyle(doc.getElementById('rollback-row')).display).toBe('none');
+    data.versions=[];await poll();expect(doc.getElementById('rollback-commit').disabled).toBe(true);
+    expect(doc.getElementById('rollback-row')).toBeNull();
     expect(f.run).not.toHaveBeenCalled();
-  },30000);
-  it.each(['zh-CN','en'])('offers instant rollback to eligible history with a confirmation dialog (%s)',async lang=>{
-    const f=await fixture(),graph=linearGraphPage(0);
-    f.data.active.release_id='base-release';
-    f.data.versions=[{id:'G0007',generation_no:7,release_id:'older',label:'Older published version',available:true,canRollback:true}];
-    const confirm=vi.fn(()=>true);
-    const {dom,doc,poll}=await page(f,lang,'',{'/api/git-graph?limit=20&page=0':graph});
-    dom.window.confirm=confirm as any;
-    await poll();
-    expect(doc.getElementById('rollback-row').hidden).toBe(false);
-    expect(doc.getElementById('rollback-select').value).toBe('G0007');
-    doc.getElementById('rollback').click();
-    await vi.waitFor(()=>expect(confirm).toHaveBeenCalled());
-    expect(String(confirm.mock.calls[0][0])).toContain('G0007');
-    if(lang==='en')expect(String(confirm.mock.calls[0][0])).toContain('Roll the running software back');
-    else expect(String(confirm.mock.calls[0][0])).toContain('回退到 G0007');
-    await vi.waitFor(()=>expect(f.run).toHaveBeenCalledOnce());
-    expect(f.run.mock.calls[0][1][0]).toBe('rollback-to');
-    expect(f.run.mock.calls[0][1][1]).toBe('G0007');
-    expect(f.checkRunning).toHaveBeenCalledWith('G0008');
   },30000);
   it.each(['zh-CN','en'])('offers instant rollback beside branch deletion only for the selected published commit (%s)',async lang=>{
     const f=await fixture(),graph=linearGraphPage(0),published=graph.commits[1].sha,other=graph.commits[2].sha;
