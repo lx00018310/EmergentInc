@@ -83,6 +83,7 @@ export function readUpgradeStatus(root, config) {
     let canRollback=false,rollbackBlockedReason=null;
     if(active&&g.generation_no<active.generation_no&&available){try{rollbackPlan(generations,records,active.id,g.id);checkPaymentRollback(path.join(config.workspace,'system/payment/payment.sqlite3'),directory);canRollback=true;}catch(error){rollbackBlockedReason=error.message;}}
     return {...g,label:record?.request.owner_release?.label??record?.request.app_code_report?.title??g.release_id,available,canRollback,rollbackBlockedReason,
+      sourceCommit:record?.request?.owner_release?.source_commit??record?.candidate?.source_commit??null,
       identity:record?.candidate?.candidate_hash??record?.request_hash,canDelete:Boolean(active&&record&&canDeleteRelease(record.state,g.release_id,g.generation_no,active,afterRollback))};
   });
   const dirty = Boolean(execFileSync('git', ['status', '--porcelain'], { cwd: root, encoding: 'utf8', windowsHide: true }).trim());

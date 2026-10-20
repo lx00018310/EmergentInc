@@ -173,4 +173,38 @@ describe("Commit pipeline progress and instant rollback",()=>{
     expect(f.run.mock.calls[0][1][1]).toBe('G0007');
     expect(f.checkRunning).toHaveBeenCalledWith('G0008');
   },30000);
+  it.each(['zh-CN','en'])('offers instant rollback beside branch deletion only for the selected published commit (%s)',async lang=>{
+    const f=await fixture(),graph=linearGraphPage(0),published=graph.commits[1].sha,other=graph.commits[2].sha;
+    f.data.versions=[{id:'G0007',generation_no:7,release_id:'older',label:'Older published version',available:true,canRollback:true,sourceCommit:published}];
+    const confirm=vi.fn(()=>true),{dom,doc}=await page(f,lang,'',{'/api/git-graph?limit=20&page=0':graph});
+    dom.window.confirm=confirm as any;
+    const rollback=doc.getElementById('rollback-commit');
+    expect(rollback.textContent).toBe(lang==='en'?'Roll back now':'立即回退');
+    expect(doc.getElementById('delete-commit').nextElementSibling).toBe(rollback);
+    expect(rollback.disabled).toBe(true);
+    doc.querySelector(`button[data-sha="${published}"]`).click();
+    await vi.waitFor(()=>expect(rollback.disabled).toBe(false));
+    doc.querySelector(`button[data-sha="${other}"]`).click();
+    await vi.waitFor(()=>expect(rollback.disabled).toBe(true));
+    doc.querySelector(`button[data-sha="${published}"]`).click();
+    await vi.waitFor(()=>expect(rollback.disabled).toBe(false));
+    rollback.click();
+    await vi.waitFor(()=>expect(f.run).toHaveBeenCalledOnce());
+    expect(String(confirm.mock.calls[0][0])).toContain('G0007');
+    if(lang==='en')expect(String(confirm.mock.calls[0][0])).toContain('Roll the running software back');
+    else expect(String(confirm.mock.calls[0][0])).toContain('回退到 G0007');
+    expect(f.run.mock.calls[0][1].slice(0,3)).toEqual(['rollback-to','G0007','G0008']);
+    expect(f.checkRunning).toHaveBeenCalledWith('G0008');
+  },30000);
+  it.each(['zh-CN','en'])('keeps instant rollback disabled when no rollback-eligible version matches the commit (%s)',async lang=>{
+    const f=await fixture(),graph=linearGraphPage(0);
+    f.data.versions=[{id:'G0007',generation_no:7,release_id:'older',label:'Older published version',available:true,canRollback:true,sourceCommit:'f'.repeat(40)},
+      {id:'G0008',generation_no:8,release_id:'current',label:'Running version',available:true,canRollback:false,sourceCommit:graph.mainHead}];
+    const {doc}=await page(f,lang,'',{'/api/git-graph?limit=20&page=0':graph});
+    doc.querySelector(`button[data-sha="${graph.mainHead}"]`).click();
+    await vi.waitFor(()=>expect(doc.getElementById('selected-sha').textContent).toContain(graph.mainHead.slice(0,12)));
+    expect(doc.getElementById('rollback-commit').disabled).toBe(true);
+    expect(doc.getElementById('rollback-commit').title).toBe(lang==='en'?'This commit is not a rollback-eligible published version.':'所选提交不是可回退的已发布历史版本。');
+    expect(f.run).not.toHaveBeenCalled();
+  },30000);
 });
