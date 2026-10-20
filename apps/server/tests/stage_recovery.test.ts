@@ -69,6 +69,23 @@ describe('stage recovery through real owner routes',()=>{
     expect(f.gate.goals.get(goalId).status).toBe('READY');
     expect(f.gate.goals.get(goalId).reason).toBeNull();
   });
+  it('keeps rework available after the automatic window expires and gives the new attempt a full window',async()=>{
+    const f=fixture(), {taskId,goal}=failedTask(f), app=await createServer({workspaceRoot:f.root,worlds:f.worlds}); cleanups.push(()=>app.close());
+    const dispatch=f.control.db.prepare('SELECT id FROM owner_goal_dispatches WHERE task_id=?').get(taskId)!;
+    const scope=f.gate.proposals.plans.progress.forDispatch(String(dispatch.id))!;
+    // Simulate the real dead end: the 15-minute automatic window and the call allowance were
+    // consumed by the previous attempt hours ago, so every bounded action is refused.
+    const expired={...scope,startedAt:Date.now()-8*60*60_000,deadlineAt:Date.now()-8*60*60_000,modelCalls:scope.maxModelCalls,toolCalls:scope.maxToolCalls};
+    f.control.db.prepare('UPDATE company_progress_scopes SET body=? WHERE id=?').run(JSON.stringify(expired),scope.id);
+    expect(f.gate.proposals.plans.progress.retryAllowed(String(dispatch.id))).toBe('OWNER_PROGRESS_TIME_LIMIT');
+    const facts=(await app.inject(`/api/owner/tasks/${taskId}/actions`)).json();
+    expect(facts.actions).toContain('REWORK_TASK');
+    const rework=await app.inject({method:'POST',url:`/api/owner/tasks/${taskId}/actions`,payload:{action:'REWORK_TASK',expectedRevision:facts.expectedRevision,hash:facts.hash,idempotencyKey:crypto.randomUUID(),reason:'The owner restarts this task after the window expired',instructions:'Restart the audit with the actual project facts and cite real files only.'}});
+    expect(rework.statusCode,rework.body).toBe(200);
+    const fresh=f.gate.proposals.plans.progress.forDispatch(String(dispatch.id))!;
+    expect(fresh).toMatchObject({startedAt:null,deadlineAt:null,modelCalls:0,toolCalls:0});
+    expect(f.gate.goals.get(goal.id).status).toBe('READY');
+  });
   it('routes retry and stop without accepting unrelated request fields',async()=>{
     const f=fixture(), first=failedTask(f), app=await createServer({workspaceRoot:f.root,worlds:f.worlds}); cleanups.push(()=>app.close());
     const body={action:'RETRY_TASK',expectedRevision:first.goal.revision,idempotencyKey:crypto.randomUUID(),reason:'The owner requests another bounded attempt'};

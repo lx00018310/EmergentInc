@@ -29,11 +29,16 @@ export class CompanyAttentionService {
     const launch=attempt?db.prepare('SELECT state FROM company_worker_launches WHERE attempt_id=?').get(attempt.id):undefined;
     const exited=!attempt||!this.worker.isRunning(attempt.id)&&(!launch||['READY','EXITED'].includes(String(launch.state)));
     // A stopped task is a deliberate owner decision, not an unknown outcome: it stays
-    // recoverable because the goal it belongs to must not become a dead end.
+    // recoverable because the goal it belongs to must not become a dead end. A spent
+    // automatic window or call allowance also only ends that automatic attempt: rework
+    // carries new instructions and a fresh window, so it must stay available.
     if (attempt && terminal && exited && ['FAILED', 'BLOCKED', 'NO_REPLY'].includes(String(task.state))
       && (!unknown||reviewed)
-      && goal && goal.specificationRevision===Number(dispatch?.goal_revision) && !this.gate.goals.hasPendingOutcome(goal.id,true) && !this.gate.proposals.plans.progress.retryAllowed(String(dispatch!.id)) && !['STOPPED', 'ARCHIVED', 'COMPLETED', 'PARTIALLY_COMPLETED', 'PAUSED'].includes(goal.status)) {
-      if(!unknown&&!alreadyStopped)actions.push('RETRY_TASK');actions.push('REWORK_TASK');
+      && goal && goal.specificationRevision===Number(dispatch?.goal_revision) && !this.gate.goals.hasPendingOutcome(goal.id,true) && !['STOPPED', 'ARCHIVED', 'COMPLETED', 'PARTIALLY_COMPLETED', 'PAUSED'].includes(goal.status)) {
+      const retryBlocked=Boolean(this.gate.proposals.plans.progress.retryAllowed(String(dispatch!.id)));
+      const reworkBlocked=Boolean(this.gate.proposals.plans.progress.retryAllowed(String(dispatch!.id),true));
+      if(!unknown&&!alreadyStopped&&!retryBlocked)actions.push('RETRY_TASK');
+      if(!reworkBlocked)actions.push('REWORK_TASK');
     }
     const hash=companyPlanHash({taskId,state:task.state,runId:task.run_id,instruction:task.instruction,attempt:attempt??null,goalRevision:goal?.revision,goalStatus:goal?.status,dispatchState:dispatch?.state});
     return { taskId, attemptId: attempt?.id ?? null, attemptState: attempt?.state ?? null, goalId: goal?.id ?? null, goalStatus: goal?.status ?? null, expectedRevision:goal?.revision??null, hash, actions };
@@ -119,6 +124,8 @@ export class CompanyAttentionService {
         // action again and recreate the same dead end.
         db.prepare("UPDATE owner_task_nodes SET state='WAITING',next_at=? WHERE goal_id=? AND goal_revision=? AND node_key=?").run(Date.now(), occ.goal_id, occ.goal_revision, occ.node_key);
       }
+      // The continuation inherits this exact scope; give it a full window and allowances.
+      this.gate.proposals.plans.progress.resetWindow(String(dispatch.id));
       this.gate.goals.state(goal.id, 'READY');
       this.gate.goals.event(goal.id, 'task_retry_requested', { taskId, reason: input.reason });
       db.prepare('INSERT INTO control_events(kind,world_id,payload,created_at) VALUES(?,NULL,?,?)').run('owner_task_retry_requested', JSON.stringify({ taskId, goalId: goal.id, reason: input.reason }), Date.now());

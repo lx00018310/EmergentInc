@@ -179,13 +179,35 @@ export class CompanyProgressService {
     this.goals.event(goalId,'progress_material',{nodeKey,text,source:'OWNER_SUPPLIED_UNVERIFIED'});
   }
   notes(goalId:string,nodeKey:string){return this.goals.store.db.prepare("SELECT payload FROM owner_goal_events WHERE goal_id=? AND kind='progress_material' AND json_extract(payload,'$.nodeKey')=? ORDER BY id DESC LIMIT 2").all(goalId,nodeKey).map(r=>JSON.parse(String(r.payload)).text);}
-  retryAllowed(dispatchId:string):string|null {
+  /**
+   * A spent automatic window or call allowance bounds one automatic attempt; it must not
+   * become an owner dead end. Rework carries new instructions and its own fresh window, so
+   * only a genuinely exhausted missing fact keeps blocking it. Every other consumer keeps
+   * the original fully-enforced answer.
+   */
+  retryAllowed(dispatchId:string,forRework=false):string|null {
+    if(forRework){
+      const scope=this.forDispatch(dispatchId),occ=this.goals.store.db.prepare('SELECT node_key FROM owner_task_occurrences WHERE dispatch_id=?').get(dispatchId);
+      if(scope&&occ){const root=this.gaps(scope.goalId).find(g=>g.factKey===`output:${occ.node_key}:${scope.key}`);if(root&&root.attempts.length>=root.limit)return 'OWNER_PROGRESS_GAP_LIMIT';}
+      return null;
+    }
     try{this.available(dispatchId);}catch(e){return (e as Error).message;}
     const scope=this.forDispatch(dispatchId),occ=this.goals.store.db.prepare('SELECT node_key FROM owner_task_occurrences WHERE dispatch_id=?').get(dispatchId);
     if(scope&&occ){const root=this.gaps(scope.goalId).find(g=>g.factKey===`output:${occ.node_key}:${scope.key}`);if(root&&root.attempts.length>=root.limit)return 'OWNER_PROGRESS_GAP_LIMIT';}
     return null;
   }
   requestContinuation(dispatchId:string,nodeKey:string){const scope=this.forDispatch(dispatchId);if(scope){scope.notes[`resume:${nodeKey}`]=dispatchId;this.save(scope);}}
+  /**
+   * An owner-requested continuation is new automatic work. Return the reusable scope to a
+   * full window and allowances so the next execution is not refused by limits that the
+   * previous, already-finished attempt consumed.
+   */
+  resetWindow(dispatchId:string){
+    const scope=this.forDispatch(dispatchId);if(!scope)return;
+    scope.startedAt=null;scope.deadlineAt=null;scope.modelCalls=0;scope.toolCalls=0;scope.operations=[];
+    scope.maxModelCalls=PROGRESS_LIMITS.modelCalls;scope.maxToolCalls=PROGRESS_LIMITS.toolCalls;scope.windowMs=PROGRESS_LIMITS.windowMs;
+    this.save(scope);
+  }
   supersedeRequirements(goalId:string,nodeKey:string,previous:CompanyTaskNode['progressPolicy'],next:CompanyTaskNode['progressPolicy']){
     for(const requirement of previous?.requirements??[]){
       const replacement=next?.requirements.find(r=>r.id===requirement.id);
