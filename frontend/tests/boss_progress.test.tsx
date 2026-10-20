@@ -46,6 +46,13 @@ describe('bounded stage decisions in BOSS',()=>{
     expect(request.mock.calls.find(c=>c[1]==='POST')![2]).toMatchObject({action:'SUPPLEMENT',expectedRevision:7,planRevision:2,hash:'facts-hash',text:'The actual source supplied by the owner.'});
     expect(Object.keys(en).filter(k=>k.startsWith('OWNER_PROGRESS_')).every(k=>Boolean(zhCN[k])&&en[k]!==zhCN[k])).toBe(true);
   });
+  it('keeps a reviewed task card actionable instead of pointing at an empty recovery dialog',async()=>{
+    request.mockImplementation(async(_path:string,method?:string)=>method?{}:{expectedRevision:7,hash:'reviewed-task',actions:['REWORK_TASK']});
+    render(<BossAttentionCard message={{id:'goal:reviewed',entityId:'goal:reviewed',title:'Goal needs attention',priority:'critical',reason:'OWNER_EXECUTION_REVIEWED',alert:{id:'goal:reviewed',taskId:'stopped-task',goalId:'reviewed',kind:'goal',title:'Goal needs attention',summary:'Stopped work',severity:'critical',createdAt:1,source:'owner_goals',href:'/BOSS'}}} revision={99} onDone={vi.fn()} onAction={vi.fn()}/>);
+    // The prior outcome is already reviewed, so the recovery dialog would list nothing.
+    expect(await screen.findByRole('button',{name:'Rework with instructions'})).toBeTruthy();
+    expect(screen.queryByRole('button',{name:'Review unresolved calls'})).toBeNull();
+  });
   it('makes a partial close with zero artifacts reviewable without claiming complete delivery',()=>{
     const proposal={id:'partial-close',kind:'close_task' as const,goalId:'goal',goalRevision:1,hash:'hash',state:'PENDING' as const,createdAt:1,result:null,payload:{title:'Partial draft',completionKind:'partial',evidence:[],gaps:[{id:'gap',description:'Missing original source',attempts:3}]}};
     render(<CompanyProposalCard proposal={proposal}/>);

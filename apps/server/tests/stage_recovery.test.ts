@@ -52,6 +52,23 @@ describe('stage recovery through real owner routes',()=>{
     expect(spec.progress).toMatchObject({schema:1});expect(plans.progress.forDispatch(String(dispatch.id))).toMatchObject({maxModelCalls:60,maxToolCalls:120,modelCalls:0});
     expect(f.work.execution.get(command.attemptId).state).toBe('BLOCKED');expect(f.calls).toHaveLength(0);
   });
+  it('keeps a stopped task reworkable instead of leaving its goal as a dead end',async()=>{
+    const f=fixture(), {taskId}=failedTask(f), app=await createServer({workspaceRoot:f.root,worlds:f.worlds}); cleanups.push(()=>app.close());
+    const stop=await app.inject({method:'POST',url:`/api/owner/tasks/${taskId}/actions`,payload:{action:'STOP_TASK',expectedRevision:f.gate.goals.get(f.work.view().tasks.find(t=>t.id===taskId)!.goalId!)!.revision,idempotencyKey:crypto.randomUUID(),reason:'The owner stops this single task for now'}});
+    expect(stop.statusCode,stop.body).toBe(200);
+    const facts=(await app.inject(`/api/owner/tasks/${taskId}/actions`)).json();
+    // A deliberate stop is not an unfinished outcome: it may not be retried blindly, but the
+    // goal must stay reachable through an explicit rework with new instructions.
+    expect(facts.actions).not.toContain('RETRY_TASK');
+    expect(facts.actions).toContain('REWORK_TASK');
+    const goalId=String(facts.goalId);
+    const rework=await app.inject({method:'POST',url:`/api/owner/tasks/${taskId}/actions`,payload:{action:'REWORK_TASK',expectedRevision:facts.expectedRevision,hash:facts.hash,idempotencyKey:crypto.randomUUID(),reason:'The owner resumes the stopped task with new instructions',instructions:'Redo the draft with the actual project facts and no invented revenue.'}});
+    expect(rework.statusCode,rework.body).toBe(200);
+    const task=f.work.view().tasks.find(t=>t.id===taskId)!;
+    expect(task.state).toBe('QUEUED');expect(task.instruction).toContain('Redo the draft with the actual project facts');
+    expect(f.gate.goals.get(goalId).status).toBe('READY');
+    expect(f.gate.goals.get(goalId).reason).toBeNull();
+  });
   it('routes retry and stop without accepting unrelated request fields',async()=>{
     const f=fixture(), first=failedTask(f), app=await createServer({workspaceRoot:f.root,worlds:f.worlds}); cleanups.push(()=>app.close());
     const body={action:'RETRY_TASK',expectedRevision:first.goal.revision,idempotencyKey:crypto.randomUUID(),reason:'The owner requests another bounded attempt'};

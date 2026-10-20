@@ -28,9 +28,13 @@ export class CompanyAttentionService {
     const reviewed=attempt&&db.prepare("SELECT 1 FROM company_execution_reviews WHERE attempt_id=? AND decision='ABANDONED'").get(attempt.id);
     const launch=attempt?db.prepare('SELECT state FROM company_worker_launches WHERE attempt_id=?').get(attempt.id):undefined;
     const exited=!attempt||!this.worker.isRunning(attempt.id)&&(!launch||['READY','EXITED'].includes(String(launch.state)));
-    // A failed/blocked task with a terminal attempt may retry once the review obligations are met.
-    if (attempt && terminal && exited && ['FAILED', 'BLOCKED', 'NO_REPLY'].includes(String(task.state)) && String(task.reason) !== 'OWNER_TASK_STOPPED' && (!unknown||reviewed)
-      && goal && goal.specificationRevision===Number(dispatch?.goal_revision) && !this.gate.goals.hasPendingOutcome(goal.id,true) && !this.gate.proposals.plans.progress.retryAllowed(String(dispatch!.id)) && !['STOPPED', 'ARCHIVED', 'COMPLETED', 'PARTIALLY_COMPLETED', 'PAUSED'].includes(goal.status)) {if(!unknown)actions.push('RETRY_TASK');actions.push('REWORK_TASK');}
+    // A stopped task is a deliberate owner decision, not an unknown outcome: it stays
+    // recoverable because the goal it belongs to must not become a dead end.
+    if (attempt && terminal && exited && ['FAILED', 'BLOCKED', 'NO_REPLY'].includes(String(task.state))
+      && (!unknown||reviewed)
+      && goal && goal.specificationRevision===Number(dispatch?.goal_revision) && !this.gate.goals.hasPendingOutcome(goal.id,true) && !this.gate.proposals.plans.progress.retryAllowed(String(dispatch!.id)) && !['STOPPED', 'ARCHIVED', 'COMPLETED', 'PARTIALLY_COMPLETED', 'PAUSED'].includes(goal.status)) {
+      if(!unknown&&!alreadyStopped)actions.push('RETRY_TASK');actions.push('REWORK_TASK');
+    }
     const hash=companyPlanHash({taskId,state:task.state,runId:task.run_id,instruction:task.instruction,attempt:attempt??null,goalRevision:goal?.revision,goalStatus:goal?.status,dispatchState:dispatch?.state});
     return { taskId, attemptId: attempt?.id ?? null, attemptState: attempt?.state ?? null, goalId: goal?.id ?? null, goalStatus: goal?.status ?? null, expectedRevision:goal?.revision??null, hash, actions };
   }
@@ -108,7 +112,13 @@ export class CompanyAttentionService {
       db.prepare("UPDATE owner_goal_dispatches SET state='QUEUED',reason=NULL WHERE id=?").run(String(dispatch.id));
       db.prepare("UPDATE owner_goal_steps SET state='QUEUED' WHERE id=?").run(String(dispatch.id));
       const occ = db.prepare("SELECT * FROM owner_task_occurrences WHERE dispatch_id=? AND state IN ('CANCELLED','BLOCKED','NO_PROGRESS')").get(String(dispatch.id));
-      if (occ) db.prepare("UPDATE owner_task_occurrences SET state='RUNNING' WHERE id=?").run(String(occ.id));
+      if (occ) {
+        db.prepare("UPDATE owner_task_occurrences SET state='RUNNING' WHERE id=?").run(String(occ.id));
+        // A stopped task left its node BLOCKED. Reset it to a schedulable WAITING state rather
+        // than RUNNING: if this retry never starts, a RUNNING node would block every stage
+        // action again and recreate the same dead end.
+        db.prepare("UPDATE owner_task_nodes SET state='WAITING',next_at=? WHERE goal_id=? AND goal_revision=? AND node_key=?").run(Date.now(), occ.goal_id, occ.goal_revision, occ.node_key);
+      }
       this.gate.goals.state(goal.id, 'READY');
       this.gate.goals.event(goal.id, 'task_retry_requested', { taskId, reason: input.reason });
       db.prepare('INSERT INTO control_events(kind,world_id,payload,created_at) VALUES(?,NULL,?,?)').run('owner_task_retry_requested', JSON.stringify({ taskId, goalId: goal.id, reason: input.reason }), Date.now());
