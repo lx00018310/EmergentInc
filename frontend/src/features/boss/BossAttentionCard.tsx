@@ -37,9 +37,8 @@ export function BossAttentionCard({ message, revision, onDone, onAction }: { mes
       {taskFacts!.actions.includes('RETRY_TASK')&&<button disabled={busy} onClick={() => void taskAction('RETRY_TASK')}>{t(command.busy ? 'Submitting…' : approveLabel)}</button>}
       {taskFacts!.actions.includes('STOP_TASK')&&<button disabled={busy} onClick={() => void taskAction('STOP_TASK')}>{t(command.busy ? 'Submitting…' : rejectLabel)}</button>}
       {taskFacts!.actions.includes('REWORK_TASK')&&<button disabled={busy} onClick={() => setRework(v => !v)}>{t('Rework with instructions')}</button>}
-      {rework && <label>{t('Rework instructions')}<textarea required minLength={8} maxLength={1000} value={note} disabled={busy} autoFocus onChange={e => setNote(e.target.value)} placeholder={t('Describe what the company should redo or adjust')} /></label>}
-      {rework && note.trim().length < 8 && <p className="boss-muted">{t('At least 8 characters are required before submitting')}</p>}
-      {rework && <button disabled={busy || note.trim().length < 8||!taskFacts!.actions.includes('REWORK_TASK')} onClick={() => void taskAction('REWORK_TASK', note.trim())}>{t(command.busy ? 'Submitting…' : 'Submit rework instructions')}</button>}
+      {rework && <label>{t('Rework instructions')}<textarea maxLength={1000} value={note} disabled={busy} autoFocus onChange={e => setNote(e.target.value)} placeholder={t('Describe what the company should redo or adjust')} /></label>}
+      {rework && <button disabled={busy||!taskFacts!.actions.includes('REWORK_TASK')} onClick={() => void taskAction('REWORK_TASK', note.trim())}>{t(command.busy ? 'Submitting…' : 'Submit rework instructions')}</button>}
     </div>}
     {kind === 'attempt' && <VerifiedSettlement review={{ id: message.alert!.attemptId!, kind: 'attempt', reason: message.reason }} revision={revision} onDone={onDone} />}
     {kind === 'safety' && <VerifiedSettlement review={{ id: message.alert!.id.replace(/^goal:/, '') || message.alert!.id, kind: 'safety', reason: message.reason }} revision={revision} onDone={onDone} />}
@@ -69,9 +68,8 @@ function InboxActions({ message, onDone }: { message: BossMessage; onDone: () =>
       <button disabled={busy} onClick={() => void decide(true)}>{t(busy ? 'Submitting…' : 'Approve')}</button>
       <button disabled={busy} onClick={() => void decide(false)}>{t('Reject')}</button>
       <button disabled={busy} onClick={() => setRework(v => !v)}>{t('Rework with instructions')}</button>
-      {rework && <label>{t('Rework instructions')}<textarea required minLength={8} maxLength={1000} value={note} disabled={busy} autoFocus onChange={e => setNote(e.target.value)} placeholder={t('Describe what the company should redo or adjust')} /></label>}
-      {rework && note.trim().length < 8 && <p className="boss-muted">{t('At least 8 characters are required before submitting')}</p>}
-      {rework && <button disabled={busy || note.trim().length < 8} onClick={() => { setRework(false); void decide(false); }}>{t(busy ? 'Submitting…' : 'Submit rework instructions')}</button>}
+      {rework && <label>{t('Rework instructions')}<textarea maxLength={1000} value={note} disabled={busy} autoFocus onChange={e => setNote(e.target.value)} placeholder={t('Describe what the company should redo or adjust')} /></label>}
+      {rework && <button disabled={busy} onClick={() => { setRework(false); void decide(false); }}>{t(busy ? 'Submitting…' : 'Submit rework instructions')}</button>}
     </div>
     {!!error && <p role="alert">{error}</p>}</>;
 }

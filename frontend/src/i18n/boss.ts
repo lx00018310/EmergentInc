@@ -85,7 +85,7 @@ const entries: [string, string, string?][] = [
   ['OWNER_ATTENTION_INVALID','处理依据不完整，请填写至少 8 字符。','The processing reason is incomplete. Enter at least 8 characters.'],
   ['Rework with instructions','返工并说明','Rework with instructions'],
   ['Rework instructions','返工指示','Rework instructions'],
-  ['At least 8 characters are required before submitting','至少填写 8 个字符后才能提交','At least 8 characters are required before submitting'],
+  ['The owner sent this uncertain result back for rework without extra instructions.','老板把这次未明结果退回返工，未附额外指示。','The owner sent this uncertain result back for rework without extra instructions.'],
   ['Submit rework instructions','提交返工指示','Submit rework instructions'],
   ['Describe what the company should redo or adjust','请说明公司需要重做或调整的内容','Describe what the company should redo or adjust'],
   ['Suggested settlement: use the verified provider receipt values shown below. Approving records them; nothing is replayed.','建议结算：直接采用下方已核验的供应商回执数值。点击通过即记录，不会重放任何操作。','Suggested settlement: use the verified provider receipt values shown below. Approving records them; nothing is replayed.'],
@@ -98,7 +98,7 @@ const entries: [string, string, string?][] = [
   ['Approve authorizes this plan. Reject sends the company back to find another way. Rework keeps the goal alive with your instructions.','通过则授权此方案；拒绝则公司另寻实现方式；返工并说明则按你的指示继续调整。','Approve authorizes this plan. Reject sends the company back to find another way. Rework keeps the goal alive with your instructions.'],
   ['Approve closes this task with the displayed evidence. Reject refuses the result. Rework keeps the goal open with your instructions.','通过则按展示证据结案；拒绝则不接受该结果；返工并说明则按你的指示继续调整。','Approve closes this task with the displayed evidence. Reject refuses the result. Rework keeps the goal open with your instructions.'],
   ['Unknown outcomes retain their reservations. Approving records the suggested verified values; nothing is replayed.','结果未知的调用继续保留费用预留。通过即记录建议核验数值，不会重放任何操作。','Unknown outcomes retain their reservations. Approving records the suggested verified values; nothing is replayed.'],
-  ['OWNER_PROPOSAL_INVALID','决定信息不完整：返工需填写至少 8 字符的返工指示。','The decision is incomplete: rework requires rework instructions of at least 8 characters.'],
+  ['OWNER_PROPOSAL_INVALID','提案决定参数无效。','The proposal decision is invalid.'],
 
   ['OWNER_EXECUTION_CANCELLED','本次执行已取消。','This execution was cancelled.'], ['OWNER_EXECUTION_INTERRUPTED','本次执行已中断，需要检查回执。','This execution was interrupted; inspect its receipts.'], ['OWNER_DISPATCH_NOT_STARTED','已核实本次派工尚未启动执行。','This dispatch was verified to have no execution.'],
   ['EVM_PUBLIC_ADDRESS_REQUIRED','请输入有效的 BSC 或 Polygon 主网收款地址（0x 开头，40 位十六进制）。','Enter a valid BSC or Polygon mainnet recipient address (0x followed by 40 hexadecimal characters).'],

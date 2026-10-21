@@ -84,20 +84,24 @@ export class CompanyAttentionService {
   /** Retry one failed task as a fresh fenced attempt; unknown outcomes and open reviews stay blocking. */
   retryTask(taskId: string, input: any) {
     exactKeys(input, ['expectedRevision', 'idempotencyKey', 'reason','hash']);
-    return this.queueRetry(taskId,input);
+    return this.queueRetry(taskId,input,false);
   }
   reworkTask(taskId:string,input:any) {
     exactKeys(input,['expectedRevision','idempotencyKey','reason','instructions','hash']);
-    ownerInput(typeof input.instructions==='string'&&input.instructions.trim().length>=8&&input.instructions.length<=1000,'OWNER_ATTENTION_INVALID');
-    return this.queueRetry(taskId,input);
+    // Instructions are optional: an empty rework is still an explicit owner decision to restart
+    // the task, so it must not be gated on free-form text. Normalize a missing field so the
+    // idempotent request body stays identical across retries.
+    if(input.instructions===undefined)input.instructions='';
+    ownerInput(typeof input.instructions==='string'&&input.instructions.length<=1000,'OWNER_ATTENTION_INVALID');
+    return this.queueRetry(taskId,input,true);
   }
-  private queueRetry(taskId:string,input:any) {
+  private queueRetry(taskId:string,input:any,rework:boolean) {
     ownerInput(typeof input.reason === 'string' && input.reason.trim().length >= 8 && input.reason.length <= 1000, 'OWNER_ATTENTION_INVALID');
     const request = { retryTask: taskId, input }, db = this.gate.store.db;
     return this.gate.goals.request(input.idempotencyKey, request, () => {
       const facts = this.actions(taskId);
       if(input.hash!==undefined&&input.hash!==facts.hash)ownerConflict('OWNER_PROGRESS_CHANGED');
-      if (!facts.actions.includes(input.instructions?'REWORK_TASK':'RETRY_TASK')) ownerConflict('OWNER_TASK_RETRY_NOT_ALLOWED');
+      if (!facts.actions.includes(rework?'REWORK_TASK':'RETRY_TASK')) ownerConflict('OWNER_TASK_RETRY_NOT_ALLOWED');
       const task = db.prepare('SELECT * FROM owner_work_tasks WHERE id=?').get(taskId)!;
       const dispatch = db.prepare('SELECT * FROM owner_goal_dispatches WHERE task_id=?').get(taskId);
       if (!dispatch) ownerConflict('OWNER_TASK_RETRY_NOT_ALLOWED');
@@ -105,11 +109,12 @@ export class CompanyAttentionService {
       if (goal.revision !== input.expectedRevision) ownerConflict();
       if (goal.specificationRevision !== Number(dispatch.goal_revision)) ownerConflict('OWNER_GOAL_PERMISSION_CHANGED');
       if (this.gate.goals.hasPendingOutcome(goal.id)) ownerConflict('OWNER_OUTCOME_REVIEW_REQUIRED');
-      // Unknown external effects must never be replayed by a retry.
+      // Unknown external effects must never be replayed by a retry. Rework is only offered once
+      // that outcome was explicitly reviewed, so the review itself is the owner's authorization.
       const attempt = this.work.execution.forTask(taskId);
-      if (attempt && ['CALL_OUTCOME_UNKNOWN', 'TOOL_OUTCOME_UNKNOWN'].includes(attempt.reason ?? '')&&!input.instructions) ownerConflict('OWNER_OUTCOME_REVIEW_REQUIRED');
+      if (!rework && attempt && ['CALL_OUTCOME_UNKNOWN', 'TOOL_OUTCOME_UNKNOWN'].includes(attempt.reason ?? '')) ownerConflict('OWNER_OUTCOME_REVIEW_REQUIRED');
       db.prepare("UPDATE owner_work_tasks SET state='QUEUED',run_id=NULL,turn_id=NULL,reply=NULL,reason=NULL,updated_at=? WHERE id=? AND state IN ('FAILED','BLOCKED','NO_REPLY')").run(Date.now(), taskId);
-      if(input.instructions){
+      if(input.instructions?.trim()){
         const instruction=String(task.instruction)+'\nOwner rework instructions (within the original approved scope): '+input.instructions.trim();
         ownerInput(instruction.length<=16384,'OWNER_ATTENTION_INVALID');
         db.prepare('UPDATE owner_work_tasks SET instruction=? WHERE id=?').run(instruction,taskId);

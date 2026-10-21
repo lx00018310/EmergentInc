@@ -31,8 +31,7 @@ describe('V35 three-decision proposals (approve / reject / rework)',()=>{
     expect(f.gate.goals.get(goal.id).status).toBe('WAITING_APPROVAL');
     const proposal=f.gate.proposals.list().find(p=>p.kind==='close_task'&&p.goalId===goal.id)!;
     expect(proposal.state).toBe('PENDING');
-    // Rework without a real note is rejected at the input boundary.
-    expect(()=>f.gate.proposals.decide(proposal.id,{decision:'rework',hash:proposal.hash,idempotencyKey:crypto.randomUUID(),reworkNote:'short'})).toThrow('OWNER_PROPOSAL_INVALID');
+    // A rework needs no free-text note: the decision alone authorizes the new attempt.
     const decided=f.gate.proposals.decide(proposal.id,{decision:'rework',hash:proposal.hash,idempotencyKey:crypto.randomUUID(),reworkNote:'Keep the structure but replace the second section with verified pricing sources'});
     expect(decided.state).toBe('REJECTED');
     expect((decided.result as any)).toMatchObject({rework:true});
@@ -47,6 +46,21 @@ describe('V35 three-decision proposals (approve / reject / rework)',()=>{
     const fresh=f.gate.proposals.list().find(p=>p.kind==='close_task'&&p.goalId===goal.id&&p.state==='PENDING')!;
     expect(fresh.id).not.toBe(proposal.id);expect(fresh.hash).not.toBe(proposal.hash);
     expect(f.gate.proposals.list().find(p=>p.id===proposal.id)?.state).toBe('REJECTED');
+  },20000);
+  it('accepts a rework with no instructions at all and still keeps the goal open',async()=>{
+    const f=await workerFixture();
+    const goal=f.goal('Rework without notes','manual');
+    f.gate.proposals.plans.install(goal.id,{summary:'One verified deliverable',nodes:[{key:'deliver',title:'Deliver',instruction:'Save the real result',filename:'result.md',dependsOn:[],trigger:{kind:'once'}}]},true);
+    await f.scheduler.tick();await f.settle();
+    const proposal=f.gate.proposals.list().find(p=>p.kind==='close_task'&&p.goalId===goal.id&&p.state==='PENDING')!;
+    const decided=f.gate.proposals.decide(proposal.id,{decision:'rework',hash:proposal.hash,idempotencyKey:crypto.randomUUID()});
+    expect(decided.state).toBe('REJECTED');
+    expect((decided.result as any)).toMatchObject({rework:true,note:''});
+    const event=f.control.db.prepare("SELECT payload FROM owner_goal_events WHERE goal_id=? AND kind='owner_rework' ORDER BY id DESC LIMIT 1").get(goal.id)!;
+    expect(JSON.parse(String(event.payload))).toMatchObject({proposalId:proposal.id,note:''});
+    expect(['RUNNING','READY','WAITING_APPROVAL']).toContain(f.gate.goals.get(goal.id).status);
+    // next_action is NOT NULL, so an empty note must persist as '' rather than break the update.
+    expect(f.gate.goals.get(goal.id).nextAction).toBe('');
   },20000);
 
   it('rejects a task_plan so the goal finds another way; rework records instructions and keeps the goal open',async()=>{

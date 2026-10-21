@@ -69,6 +69,20 @@ describe('stage recovery through real owner routes',()=>{
     expect(f.gate.goals.get(goalId).status).toBe('READY');
     expect(f.gate.goals.get(goalId).reason).toBeNull();
   });
+  it('lets a stopped task rework without any instructions instead of requiring free text',async()=>{
+    const f=fixture(), {taskId}=failedTask(f), app=await createServer({workspaceRoot:f.root,worlds:f.worlds}); cleanups.push(()=>app.close());
+    const stop=await app.inject({method:'POST',url:`/api/owner/tasks/${taskId}/actions`,payload:{action:'STOP_TASK',expectedRevision:f.gate.goals.get(f.work.view().tasks.find(t=>t.id===taskId)!.goalId!)!.revision,idempotencyKey:crypto.randomUUID(),reason:'The owner stops this single task for now'}});
+    expect(stop.statusCode,stop.body).toBe(200);
+    const facts=(await app.inject(`/api/owner/tasks/${taskId}/actions`)).json();
+    expect(facts.actions).toContain('REWORK_TASK');
+    const before=f.work.view().tasks.find(t=>t.id===taskId)!.instruction;
+    const rework=await app.inject({method:'POST',url:`/api/owner/tasks/${taskId}/actions`,payload:{action:'REWORK_TASK',expectedRevision:facts.expectedRevision,hash:facts.hash,idempotencyKey:crypto.randomUUID(),reason:'The owner simply sends this work back for another attempt'}});
+    expect(rework.statusCode,rework.body).toBe(200);
+    const task=f.work.view().tasks.find(t=>t.id===taskId)!;
+    // No instruction text is appended, and the task still restarts with its original scope.
+    expect(task.state).toBe('QUEUED');expect(task.instruction).toBe(before);
+    expect(f.gate.goals.get(String(facts.goalId)).status).toBe('READY');
+  });
   it('keeps rework available after the automatic window expires and gives the new attempt a full window',async()=>{
     const f=fixture(), {taskId,goal}=failedTask(f), app=await createServer({workspaceRoot:f.root,worlds:f.worlds}); cleanups.push(()=>app.close());
     const dispatch=f.control.db.prepare('SELECT id FROM owner_goal_dispatches WHERE task_id=?').get(taskId)!;
