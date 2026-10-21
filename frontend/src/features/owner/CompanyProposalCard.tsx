@@ -53,6 +53,7 @@ export function CompanyProposalCard({proposal:p,onDone}:{proposal:CompanyProposa
         <button disabled={busy||command.awaiting} className="owner-btn" onClick={()=>setRework(v=>!v)}>{t('Rework with instructions')}</button>
       </div>
       {rework&&<label>{t('Rework instructions')}<textarea required minLength={8} maxLength={1000} value={note} disabled={busy} autoFocus onChange={e=>setNote(e.target.value)} placeholder={t('Describe what the company should redo or adjust')} /></label>}
+      {rework&&note.trim().length<8&&<p className="boss-muted">{t('At least 8 characters are required before submitting')}</p>}
       {rework&&p.kind==='close_task'&&payload.reworkNodes?.length>1&&<label>{t('Stage to rework')}<select value={nodeKey} disabled={busy} onChange={e=>setNodeKey(e.target.value)}><option value="">{t('Select a stage')}</option>{payload.reworkNodes.map((n:any)=><option key={n.key} value={n.key}>{n.title}</option>)}</select></label>}
       {rework&&<button disabled={busy||command.awaiting||note.trim().length<8||p.kind==='close_task'&&payload.reworkNodes?.length>1&&!nodeKey} className="owner-btn" onClick={()=>void decide('rework')}>{t(busy?'Submitting…':'Submit rework instructions')}</button>}
     </div>:<p role="status">{ownerStatusLabel(result??p.state,'Proposal state: ')}</p>}

@@ -46,6 +46,19 @@ describe('bounded stage decisions in BOSS',()=>{
     expect(request.mock.calls.find(c=>c[1]==='POST')![2]).toMatchObject({action:'SUPPLEMENT',expectedRevision:7,planRevision:2,hash:'facts-hash',text:'The actual source supplied by the owner.'});
     expect(Object.keys(en).filter(k=>k.startsWith('OWNER_PROGRESS_')).every(k=>Boolean(zhCN[k])&&en[k]!==zhCN[k])).toBe(true);
   });
+  it('explains why the rework submit stays disabled until the instructions reach 8 characters',async()=>{
+    request.mockImplementation(async(_path:string,method?:string)=>method?{}:{expectedRevision:7,hash:'reviewed-task',actions:['REWORK_TASK']});
+    render(<BossAttentionCard message={{id:'goal:reviewed',entityId:'goal:reviewed',title:'Goal needs attention',priority:'critical',reason:'OWNER_EXECUTION_REVIEWED',alert:{id:'goal:reviewed',taskId:'stopped-task',goalId:'reviewed',kind:'goal',title:'Goal needs attention',summary:'Stopped work',severity:'critical',createdAt:1,source:'owner_goals',href:'/BOSS'}}} revision={99} onDone={vi.fn()} onAction={vi.fn()}/>);
+    fireEvent.click(await screen.findByRole('button',{name:'Rework with instructions'}));
+    // The plain textarea has no counter, so a short Chinese instruction used to look broken.
+    expect((screen.getByRole('button',{name:'Submit rework instructions'}) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByText('At least 8 characters are required before submitting')).toBeTruthy();
+    fireEvent.change(screen.getByLabelText('Rework instructions'),{target:{value:'重新做一遍'}});
+    expect((screen.getByRole('button',{name:'Submit rework instructions'}) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.change(screen.getByLabelText('Rework instructions'),{target:{value:'请按真实项目事实重做本阶段'}});
+    expect((screen.getByRole('button',{name:'Submit rework instructions'}) as HTMLButtonElement).disabled).toBe(false);
+    expect(screen.queryByText('At least 8 characters are required before submitting')).toBeNull();
+  });
   it('keeps a reviewed task card actionable instead of pointing at an empty recovery dialog',async()=>{
     request.mockImplementation(async(_path:string,method?:string)=>method?{}:{expectedRevision:7,hash:'reviewed-task',actions:['REWORK_TASK']});
     render(<BossAttentionCard message={{id:'goal:reviewed',entityId:'goal:reviewed',title:'Goal needs attention',priority:'critical',reason:'OWNER_EXECUTION_REVIEWED',alert:{id:'goal:reviewed',taskId:'stopped-task',goalId:'reviewed',kind:'goal',title:'Goal needs attention',summary:'Stopped work',severity:'critical',createdAt:1,source:'owner_goals',href:'/BOSS'}}} revision={99} onDone={vi.fn()} onAction={vi.fn()}/>);

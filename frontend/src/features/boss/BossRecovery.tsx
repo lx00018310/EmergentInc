@@ -65,6 +65,7 @@ export function VerifiedSettlement({ review: initial, revision, onDone }: { revi
       <button disabled={busy} onClick={()=>setRework(v=>!v)}>{t('Rework with instructions')}</button>
     </div>
     {rework && <label>{t('Rework instructions')}<textarea required minLength={8} maxLength={1000} value={note} disabled={busy} autoFocus onChange={e => setNote(e.target.value)} placeholder={t('Describe what the company should redo or adjust')} /></label>}
+    {rework&&note.trim().length<8&&<p className="boss-muted">{t('At least 8 characters are required before submitting')}</p>}
     {rework && <button disabled={busy||note.trim().length<8} onClick={()=>void decide('rework')}>{t(busy?'Submitting…':'Submit rework instructions')}</button>}
     {awaiting&&!busy&&<><p role="status">{t('The recovery decision is not confirmed. Retry its original fields and key.')}</p><button type="button" onClick={()=>{if(!pending.current||flight.current)return;flight.current=true;setBusy(true);void ownerGoalRequest(pending.current.path,'POST',pending.current.body).then(()=>{pending.current=undefined;setAwaiting(false);onDone();}).catch(e=>setError(ownerError(e))).finally(()=>{flight.current=false;setBusy(false);});}}>{t('Retry pending recovery')}</button></>}
     {review.kind==='safety'&&!review.canAcknowledge&&<p>{t('A verified receipt is required before this safety hold can be acknowledged.')}</p>}

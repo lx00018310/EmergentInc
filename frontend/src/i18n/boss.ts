@@ -85,6 +85,7 @@ const entries: [string, string, string?][] = [
   ['OWNER_ATTENTION_INVALID','处理依据不完整，请填写至少 8 字符。','The processing reason is incomplete. Enter at least 8 characters.'],
   ['Rework with instructions','返工并说明','Rework with instructions'],
   ['Rework instructions','返工指示','Rework instructions'],
+  ['At least 8 characters are required before submitting','至少填写 8 个字符后才能提交','At least 8 characters are required before submitting'],
   ['Submit rework instructions','提交返工指示','Submit rework instructions'],
   ['Describe what the company should redo or adjust','请说明公司需要重做或调整的内容','Describe what the company should redo or adjust'],
   ['Suggested settlement: use the verified provider receipt values shown below. Approving records them; nothing is replayed.','建议结算：直接采用下方已核验的供应商回执数值。点击通过即记录，不会重放任何操作。','Suggested settlement: use the verified provider receipt values shown below. Approving records them; nothing is replayed.'],
