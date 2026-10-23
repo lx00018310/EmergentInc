@@ -166,7 +166,32 @@ const entries: [string, string, string?][] = [
   ['{0} running · {1} need attention','{0} 项执行中 · {1} 项需要处理','{0} running · {1} need attention'],
   ['Open to check these orders and their payment status.','点开查看这些订单和付款状态。','Open to check these orders and their payment status.'],
   ['Goal coordinator / 目标协调','目标协调','Goal coordinator'],
-  ['Owner reviews the actual task deliverables / 老板核对真实任务成果后结案','老板核对真实任务成果后结案','The owner reviews the actual task deliverables before closing.']
+  ['Owner reviews the actual task deliverables / 老板核对真实任务成果后结案','老板核对真实任务成果后结案','The owner reviews the actual task deliverables before closing.'],
+  ['Overview','总览','Overview'], ['Overall progress','总体进展','Overall progress'], ['Main stages','主要环节','Main stages'],
+  ['Expected outcome','预期成果','Expected outcome'], ['Stage completion','环节完成率','Stage completion'],
+  ['Completed stages','已完成环节','Completed stages'], ['Stages in progress','正在推进的环节','Stages in progress'], ['Verified artifacts','已核验成果','Verified artifacts'],
+  ['Completed stages / current plan stages, equally weighted. Partial, skipped and deferred stages are not complete.','按当前计划中已完整完成的环节等权计算；部分完成、跳过和暂缓均不计为完成。','Completed stages / current plan stages, equally weighted. Partial, skipped and deferred stages are not complete.'],
+  ['This plan is awaiting approval. Progress is not calculated yet.','计划尚待批准，暂不计算完成率。','This plan is awaiting approval. Progress is not calculated yet.'],
+  ['No stage plan is available to calculate progress.','尚无可用于计算完成率的环节计划。','No stage plan is available to calculate progress.'],
+  ['Open a stage to see its work, acceptance checks and next actions.','展开环节，查看具体工作、验收清单和后续操作。','Open a stage to see its work, acceptance checks and next actions.'],
+  ['No stages have been planned yet.','尚未安排具体环节。','No stages have been planned yet.'],
+  ['Results and records','成果与记录','Results and records'], ['Other work records','其他工作记录','Other work records'], ['Specific work','具体事项','Specific work'], ['Stage artifacts','环节成果','Stage artifacts'], ['Current situation','当前情况','Current situation'],
+  ['Assigned work','工作内容','Assigned work'], ['No reply recorded yet.','尚无汇报记录。','No reply recorded yet.'],
+  ['Stage objective and output','环节目标与输出','Stage objective and output'], ['Expected file: {0}','预期产物：{0}','Expected file: {0}'],
+  ['Acceptance checklist','验收清单','Acceptance checklist'], ['Acceptance checks: {0}/{1}','验收项：已通过 {0}/{1}','Acceptance checks: {0}/{1}'],
+  ['No acceptance result recorded yet.','尚无验收记录。','No acceptance result recorded yet.'],
+  ['Acceptance checks passed','验收项通过率','Acceptance checks passed'], ['Based on recorded checks against this stage’s requirements.','依据该环节已记录的验收结果计算。','Based on recorded checks against this stage’s requirements.'],
+  ['No quantified acceptance checklist is defined for this stage.','该环节尚未设置量化验收清单。','No quantified acceptance checklist is defined for this stage.'],
+  ['Check passed','已通过','Passed'], ['Not verified','尚未核验','Not verified'], ['Actions for this stage','环节处理','Actions for this stage'], ['Execution limits and records','执行额度与记录','Execution limits and records'],
+  ['Current status','当前状态','Current status'], ['Price','价格','Price'], ['Publication status','上架状态','Publication status'], ['Details and next steps','后续操作与详情','Details and next steps'],
+  ['Budget breakdown','预算分布','Budget breakdown'], ['Authorized budget','已授权额度','Authorized budget'],
+  ['Currently working','正在工作','Currently working'], ['Team members','成员分工','Team members'], ['Role','职责','Role'], ['Not recorded','未记录','Not recorded'],
+  ['Open a member to see their role and work records.','展开成员，查看其职责和具体工作。','Open a member to see their role and work records.'],
+  ['Visible records','当前记录','Visible records'], ['Currently running','执行中','Currently running'],
+  ['Open a record to see the assignment, result and supporting details.','展开记录，查看工作内容、实际成果和详细依据。','Open a record to see the assignment, result and supporting details.'],
+  ['Visible orders','当前订单','Visible orders'], ['Order records','订单明细','Order records'], ['Amount','金额','Amount'], ['Order time','下单时间','Order time'],
+  ['Open an order to see its amount, time and reference.','展开订单，查看金额、时间和订单标识。','Open an order to see its amount, time and reference.'],
+  ['Detailed view','详细内容','Detailed view'], ['Detail sections','详情分区','Detail sections']
 ];
 export const bossEnglish: Record<string,string> = Object.fromEntries(entries.map(([key,,en]) => [key,en ?? key]));
 export const bossChinese: Record<string,string> = Object.fromEntries(entries.map(([key,zh]) => [key,zh]));

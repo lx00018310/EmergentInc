@@ -3,6 +3,7 @@ import { apiRequest } from '../../api/client';
 import { ownerError, ownerGoalRequest } from '../../api/owner';
 import { language, t, useLanguage } from '../../i18n';
 import { BossCompanyCard, BossCompanyDialog } from './BossCompanyCard';
+import { BossDetailSection } from './BossDetailLayout';
 
 interface CompanyCard {
   id: string; pluginId: string; viewKey: string; title: string; titleZh: string;
@@ -41,7 +42,7 @@ function CardFrame({ card, variant, nonce }: { card: CompanyCard; variant: 'card
   const context = new URLSearchParams({ bridge: nonce, language: currentLanguage });
   return <iframe key={currentLanguage} ref={frame} sandbox="allow-scripts" title={`${t('Company card {0}', [card.id])} ${variant}`} src={`${src}#${context}`} className={`boss-plugin-frame boss-plugin-frame--${variant}`}
     style={variant === 'card' ? { height } : undefined} tabIndex={variant === 'card' ? -1 : 0} aria-hidden={variant === 'card' ? true : undefined}
-    onLoad={() => frame.current?.contentWindow?.postMessage({ kind: 'HOST_CONTEXT', bridge: nonce, language: currentLanguage }, '*')} />;
+    onLoad={() => frame.current?.contentWindow?.postMessage({ kind: 'HOST_CONTEXT', bridge: nonce, language: currentLanguage, detailSections: ['overview', 'progress', 'stages', 'items'] }, '*')} />;
 }
 
 export function BossPluginCards({ children }: { children?: ReactNode }) {
@@ -79,8 +80,11 @@ export function BossPluginCards({ children }: { children?: ReactNode }) {
         {card.previousHash && <button onClick={() => void act(card, 'rollback')}>{t('Rollback card')}</button>}
       </p>)}
     </details>}
-    {detail && <BossCompanyDialog id={`plugin:${detail.id}`} title={label(detail)} onClose={() => setDetail(undefined)}>
-      {detail.enabled ? <CardFrame card={detail} variant="detail" nonce={nonce.current} /> : <p className="boss-quiet">{t('PLUGIN_CARD_UNAVAILABLE')}</p>}
+    {detail && <BossCompanyDialog id={`plugin:${detail.id}`} title={label(detail)} sections={[t('Overview'),t('Detailed view')]} onClose={() => setDetail(undefined)}>
+      <BossDetailSection number={1} title={t('Overview')}><p>{label(detail)}</p></BossDetailSection>
+      <BossDetailSection number={2} title={t('Detailed view')}>
+        {detail.enabled ? <CardFrame card={detail} variant="detail" nonce={nonce.current} /> : <p className="boss-quiet">{t('PLUGIN_CARD_UNAVAILABLE')}</p>}
+      </BossDetailSection>
     </BossCompanyDialog>}
   </section>;
 }

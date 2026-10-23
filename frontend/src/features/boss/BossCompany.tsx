@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import type { OwnerGoalDetail, OwnerOverview, OwnerWorkTask } from '../../../../packages/protocol/src/types/owner';
+import type { OwnerGoalDetail, OwnerOverview } from '../../../../packages/protocol/src/types/owner';
 import { ownerError } from '../../api/owner';
 import { apiRequest } from '../../api/client';
 import { language, t, useLanguage } from '../../i18n';
@@ -8,6 +8,7 @@ import { ownerStatusLabel, ownerTime } from '../owner/ownerPresentation';
 import { BossNodeProgress } from './BossNodeProgress';
 import { BossPluginCards } from './BossPluginCards';
 import { BossCompanyCard, BossCompanyDialog } from './BossCompanyCard';
+import { BossDetailSection, BossDetailStats, BossDetailProgress, BossTaskRecord } from './BossDetailLayout';
 
 type Product = NonNullable<OwnerOverview['storefront']>['products'][number];
 type Detail = { kind: 'goal' | 'product'; id: string } | { kind: 'budget' | 'team' | 'tasks' | 'orders' };
@@ -22,43 +23,50 @@ function goalSummary(status: string): string {
   return t('Open this goal to see its progress and next steps.');
 }
 
-function TaskDetails({ task }: { task: OwnerWorkTask }) {
-  return <article className="boss-company-record">
-    <h4>{t(task.personName)} · {ownerStatusLabel(task.state, 'Task state: ')}</h4>
-    <OwnerMarkdown content={task.instruction} />
-    {task.reply && <><h5>{t('Work result')}</h5><OwnerMarkdown content={task.reply} /></>}
-    {task.reason && <p>{t(task.reason)}</p>}
-    <details><summary>{t('Technical details')}</summary>
-      {task.attempt && <p>{t('Execution result')}: {t('Attempt state: ' + task.attempt.state)} · {t('Cost accounting')}: {t('Accounting state: ' + task.attempt.accountingState)}</p>}
-      <p>{t('Last refreshed')}: {ownerTime(task.updatedAt)}</p><code>{task.id}</code>
-    </details>
-  </article>;
-}
-
-function GoalDetails({ id, data, onDone }: { id: string; data: OwnerOverview; onDone: () => void }) {
+function GoalDetails({ id, data, onSnapshot }: { id: string; data: OwnerOverview; onSnapshot: (data: OwnerOverview) => void }) {
   const [detail, setDetail] = useState<OwnerGoalDetail>(), [error, setError] = useState(''), [revision, setRevision] = useState(0);
   useEffect(() => {
     const controller = new AbortController();
-    void apiRequest<OwnerGoalDetail>('owner/goals/' + encodeURIComponent(id), { worldScoped: false, signal: controller.signal })
-      .then(next => { if (!controller.signal.aborted) { setDetail(next); setError(''); } })
+    void Promise.all([
+      apiRequest<OwnerGoalDetail>('owner/goals/' + encodeURIComponent(id), { worldScoped: false, signal: controller.signal }),
+      apiRequest<OwnerOverview>('boss/company', { worldScoped: false, signal: controller.signal }),
+    ])
+      .then(([next, snapshot]) => { if (!controller.signal.aborted) { setDetail(next); onSnapshot(snapshot); setError(''); } })
       .catch(e => { if (!controller.signal.aborted) setError(ownerError(e)); });
     return () => controller.abort();
-  }, [id, revision]);
+  }, [id, revision, onSnapshot]);
   if (error) return <p role="alert">{error} <button onClick={() => setRevision(n => n + 1)}>{t('Retry')}</button></p>;
   if (!detail) return <p>{t('Loading…')}</p>;
   const artifacts = detail.evidence.filter(e => e.kind === 'artifact');
   const tasks = data.work?.tasks.filter(task => task.goalId === id) ?? [];
+  const plan = data.taskPlans?.find(plan => plan.goalId === id && plan.goalRevision === detail.goal.specificationRevision);
+  const nodes = plan?.nodes ?? [];
+  const completed = nodes.filter(node => node.state === 'COMPLETED').length;
+  const unlinkedTasks = tasks.filter(task => !nodes.some(node => node.key === task.nodeKey));
+  const acceptance = detail.goal.acceptance.kind === 'manual' ? t(detail.goal.acceptance.description) : detail.goal.acceptance.kind === 'artifact' ? detail.goal.acceptance.filename : detail.goal.acceptance.targetCount + ' ' + t('Confirmed paid orders');
   return <>
-    <p className="boss-company-detail-status">{ownerStatusLabel(detail.goal.status, 'Goal status: ')}</p>
-    <h3>{t('What this is about')}</h3><OwnerMarkdown content={detail.goal.objective} />
-    {detail.goal.reason && <p>{t(detail.goal.reason)}</p>}
-    <h3>{t('Stage progress and continuation')}</h3>
-    {data.taskPlans?.find(plan => plan.goalId === id)?.nodes.map(node => <BossNodeProgress key={id + ':' + node.key} goalId={id} nodeKey={node.key} onDone={() => { onDone(); setRevision(n => n + 1); }} />)}
-    <h3>{t('View task deliverables')}</h3>
-    {!artifacts.length && <p>{t('No verified deliverables yet.')}</p>}
-    {artifacts.map(e => <p key={e.id}><a href={'/api/owner/goals/' + encodeURIComponent(id) + '/evidence/' + encodeURIComponent(e.id)} target="_blank" rel="noopener noreferrer">{e.reference.split('/').at(-1)}</a></p>)}
-    <h3>{t('Acceptance rule')}</h3><p>{detail.goal.acceptance.kind === 'manual' ? t(detail.goal.acceptance.description) : detail.goal.acceptance.kind === 'artifact' ? detail.goal.acceptance.filename : detail.goal.acceptance.targetCount + ' ' + t('Confirmed paid orders')}</p>
-    {!!tasks.length && <details><summary>{t('Work records')}</summary>{tasks.map(task => <TaskDetails key={task.id} task={task} />)}</details>}
+    <BossDetailSection number={1} title={t('Overview')} caption={t('What this is about')}>
+      <p className="boss-company-detail-status">{ownerStatusLabel(detail.goal.status, 'Goal status: ')}</p>
+      <div className="boss-detail-split"><OwnerMarkdown content={detail.goal.objective} />
+      <div className="boss-detail-panel"><h4>{t('Expected outcome')}</h4><p>{acceptance}</p></div></div>
+    </BossDetailSection>
+    <BossDetailSection number={2} title={t('Overall progress')}>
+      {plan?.approved && nodes.length ? <BossDetailProgress completed={completed} total={nodes.length} label={t('Stage completion')} caption={t('Completed stages / current plan stages, equally weighted. Partial, skipped and deferred stages are not complete.')} /> : <p className="boss-detail-empty">{t(plan && !plan.approved ? 'This plan is awaiting approval. Progress is not calculated yet.' : 'No stage plan is available to calculate progress.')}</p>}
+      <BossDetailStats items={[{ label: t('Completed stages'), value: completed }, { label: t('Stages in progress'), value: nodes.filter(node => node.state === 'RUNNING').length }, { label: t('Verified artifacts'), value: artifacts.length }]} />
+      {detail.goal.reason && <aside className="boss-detail-notice"><h4>{t('Current situation')}</h4><p>{t(detail.goal.reason)}</p></aside>}
+    </BossDetailSection>
+    <BossDetailSection number={3} title={t('Main stages')} caption={t('Open a stage to see its work, acceptance checks and next actions.')}>
+      {!nodes.length && <p className="boss-detail-empty">{t('No stages have been planned yet.')}</p>}
+      <ol className="boss-detail-stages">{nodes.map((node, index) => <li key={node.key}><BossNodeProgress index={index + 1} goalId={id} nodeKey={node.key} title={node.title} state={node.state} onDone={() => setRevision(n => n + 1)}>
+        {!!tasks.filter(task => task.nodeKey === node.key).length && <section className="boss-detail-panel"><h5>{t('Specific work')}</h5>{tasks.filter(task => task.nodeKey === node.key).map(task => <BossTaskRecord key={task.id} task={task} />)}</section>}
+        {!!artifacts.filter(e => node.latestEvidence.includes(e.id) || node.progress?.evidenceIds.includes(e.id)).length && <section className="boss-detail-panel"><h5>{t('Stage artifacts')}</h5>{artifacts.filter(e => node.latestEvidence.includes(e.id) || node.progress?.evidenceIds.includes(e.id)).map(e => <p key={e.id}><a href={'/api/owner/goals/' + encodeURIComponent(id) + '/evidence/' + encodeURIComponent(e.id)} target="_blank" rel="noopener noreferrer">{e.reference.split('/').at(-1)}</a></p>)}</section>}
+      </BossNodeProgress></li>)}</ol>
+    </BossDetailSection>
+    <BossDetailSection number={4} title={t('Results and records')}>
+      {!artifacts.length && <p className="boss-detail-empty">{t('No verified deliverables yet.')}</p>}
+      <div className="boss-detail-artifacts">{artifacts.map(e => <a key={e.id} href={'/api/owner/goals/' + encodeURIComponent(id) + '/evidence/' + encodeURIComponent(e.id)} target="_blank" rel="noopener noreferrer"><span aria-hidden="true">↗</span>{e.reference.split('/').at(-1)}</a>)}</div>
+      {!!unlinkedTasks.length && <details><summary>{t('Other work records')}</summary>{unlinkedTasks.map(task => <BossTaskRecord key={task.id} task={task} />)}</details>}
+    </BossDetailSection>
   </>;
 }
 
@@ -76,6 +84,7 @@ export function BossCompany({ onAction }: { onAction: (action: 'budget' | 'payme
   const titles = { budget: t('Company money'), team: t('Who is working?'), tasks: t('Work records'), orders: t('Customer orders') };
   const detailTitle = goal?.title ?? (product ? productName(product, productIndex) : selected && selected.kind in titles ? titles[selected.kind as keyof typeof titles] : '');
   const detailId = selected ? 'id' in selected ? selected.kind + ':' + selected.id : selected.kind : '';
+  const detailSections:Record<Detail['kind'],string[]>={goal:['Overview','Overall progress','Main stages','Results and records'],product:['Overview','Current status','Details and next steps'],budget:['Overview','Budget breakdown','Details and next steps'],team:['Overview','Team members'],tasks:['Overview','Specific work'],orders:['Overview','Order records']};
   return <>
     <header className="boss-company-header">
       <div><h2>{t('Inspect Company')}</h2><p>{t('One card, one story. Open it for the details.')}</p></div>
@@ -125,34 +134,41 @@ export function BossCompany({ onAction }: { onAction: (action: 'budget' | 'payme
         </BossCompanyCard>
       </>}
     </BossPluginCards>
-    {selected && data && <BossCompanyDialog id={detailId} title={detailTitle} onClose={() => setSelected(undefined)}>
-      {goal && <GoalDetails key={goal.id} id={goal.id} data={data} onDone={() => void refresh()} />}
+    {selected && data && <BossCompanyDialog id={detailId} title={detailTitle} sections={detailSections[selected.kind].map(section=>t(section))} onClose={() => setSelected(undefined)}>
+      {goal && <GoalDetails key={goal.id} id={goal.id} data={data} onSnapshot={setData} />}
       {product && <>
-        <p className="boss-company-detail-status">{t(product.enabled ? 'Published' : 'Unpublished')}</p>
-        <p className="boss-company-card-value">{product.price === null ? t('Not priced yet') : product.price + ' ' + product.currency}</p>
-        <p>{t(product.enabled ? 'This product is published in the storefront.' : 'This product has not been published yet.')}</p>
-        <a href="/" target="_blank" rel="noopener noreferrer">{t('Storefront')} ↗</a>
-        <details><summary>{t('Technical details')}</summary><code>{product.id}</code></details>
+        <BossDetailSection number={1} title={t('Overview')}><p className="boss-company-detail-status">{t(product.enabled ? 'Published' : 'Unpublished')}</p><p>{t(product.enabled ? 'This product is published in the storefront.' : 'This product has not been published yet.')}</p></BossDetailSection>
+        <BossDetailSection number={2} title={t('Current status')}><BossDetailStats items={[{label:t('Price'),value:product.price===null?t('Not priced yet'):product.price+' '+product.currency},{label:t('Publication status'),value:t(product.enabled?'Published':'Unpublished')}]} /></BossDetailSection>
+        <BossDetailSection number={3} title={t('Details and next steps')}><a className="boss-detail-link" href="/" target="_blank" rel="noopener noreferrer">{t('Storefront')} ↗</a><details className="boss-detail-technical"><summary>{t('Technical details')}</summary><code>{product.id}</code></details></BossDetailSection>
       </>}
       {selected.kind === 'budget' && data.budget && <>
-        <p>{t('Available company budget')}: {money(data.budget.availableMicros)} CNY</p>
-        <p>{t('Settled cost')}: {money(data.budget.spentMicros)} CNY</p><p>{t('Reserved cost')}: {money(data.budget.reservedMicros)} CNY</p>
-        <button onClick={() => onAction('budget')}>{t('Authorize company budget')}</button>
+        <BossDetailSection number={1} title={t('Overview')}><p>{t('Available for the company to use.')}</p><p className="boss-company-card-value">{data.budget.activatedAt===null?t('Unauthorized'):money(data.budget.availableMicros)+' CNY'}</p></BossDetailSection>
+        <BossDetailSection number={2} title={t('Budget breakdown')}><BossDetailStats items={[{label:t('Authorized budget'),value:money(data.budget.totalMicros)+' CNY'},{label:t('Settled cost'),value:money(data.budget.spentMicros)+' CNY'},{label:t('Reserved cost'),value:money(data.budget.reservedMicros)+' CNY'}]}/></BossDetailSection>
+        <BossDetailSection number={3} title={t('Details and next steps')}><button onClick={() => onAction('budget')}>{t('Authorize company budget')}</button></BossDetailSection>
       </>}
       {selected.kind === 'team' && <>
-        {!data.people.length && <p>{t('No company workers yet.')}</p>}
-        {data.people.map(person => <article key={person.id} className="boss-company-record"><h3>{t(person.name)}</h3>{person.role && <p>{t(person.role)}</p>}<p>{ownerStatusLabel(person.running ? 'RUNNING' : 'IDLE', 'Company observed: ')}</p></article>)}
+        <BossDetailSection number={1} title={t('Overview')}><BossDetailStats items={[{label:t('Company workers'),value:data.people.length},{label:t('Currently working'),value:data.people.filter(person=>person.running).length}]}/></BossDetailSection>
+        <BossDetailSection number={2} title={t('Team members')} caption={t('Open a member to see their role and work records.')}>
+          {!data.people.length && <p className="boss-detail-empty">{t('No company workers yet.')}</p>}
+          {data.people.map(person => <details key={person.id} className="boss-work-record"><summary><span>{t(person.name)}</span><span className="boss-detail-state">{ownerStatusLabel(person.running ? 'RUNNING' : 'IDLE', 'Company observed: ')}</span></summary><div className="boss-detail-panel"><h5>{t('Role')}</h5><p>{person.role?t(person.role):t('Not recorded')}</p></div>{tasks.filter(task=>task.personId===person.id).map(task=><BossTaskRecord key={task.id} task={task}/>)}</details>)}
+        </BossDetailSection>
       </>}
       {selected.kind === 'tasks' && <>
-        {!tasks.length && <p>{t(data.work ? 'No company tasks yet.' : 'Waiting for verified data')}</p>}
-        {tasks.map(task => <TaskDetails key={task.id} task={task} />)}
+        <BossDetailSection number={1} title={t('Overview')}><p>{t('Recorded work, replies and execution history.')}</p><BossDetailStats items={[{label:t('Visible records'),value:data.work?tasks.length:'—'},{label:t('Currently running'),value:data.work?tasks.filter(task=>task.state==='RUNNING').length:'—'},{label:t('Needs attention'),value:data.work?tasks.filter(task=>['BLOCKED','FAILED','NO_REPLY'].includes(task.state)).length:'—'}]}/></BossDetailSection>
+        <BossDetailSection number={2} title={t('Specific work')} caption={t('Open a record to see the assignment, result and supporting details.')}>
+          {!tasks.length && <p className="boss-detail-empty">{t(data.work ? 'No company tasks yet.' : 'Waiting for verified data')}</p>}
+          {tasks.map(task => <BossTaskRecord key={task.id} task={task} />)}
+        </BossDetailSection>
       </>}
       {selected.kind === 'orders' && <>
-        {!orders.length && <p>{t(data.storefront ? 'No company orders yet.' : 'Waiting for verified data')}</p>}
+        <BossDetailSection number={1} title={t('Overview')}><BossDetailStats items={[{label:t('Visible orders'),value:data.storefront?orders.length:'—'},{label:t('Confirmed paid orders'),value:data.storefront?orders.filter(order=>['PAID','DELIVERED','FULFILLED'].includes(order.status)).length:'—'}]}/></BossDetailSection>
+        <BossDetailSection number={2} title={t('Order records')} caption={t('Open an order to see its amount, time and reference.')}>
+        {!orders.length && <p className="boss-detail-empty">{t(data.storefront ? 'No company orders yet.' : 'Waiting for verified data')}</p>}
         {orders.map(order => {
           const index = products.findIndex(p => p.id === order.product), orderedProduct = products[index];
-          return <article key={order.id} className="boss-company-record"><h3>{orderedProduct ? productName(orderedProduct, index) : order.product}</h3><p>{order.amount} {order.currency} · {ownerStatusLabel(order.status, 'Order status: ')}</p><p>{ownerTime(order.at)}</p><details><summary>{t('Technical details')}</summary><code>{order.id}</code></details></article>;
+          return <details key={order.id} className="boss-work-record"><summary><span>{orderedProduct ? productName(orderedProduct, index) : order.product}</span><span className="boss-detail-state">{ownerStatusLabel(order.status, 'Order status: ')}</span></summary><BossDetailStats items={[{label:t('Amount'),value:order.amount+' '+order.currency},{label:t('Order time'),value:ownerTime(order.at)}]}/><details className="boss-detail-technical"><summary>{t('Technical details')}</summary><code>{order.id}</code></details></details>;
         })}
+        </BossDetailSection>
       </>}
     </BossCompanyDialog>}
   </>;

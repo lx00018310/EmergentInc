@@ -1,12 +1,14 @@
-import {useCallback,useEffect,useRef,useState} from 'react';
+import {useCallback,useEffect,useRef,useState,type ReactNode} from 'react';
 import type {CompanyTaskNodeView,CompanyProgressScope,CompanyProgressGap} from '../../../../packages/protocol/src/types/owner';
 import {ownerGoalRequest,ownerError} from '../../api/owner';
 import {t,useLanguage} from '../../i18n';
 import {ownerStatusLabel,ownerTime} from '../owner/ownerPresentation';
 import {useOwnerCommand} from './useOwnerCommand';
+import {OwnerMarkdown} from '../owner/OwnerMarkdown';
+import {BossDetailProgress} from './BossDetailLayout';
 
 interface Facts {expectedRevision:number;planRevision:number;hash:string;node:CompanyTaskNodeView;actions:string[];scope:CompanyProgressScope|null;gaps:CompanyProgressGap[];dependencies?:{key:string;title:string}[]}
-export function BossNodeProgress({goalId,nodeKey,onDone}:{goalId:string;nodeKey:string;onDone:()=>void}){
+export function BossNodeProgress({goalId,nodeKey,onDone,index,title,state,children}:{goalId:string;nodeKey:string;onDone:()=>void;index?:number;title?:string;state?:string;children?:ReactNode}){
   useLanguage();const path=`goals/${encodeURIComponent(goalId)}/nodes/${encodeURIComponent(nodeKey)}/actions`;
   const command=useOwnerCommand(`boss.progress.${goalId}.${nodeKey}`,path);
   const initialized=useRef(false);
@@ -19,16 +21,31 @@ export function BossNodeProgress({goalId,nodeKey,onDone}:{goalId:string;nodeKey:
     if(await command.submit({action,...extra,expectedRevision:facts.expectedRevision,planRevision:facts.planRevision,hash:facts.hash,idempotencyKey:crypto.randomUUID(),reason:'The owner explicitly chose this bounded stage action.'})){await refresh();onDone();}
   }
   const disabled=command.busy||command.awaiting;
-  return <details className="boss-stage"><summary>{facts?.node.title??nodeKey} · {facts?ownerStatusLabel(facts.node.state,'Stage state: '):t('Loading…')}</summary>
-    {facts&&<>
-      <p>{facts.node.instruction}</p>
-      {facts.node.progress&&<p>{t('Checked requirements: {0}',[facts.node.progress.checked.length])}</p>}
-      {facts.scope&&<p>{t('Model calls: {0}/{1}',[facts.scope.modelCalls,facts.scope.maxModelCalls])} · {t('Tool calls: {0}/{1}',[facts.scope.toolCalls,facts.scope.maxToolCalls])}</p>}
-      {facts.scope&&<p>{facts.scope.deadlineAt?t('Automatic window ends at {0}',[ownerTime(facts.scope.deadlineAt)]):t('The automatic window starts with execution.')}</p>}
+  const requirements=facts?.node.progressPolicy?.requirements??[];
+  const checked=requirements.filter(requirement=>facts?.node.progress?.checked.includes(requirement.id)).length;
+  return <details className="boss-stage"><summary>
+    {index!==undefined&&<span className="boss-stage-number" aria-hidden="true">{String(index).padStart(2,'0')}</span>}
+    <span className="boss-stage-summary-title"><strong>{facts?.node.title??title??nodeKey}</strong>{facts&&requirements.length>0&&<small>{facts.node.progress?t('Acceptance checks: {0}/{1}',[checked,requirements.length]):t('No acceptance result recorded yet.')}</small>}</span>
+    <span className="boss-detail-state">{facts||state?ownerStatusLabel(facts?.node.state??state!,'Stage state: '):t('Loading…')}</span><span className="boss-stage-chevron" aria-hidden="true">⌄</span>
+  </summary>
+    {facts&&<div className="boss-stage-body">
+      <div className="boss-detail-split">
+        <section className="boss-detail-panel"><h5>{t('Stage objective and output')}</h5><OwnerMarkdown content={facts.node.instruction}/><p className="boss-detail-caption">{t('Expected file: {0}',[facts.node.filename])}</p></section>
+        <section className="boss-detail-panel"><h5>{t('Acceptance checklist')}</h5>
+          {!!requirements.length&&facts.node.progress&&<BossDetailProgress completed={checked} total={requirements.length} label={t('Acceptance checks passed')} caption={t('Based on recorded checks against this stage’s requirements.')}/>}
+          {!requirements.length&&<p>{t('No quantified acceptance checklist is defined for this stage.')}</p>}
+          {!!requirements.length&&!facts.node.progress&&<p className="boss-detail-caption">{t('No acceptance result recorded yet.')}</p>}
+          <ul className="boss-detail-checklist">{requirements.map(requirement=><li key={requirement.id} data-checked={Boolean(facts.node.progress?.checked.includes(requirement.id))}><span aria-hidden="true">{facts.node.progress?.checked.includes(requirement.id)?'✓':'○'}</span><span>{requirement.description}</span><small>{t(facts.node.progress?.checked.includes(requirement.id)?'Check passed':'Not verified')}</small></li>)}</ul>
+        </section>
+      </div>
+      {children}
+      <section className="boss-detail-panel">
       <h5>{t('Missing items and previous attempts')}</h5>
       {!facts.gaps.filter(g=>!g.superseded&&g.status!=='RESOLVED').length&&<p>{t('No unresolved items recorded.')}</p>}
       {facts.gaps.filter(g=>!g.superseded&&g.status!=='RESOLVED').map(g=><details key={g.id}><summary>{g.description} · {t('Attempts: {0}/{1}',[g.attempts.length,g.limit])}</summary>{g.attempts.map(a=><p key={a.key}>{t(a.method)}{a.result&&` · ${t(a.result)}`}</p>)}</details>)}
       {!!facts.gaps.filter(g=>g.superseded).length&&<details><summary>{t('Earlier requirements retained for history')}</summary>{facts.gaps.filter(g=>g.superseded).map(g=><p key={g.id}>{g.description} · {t('Previous attempts: {0}',[g.attempts.length])}</p>)}</details>}
+      </section>
+      {!!facts.actions.length&&<section className="boss-detail-panel boss-stage-actions"><h5>{t('Actions for this stage')}</h5>
       <div className="boss-actions">
         {facts.actions.includes('CONTINUE_NODE')&&<button disabled={disabled} onClick={()=>void act('CONTINUE_NODE')}>{t('Continue this stage')}</button>}
         {facts.actions.includes('SKIP_NODE')&&<button disabled={disabled} onClick={()=>void act('SKIP_NODE')}>{t('Skip this ordinary stage')}</button>}
@@ -54,7 +71,12 @@ export function BossNodeProgress({goalId,nodeKey,onDone}:{goalId:string;nodeKey:
         <label>{t('Additional attempts for this item')}<input type="number" min={0} max={10} value={attempts} disabled={disabled} onChange={e=>setAttempts(Number(e.target.value))}/></label>
         <button disabled={disabled||!(modelCalls||toolCalls||minutes||gapId&&attempts)} onClick={()=>void act('EXTEND_LIMITS',{limits:{...(modelCalls?{modelCalls}:{}),...(toolCalls?{toolCalls}:{}),...(minutes?{minutes}:{}),...(gapId&&attempts?{gapId,attempts}:{})}})}>{t('Add allowance')}</button>
       </details>}
-    </>}
+      </section>}
+      {facts.scope&&<details className="boss-detail-technical"><summary>{t('Execution limits and records')}</summary>
+        <p>{t('Model calls: {0}/{1}',[facts.scope.modelCalls,facts.scope.maxModelCalls])} · {t('Tool calls: {0}/{1}',[facts.scope.toolCalls,facts.scope.maxToolCalls])}</p>
+        <p>{facts.scope.deadlineAt?t('Automatic window ends at {0}',[ownerTime(facts.scope.deadlineAt)]):t('The automatic window starts with execution.')}</p>
+      </details>}
+    </div>}
     {command.awaiting&&<p role="status">{t('The recovery decision is not confirmed. Retry its original fields and key.')} <button disabled={command.busy} onClick={()=>void command.retry().then(ok=>{if(ok){void refresh();onDone();}})}>{t('Retry original decision')}</button></p>}
     {(error||command.error)&&<p role="alert">{error||command.error} <button disabled={command.busy} onClick={()=>void refresh()}>{t('Refresh stage')}</button></p>}
   </details>;

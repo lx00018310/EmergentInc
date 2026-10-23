@@ -24,8 +24,8 @@ export function BossCompanyCard({ id, title, topic, status, onOpen, children, me
 }
 
 /** The card wall stays mounted, preserving its scroll position behind the detail. */
-export function BossCompanyDialog({ id, title, onClose, children }: {
-  id: string; title: string; onClose: () => void; children: ReactNode;
+export function BossCompanyDialog({ id, title, onClose, children, sections }: {
+  id: string; title: string; onClose: () => void; children: ReactNode; sections?: string[];
 }) {
   const headingId = useId(), dialog = useRef<HTMLElement>(null), close = useRef(onClose);
   close.current = onClose;
@@ -58,7 +58,12 @@ export function BossCompanyDialog({ id, title, onClose, children }: {
   }, []);
   return createPortal(<div className="boss-shell boss-company-detail-layer" onClick={event => { if (event.target === event.currentTarget) onClose(); }}>
     <section ref={dialog} role="dialog" aria-modal="true" aria-labelledby={headingId} tabIndex={-1} className="boss-dialog boss-company-detail" style={companyCardTheme(id)}>
-      <header className="boss-company-detail-header"><h2 id={headingId}>{title}</h2><button onClick={onClose}>{t('Back to cards')} <span aria-hidden="true">×</span></button></header>
+      <header className="boss-company-detail-header"><div className="boss-company-detail-title"><h2 id={headingId}>{title}</h2><button onClick={onClose}>{t('Back to cards')} <span aria-hidden="true">×</span></button></div>
+        {sections&&<nav className="boss-detail-nav" aria-label={t('Detail sections')}>{sections.map((section,index)=><button key={section} onClick={()=>{
+          const target=dialog.current?.querySelector<HTMLElement>(`[data-detail-section="${index+1}"]`),header=dialog.current?.querySelector<HTMLElement>('.boss-company-detail-header');
+          if(target&&header&&dialog.current)dialog.current.scrollTo({top:Math.max(0,target.getBoundingClientRect().top-dialog.current.getBoundingClientRect().top+dialog.current.scrollTop-header.offsetHeight-12)});
+        }}><span aria-hidden="true">{String(index+1).padStart(2,'0')}</span>{section}</button>)}</nav>}
+      </header>
       <div className="boss-company-detail-body">{children}</div>
     </section>
   </div>, document.body);
