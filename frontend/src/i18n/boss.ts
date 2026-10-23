@@ -142,7 +142,31 @@ const entries: [string, string, string?][] = [
   ['Hidden card library','隐藏卡片库'], ['PLUGIN_CARD_UNAVAILABLE','卡片暂不可用。','This card is unavailable.'],
   ['PLUGIN_CARD_INCOMPATIBLE','当前主程序与此卡片版本不兼容，卡片已停用；代码和数据保留。','The current host is incompatible with this card version. The card is disabled; its code and data are retained.'],
   ['UNSUPPORTED_BRIDGE_REQUEST','该桥接请求不受支持。','This bridge request is not supported.'],
-  ['Company card 001','卡片 001','Card 001']
+  ['Company card 001','卡片 001','Card 001'],
+  ['Company card {0}','卡片 {0}','Card {0}'], ['Open {0}','打开：{0}','Open {0}'], ['Card options','卡片管理','Card options'],
+  ['One card, one story. Open it for the details.','一张卡片，一件事。点开查看详情。','One card, one story. Open it for the details.'],
+  ['Business goal','经营目标','Business goal'], ['Company money','公司的钱','Company money'],
+  ['Budget','预算','Budget'], ['Product','商品','Product'], ['Team','团队','Team'], ['Execution','工作','Work'], ['Orders','订单','Orders'],
+  ['Who is working?','谁在工作','Who is working?'], ['Work records','工作记录','Work records'], ['Customer orders','客户订单','Customer orders'],
+  ['Work result','工作成果','Work result'], ['What this is about','这件事要做什么','What this is about'],
+  ['Current stage: {0}','当前环节：{0}','Current stage: {0}'],
+  ['This goal is complete. Open to review its results.','这件事已完成，点开查看实际成果。','This goal is complete. Open to review its results.'],
+  ['The current results were accepted; some work remains.','已接受当前成果，仍有部分工作未完成。','The current results were accepted; some work remains.'],
+  ['An issue needs to be resolved before this goal can move forward.','这件事遇到了阻碍，点开查看原因和下一步。','An issue needs to be resolved before this goal can move forward.'],
+  ['This goal is waiting for your decision.','需要你作出决定，才能推进下一步。','This goal is waiting for your decision.'],
+  ['This goal is not running. Its records are kept.','这件事目前没有运行，已有记录已保留。','This goal is not running. Its records are kept.'],
+  ['Open this goal to see its progress and next steps.','点开查看进展、成果和下一步。','Open to see progress, results and next steps.'],
+  ['Available for the company to use.','公司当前可使用的预算。','The budget currently available to the company.'],
+  ['Available company budget','可用公司预算','Available company budget'],
+  ['Not priced yet','尚未定价','Not priced yet'],
+  ['This product is published in the storefront.','商品已在门店上架。','This product is published in the storefront.'],
+  ['This product has not been published yet.','商品还未上架。','This product has not been published yet.'],
+  ['Workers currently running / company workers.','正在工作的执行者 / 团队总人数。','Workers currently running / company workers.'],
+  ['Recorded work, replies and execution history.','查看已经安排的工作和收到的汇报。','Review assigned work and the replies received.'],
+  ['{0} running · {1} need attention','{0} 项执行中 · {1} 项需要处理','{0} running · {1} need attention'],
+  ['Open to check these orders and their payment status.','点开查看这些订单和付款状态。','Open to check these orders and their payment status.'],
+  ['Goal coordinator / 目标协调','目标协调','Goal coordinator'],
+  ['Owner reviews the actual task deliverables / 老板核对真实任务成果后结案','老板核对真实任务成果后结案','The owner reviews the actual task deliverables before closing.']
 ];
 export const bossEnglish: Record<string,string> = Object.fromEntries(entries.map(([key,,en]) => [key,en ?? key]));
 export const bossChinese: Record<string,string> = Object.fromEntries(entries.map(([key,zh]) => [key,zh]));

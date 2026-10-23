@@ -42,9 +42,55 @@
 .boss-stage textarea { min-height: 5rem; }
 .boss-stage label.boss-stage-check { display: flex; align-items: baseline; }
 .boss-stage-check input[type=checkbox] { width: auto; }
-/* V36 公司插件卡片:响应式网格 + 沙箱 iframe + 隐藏库入口,390px 宽度无横向溢出 */
-.boss-plugin-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:14px;margin:12px 0}
-.boss-plugin-card{border:1px solid #e5e5e5;border-radius:10px;padding:12px;min-width:0;display:flex;flex-direction:column;gap:8px}
-.boss-plugin-card header{font-size:14px}.boss-plugin-card footer{display:flex;gap:8px;flex-wrap:wrap}
-.boss-plugin-frame{width:100%;height:260px;border:1px solid #eee;border-radius:8px;background:#fff}
-@media(max-width:700px){.boss-plugin-grid{grid-template-columns:1fr}.boss-plugin-frame{height:220px}}
+/* Company cards: one topic per card, natural-height masonry and independent details. */
+.boss-dialog--company{box-sizing:border-box;position:relative;width:min(1160px,calc(100vw - 40px));max-height:90vh;max-height:90dvh;padding:28px;background:#fcfbf9}
+.boss-dialog--company>.boss-dialog-close{position:absolute;top:26px;right:26px;float:none}
+.boss-company-header{display:flex;align-items:flex-start;justify-content:space-between;gap:18px;padding-right:76px;margin-bottom:18px}
+.boss-company-header h2{font-size:24px;margin:0 0 8px}.boss-company-header p{color:#777;font-size:13px}
+.boss-company-settings{position:relative;flex-shrink:0;z-index:5}
+.boss-company-settings>summary{cursor:pointer;list-style:none;padding:7px 12px;border:1px solid #ddd;border-radius:7px;background:#fff}
+.boss-company-settings-menu{position:absolute;right:0;top:calc(100% + 8px);width:230px;padding:6px;background:#fff;border:1px solid #e5e5e5;border-radius:10px;box-shadow:0 8px 26px #0002;display:grid;gap:3px}
+.boss-company-settings-menu button{text-align:left;border:0}
+.boss-company-grid{columns:3;column-gap:18px;margin-top:24px}
+.boss-company-card{box-sizing:border-box;position:relative;display:inline-block;vertical-align:top;break-inside:avoid;width:100%;margin:0 0 18px;border:1px solid var(--card-line);border-top:4px solid var(--card-accent);border-radius:14px;background:var(--card-tint);box-shadow:0 3px 12px #27211b05;overflow-wrap:anywhere;transition:box-shadow .15s,transform .15s}
+.boss-company-card:hover{box-shadow:0 7px 22px #27211b12;transform:translateY(-2px)}
+.boss-company-card:focus-within{outline:2px solid var(--card-accent);outline-offset:3px}
+.boss-company-card-content{padding:20px 22px 12px}
+.boss-company-card .boss-company-card-topic{font-size:11px;font-weight:600;letter-spacing:.06em;color:var(--card-accent);margin:0 0 12px}
+.boss-company-card h3{font-size:20px;line-height:1.4;font-weight:600;margin:0 0 10px;color:#272a2e}
+.boss-company-card .boss-company-card-status,.boss-company-detail-status{display:inline-block;font-size:12px;border:1px solid var(--card-line);border-radius:5px;padding:2px 7px;color:var(--card-accent);background:#ffffff80;margin:0 0 12px}
+.boss-company-card-summary{color:#585b60;font-size:13px;line-height:1.7;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:3;overflow:hidden}
+.boss-company-card-note{color:var(--card-accent);font-size:12px;line-height:1.65;border-top:1px solid var(--card-line);padding-top:12px;margin-top:14px!important}
+.boss-company-card-value{font-size:36px;line-height:1.25;letter-spacing:-1px;font-weight:600;margin:8px 0 14px!important;color:var(--card-accent)}
+.boss-company-card-value small{font-size:14px;letter-spacing:0;font-weight:400}
+.boss-company-card>footer{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:0 22px 17px}
+.boss-shell .boss-company-card-open{padding:5px 0;border:0;background:transparent;color:var(--card-accent);font-size:12px;min-height:32px}
+.boss-company-card-open::after{content:'';position:absolute;inset:0;border-radius:14px;z-index:1}
+.boss-company-card-open span{margin-left:6px}
+.boss-company-card-menu{position:relative;z-index:2;font-size:13px}
+.boss-company-card-menu>summary{list-style:none;cursor:pointer;padding:3px 9px;font-size:20px;line-height:1;color:var(--card-accent)}
+.boss-company-card-menu>div{position:absolute;right:0;bottom:100%;width:150px;padding:5px;background:#fff;border:1px solid #ddd;border-radius:8px;box-shadow:0 6px 20px #0002}
+.boss-company-card-menu button{border:0;width:100%;text-align:left}
+.boss-company-library{color:#727272;font-size:13px;margin:10px 0}.boss-company-library summary{cursor:pointer}
+.boss-plugin-frame{box-sizing:border-box;display:block;width:100%;max-width:100%;border:0;border-radius:6px;background:#fff}
+.boss-plugin-frame--card{pointer-events:none}.boss-plugin-frame--detail{height:60vh;min-height:320px}
+.boss-company-detail-layer{box-sizing:border-box;position:fixed;inset:0;z-index:45;max-width:none;margin:0;padding:24px;background:#15182066;display:grid;place-items:center}
+.boss-company-detail{box-sizing:border-box;width:min(800px,100%);max-height:88vh;max-height:88dvh;padding:0;border-top:5px solid var(--card-accent)}
+.boss-company-detail-header{position:sticky;top:0;z-index:2;display:flex;align-items:flex-start;justify-content:space-between;gap:20px;padding:22px 26px;background:var(--card-tint);border-bottom:1px solid var(--card-line)}
+.boss-company-detail-header h2{font-size:21px;line-height:1.45;margin:0}.boss-company-detail-header button{flex-shrink:0;font-size:12px}.boss-company-detail-header button span{margin-left:7px}
+.boss-company-detail-body{padding:24px 26px}.boss-company-detail-body h3{margin:24px 0 12px}.boss-company-detail-body>h3:first-child{margin-top:0}
+.boss-company-detail-body details{margin-top:16px}.boss-company-detail-body summary{cursor:pointer;color:#64676b;font-size:13px}
+.boss-company-detail-body a{color:var(--card-accent)}.boss-company-detail-body code{font-size:12px;color:#777}
+.boss-company-record{padding:18px 0;border-bottom:1px solid #eee}.boss-company-record:first-child{padding-top:0}.boss-company-record h4{margin:0 0 12px}.boss-company-record h5{font-size:13px;margin:18px 0 8px}
+@media(max-width:1000px){.boss-company-grid{columns:2}}
+@media(max-width:700px){
+  .boss-dialog--company{width:100%;padding:22px 16px calc(22px + env(safe-area-inset-bottom));max-height:94dvh}
+  .boss-dialog--company>.boss-dialog-close{top:18px;right:16px;padding:7px 10px;min-height:36px;font-size:12px}
+  .boss-company-header{gap:12px;padding-right:64px}.boss-company-header h2{font-size:21px}.boss-company-header p{font-size:12px}
+  .boss-company-settings>summary{padding:7px 10px;font-size:12px}.boss-company-settings-menu{right:-64px;width:210px}
+  .boss-dialog--company .boss-entries{gap:8px 14px}.boss-dialog--company .boss-entries a{flex:none;min-height:0;padding:0;border:0;background:none;font-size:12px}
+  .boss-company-detail-layer{align-items:end;padding:0}.boss-company-detail{width:100%;max-height:94dvh;padding:0;border-radius:18px 18px 0 0}
+  .boss-company-detail::before{display:none}.boss-company-detail-header{padding:18px}.boss-company-detail-header h2{font-size:18px}.boss-company-detail-header button{min-height:36px;padding:6px 10px}
+  .boss-company-detail-body{padding:20px 18px calc(24px + env(safe-area-inset-bottom))}
+}
+@media(max-width:620px){.boss-company-grid{columns:1;margin-top:20px}.boss-company-header{flex-wrap:wrap}.boss-company-card h3{font-size:20px}}

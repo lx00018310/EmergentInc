@@ -78,7 +78,7 @@ export function BossConsole() {
     </section>
     {data && <BossChat key={data.instanceId} instanceId={data.instanceId} canDiscardPending={automation?.desiredMode === 'OFF' && automation.inFlight === 0 && data.budget?.unknownCalls === 0 && automation.reason !== 'OWNER_OUTCOME_REVIEW_REQUIRED'} onDone={() => void refresh(true)} />}
     <footer className="boss-muted">{t('Last refreshed')}: {data ? ownerTime(data.asOf) : '—'} · {t('Powered by EmergentInc')}</footer>
-    {modal && <div className="boss-backdrop"><section role="dialog" aria-modal="true" aria-label={t('Details')} tabIndex={-1} className="boss-dialog"><button className="boss-dialog-close" onClick={() => setModal(undefined)}>{t('Close')}</button>
+    {modal && <div className="boss-backdrop"><section role="dialog" aria-modal="true" aria-label={t(modal === 'company' ? 'Inspect Company' : 'Details')} tabIndex={-1} className={`boss-dialog${modal === 'company' ? ' boss-dialog--company' : ''}`}><button className="boss-dialog-close" onClick={() => setModal(undefined)}>{t('Close')}</button>
       {modal === 'company' && <BossCompany onAction={setModal} />}
       {modal === 'budget' && data?.budget && <><h2>{t('Company money budget')}</h2><BossBudget budget={data.budget} instanceId={data.instanceId} onDone={() => { setModal(undefined); void refresh(true); }} /></>}
       {modal === 'payment' && <><h2>{t('Configure receive-only payments')}</h2><BossPayment onDone={() => { setModal(undefined); void refresh(true); }} /></>}

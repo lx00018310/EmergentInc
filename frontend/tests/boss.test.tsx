@@ -102,20 +102,26 @@ it('retains an unknown server result and blocks a changed command',async()=>{
   fireEvent.change(screen.getByRole('textbox'),{target:{value:'Different task'}});fireEvent.submit(screen.getByRole('textbox').closest('form')!);expect(calls).toHaveLength(1);expect(screen.getByRole('alert').textContent).toContain('Resolve the pending request');
 });
 it.each(['en','zh-CN'] as const)('inspects actual company records and keeps settings reachable in %s',async language=>{
-  setLanguage(language);vi.spyOn(globalThis,'fetch').mockImplementation(async url=>String(url).endsWith('/boss/overview')?response(bossFixture()):String(url).includes('/goals/')?response({goal:flowGoal(),events:[],dispatches:[],evidence:[{id:'artifact-1',kind:'artifact',reference:'evidence/owner-run/guide.md',bytes:123}]}):response(flowOverview()));render(<BossConsole/>);
-  fireEvent.click(await screen.findByRole('button',{name:language==='en'?'Inspect Company':'视察公司'}));const dialog=screen.getByRole('dialog');await within(dialog).findByText('Alice · Researcher · '+(language==='en'?'Running':'运行中'));
-  expect(within(dialog).getByText(language==='en'?'Company orders':'公司订单')).toBeTruthy();fireEvent.click(within(dialog).getByRole('button',{name:'Digital guide'}));const evidence=await within(dialog).findByRole('link',{name:'guide.md'});expect(evidence.getAttribute('href')).toBe('/api/owner/goals/goal-a/evidence/artifact-1');
-  fireEvent.click(within(dialog).getByRole('button',{name:language==='en'?'Authorize company budget':'授权公司预算'}));await screen.findByRole('button',{name:language==='en'?'Save company budget':'保存公司预算'});
+  setLanguage(language);vi.spyOn(globalThis,'fetch').mockImplementation(async url=>String(url).endsWith('/boss/overview')?response(bossFixture()):String(url).includes('/plugins/cards')?response({items:[]}):String(url).includes('/goals/')?response({goal:flowGoal(),events:[],dispatches:[],evidence:[{id:'artifact-1',kind:'artifact',reference:'evidence/owner-run/guide.md',bytes:123}]}):response(flowOverview()));render(<BossConsole/>);
+  fireEvent.click(await screen.findByRole('button',{name:language==='en'?'Inspect Company':'视察公司'}));const wall=screen.getByRole('dialog');
+  await within(wall).findByText(language==='en'?'Customer orders':'客户订单');expect(screen.queryByText('Create a sellable guide')).toBeNull();expect(screen.queryByText('Researcher')).toBeNull();
+  const goalCard=within(wall).getByText(language==='en'?'Business goal':'经营目标').closest('article')!;
+  const opener=within(goalCard).getByRole('button');opener.focus();fireEvent.click(opener);
+  const detail=screen.getByRole('dialog');expect(detail).not.toBe(wall);const evidence=await within(detail).findByRole('link',{name:'guide.md'});expect(evidence.getAttribute('href')).toBe('/api/owner/goals/goal-a/evidence/artifact-1');
+  fireEvent.keyDown(document,{key:'Escape'});expect(screen.getByRole('dialog')).toBe(wall);expect(document.activeElement).toBe(opener);expect(wall.getAttribute('aria-hidden')).toBeNull();
+  fireEvent.click(within(wall).getByText(language==='en'?'Settings':'设置'));fireEvent.click(within(wall).getByRole('button',{name:language==='en'?'Authorize company budget':'授权公司预算'}));await screen.findByRole('button',{name:language==='en'?'Save company budget':'保存公司预算'});
 });
 it.each(['en','zh-CN'] as const)('distinguishes delivery and retained accounting reservations in %s',async language=>{
   setLanguage(language);const task=flowWork({state:'REPLIED',reply:'Actual delivery',attempt:{id:'attempt-a',taskId:'work-a',worldId:'world-a',goalId:'goal-a',goalRevision:1,dispatchId:'dispatch-a',runId:'run-a',fence:1,revision:3,state:'COMPLETED',accountingState:'PENDING',leaseOwner:'controller',leaseExpiresAt:20,lastSequence:2,reason:null,createdAt:10,updatedAt:20}});
   vi.spyOn(globalThis,'fetch').mockImplementation(async url=>String(url).includes('plugins/cards')?response({items:[]}):response(flowOverview({work:{tasks:[task],requests:[],codeReports:[]}})));render(<BossCompany onAction={()=>{}}/>);
+  fireEvent.click(await screen.findByRole('button',{name:language==='en'?'Open Work records':'打开：工作记录'}));
   await screen.findByText(language==='en'?'Execution result: Completed · Cost accounting: Pending verification; reservation retained':'执行结果: 执行完成 · 费用结算: 费用待核实，预留保留');
   expect(screen.getByText('Actual delivery')).toBeTruthy();
 });
 it.each(['en','zh-CN'] as const)('shows a suspended worker and retained progress in %s',async language=>{
   setLanguage(language);const task=flowWork({state:'BLOCKED',reason:'OWNER_GOAL_PAUSED',attempt:{id:'attempt-paused',taskId:'work-a',worldId:'agent-a',goalId:'goal-a',goalRevision:1,dispatchId:'dispatch-a',runId:'run-a',fence:1,revision:3,state:'SUSPENDED',accountingState:'SETTLED',leaseOwner:'controller',leaseExpiresAt:20,lastSequence:2,reason:'OWNER_GOAL_PAUSED',createdAt:10,updatedAt:20}});
   vi.spyOn(globalThis,'fetch').mockImplementation(async url=>String(url).includes('plugins/cards')?response({items:[]}):response(flowOverview({work:{tasks:[task],requests:[],codeReports:[]}})));render(<BossCompany onAction={()=>{}}/>);
+  fireEvent.click(await screen.findByRole('button',{name:language==='en'?'Open Work records':'打开：工作记录'}));
   await screen.findByText(language==='en'?'Execution result: Suspended; progress retained · Cost accounting: Settled':'执行结果: 执行已暂停，保留进度 · 费用结算: 已结算');
   expect(screen.getByText(language==='en'?'This goal is paused; execution progress is retained.':'该目标已暂停，执行进度已保留。')).toBeTruthy();
 });
